@@ -104,6 +104,13 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   `allow_wilderness`, `allow_bank_fetch`. Omitted fields default false,
   matching `ctx.walk_with`. Explicit `true`/`false` are preserved.
   Optional `request_id` is forwarded for wait correlation.
+  A bank-fetch walk plans its trip from the account's bank memory, so a closed
+  bank still plans one ([nav.md](nav.md)); `inspect-route` previews from the
+  same memory.
+  Danger zones are not an option on these ops: they follow the global
+  **Danger routing** setting in Nav config, and only **Always** lets a route
+  cross them. A route with no way past its danger zones ends the walk with
+  `walk_outcome_failed`, and the host log names the zones.
 - `walk-nearest-bank` uses host packed nav with default-false FindOptions.
   Watch `walk_outcome_seq` / `walk_outcome_failed` and `here` vs `banks`.
   No packed stand fails closed in Rust.
@@ -239,7 +246,9 @@ Three sync `HelperResult` methods over the selected pin's typed gathering
 catalog (the checked `gathering.json` family: woodcutting, mining and fishing
 methods, their targets, products, tools, consumed bait, requirements and world
 placements). They are not Promises, not `request()` ops, and they do not push
-`h.interact`. `bestAxe` and `bestPickaxe` stay `notImpl`.
+`h.interact`. `bestAxe` and `bestPickaxe` are not `NativeApi` members
+(`api.bestAxe` is `undefined`); the rs2b0t `Tools` exports of those names are
+separate native calls for compat scripts.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -318,8 +327,9 @@ the card default (`skill` `"Woodcutting"`, `woodcuttingResources`
 `["normal"]`, `miningResources` `["copper","tin"]`, `fishingMethod`
 `"fishing.saltfish.op1"`, `targetPreference` `"Best tier"`, `location`
 `"Start"`, `customTile` only when `location` is `"Custom"`, `radius` 2..64
-default 12, `disposition` `"Bank"`, `allowTeleports`/`allowWilderness`
-`false`, `deathPolicy` `"Recover"` (or `"Stop"`), `maxDeaths` 0..255 default 2). `GatherStatus`
+default 12, `disposition` `"Bank"`,
+`allowTeleports`/`allowWilderness`/`allowDangerZones` `false`, `deathPolicy`
+`"Recover"` (or `"Stop"`), `maxDeaths` 0..255 default 2). `GatherStatus`
 is keyed exactly as the card publishes it (`gatherer::status::KEYS`, 24 keys:
 `skill`, `method`, `phase`, `area`, `target`, `tool`, `bank`,
 `excluded_targets`, `last_event` as strings; `bait`, `food`, `coins`,
@@ -547,15 +557,20 @@ journal read only when the colour is in-progress and the released Path
 has journal rules. Like the rest of `NativeApi`, these are host verbs;
 frozen rs2b0t signatures are irrelevant to them.
 
-The shared Quester release index holds the seventeen released revision-289
-Paths, in release order: Cook's Assistant (`cook`), Sheep Shearer (`sheep`),
-Rune Mysteries (`runemysteries`), Romeo & Juliet (`romeojuliet`), Imp Catcher
+The shared Quester release index holds twenty-five revision-289 Paths, in
+release order: Cook's Assistant (`cook`), Sheep Shearer (`sheep`), Rune
+Mysteries (`runemysteries`), Romeo & Juliet (`romeojuliet`), Imp Catcher
 (`imp`), Vampire Slayer (`vampire`), Doric's Quest (`doric`), Goblin Diplomacy
 (`gobdip`), Witch's Potion (`hetty`), Prince Ali Rescue (`prince`), Pirate's
 Treasure (`hunt`), Demon Slayer (`demon`), The Knight's Sword (`squire`), Death
 Plateau (`death`), The Tourist Trap (`desertrescue`), Priest in Peril
-(`priestperil`), and Clock Tower (`cog`). Each row's `stages` comes from that
-Path's colour mapping and journal rules. Cook and Imp Catcher are colour-only
+(`priestperil`), Clock Tower (`cog`), Monk's Friend (`drunkmonk`), Hazeel Cult
+(`hazeelcult`), Plague City (`elena`), and the five untested draft guides
+Druidic Ritual (`druid`), Gertrude's Cat (`fluffs`), Jungle Potion
+(`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). A row
+does not mark its Path as a draft. Haunted Mine, which this server can't run,
+has no Path and is not a row. Each row's `stages` comes from that Path's colour
+mapping and journal rules. Cook and Imp Catcher are colour-only
 (`journal: false`); the rest have journal rules (`journal: true`). For example,
 Romeo & Juliet includes the six journal stages `romeojuliet:10` through
 `romeojuliet:60`, plus its not-started and complete stages (`romeojuliet:0` and
@@ -568,10 +583,11 @@ Stages are returned in ascending numeric stage order.
 | `await api.questProgress({ quest })` | one `QuestProgressOutcome` settlement | sync `invalid-args`; host `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>`, `failed:<why>`, or a machine abort |
 
 A non-object input, or a non-string or blank `quest`, is `invalid-args`. A quest
-without a released Path is `done{end:'refused', reason:'unknown-path'}`:
-nothing is synthesized. A read while a gather session is live — and a
-gather `run` while a read is live — is `done{end:'refused',
-reason:'busy'}`. The terminal is the nested `value` of the unchanged
+without a Path in the index (Haunted Mine is one) is `done{end:'refused',
+reason:'unknown-path'}`: nothing is synthesized. A read while a gather or
+combat session is live — and a gather `run` or combat `fight` while a read is
+live — is `done{end:'refused', reason:'busy'}`. The terminal is the nested
+`value` of the unchanged
 `done` envelope: `done` carries the `QuestProgressRow` (`quest`,
 `display`, `colour`, `stage`, `complete`, `rule`, `flags`, `evidence`,
 `journal_read`, `binding`, `role`); `refused` carries the host reason
@@ -1133,7 +1149,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `callback.enabled` | invoke and await the frozen `enabled()` hook; an absent hook answers true |
 | `callback.log` | invoke and await `log(message)` when supplied |
 | `callback.setStatus` | invoke and await `setStatus(message)` when supplied: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
-| `walk` | a search row, an unguarded dig row, a guarded row, a talk step or a key-keeper row that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, the talk step's own target tile, or the key keeper's published spawn with its `plane` as the `level` |
+| `walk-near` | a search row, an unguarded dig row, a guarded row, a talk step, a key-keeper row or a coordinate-trio giver stop that has not arrived: walk to within `radius` 1 of `{ x, z, level }` — the decoded `trail_coord`, the talk step's own target tile, or a published spawn with its `plane` as the `level` — as the ordinary `walk-near` request `{ x, z, level, radius }`. Rust-native Sherlock may add the picked loc's id so the host walks to a side that can operate it |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
 | `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }`, and a key-keeper row that has arrived is the same kind with the frozen `Attack` on a posted npc of the keeper's packed type standing on the published spawn, `{ name, action: 'Attack', index }` |
 | `answer-count` | a talk step whose selected challenge scroll is in hand and whose posted `count_dialog_open` is true: answer that dialog with the selected `challenge_answers` string parsed as a non-negative `i32`, `{ value }`. A posted `false` or an omitted slot is not an open count dialog and nothing is answered |
@@ -1148,7 +1164,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `wear` | the Entrana restore's wear pass: equip the pack row named `name`, `{ name }`. The landed equip-from-pack verb, one listed name per call, and never the strip's unequip. Not a `V2_OPS` author verb either: `api.request({ op: 'wear' })` stays `not impl` |
 | `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the first posted pack row with a positive count whose selected category is restricted under the monk's rule, whether or not the strip listed it. The restore's make-room deposit rides the same kind |
 | `withdraw` | the Entrana restore's claim: withdraw one listed name with the machine's own posted action label, `{ name, action: 'Withdraw-1' }`. One claim in flight at a time |
-| `walk-nearest-bank` | the Entrana strip's and the restore's bank trip: walk to the nearest stand the host picks from the packed world. No tile rides it, because the machine never invents one |
+| `walk-nearest-bank` | the Entrana strip's and the restore's bank trip: walk to the nearest stand the host picks from the packed world. No tile rides it, because the machine never invents one. (A page that posts the booth's `approach`, which only Rust-native Sherlock does, gets an exact `walk` to that stand instead.) |
 | `open-booth` | the bank trip's `open-booth`: the posted `nearest_booth`'s own identity, `{ x, z, level, id, name?, action? }`, exactly as the landed bank helpers queue it |
 | `close` | the bank interface's own close, after the strip's deposit or the restore's claim |
 | `supplies-needed` | an arrived dig — unguarded or the guarded first Dig — whose posted pack page carries no `Spade`: a named wait-class, not a terminal. The token stays live, nothing is fetched and no `no-spade` error is published |
@@ -1220,18 +1236,19 @@ an off-contract token is never rounded into an invented coordinate.
 `trail_coord` is never published on `clue.row`.
 
 Once the search row has been reported — after its `callback.log` and
-`callback.setStatus` — `walk` and `loc` replace the idle `wait`. Each Rust
+`callback.setStatus` — `walk-near` and `loc` replace the idle `wait`. Each Rust
 machine pass reads the posted `here` tile and posted loc page, so the machine
-caches no world copy and `api.snapshot.locs` stays hidden. `walk` repeats until
+caches no world copy and `api.snapshot.locs` stays hidden. `walk-near`
+(`radius` 1) repeats until
 `here` is on the decoded tile's level and within Chebyshev 1 of it; then the
 picker takes posted loc rows on that level, within Chebyshev 1 of the decoded
 tile (not of `here`), whose actions match `Search` then `Open`
 case-insensitively — nearest first, then rank, then posted order. The `loc`
 step carries the picked row's own tile and its posted scene id, always, so the
-host refuses a stale id rather than falling back to a co-located row. Neither
-kind is a `V2_OPS` author verb: the Rust clue family enqueues both directly,
-`api.request({ op: 'loc' })` stays `not impl`, and JavaScript never redispatches
-the step.
+host refuses a stale id rather than falling back to a co-located row. `loc` is
+not a `V2_OPS` author verb (`api.request({ op: 'loc' })` stays `not impl`) and
+`walk-near` is one, but the Rust clue family enqueues both directly and
+JavaScript never redispatches the step.
 
 Arrived with nothing to search this tick — an unloaded scene, an empty page, or
 a loc id the host refused — is `wait`: the token stays live and the pick is
@@ -1322,9 +1339,9 @@ entered at most **once per item id per token** (the frozen `gateItemsTried`),
 latched before its first verb so the Shantay walk cannot re-enter the
 intercept:
 
-| Step | Verds and observation |
+| Step | Verbs and observation |
 | --- | --- |
-| walk to the stand | `walk` to the selected Shantay spawn `(3304, 3123, 0)` — the unique jm2 tile, never the frozen `GATE_ITEM_SHOPS` stand `(3304, 3122, 0)` that is off by one in `z` — repeated until the posted return to the spawn |
+| walk to the stand | `walk-near` (`radius` 1) to the selected Shantay spawn `(3304, 3123, 0)` — the unique jm2 tile, never the frozen `GATE_ITEM_SHOPS` stand `(3304, 3122, 0)` that is off by one in `z` — repeated until the posted return to the spawn |
 | `Trade` | an `npc` click on a posted npc of the selected packed type `836` (or, when the page posted no id, of the display name `Shantay`) standing inside `ARRIVE_RADIUS` of that spawn and listing `Trade`; a wanderer is never chased and a page with no such row waits |
 | buy one | a `shop-button` click — `kind: 'buy'`, `chunk: 1` — on the short's own posted stock row: its `id`, the display name the host resolves, and the `slot` and `component` its presence check matches |
 | close | the landed `close-modal` once the posted pack page holds the short, and once per trip |
@@ -1464,7 +1481,7 @@ scene:
 | Kind | When |
 | --- | --- |
 | `wait` | the key is already on the posted page the identify reads — the hunt is over and the original riddle idles with its token live, no Attack, no completion kind and no gate re-arm, and a key banked but not held is not observed at all; or no posted `here`; or the keeper's packed type is not posted on the published tile; or the owned keeper is still posted and alive, so the Attack is not issued twice; or the pack is full, or the page posted no `inv_size`, and the Take is held back |
-| `walk` | the posted `here` is not on the published `{ x, z, plane }` tile, whose `plane` is the verb's `level`. The walk repeats until the posted arrival holds, exactly like a search or dig row, and it is never `walkLeg` |
+| `walk-near` | the posted `here` is not on the published `{ x, z, plane }` tile, whose `plane` is the verb's `level`. The walk repeats until the posted arrival holds, exactly like a search or dig row, and it is never `walkLeg` |
 | `npc` | arrived, with a posted npc of the keeper's packed type standing on that tile and listing `Attack`: `{ name, action: 'Attack', index }` — the posted display name and the posted scene index. The identity join is the selected packed id against the posted `id` first, then the selected display name against the posted `name`; the matcher's script alias is never compared to a posted string, and the posted name is what rides the verb |
 | `obj` | the kill was observed and the key is posted on the spawn's own tile: the landed collect `obj`, `{ x, z, level, name, action: 'Take' }`, for the posted ground row whose own id is the step's `key_id`, whose actions carry `Take`, and whose posted tile is on the spawn's own level inside Chebyshev 1 of it |
 
@@ -1561,9 +1578,9 @@ of its own identity, and no match, no `here` or an open chat is a `wait` — and
 every other latched row idles. The trigger is that latch and never an id list:
 no new kind, no new host op and no new session field. `closing` stays set after
 the close window ends, so it is never what decides the fall-through.
-`puzzle-move` is not a `V2_OPS` verb of its author API: the Rust clue family
-enqueues it directly like `loc` and the other internal kinds, and
-`api.request({ op: 'puzzle-move' })` stays the OPHELD send gate it already was.
+`puzzle-move` is also an author `request` op (see Supported requests): the Rust
+clue family enqueues it directly like `loc` and the other internal kinds, and
+`api.request({ op: 'puzzle-move' })` is the same OPHELD send gate.
 
 ### Trail-end collect
 
@@ -1714,6 +1731,10 @@ Eight sync `HelperResult` methods. They recommend food, worn names, carry
 rows, a weapon, a dart/bow shape, and a melee flask pair. They do not drink,
 equip, withdraw, or invent `snapshot.loadout`. Callers supply a loadout
 literal and read `api.snapshot.inv` / `api.snapshot.stats`.
+The host reads no saved loadout for a v2 script, but a `loadout` key in its
+settings is still checked at Start: an unknown or ambiguous saved-loadout name
+refuses the Start ([script.md](script.md) "Per-profile assignment and
+settings").
 
 v1 JSON helpers (`__rs2b0t_food_of`, `__rs2b0t_gear_of`,
 `__rs2b0t_supplies_of`, `__rs2b0t_weapon_of`), the v1 boost-potion helper

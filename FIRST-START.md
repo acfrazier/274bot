@@ -42,6 +42,11 @@ No Rust toolchain or local engine is needed for the public package. Game assets
 are fetched from the configured public server, and catalog scripts still come
 from your chosen rs2b0t checkout. Public login requires your own account.
 
+Upgrading from 0.1.9.1: read "Upgrading from 0.1.9.1" in the release notes
+(the same text is in `CHANGELOG.md` and `docs/upgrade-0.2.0.md` in the
+repository). Server profiles, the vault passphrase prompt, local engine paths,
+self-baked navigation packs and the graphics defaults changed.
+
 ## Toolchain
 
 - Rust **1.98.0** (`rust-toolchain.toml` in this repo and in

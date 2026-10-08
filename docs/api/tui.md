@@ -28,7 +28,9 @@ terminal is present; otherwise it pumps headless and still prints
 PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
 `BOT_LIVE_CORE=catalog|pair`) hold a `--live` PASS until the shared core
 witness qualifies, exactly as the panel watches do; see
-[the harness guide](../harness.md#core-gated-qualification).
+[the harness guide](../harness.md#core-gated-qualification). `--help` (or
+`-h`) prints the usage on stdout and exits 0; any other bad flag prints
+usage on stderr and exits 2.
 
 The vault passphrase is never an argument or an environment variable:
 `tui-play` asks on the terminal, or reads one line from a pipe with
@@ -73,7 +75,7 @@ label in its border. Everything is plain text as well as colour.
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
-| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, teleports / wilderness / bank fetch / danger zones, **Pause script on manual movement**, Quester paths folder + reload, and **lowmem / highmem** (persisted on the profile); **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
+| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
 ## Keys
 
@@ -97,8 +99,8 @@ is global, and moving the fleet cursor never changes the selected bot.
 | --- | --- |
 | Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
-| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while the global danger-zones permission is on), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
-| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`) |
+| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
+| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`); in Parameters, `Space` steps through an option's choices and `Enter` opens its choice list (searchable past 16 options) |
 | Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
 | Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
 | Manual walk | `W` `A` `S` `D` / arrows walk one tile; `Esc` disarms |
@@ -127,7 +129,7 @@ zone names for each affected bot. On legacy grid packs `z` cannot enable
 checks and the report says `zones: unavailable (legacy grid pack)`. Bots that
 are logged out, have no position yet or run a script are skipped with that
 reason. The `z` choice starts with zones avoided and resets whenever Map
-closes or opens; it is not persisted. While the global danger-zones permission is on, the per-walk checkbox is superseded.
+closes or opens; it is not persisted. While Danger routing is Always, the per-walk checkbox is superseded.
 
 **Mouse** (optional; every workflow works from the keyboard): left click
 focuses the pane, selects a fleet row (its checkbox column ticks the row

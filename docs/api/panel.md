@@ -397,10 +397,11 @@ The **Fleet** window (the button beside WalkTo) is the panel's view of the
 shared marked selection: one row per vault profile with a checkbox mark,
 filter and sort. Its action bar runs on the marked rows only and each action
 puts one report in the window, counting every marked bot once with failures
-first: **Start selected card**, **Stop**, **Assign selected card** (saves the
-card without starting; running bots are skipped), **Assign & restart…** (a
-confirmation names the bots whose running script it stops; the Starts are
-paced like Start all), **Log in** / **Log out**, **Walk N to…** (opens the
+first: **Start selected card on N marked bots**, **Stop N marked bots**,
+**Assign selected card** (saves the card without starting; running bots are
+skipped), **Assign & restart...** (a confirmation names the bots whose running
+script it stops; the Starts are paced like Start all), **Log in N** / **Log out N**,
+**Walk N to…** (opens the
 WalkTo picker in group mode; each marked bot walks to the chosen tile from
 its own position, and bots that are logged out, have no position or run a
 script are skipped with that reason) and **Apply focused bot's settings to
@@ -423,9 +424,14 @@ matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
 Start persists the per-profile script assignment. **Nav config** is live
 as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map,
-and Quest Paths groups): the durable walk permissions (teleports, wilderness, bank fetch,
-danger zones — all default off), **Pause script on manual movement**
-(default on), and debug paints / labels. WalkTo map holds **ask before baking terrain**;
+and Quest Paths groups): the durable walk permissions — teleports, wilderness
+and bank fetch (all default off) plus **Danger routing** (Never, When survivable
+(the default), Always; When survivable currently shows `When survivable (not
+available yet: acts as Never)` and admits routes as Never) — **Pause script on
+manual movement** (default on; it also pauses the script behind a Gatherer or
+combat session), and debug paints / labels. A script allows danger zones for its
+own walks in its Script prefs Walk permissions; a single WalkTo walk is allowed
+with its own checkbox (below). WalkTo map holds **ask before baking terrain**;
 Quest Paths holds the Quester folder-paths loader (folder, reload). **General config** (under
 WalkTo, above profile) is
 **slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
@@ -475,7 +481,7 @@ guarded by `host_play::walk_map`). Walk needs a snapped walkable target. The
 zone checkbox starts unchecked and resets every time WalkTo opens; its hover
 text is `Allows routes past monsters that may kill your bot.` It applies only
 to that WalkTo's focused or group Walk confirmation and is not saved in Nav
-config. While the global danger-zones permission is on, the per-walk checkbox is superseded.
+config. While Danger routing is Always, the per-walk checkbox is superseded.
 On a legacy grid pack the toggle cannot enable zone checks, and the
 report says `zones: unavailable (legacy grid pack)`.
 The map selection is a destination (tile/POI, plane, nav identity), not a bot.

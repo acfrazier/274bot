@@ -444,7 +444,7 @@ remains the gathering bound; a bank inside that bound does not complete Return.
 Area arrival settles only at a currently loaded, standable tile near the
 observation stand, then Gatherer observes resources again.
 
-The command below runs both ignored cells (the filter intentionally is not
+The command below runs the matching ignored cells (the filter intentionally is not
 `--exact`):
 
 ```sh

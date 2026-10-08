@@ -670,6 +670,8 @@ request that names grants (Path `cross`) also has the zones engaged at the
 route's endpoint granted, the router's endpoint completion
 (`risk::Grants::request`). The named retry's witness keys never are.
 
+Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`).
+
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
 `FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path
 does not invent an assessment. A found route carries an assessment even
@@ -715,6 +717,8 @@ overrides and named grants keep their S2b semantics. Panel and TUI display the
 held middle level as **When survivable (not available yet: acts as Never)**; the
 host emits one informational held-state note per slot session, not a warning on
 every walk.
+The hold lasts until the bot can track poison live: until then the middle level behaves like Never.
+
 The live observer, ordinary-walk safety behavior and escape execution belong
 to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and
@@ -723,7 +727,7 @@ the middle level.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
-NPC-backed hops use the live NPC tile (search radius 8). Paid Al Kharid
+NPC-backed hops use the live NPC tile (search radius 8). The paid 10-coin Al Kharid
 toll, Boat and Npc affirmative fare choices recheck current carried supply
 before clicking. Glider landings settle Chebyshev 1. Spell buttons and charged
 jewellery operations recheck live skill/item requirements before sending;
