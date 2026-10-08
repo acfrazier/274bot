@@ -393,3 +393,190 @@ fn door_recovery_reopens_and_walks_a_leaf_matched_by_footprint_not_origin() {
         Some(TravelOutcome::Arrived { at }) if at == edge.to
     ));
 }
+
+#[test]
+fn shared_self_closing_door_retries_lost_operations_after_closed_loc_returns() {
+    let mut clients: Vec<_> = (0..3)
+        .map(|_| {
+            let mut client = scene_client();
+            plant_loc(&mut client, 2025, "Door", "Open", 6, 6);
+            client
+        })
+        .collect();
+    let mut snapshots: Vec<_> = clients
+        .iter_mut()
+        .map(|client| snap_at(client, 5, 6))
+        .collect();
+    let closed_loc = snapshots[0].locs()[0].clone();
+    let mut inviswall = closed_loc.clone();
+    inviswall.id = 83;
+    inviswall.actions.clear();
+    let mut displaced_leaf = closed_loc.clone();
+    displaced_leaf.id = 1535;
+    displaced_leaf.tile.z -= 1;
+    displaced_leaf.actions.clear();
+
+    let edge = TransportEdge {
+        at: WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        loc_id: 2025,
+        open_loc_id: None,
+        dir: Some(DoorDir::E),
+        ..door_edge()
+    };
+    let route = web_route(edge.clone());
+    let mut travellers: Vec<_> = (0..3).map(|_| Traveller::new()).collect();
+    let mut drivers: Vec<_> = (0..3)
+        .map(|_| FollowRec {
+            route: Some((5, 6)),
+            ..FollowRec::default()
+        })
+        .collect();
+    let mut options: Vec<_> = (0..3)
+        .map(|_| TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        })
+        .collect();
+    let mut terminal = [false; 3];
+    let mut landing_at = [None; 3];
+    let mut unavailable_until = 0;
+    let mut accepted = Vec::new();
+
+    for tick in 0..=12 {
+        let closed = tick >= unavailable_until;
+        let walks_before: Vec<_> = drivers.iter().map(|driver| driver.walked.len()).collect();
+        for i in 0..3 {
+            if landing_at[i].is_some_and(|landing| tick >= landing) {
+                plant_player(&mut clients[i], 6, 6);
+            }
+            if tick > 0 {
+                bump_rebuild(&mut clients[i], &mut snapshots[i]);
+            }
+            snapshots[i].seed_locs(if closed {
+                vec![closed_loc.clone()]
+            } else {
+                vec![inviswall.clone(), displaced_leaf.clone()]
+            });
+        }
+
+        let mut requests = Vec::new();
+        for i in 0..3 {
+            if terminal[i] {
+                continue;
+            }
+            let before = drivers[i].loc_ops;
+            let outcome = travellers[i].follow(
+                &mut drivers[i],
+                &snapshots[i],
+                route.clone(),
+                &mut options[i],
+            );
+            if drivers[i].loc_ops > before {
+                requests.push(i);
+            }
+            if let Some(outcome) = outcome {
+                assert!(
+                    matches!(outcome, TravelOutcome::Arrived { at } if at == edge.to),
+                    "unexpected outcome: {outcome:?}"
+                );
+                terminal[i] = true;
+            }
+        }
+
+        if !closed {
+            assert!(
+                requests.is_empty(),
+                "never operate the invisible wall or inactive loc 1535"
+            );
+            assert!(
+                drivers
+                    .iter()
+                    .zip(&walks_before)
+                    .all(|(driver, before)| driver.walked.len() == *before),
+                "the displaced inactive leaf is not a walk-through open leaf"
+            );
+        } else if let Some(&winner) = requests.first() {
+            // All snapshots saw closed loc 2025 before queued operations ran.
+            // The script accepts one operation, then swaps it for loc 83 and
+            // inactive loc 1535 for three ticks, teleporting only its owner.
+            landing_at[winner] = Some(tick + 1);
+            unavailable_until = tick + 4;
+            accepted.push((tick, winner));
+        }
+
+        if terminal == [true; 3] {
+            break;
+        }
+    }
+
+    assert_eq!(accepted, vec![(0, 0), (4, 1), (8, 2)]);
+    assert_eq!(
+        drivers
+            .iter()
+            .map(|driver| driver.loc_ops)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "the landed winner does not re-operate the door; each loser retries the closed loc"
+    );
+    assert_eq!(
+        terminal, [true; 3],
+        "every traveller must cross on an accepted operation"
+    );
+}
+
+#[test]
+fn west_ardougne_exact_move_fence_far_side_finishes_without_reopening() {
+    // This is the producer's westward `mournerstewfence` crossing: a
+    // directional scripted Door with no reusable open leaf.
+    let mut client = scene_client();
+    plant_loc(&mut client, 2068, "Mourner fence", "Climb-over", 6, 6);
+    let snapshot = snap_at(&mut client, 4, 6);
+    let edge = TransportEdge {
+        at: WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        },
+        loc_id: 2068,
+        open_loc_id: None,
+        dir: Some(DoorDir::W),
+        ..door_edge()
+    };
+    let route = web_route(edge);
+    let mut traveller = Traveller::new();
+    let mut driver = FollowRec {
+        route: Some((4, 6)),
+        ..FollowRec::default()
+    };
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut driver, &snapshot, route, &mut options)
+        .is_none());
+    assert_eq!(
+        driver.loc_ops, 0,
+        "a bot already on the far side must not climb again"
+    );
+    assert_eq!(
+        driver.walked,
+        [(5, 6)],
+        "continue to the packed west-side destination, not back across the fence"
+    );
+}
