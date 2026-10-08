@@ -8,6 +8,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use frontend_core::views::run_state_label;
@@ -231,6 +232,7 @@ pub struct FleetTable<'a> {
     pub names: &'a [String],
     pub ids: &'a [ProfileIdentity],
     pub rows: &'a [FleetRow],
+    pub restart_badges: &'a HashSet<ProfileIdentity>,
     pub state: &'a mut FleetState,
     pub selected: Option<usize>,
     pub keys: bool,
@@ -286,6 +288,7 @@ impl FleetTable<'_> {
             rows: fleet,
             state,
             selected,
+            restart_badges,
             keys,
             class,
         } = self;
@@ -379,16 +382,23 @@ impl FleetTable<'_> {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             cell.clear();
-            cell.push_str(
-                if state.is_marked_id(profile_id(ids, names, member).expect("fleet row identity")) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                },
-            );
+            let identity = profile_id(ids, names, member).expect("fleet row identity");
+            cell.push_str(if state.is_marked_id(identity) {
+                "[x]"
+            } else {
+                "[ ]"
+            });
             cell.push_str(if is_cursor { " >" } else { "  " });
             cell.push(if is_selected { '*' } else { ' ' });
-            push_fitted(&mut cell, name, name_w);
+            let restart_required = restart_badges.contains(&identity);
+            push_fitted(
+                &mut cell,
+                name,
+                name_w.saturating_sub(usize::from(restart_required)),
+            );
+            if restart_required {
+                cell.push('!');
+            }
             cell.push(' ');
             let world_at = cell.len();
             match row.and_then(|row| row.world) {

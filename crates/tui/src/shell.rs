@@ -342,6 +342,7 @@ impl TuiApp {
             names: &self.names,
             ids: &self.profile_ids,
             rows: &self.fleet,
+            restart_badges: &self.restart_badges,
             state: &mut self.table,
             selected: self.focused,
             keys,

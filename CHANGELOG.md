@@ -3,6 +3,12 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Scripts
+
+- When saved settings need a script restart, the panel and TUI offer to restart only the affected profiles or leave their current scripts running and apply the settings on a later Start.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
