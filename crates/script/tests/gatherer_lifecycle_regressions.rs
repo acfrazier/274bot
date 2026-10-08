@@ -1110,6 +1110,51 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
 }
 
 #[test]
+fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
+    let selected = selected();
+    let mut slot = started(4392, &selected);
+    let mut frame = chopping_snapshot(&selected);
+    let mut locs = frame.locs().to_vec();
+    let mut next_tree = locs[0].clone();
+    next_tree.tile.x += 1;
+    locs.push(next_tree);
+    frame.seed_locs(locs);
+    tick(&mut slot, &frame, 1);
+    let chop = slot.take_native_action().expect("initial tree chop");
+    assert!(matches!(
+        chop.effect,
+        HostEffect::Interaction(InteractReq::Loc { ref action, .. }) if action == "Chop down"
+    ));
+    assert!(!slot.has_native_actions());
+
+    let mut locs = frame.locs().to_vec();
+    locs[0].id = depleted_snapshot(&selected).locs()[0].id;
+    locs[0].actions.clear();
+    frame.seed_locs(locs);
+    let (x, z) = frame.base().unwrap();
+    frame.seed_world(WorldStateView {
+        map_base_x: x + 8,
+        map_base_z: z,
+        members: true,
+        ..Default::default()
+    });
+    tick(&mut slot, &frame, 2);
+    for _ in 0..3 {
+        wake(&mut slot, &frame, 2);
+        assert!(!slot.has_native_actions(), "scene-entry locs cannot retarget");
+        assert_eq!(slot.native_status().unwrap().failure, None);
+    }
+    tick(&mut slot, &frame, 3);
+    let next = slot.take_native_action().expect("new tree after scene settles");
+    assert!(matches!(
+        next.effect,
+        HostEffect::Interaction(InteractReq::Loc { action, .. }) if action == "Chop down"
+    ));
+    assert!(!slot.has_native_actions());
+    slot.stop();
+}
+
+#[test]
 fn same_tick_level_up_wake_defers_continue_and_gatherer_resumes() {
     let selected = selected();
     let mut slot = started(4391, &selected);

@@ -927,6 +927,44 @@ mod tests {
     }
 
     #[test]
+    fn scene_entry_fences_selected_booth_on_tick_wakes_and_reobserve() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        observed::post(0, |post| {
+            post.scene_state(2);
+        });
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+
+        // The player's new level arrives before that level's loc reset.
+        // WaitSelected must not interpret the incomplete scene as a lost booth.
+        observed::post(1, |post| {
+            post.here(observed::Tile {
+                x: 3011,
+                z: 3353,
+                level: 1,
+            })
+            .locs(Vec::new())
+            .bank_approaches(Vec::new());
+        });
+        tick();
+        for sequence in 1..=3 {
+            machine::snapshot_step(&mut NoJs, 1, sequence);
+            tick(); // The host's terminal-receipt re-observation.
+            assert_eq!(machine::take(handle), Take::Pending);
+            assert!(drain().is_empty());
+        }
+        // A second post of the same new scene must not clear the latch.
+        observed::post(1, |_| {});
+        machine::snapshot_step(&mut NoJs, 1, 4);
+        assert_eq!(machine::take(handle), Take::Pending);
+        observed::post(2, |_| {});
+        tick();
+        assert_eq!(done(handle), json!(false));
+        assert!(drain().is_empty(), "a genuinely missing booth still fails");
+    }
+
+    #[test]
     fn pause_and_hold_freeze_mid_approach() {
         reset();
         post_scene(named_booth(), named_approach(Some((3011, 3353))));

@@ -1164,6 +1164,7 @@ enum Pass {
 /// start another machine; the host is borrowed only between JS calls.
 /// [`Host::stepping`] keeps those rows visible to [`live`].
 fn pass(js: &mut impl Js, pass: Pass) {
+    let entered_scene = crate::observed::with(crate::observed::Scene::entered_scene);
     let Some(mut rows) = HOST.with(|host| {
         let mut host = host.borrow_mut();
         if host.paused || host.held {
@@ -1216,6 +1217,12 @@ fn pass(js: &mut impl Js, pass: Pass) {
             HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
             return false;
+        }
+        // PLAYER_INFO can expose the new level before that scene's loc
+        // changes. Opted-in rows must keep that fence on every pass, including
+        // promise resumes and receipt re-observes, without delaying revocation.
+        if entered_scene && row.machine.snapshot_sensitive() {
+            return true;
         }
         let outcome = match pass {
             Pass::Snapshot { .. } => drive_snapshot(row, js, &mut at),

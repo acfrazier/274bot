@@ -60,16 +60,18 @@ operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
 The typed action-machine facility drives real machines: `NativeActions::begin`
-and `poll` admit and advance each family's operations. A native or compiled
-machine can be polled again when evidence changes within the same observed
-tick. These polls consume new receipts and facts; they do not advance tick
-windows or renew the single interaction-event budget. Tick-based quiet,
-stall and settle counters must distinguish observed ticks from polls.
-`ActionError::BudgetExhausted` at a poll-time action admission waits for the
-next observed tick without counting a failed attempt or parking the script.
-Native callers use the shared `defer_budget` helper and commit request state,
-phases and deadlines only after admission. Dialogue gap rearms also spend
-their finite allowance at most once per observed tick, not once per drain.
+and `poll` admit and advance each family's operations. Each observed tick grants
+one interaction-event allowance and a cap of 32 action transitions. A native or
+compiled machine can be polled again when evidence changes within the same
+observed tick; those polls consume new receipts and facts but do not advance tick
+windows or refresh either allowance. Tick-based quiet, stall and settle counters
+must distinguish observed ticks from polls. Poll-time admissions wrapped in
+`defer_budget` defer `ActionError::BudgetExhausted` to a later tick without
+counting a failed attempt, and callers commit request state only after admission.
+Not every begin is wrapped: a non-emitting begin can still exhaust the
+transition allowance unless its caller handles that error. Root Quester begin
+handles `BudgetExhausted` without counting an attempt. Dialogue gap rearms also
+spend their finite allowance at most once per observed tick, not once per drain.
 `ActionError::Unavailable` is a per-request refusal (for example a disposal
 that requires a slot-exact Drop). Sherlock retains its existing clue
 queue/dispatch behavior through one crate-private borrowed host frame (no raw

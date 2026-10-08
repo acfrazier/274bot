@@ -673,6 +673,101 @@ mod tests {
     }
 
     #[test]
+    fn stray_page_defers_spent_event_without_losing_gather_run() {
+        use crate::quester::families::tests::with_tick;
+
+        let catalog = prepared_catalog();
+        let method = catalog.methods_for_resource("normal").next().unwrap();
+        let method_index = catalog
+            .methods()
+            .iter()
+            .position(|row| row.id == method.id)
+            .unwrap();
+        let entity = known_rows(&method.targets)
+            .iter()
+            .find(|row| row.class == TargetClass::Resource)
+            .unwrap()
+            .entity;
+        let EntityId::Loc(id) = entity else {
+            panic!("loc tree")
+        };
+        let tile = WorldTile {
+            x: 3201,
+            z: 3202,
+            level: 0,
+        };
+        let mut plan = target(entity, -1, tile);
+        plan.method_index = method_index as u16;
+        plan.skill_stat = 14;
+        let mut snapshot = supply_snapshot(99, &[1265]);
+        snapshot.seed_locs(vec![loc(id, tile)]);
+        snapshot.seed_npcs(Vec::new());
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<GatherRun>(
+                    GatherRunArgs {
+                        target: plan,
+                        catalog: Arc::clone(&catalog),
+                        stall_ticks: 8,
+                        quest_owned: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let initial_request_id = handle
+            .inspect(|machine| machine.request_id)
+            .expect("the gather run remains owned");
+
+        snapshot.seed_chat_modal(4882, vec!["A stray page.".into()]);
+        snapshot.seed_chat_options(vec![], 4883);
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.action_id = tick.cx.ledger.as_ref().unwrap().outbox[0]
+                .action_id()
+                .get();
+            tick.cx.emit(InteractReq::CloseModal).unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert_eq!(
+                handle.inspect(|machine| (machine.request_id, machine.tend.is_none())),
+                Some((initial_request_id, true)),
+                "the spent event must not install a partial OneOp or discard the gather run"
+            );
+        });
+
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert_eq!(
+                handle.inspect(|machine| machine.tend.is_some()),
+                Some(true),
+                "the same gather run should begin its continue action on the next tick"
+            );
+            assert!(matches!(
+                &tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                crate::native::HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+            ));
+        });
+
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        let continuation = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(
+                continuation,
+                Poll::Ready(Ok(GatherResult {
+                    end: GatherEnd::Refused,
+                    gained: 0,
+                    xp: 0,
+                }))
+            ),
+            "after the page closes, GatherRun returns Refused so the runner revalidates: {continuation:?}"
+        );
+        assert_eq!(handle.inspect(|machine| machine.tend.is_none()), Some(true));
+    }
+
+    #[test]
     fn same_tick_repolls_do_not_consume_gather_quiet_ticks() {
         let catalog = prepared_catalog();
         let (method_index, entity) = catalog

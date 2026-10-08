@@ -953,3 +953,31 @@ mod walk_permission_tests {
         );
     }
 }
+#[cfg(test)]
+mod defer_budget_tests {
+    use super::*;
+
+    #[test]
+    fn defer_budget_only_defers_budget_exhaustion() {
+        assert_eq!(defer_budget(Ok(17)), Poll::Ready(Ok(17)));
+        assert_eq!(
+            defer_budget::<()>(Err(ActionError::BudgetExhausted)),
+            Poll::Pending
+        );
+
+        let errors = [
+            ActionError::Busy,
+            ActionError::Held,
+            ActionError::Stale,
+            ActionError::Cancelled,
+            ActionError::UserInput,
+            ActionError::Unavailable(Arc::from("unavailable")),
+            ActionError::Failed(Arc::from("failed")),
+            ActionError::Blocked(Arc::from("blocked")),
+            ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
+        ];
+        for error in errors {
+            assert_eq!(defer_budget::<()>(Err(error.clone())), Poll::Ready(Err(error)));
+        }
+    }
+}
