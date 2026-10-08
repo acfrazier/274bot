@@ -1028,6 +1028,78 @@ fn live_api_combat_ranged_wields_and_kills_a_cow() {
     assert!(ranged > 0, "ranged XP: {ranged}");
 }
 
+/// The tutorial guard can leave a worn bow bound to the unarmed root. Prep
+/// must explain that readiness failure instead of spending the full budget.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_api_combat_ranged_unready_tutorial_aborts_with_readiness_reason() {
+    let bow = std::env::var("COMBAT_LIVE_BOW").unwrap_or_else(|_| "shortbow".into());
+    let ammo = std::env::var("COMBAT_LIVE_AMMO").unwrap_or_else(|_| "bronze_arrow".into());
+    let mut cell = start_cell(
+        "ranged-unready",
+        274_279_218,
+        vec![
+            "setstat ranged 30".into(),
+            "setstat defence 20".into(),
+            "setstat hitpoints 20".into(),
+            format!("give {bow} 1"),
+            format!("give {ammo} 200"),
+            // Leave the final session below the content's weapon-tab update
+            // threshold, reproducing the intentionally unready fixture.
+            "setvar tutorial 1".into(),
+            "getvar tutorial".into(),
+        ],
+        Vec::new(),
+        |snapshot| {
+            snapshot
+                .stats()
+                .iter()
+                .any(|stat| stat.index == 4 && stat.base >= 30)
+                && snapshot.inventory().len() >= 2
+                && snapshot
+                    .chat_lines()
+                    .iter()
+                    .any(|line| line.text.trim().eq_ignore_ascii_case("get tutorial: 1"))
+        },
+    );
+    let (outcome, phases, before, after) = cell.fight(&format!(
+        "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, radius: 30, style: 'ranged', rangedMode: 'rapid', budgetTicks: 300 }}"
+    ));
+    let report = &outcome["value"]["report"];
+    let reason = report["reason"].as_str().unwrap_or("").to_owned();
+    let ticks = report["ticks"].as_u64().unwrap_or(u64::MAX);
+    cell.receipt(
+        "api-combat-ranged-readiness-receipt.json",
+        serde_json::json!({
+            "cell": "live_api_combat_ranged_unready_tutorial_aborts_with_readiness_reason",
+            "account": cell.account,
+            "tutorial_fixture_value": 1,
+            "bow": bow,
+            "ammo": ammo,
+            "outcome": outcome.clone(),
+            "phases": phases,
+            "observed_side_tabs": after.side_tabs,
+            "after_equipment": after.equipment,
+            "before": before,
+            "after": after,
+        }),
+    );
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["end"], "fought", "{outcome}");
+    assert_eq!(report["end"], "aborted", "{outcome}");
+    assert!(
+        matches!(
+            reason.as_str(),
+            "prep-readiness:combat-root-wrong" | "prep-readiness:combat-root-missing"
+        ),
+        "tutorial-1 readiness result: {outcome}"
+    );
+    assert!(
+        ticks <= 16,
+        "readiness should fail near eight observed ticks, not the 300-tick budget: {outcome}"
+    );
+}
+
 /// Magic on its own: one manual spell from carried runes.
 #[test]
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]

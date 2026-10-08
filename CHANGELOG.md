@@ -176,6 +176,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Loot that can't be reached is skipped instead of getting the bot stuck, and
   a target that turns out not to be attackable makes the bot walk out and say
   why.
+- Ranged fights that cannot confirm the weapon's combat tab or requested style
+  now stop with a clear preparation-readiness reason after eight observed
+  ticks, rather than waiting out the full fight budget.
 
 ### Clues
 
