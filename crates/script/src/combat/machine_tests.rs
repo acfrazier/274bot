@@ -482,6 +482,18 @@ impl Scene {
             .unwrap()
             .seq_id
     }
+    fn ranged_seq(&self) -> i32 {
+        self.data
+            .style_seqs()
+            .iter()
+            .find(|row| {
+                self.tables
+                    .style_seq(row.seq_id)
+                    .is_some_and(|mask| mask.contains(super::super::tables::StyleMask::RANGED))
+            })
+            .unwrap()
+            .seq_id
+    }
 }
 fn attack(effect: Option<HostEffect>) {
     assert!(
@@ -3480,7 +3492,7 @@ fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() 
 }
 
 #[test]
-fn case_31_ranged_launch_advances_cycle_but_impact_does_not() {
+fn case_31_ranged_animation_advances_cycle_but_projectile_does_not() {
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
@@ -3511,6 +3523,8 @@ fn case_31_ranged_launch_advances_cycle_but_impact_does_not() {
     scene.combat_tab(root);
     assert!(harness.pending(&scene, 2).is_none());
     scene.equipment[1].count -= 1;
+    scene.local.player.actor.animation = scene.ranged_seq();
+    scene.local.player.actor.animation_frame = 0;
     scene.refresh();
     scene.combat_tab(root);
     scene
@@ -4124,91 +4138,163 @@ fn ranged_missing_thrown_weapon_wear_times_out_as_prep_failed_weapon() {
     );
 }
 
-#[test]
-fn ranged_stacked_shooter_uses_rate_clock_then_resumes_launch_evidence() {
+fn ranged_swing_replay(
+    stacked: bool,
+    idle_local: bool,
+    wrong_target: bool,
+) -> (u16, u16, Option<u16>, u8) {
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
     scene.equipment.push(bow);
+    if stacked {
+        let mut witness = scene.local.player.clone();
+        witness.index = 2;
+        witness.actor.animation = -1;
+        witness.actor.animation_frame = 0;
+        witness.actor.target = None;
+        scene.players.push(witness);
+    }
     scene.install();
-    let mut other = scene.local.player.clone();
-    other.index = 2;
-    // A co-located network shooter can still have a different rendered pose.
-    other.actor.tile.x += 2;
-    scene.players.push(other);
     scene.refresh();
     let mut request = scene.request();
     request.style = Style::Ranged;
+    request.ranged_style = RangedMode::Rapid;
     let mut harness = Harness::new(&scene, request);
-    harness.machine.engaged = Some(ActorRef {
+    let engaged = ActorRef {
         kind: ActorKind::Npc,
         index: 7,
-    });
-    let rate = measured_weapon_rate(&harness, &scene);
-    harness.machine.schedule.observe_swing(1, rate);
-    for tick in 2..=30 {
-        let frame = Frame::borrow(SnapshotView::new(
-            Some(&scene.snapshot),
-            harness.runtime.evidence.unwrap(),
-        ))
-        .unwrap();
+    };
+    harness.machine.engaged = Some(engaged);
+    let target = ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    };
+    let animation_target = if wrong_target {
+        ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 8,
+        }
+    } else {
+        target
+    };
+    let sequence = scene.ranged_seq();
+    let evidence = harness.runtime.evidence.unwrap();
+    let initial_frame =
+        Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    let rate = harness.machine.rate(&initial_frame);
+
+    // Recorded from DIAG-RANGED-SWINGS. Repeated projectiles remain visible
+    // between launches; the local sequence restarts at frame 0 on ticks
+    // 10, 13 and 16.
+    let stacked_observations = [
+        (6, 155, false, 0, None),
+        (7, 156, false, 0, None),
+        (8, 189, false, 0, None),
+        (9, 206, false, 0, None),
+        (10, 229, true, 0, Some((270, 280))),
+        (11, 248, true, 4, None),
+        (12, 272, true, 6, None),
+        (13, 298, true, 0, Some((339, 349))),
+        (14, 316, true, 4, None),
+        (15, 340, true, 6, None),
+        (16, 365, true, 0, Some((406, 416))),
+        (17, 389, true, 4, None),
+        (18, 414, true, 7, None),
+    ];
+    let unstacked_observations = [
+        (6, 257, false, 0, None),
+        (7, 258, false, 0, None),
+        (8, 290, false, 0, None),
+        (9, 305, false, 0, None),
+        (10, 329, true, 0, Some((370, 385))),
+        (11, 353, true, 4, None),
+        (12, 378, true, 7, None),
+        (13, 403, true, 0, Some((444, 454))),
+        (14, 428, true, 4, None),
+        (15, 452, true, 7, None),
+        (16, 477, true, 0, Some((518, 528))),
+        (17, 502, true, 4, None),
+        (18, 527, true, 8, None),
+    ];
+    let observations = if stacked {
+        &stacked_observations
+    } else {
+        &unstacked_observations
+    };
+    let mut projectiles = Vec::new();
+    for (tick, loop_cycle, attacking, animation_frame, launch) in observations.iter().copied() {
+        scene.local.player.actor.animation = if attacking && !idle_local {
+            sequence
+        } else {
+            -1
+        };
+        scene.local.player.actor.animation_frame = animation_frame;
+        scene.local.player.actor.target = Some(animation_target);
+        scene.snapshot.seed_local_player(scene.local.clone());
+        scene.snapshot.seed_players(scene.players.clone());
+        if let Some((t1, t2)) = launch {
+            projectiles.push(api::snapshot::ProjectileView {
+                spotanim: 10,
+                level: 0,
+                src: scene.local.player.network,
+                target: Some(target),
+                t1,
+                t2,
+            });
+        }
+        scene.snapshot.seed_projectiles(projectiles.clone());
+        scene.snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle,
+        });
+        let frame =
+            Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
         harness.machine.settle(&frame, tick);
-        assert_eq!(harness.machine.schedule.last_swing, 1);
-        assert_eq!(harness.machine.counters.swings, 0);
-        assert!(!harness.machine.schedule.stale_ready(tick, rate));
-        assert!(!reached(tick, harness.machine.schedule.cycle.deadline));
     }
-    scene
-        .snapshot
-        .seed_projectiles(vec![api::snapshot::ProjectileView {
-            spotanim: 9,
-            src: scene.local.player.actor.tile,
-            level: scene.local.player.actor.tile.level,
-            target: scene.local.player.actor.target,
-            t1: 32,
-            t2: 40,
-        }]);
-    let frame = Frame::borrow(SnapshotView::new(
-        Some(&scene.snapshot),
-        harness.runtime.evidence.unwrap(),
-    ))
-    .unwrap();
-    harness.machine.settle(&frame, 31);
-    assert_eq!(harness.machine.ranged().launch_cycle, 32);
-    assert_eq!(harness.machine.counters.swings, 0);
-    scene.snapshot.seed_players(Vec::new());
-    let frame = Frame::borrow(SnapshotView::new(
-        Some(&scene.snapshot),
-        harness.runtime.evidence.unwrap(),
-    ))
-    .unwrap();
-    harness.machine.settle(&frame, 32);
-    assert_eq!(
-        harness.machine.counters.swings, 0,
-        "old ambiguous launch stays consumed"
-    );
-    scene
-        .snapshot
-        .seed_projectiles(vec![api::snapshot::ProjectileView {
-            spotanim: 9,
-            src: scene.local.player.actor.tile,
-            level: scene.local.player.actor.tile.level,
-            target: scene.local.player.actor.target,
-            t1: 35,
-            t2: 45,
-        }]);
-    let frame = Frame::borrow(SnapshotView::new(
-        Some(&scene.snapshot),
-        harness.runtime.evidence.unwrap(),
-    ))
-    .unwrap();
-    harness.machine.settle(&frame, 33);
-    assert_eq!(harness.machine.counters.swings, 1);
-    assert_eq!(harness.machine.schedule.last_swing, 33);
-    assert_eq!(
-        harness.machine.schedule.cycle.deadline,
-        33 + u16::from(rate)
-    );
+
+    (
+        harness.machine.counters.swings,
+        harness.machine.schedule.last_swing,
+        harness
+            .machine
+            .schedule
+            .cycle
+            .known
+            .then_some(harness.machine.schedule.cycle.deadline),
+        rate,
+    )
 }
+
+#[test]
+fn ranged_swings_follow_local_animation_onsets_only() {
+    let (stacked, stacked_last, stacked_deadline, rate) =
+        ranged_swing_replay(true, false, false);
+    assert_eq!(stacked, 3, "same-tile idle witness must not suppress local shots");
+    assert_eq!(stacked_last, 16);
+    assert_eq!(stacked_deadline, Some(16 + u16::from(rate)));
+
+    let (unstacked, unstacked_last, unstacked_deadline, unstacked_rate) =
+        ranged_swing_replay(false, false, false);
+    assert_eq!(unstacked, 3);
+    assert_eq!(unstacked_last, 16);
+    assert_eq!(unstacked_deadline, Some(16 + u16::from(unstacked_rate)));
+    assert_eq!(unstacked_rate, rate);
+
+    let (idle_local, idle_last, idle_deadline, _) = ranged_swing_replay(true, true, false);
+    assert_eq!(idle_local, 0, "projectiles cannot substitute for local animation");
+    assert_eq!(idle_last, 0);
+    assert_eq!(idle_deadline, None);
+
+    let (wrong_target, wrong_last, wrong_deadline, _) = ranged_swing_replay(false, false, true);
+    assert_eq!(wrong_target, 0, "another target's animation is not this fight's swing");
+    assert_eq!(wrong_last, 0);
+    assert_eq!(wrong_deadline, None);
+}
+
 #[path = "magic_machine_tests.rs"]
 mod magic_tests;
