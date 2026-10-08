@@ -3,6 +3,22 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Gatherer
+
+- Raw shark (Harpoon) and the big-net catch are selectable again. The
+  monkey-form guard in the fishing scripts refuses only while a greegree is
+  worn, so the Gatherer now refuses to start in that case
+  (`forbidden-state:monkey-form`) instead of hiding the method. The Elf Camp
+  NW and Elf Camp W fishing sites show again.
+- More gather sites: underground mines and caves are named from the nearest
+  label, far surface areas take the nearest bank within 64 tiles or else the
+  nearest label with its bearing and distance, and single fishing spots are
+  offered. Woodcutting and mining fragments still need three tiles. Sites in
+  instanced and quest-only areas are not offered.
+- Every 0.2.0 site keeps its id and region, so saved Gatherer cards still work.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1

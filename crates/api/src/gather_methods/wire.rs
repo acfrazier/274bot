@@ -1,4 +1,4 @@
-//! Wire format of `gathering.json` (extractor schema 2) and its decode into the typed catalog. Decoding runs once
+//! Wire format of `gathering.json` (extractor schema 3) and its decode into the typed catalog. Decoding runs once
 //! per prepared catalog, off-pump; every violation is a typed `FactError`, nothing is defaulted or guessed.
 //!
 //! Field meanings mirror `tools/game-data/extractors/gathering.ts`: a `Know` cell is `known`, `partial` (rows plus
@@ -11,6 +11,7 @@ use super::catalog::{
     RockEntry, SpotId, TargetClass, ToolUse, ZoneEffect, ZoneRule, KIND_LOC, KIND_NPC, KIND_OBJ,
 };
 use super::SceneRegionInput;
+use crate::game_data::GatherForbiddenState;
 use crate::selected::{
     EntityId, FactError, FactKey, FactStrings, Gap, ItemAmount, Knowledge, Requirement,
     RequirementAt, RequirementKind, SelectedPin, SkillMinimum, SourceSpan,
@@ -22,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The extractor schema this decoder reads. The manifest descriptor and the family header must both carry it.
-pub(super) const SCHEMA: u16 = 2;
+pub(super) const SCHEMA: u16 = 3;
 
 /// Identity fields every family file leads with; read before any fact so a stale or foreign file is refused with
 /// its typed cause even if a newer schema changed the fact layout.
@@ -215,6 +216,8 @@ struct MethodWire {
     consumes: Know<Vec<AmountWire>>,
     requirements: Know<Vec<RequirementWire>>,
     spots: Know<()>,
+    /// Content states that refuse the method while they hold (`monkey-form`).
+    forbidden_states: Vec<GatherForbiddenState>,
     /// Provenance spans of the method as a whole; each fact carries its own sources.
     #[serde(rename = "sources")]
     _sources: IgnoredAny,
@@ -522,6 +525,7 @@ impl Decoder {
             });
             extras.push(MethodExtra {
                 op,
+                forbidden: wire.forbidden_states.into_boxed_slice(),
                 zones: Box::default(),
                 buckets: Box::default(),
                 first_spot: 0,

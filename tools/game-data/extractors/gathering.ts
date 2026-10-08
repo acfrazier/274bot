@@ -6,7 +6,7 @@ import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, s
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
-export const GATHERING_SCHEMA = 2;
+export const GATHERING_SCHEMA = 3;
 
 /** Engine `PlayerStat` order (`src/engine/entity/PlayerStat.ts`): a protocol constant, not gathering data. */
 const SKILL = { attack: 0, woodcutting: 8, fishing: 10, mining: 14 } as const;
@@ -39,6 +39,8 @@ export type MethodWire = {
     requirements: Know<RequirementWire[]>;
     /** `known` means the placement rows of this method's resource targets are complete. */
     spots: Know<null>;
+    /** States that refuse the method at runtime (checked against worn items), not gaps: the method stays selectable. */
+    forbidden_states: string[];
     sources: Ref[];
 };
 export type RegionWire = { min_x: number; min_z: number; max_x: number; max_z: number; level: number };
@@ -679,6 +681,7 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
             consumes: labels.size === 0 ? unknown('no-mining-handler', group.map((row) => spanRef(row.span))) : partial([], consumeGaps),
             requirements: Number.isNaN(level) ? unknown('rock-level-missing', group.map((row) => spanRef(row.span))) : partial([{ id: `${id}.level`, source: spanRef(line(MINE_DBROW, levelData!.line)), kind: 'skill', skill: SKILL.mining, level }], requirementGaps),
             spots: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : known(null),
+            forbidden_states: [],
             sources: group.map((row) => spanRef(row.span)),
         });
     }
@@ -839,6 +842,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
             consumes: empty ? unknown(why.code, why.sources) : 'code' in model ? unknown(model.code, model.sources) : partial([], model.deletes ? [gap('inventory-effect', blockSpan(uniqueBlock(ctx, 'label', 'get_logs')!))] : []),
             requirements: empty ? unknown(why.code, why.sources) : partial(requirements, requirementGaps),
             spots: empty ? unknown(why.code, why.sources) : known(null),
+            forbidden_states: [],
             sources,
         });
     }
@@ -880,6 +884,7 @@ type Closure = {
     direct: { item: string; k: number }[];
     usesRoll: 'fish_roll' | 'fish_roll_loc' | null;
     requirementGaps: Gap[];
+    forbiddenStates: string[];
     effectGaps: Gap[];
     gates: { zone: Zone; sources: Span[] }[];
     visited: number;
@@ -933,7 +938,7 @@ function checkEquipmentShape(ctx: Ctx): Gap | null {
 
 /** Follow one method's handler blocks (labels, re-dispatch, recognised procs) and collect proven facts and gaps. */
 function fishingClosure(ctx: Ctx, start: Rs2Block, redispatch: (slot: number) => Rs2Block | null): Closure {
-    const closure: Closure = { levels: [], tools: new Set(), held: new Set(), rolls: [], direct: [], usesRoll: null, requirementGaps: [], effectGaps: [], gates: [], visited: 0 };
+    const closure: Closure = { levels: [], tools: new Set(), held: new Set(), rolls: [], direct: [], usesRoll: null, requirementGaps: [], forbiddenStates: [], effectGaps: [], gates: [], visited: 0 };
     const seen = new Set<string>();
     const queue: Rs2Block[] = [start];
     const enqueue = (block: Rs2Block | null) => {
@@ -966,7 +971,7 @@ function fishingClosure(ctx: Ctx, start: Rs2Block, redispatch: (slot: number) =>
         else if ((match = EQUIP_FALSE.exec(cond))) closure.tools.add(match[1]);
         else if ((match = HELD_LT1.exec(cond))) closure.held.add(match[1]);
         else if ((match = CHECK_PROC_FALSE.exec(cond)) && match[1] !== 'mm_wearing_greegree') enqueue(uniqueBlock(ctx, 'proc', match[1]));
-        else if (cond === '~mm_wearing_greegree = true') closure.requirementGaps.push(gap('monkey-form-forbidden', span));
+        else if (cond === '~mm_wearing_greegree = true') closure.forbiddenStates.push('monkey-form');
         else if (IGNORED_GUARD.some((pattern) => pattern.test(cond))) return false;
         else closure.requirementGaps.push(gap(cond.includes('%') ? 'varp-gate' : 'custom-guard', span));
         return false;
@@ -1145,6 +1150,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
         consumes: known([{ item: worm, count: 1 }]),
         requirements: partial([{ id: `${HEMENSTER_CARP_METHOD}.level`, source: spanRef(levelSpan), kind: 'skill', skill: SKILL.fishing, level }], [questGate]),
         spots: known(null),
+        forbidden_states: [],
         sources: provenance,
     };
 }
@@ -1262,6 +1268,7 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
                 consumes: partial(bait ? [{ item: ctx.entities.id('obj', bait, `${id} bait`), count: 1 }] : [], effectGaps),
                 requirements: partial(reqs, requirementGaps),
                 spots: known(null),
+                forbidden_states: [...new Set(closure.forbiddenStates)].sort(),
                 sources: [spanRef(header.span)],
             });
         }
@@ -1424,6 +1431,7 @@ export type GatherResourceWire = {
     level: number;
     selectable: boolean;
     gap: string | null;
+    forbidden_states: string[];
 };
 
 /** A target row the slice admits on: it carries a respawn fact (`Known`, even `null` for never-depleting spots). */
@@ -1559,6 +1567,7 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
                 level,
                 selectable,
                 gap,
+                forbidden_states: [...method.forbidden_states],
             });
         }
     }
@@ -1589,6 +1598,7 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
             level: Math.min(...methods.map(gatherMethodLevel)),
             selectable: gaps.every((reason) => reason === null),
             gap,
+            forbidden_states: [...new Set(methods.flatMap((method) => method.forbidden_states))].sort(),
         });
     }
 
@@ -1625,7 +1635,7 @@ export type GatherSiteWire = {
 };
 
 /** Per-skill generator report, recorded on the manifest and pinned by verify. */
-export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number };
+export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number };
 export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
 export type GatherSitesResult = { rows: GatherSiteWire[]; report: GatherSiteReport };
 
@@ -1637,6 +1647,7 @@ const SITE_SPRAWL_EXTENT = 48;
 const SITE_NEAR = 16;
 const SITE_CAP = 64;
 const SITE_SURFACE_Z = 6400;
+const SITE_SPECIAL_Z = 4160;
 const SITE_LABELS = 'maps/labels.txt';
 const SITE_PLACEMENT_FILE = /^maps\/m(\d+)_(\d+)\.jm2$/;
 
@@ -1726,6 +1737,8 @@ function humanizeStem(stem: string, spelling: ReadonlyMap<string, string>): stri
 const siteExtent = (box: SiteBox) => Math.max(box.maxX - box.minX, box.maxZ - box.minZ);
 const siteEdgeDist = (place: SitePlace, box: SiteBox) => Math.max(0, box.minX - place.x, place.x - box.maxX, box.minZ - place.z, place.z - box.maxZ);
 const siteInBox = (tile: SiteTile, box: RegionWire) => tile.level === box.level && tile.x >= box.min_x && tile.x <= box.max_x && tile.z >= box.min_z && tile.z <= box.max_z;
+/** The box a site is named by: an underground box projected onto the surface map (`z - SITE_SURFACE_Z`). */
+const siteNamingBox = (box: SiteBox): SiteBox => (box.minZ >= SITE_SURFACE_Z ? { minX: box.minX, minZ: box.minZ - SITE_SURFACE_Z, maxX: box.maxX, maxZ: box.maxZ - SITE_SURFACE_Z } : box);
 
 /** 8-way bearing from a place point to a box centre. */
 function siteBearing(place: SitePlace, centre: { x: number; z: number }): string {
@@ -1833,6 +1846,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         movementBox.set(movement.npc, movement.region);
     }
     const { places, spelling } = readSitePlaces(content, banks);
+    const labelPlaces = places.filter((place) => place.src.startsWith('label:'));
     const { enumOf, suffixes } = readFishingEnums(content);
     const directCache = new Map<number, DirectName | null>();
     const directNameOf = (npc: number): DirectName | null => {
@@ -1900,7 +1914,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 throw new Error(`gather_sites: malformed placement row ${row}`);
             }
             const tile = { x: mx * 64 + lx, z: mz * 64 + lz, level: plane };
-            if (tile.z >= SITE_SURFACE_Z) continue;
             for (const entry of entityKeys.get(ent) ?? []) {
                 let tiles = perKey.get(entry.key);
                 if (tiles === undefined) {
@@ -1916,9 +1929,9 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     }
     const rows: GatherSiteWire[] = [];
     const report: GatherSiteReport = {
-        woodcutting: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
-        mining: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
-        fishing: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
+        woodcutting: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
+        mining: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
+        fishing: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
     };
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
         const members = new Map<string, SiteTile>();
@@ -1934,8 +1947,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 }
             }
         }
-        type Draft = { d: number; label: string; idbase: string; minX: number; minZ: number; maxX: number; maxZ: number; level: number; n: number; keys: GatherSiteKeyWire[] };
+        type Draft = { d: number; extra: boolean; label: string; idbase: string; minX: number; minZ: number; maxX: number; maxZ: number; level: number; n: number; keys: GatherSiteKeyWire[] };
         const drafts: Draft[] = [];
+        // Far, underground and sprawl-fragment sites need `minTiles` tiles: a fishing spot is one tile, a tree or rock fragment three.
+        const minTiles = skill === 'fishing' ? 1 : 3;
         let dropped = 0;
         let direct = 0;
         let outsideBox = 0;
@@ -1953,6 +1968,26 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             for (const place of places) {
                 if (place.level !== tile.level) continue;
                 const d = Math.max(Math.abs(tile.x - place.x), Math.abs(tile.z - place.z));
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        // The nearest labels.txt label at any distance and on any level (labels carry no level). Far clusters and underground projections take it.
+        const nearestLabel = (box: SiteBox): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of labelPlaces) {
+                const d = siteEdgeDist(place, box);
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        // The nearest bank within SITE_CAP of a far surface box, on any floor (banks carry a level; far areas ignore it, as labels do).
+        const nearestBank = (box: SiteBox): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of places) {
+                if (!place.src.startsWith('bank:')) continue;
+                const d = siteEdgeDist(place, box);
+                if (d > SITE_CAP) continue;
                 if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
             }
             return best;
@@ -1981,14 +2016,18 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (names.size > 1) throw new Error(`gather_sites: ambiguous direct names in one site: ${[...names.keys()].join(' / ')}`);
             return names.size === 1 ? [...names.values()][0]! : null;
         };
-        const draftOf = (comp: SiteTile[], place: SitePlace, d: number, named: DirectName | null): Draft => {
+        // A site's label and id base come from its place, or from its direct name. An underground site (box at z >= SITE_SURFACE_Z) is named from its surface projection: `<place> (underground)`, id base `<skill>.<place slug>.underground`. A far surface area (`area`) is named `<place> area` with no bearing.
+        const draftOf = (comp: SiteTile[], place: SitePlace, named: DirectName | null, extra: boolean, area = false): Draft => {
             const box = siteBoxOf(comp);
-            const centre = { x: Math.round((box.minX + box.maxX) / 2), z: Math.round((box.minZ + box.maxZ) / 2) };
+            const naming = siteNamingBox(box);
+            const underground = box.minZ >= SITE_SURFACE_Z;
+            const d = siteEdgeDist(place, naming);
+            const centre = { x: Math.round((naming.minX + naming.maxX) / 2), z: Math.round((naming.minZ + naming.maxZ) / 2) };
             const counts = new Map<string, number>();
             for (const tile of comp) for (const key of tile.keys) counts.set(key, (counts.get(key) ?? 0) + 1);
             const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || compareCodepoint(a[0], b[0]));
-            const name = named === null ? place.display : named.name;
-            const bearing = named === null && d > SITE_NEAR ? siteBearing(place, centre) : '';
+            const name = named !== null ? named.name : underground ? `${place.display} (underground)` : area ? `${place.display} area` : place.display;
+            const bearing = named === null && !area && d > SITE_NEAR ? siteBearing(place, centre) : '';
             const br = bearing === '' ? '' : `${bearing}${d}`;
             let contents: string;
             if (skill === 'fishing') {
@@ -1999,31 +2038,61 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 const parts = ordered.map(([key, count]) => `${keyMeta.get(key)?.label ?? key} ${count}`);
                 contents = parts.slice(0, 3).join(', ') + (parts.length > 3 ? ` +${parts.length - 3}` : '');
             }
+            const stem = underground ? `${siteSlug(place.display)}.underground` : siteSlug(name);
             return {
-                d: named === null ? d : 0, label: `${name}${br === '' ? '' : ` ${br}`} · ${contents}`,
-                idbase: `${skill}.${siteSlug(name)}${bearing === '' ? '' : `.${bearing.toLowerCase()}`}`,
+                d: named === null ? d : 0, extra, label: `${name}${br === '' ? '' : ` ${br}`} · ${contents}`,
+                idbase: `${skill}.${stem}${bearing === '' ? '' : `.${bearing.toLowerCase()}`}`,
                 minX: box.minX, minZ: box.minZ, maxX: box.maxX, maxZ: box.maxZ, level: comp[0]!.level, n: comp.length,
                 keys: ordered.map(([key, count]) => ({ key, count })),
             };
         };
-        for (const comp of clusterTiles([...members.values()], SITE_GAP)) {
+        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the 4160-6400 special-area band are counted, not offered.
+        const farSite = (comp: SiteTile[]) => {
+            const box = siteBoxOf(comp);
+            if (box.maxZ >= SITE_SPECIAL_Z || comp.length < minTiles) {
+                dropped += comp.length;
+                return;
+            }
+            const bank = nearestBank(box);
+            if (bank !== null) {
+                drafts.push(draftOf(comp, bank.place, null, true, true));
+                return;
+            }
+            const near = nearestLabel(box);
+            if (near === null) dropped += comp.length;
+            else drafts.push(draftOf(comp, near.place, null, true));
+        };
+        // Underground clusters take the nearest label to their surface projection, at any distance.
+        const undergroundSite = (comp: SiteTile[]) => {
+            const near = nearestLabel(siteNamingBox(siteBoxOf(comp)));
+            if (comp.length < minTiles || near === null) dropped += comp.length;
+            else drafts.push(draftOf(comp, near.place, null, true));
+        };
+        const surface: SiteTile[] = [];
+        const underground: SiteTile[] = [];
+        for (const tile of members.values()) {
+            if (tile.z < SITE_SURFACE_Z) surface.push(tile);
+            else underground.push(tile);
+        }
+        for (const comp of clusterTiles(surface, SITE_GAP)) {
             const box = siteBoxOf(comp);
             if (siteExtent(box) <= SITE_SPRAWL_EXTENT) {
                 const near = nearestBox(box, comp[0]!.level);
                 if (near === null || near.d > SITE_CAP) {
-                    dropped += comp.length;
+                    farSite(comp);
                     continue;
                 }
                 const named = directOf(comp);
                 if (named !== null) direct += 1;
-                drafts.push(draftOf(comp, near.place, near.d, named));
+                drafts.push(draftOf(comp, near.place, named, false));
                 continue;
             }
             const cells = new Map<string, { place: SitePlace; pts: SiteTile[] }>();
+            const far: SiteTile[] = [];
             for (const tile of comp) {
                 const near = nearestPoint(tile);
                 if (near === null || near.d > SITE_CAP) {
-                    dropped += 1;
+                    far.push(tile);
                     continue;
                 }
                 const cell = cells.get(near.place.src);
@@ -2032,14 +2101,19 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             for (const { place, pts } of cells.values()) {
                 for (const part of clusterTiles(pts, SITE_GAP)) {
-                    if (part.length < 3) {
+                    if (part.length < minTiles) {
                         dropped += part.length;
                         continue;
                     }
-                    drafts.push(draftOf(part, place, siteEdgeDist(place, siteBoxOf(part)), null));
+                    // Only fishing admits a fragment under 3 tiles (rule 3): it is new, so it sorts after every 0.2.0 id.
+                    drafts.push(draftOf(part, place, null, part.length < 3));
                 }
             }
+            const reachable = far.filter((tile) => tile.z < SITE_SPECIAL_Z);
+            dropped += far.length - reachable.length;
+            for (const part of clusterTiles(reachable, SITE_GAP)) farSite(part);
         }
+        for (const comp of clusterTiles(underground, SITE_GAP)) undergroundSite(comp);
         const byBase = new Map<string, Draft[]>();
         for (const draft of drafts) {
             const group = byBase.get(draft.idbase);
@@ -2047,7 +2121,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             else group.push(draft);
         }
         for (const group of byBase.values()) {
-            group.sort((a, b) => a.d - b.d || b.n - a.n || a.minX - b.minX || a.minZ - b.minZ);
+            group.sort((a, b) => Number(a.extra) - Number(b.extra) || a.d - b.d || b.n - a.n || a.minX - b.minX || a.minZ - b.minZ);
             group.forEach((draft, index) => {
                 const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
                 const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
@@ -2058,7 +2132,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 });
             });
         }
-        report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox };
+        report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox, extra: drafts.filter((draft) => draft.extra).length };
     }
     // Sort by place names so plain names precede their bearing siblings.
     rows.sort((a, b) => {
@@ -2076,8 +2150,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
     }
     for (const row of rows) {
-        if (/\d{4}/.test(row.label)) throw new Error(`gather_sites: ${row.id} label leaks a number: ${row.label}`);
-        if (row.region.min_z >= SITE_SURFACE_Z || row.region.max_z >= SITE_SURFACE_Z) throw new Error(`gather_sites: ${row.id} is not a surface site`);
+        // Far sites take a bearing and distance after the name (`Far Place NE3110`), and counts follow ` · `. Only the name must be free of 4-digit runs (raw coordinates).
+        const head = row.label.split(' · ')[0]!.replace(/ (?:NE|NW|SE|SW|N|E|S|W)\d+$/, '');
+        if (/\d{4}/.test(head)) throw new Error(`gather_sites: ${row.id} label leaks a number: ${row.label}`);
+        if (row.region.min_z < SITE_SURFACE_Z && row.region.max_z >= SITE_SURFACE_Z) throw new Error(`gather_sites: ${row.id} spans the surface and underground`);
         if (row.region.min_x > row.region.max_x || row.region.min_z > row.region.max_z) throw new Error(`gather_sites: ${row.id} has an inverted region`);
         if (row.keys.length === 0) throw new Error(`gather_sites: ${row.id} offers no keys`);
         for (const entry of row.keys) {

@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "revision": 274,
   "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
   "content_commit": "000c19997e07206131bcb3c884265840efce416d",
@@ -16925,6 +16925,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:1-39"
         ]
@@ -16990,6 +16991,7 @@
             ]
           }
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:41-51"
         ]
@@ -17134,6 +17136,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:53-66"
         ]
@@ -17283,6 +17286,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:68-81"
         ]
@@ -17426,6 +17430,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:83-96"
         ]
@@ -17569,6 +17574,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:98-111"
         ]
@@ -17712,6 +17718,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:113-126"
         ]
@@ -17855,6 +17862,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:128-141"
         ]
@@ -18003,6 +18011,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:143-156"
         ]
@@ -18185,6 +18194,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_woodcutting/configs/trees.dbrow:158-172"
         ]
@@ -18314,6 +18324,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:1-8"
         ]
@@ -18530,6 +18541,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:10-21"
         ]
@@ -18770,6 +18782,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:23-34"
         ]
@@ -19010,6 +19023,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:36-47"
         ]
@@ -19226,6 +19240,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:49-60"
         ]
@@ -19442,6 +19457,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:62-73"
         ]
@@ -19658,6 +19674,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:75-86"
         ]
@@ -19874,6 +19891,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:88-99"
         ]
@@ -20090,6 +20108,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:101-112"
         ]
@@ -20306,6 +20325,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:114-125"
         ]
@@ -20522,6 +20542,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:127-138"
         ]
@@ -20694,6 +20715,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:142-151"
         ]
@@ -20881,6 +20903,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:153-161"
         ]
@@ -21043,6 +21066,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:163-171"
         ]
@@ -21253,6 +21277,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_mining/configs/mine.dbrow:173-181",
           "scripts/skill_mining/configs/mine.dbrow:183-191",
@@ -21333,6 +21358,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2:3-3"
         ]
@@ -21406,6 +21432,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2:61-61"
         ]
@@ -21479,6 +21506,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/lavafish_loc.rs2:1-1"
         ]
@@ -21552,6 +21580,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/lavafish.rs2:2-2"
         ]
@@ -21635,6 +21664,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:1-1"
         ]
@@ -21779,6 +21809,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:13-13"
         ]
@@ -21977,6 +22008,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/freshfish.rs2:1-1"
         ]
@@ -22170,6 +22202,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/freshfish.rs2:4-4"
         ]
@@ -22313,6 +22346,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/memberfish.rs2:1-1"
         ]
@@ -22421,6 +22455,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/memberfish.rs2:2-2"
         ]
@@ -22529,6 +22564,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/rarefish.rs2:1-1"
         ]
@@ -22642,6 +22678,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/rarefish.rs2:3-3"
         ]
@@ -22797,6 +22834,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/saltfish.rs2:1-1"
         ]
@@ -22965,6 +23003,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/saltfish.rs2:4-4"
         ]
@@ -23058,6 +23097,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/slimeyfish.rs2:1-1"
         ]
@@ -23143,6 +23183,7 @@
           "state": "known",
           "value": null
         },
+        "forbidden_states": [],
         "sources": [
           "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:2-2",
           "scripts/skill_fishing/configs/fishing.npc:16-28",
