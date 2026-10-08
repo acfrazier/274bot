@@ -22,6 +22,21 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             avoid: Vec::new(),
             cross: Vec::new(),
         }),
+        // Native-only loc approach requires Sherlock's `Reach` action. The
+        // compatibility verb path has no such handoff, so reject rather than
+        // silently degrading to a radius walk that may stop at a blocked side.
+        "walk-near" if step.get("loc_id").is_none() => Some(InteractReq::WalkNear {
+            x: i32_field(step, "x")?,
+            z: i32_field(step, "z")?,
+            level: i32_field(step, "level")?,
+            radius: i32_field(step, "radius")?,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        }),
         "held" => Some(InteractReq::Held {
             name: text_field(step, "name")?.to_string(),
             action: text_field(step, "action")?.to_string(),
