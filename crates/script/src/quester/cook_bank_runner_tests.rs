@@ -1136,6 +1136,34 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
                 }
             })
             .collect();
+        for carry in fixture
+            .script
+            .path
+            .provisioning
+            .loadout_carry
+            .values()
+            .flat_map(|rows| rows.iter())
+        {
+            if let Some(stock) = fixture
+                .stock
+                .iter_mut()
+                .find(|row| row.def.id == carry.item.id)
+            {
+                stock.count = stock.count.max(carry.qty);
+            } else {
+                let mut definition = def(carry.item.id, &carry.item.name);
+                definition.stackable = carry.stackable;
+                fixture.stock.push(ItemView {
+                    def: definition,
+                    container: ItemContainer::Bank,
+                    action_family: ItemActionFamily::Component,
+                    slot: fixture.stock.len() as i32,
+                    count: carry.qty,
+                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                    component_id: 7,
+                });
+            }
+        }
         fixture.until_root_begin();
         assert!(
             !fixture.script.parked,
