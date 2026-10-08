@@ -55,6 +55,8 @@ fn quest_paths<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         set_key(scope, value, "display", display);
         let journal = v8::Boolean::new(scope, row.journal);
         set_key(scope, value, "journal", journal.into());
+        let draft = v8::Boolean::new(scope, row.draft);
+        set_key(scope, value, "draft", draft.into());
         set_key(scope, value, "stages", stages.into());
         values
             .set_index(scope, index, value.into())

@@ -567,8 +567,9 @@ Plateau (`death`), The Tourist Trap (`desertrescue`), Priest in Peril
 (`priestperil`), Clock Tower (`cog`), Monk's Friend (`drunkmonk`), Hazeel Cult
 (`hazeelcult`), Plague City (`elena`), and the five untested draft guides
 Druidic Ritual (`druid`), Gertrude's Cat (`fluffs`), Jungle Potion
-(`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). A row
-does not mark its Path as a draft. Haunted Mine, which this server can't run,
+(`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). Each
+row's `draft` is `true` for those five and `false` for the twenty released
+Paths. Haunted Mine, which this server can't run,
 has no Path and is not a row. Each row's `stages` comes from that Path's colour
 mapping and journal rules. Cook and Imp Catcher are colour-only
 (`journal: false`); the rest have journal rules (`journal: true`). For example,

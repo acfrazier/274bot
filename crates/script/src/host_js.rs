@@ -815,12 +815,13 @@ fn render_native_v2(out: &mut String) {
 /// and one owned progress read (design section 2, slice B).
 fn render_quest_progress(out: &mut String) {
     out.push_str(
-        "/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */\n",
+        "/** One released quest path from the Quester release index; stages and journal availability come from its Path document, draft status from the release index. */\n",
     );
     out.push_str("export interface QuestPathRow {\n");
     out.push_str("  id: string;\n");
     out.push_str("  display: string;\n");
     out.push_str("  journal: boolean;\n");
+    out.push_str("  draft: boolean;\n");
     out.push_str("  stages: string[];\n");
     out.push_str("}\n\n");
     out.push_str("/** Three-valued truth used by progress rows and their flags. */\n");
