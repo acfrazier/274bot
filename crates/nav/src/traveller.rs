@@ -371,9 +371,11 @@ impl Traveller {
     /// on every poll. The snapshot is the host's per-tick `GameSnapshot`;
     /// `Interactions` and `Settle` are built fresh from it each call, so
     /// each call performs at most one driver send (walk or transport op)
-    /// plus one settle poll. Door-kind edges with a packed open leaf (swing
-    /// doors, gates, held-item and scripted doors) re-read the leaf within the
-    /// original hop budget, opening while closed and walking through while open.
+    /// plus one settle poll. Door-kind edges with either a packed open leaf
+    /// or a cardinal direction (except dialogue doors and slashable webs)
+    /// use state-aware recovery inside the original hop budget. Retry only
+    /// against the matching closed loc when it is present; a self-closing
+    /// script's displaced inactive leaf is never treated as open.
     pub fn follow<D: Driver>(
         &mut self,
         d: &mut D,
@@ -1123,10 +1125,10 @@ impl WalkHop {
 
 /// One transport-leg hop: the edge (for the phase callback) plus the
 /// arrival target and the stall clock. `troll` marks state-aware door
-/// recovery within the original hop budget for every Door-kind edge with a
-/// packed open leaf (swing doors, gates, held-item and scripted doors): re-read
-/// the leaf, Open while closed (paced by `door_retry`), probe after Open, and
-/// walk when open. `chat_seq` is the watermark
+/// recovery within the original hop budget for Door-kind edges with a packed
+/// open leaf or cardinal crossing direction (except dialogue doors and webs):
+/// re-read the matching loc, Open while closed (paced by `door_retry`), probe
+/// and walk when open. `chat_seq` is the watermark
 /// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
 /// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
