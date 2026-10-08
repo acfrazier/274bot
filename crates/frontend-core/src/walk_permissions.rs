@@ -51,8 +51,8 @@ pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.
 
 /// Label for the single-admission danger-zone control.
 pub const DANGER_THIS_WALK_LABEL: &str = "Route through danger zones";
-/// Shared scope copy for teleports, wilderness, and danger grants.
-pub const GLOBAL_PERMISSION_SCOPE: &str = "Global — applies to every walk.";
+/// One note above the routing grants, replacing the per-row scope suffixes.
+pub const ROUTING_SCOPE_NOTE: &str = "Settings are global except where otherwise specified. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 /// Bank-budget fetching is available to manual WalkTo only.
 pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
 

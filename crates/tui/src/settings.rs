@@ -11,15 +11,15 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED,
-    SCRIPT_SCOPE_NOTICE,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
+    QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
 use vault::ProfileSettings;
 
@@ -383,18 +383,16 @@ impl Widget for SettingsPane<'_> {
             format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill),
             format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto),
             format!(
-                "{}{}: {} · {}",
+                "{}{}: {}",
                 marker(3),
                 GLOBAL_PERMISSION_LABELS[0].1,
-                self.nav.allow_teleports,
-                GLOBAL_PERMISSION_SCOPE
+                self.nav.allow_teleports
             ),
             format!(
-                "{}{}: {} · {}",
+                "{}{}: {}",
                 marker(4),
                 GLOBAL_PERMISSION_LABELS[1].1,
-                self.nav.allow_wilderness,
-                GLOBAL_PERMISSION_SCOPE
+                self.nav.allow_wilderness
             ),
             format!(
                 "{}{}: {} · {}",
@@ -405,20 +403,18 @@ impl Widget for SettingsPane<'_> {
             ),
             if danger_level == frontend_core::DangerLevel::Always {
                 format!(
-                    "{}{}: {} — {} · {}",
+                    "{}{}: {} — {}",
                     marker(6),
                     GLOBAL_PERMISSION_LABELS[3].1,
                     frontend_core::walk_permissions::danger_routing_label(danger_level),
-                    GLOBAL_DANGER_WARNING,
-                    GLOBAL_PERMISSION_SCOPE
+                    GLOBAL_DANGER_WARNING
                 )
             } else {
                 format!(
-                    "{}{}: {} · {}",
+                    "{}{}: {}",
                     marker(6),
                     GLOBAL_PERMISSION_LABELS[3].1,
-                    frontend_core::walk_permissions::danger_routing_label(danger_level),
-                    GLOBAL_PERMISSION_SCOPE
+                    frontend_core::walk_permissions::danger_routing_label(danger_level)
                 )
             },
             format!(
@@ -439,9 +435,33 @@ impl Widget for SettingsPane<'_> {
             format!("{}Paths folder: {}{}", marker(11), path_folder, folder_hint),
             format!("{}{}", marker(12), reload),
         ];
+        let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
+        let note_style = Style::default().fg(Color::DarkGray);
+        let heading_style = Style::default().add_modifier(Modifier::BOLD);
+        // Lead-ins sit above their first row. A lead-in adds to its row's block
+        // height, but the row keeps its own index, hit target, and scroll slot.
+        let headers: [Option<(&str, Style)>; 13] = [
+            None,
+            None,
+            None,
+            Some((ROUTING_SCOPE_NOTE, note_style)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((quester_heading.as_str(), heading_style)),
+            None,
+            None,
+        ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
+        let header_heights =
+            headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
+        let block_heights: [u16; 13] =
+            std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
         let scope_height = if show_scope_notice {
@@ -468,7 +488,7 @@ impl Widget for SettingsPane<'_> {
         let path_notice_height = self
             .quester_paths_notice
             .map_or(0, |notice| wrapped_rows(notice, columns));
-        let height = (row_heights.iter().sum::<u16>()
+        let height = (block_heights.iter().sum::<u16>()
             + memory_height
             + help_height
             + migration_notice_height
@@ -510,9 +530,9 @@ impl Widget for SettingsPane<'_> {
             - migration_notice_height
             - scope_height;
         let mut first = 0;
-        let mut through_selected = row_heights[..=selected].iter().sum::<u16>();
+        let mut through_selected = block_heights[..=selected].iter().sum::<u16>();
         while first < selected && through_selected > rows_height {
-            through_selected -= row_heights[first];
+            through_selected -= block_heights[first];
             first += 1;
         }
         let rows_bottom = inner.y + rows_height;
@@ -520,6 +540,12 @@ impl Widget for SettingsPane<'_> {
         for (index, text) in rows.iter().enumerate().skip(first) {
             if y >= rows_bottom {
                 break;
+            }
+            if let Some((header, style)) = headers[index] {
+                y = draw_wrapped(buf, inner, y, rows_bottom, header, style);
+                if y >= rows_bottom {
+                    break;
+                }
             }
             let bottom = (y + row_heights[index]).min(rows_bottom);
             self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);

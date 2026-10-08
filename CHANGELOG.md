@@ -3,6 +3,18 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Panel
+
+- **Navigation settings.** The routing permissions no longer repeat "Global — applies to every walk." beside each row. One note now sits above the Routing group.
+- **Quest Paths.** The Path folder, its load switch and the Reload Paths button moved from Navigation settings to Script prefs, under the Quester card. They still apply to every bot, and the heading says so.
+
+### TUI
+
+- **Navigation settings.** The routing rows no longer repeat "· Global — applies to every walk." on each line. One note above the Routing rows says settings are global except where otherwise specified, and that rs2b0t-compatible scripts always allow wilderness and bank fetch.
+- **Quest Paths.** The Path folder and Reload Paths rows sit under a "Quester: Quest Paths (all bots)" heading in Settings, so it is clear they apply to every bot.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1

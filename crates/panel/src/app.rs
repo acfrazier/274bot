@@ -2951,7 +2951,6 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
 /// updates the host policy immediately. FirstUseEver docks as a 274bot
 /// panel tab; undock to float.
 fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
-    session.poll_quester_paths_reload();
     if !session.nav_settings_open {
         return;
     }
@@ -2974,20 +2973,20 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 previous_nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
             ui.text_colored(ACCENT, "Routing");
+            {
+                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                ui.text_wrapped(frontend_core::ROUTING_SCOPE_NOTE);
+            }
             if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[0].1, &mut nav.allow_teleports) {
                 changed = true;
             }
             ui.set_item_tooltip("Global routing permission for every walk.");
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
             if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[1].1, &mut nav.allow_wilderness) {
                 changed = true;
             }
             ui.set_item_tooltip(
                 "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
             );
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
             if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[2].1, &mut nav.allow_bank_fetch) {
                 changed = true;
             }
@@ -3015,8 +3014,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 }
                 frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
             });
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
             if danger_level == frontend_core::DangerLevel::Always {
                 ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
             }
@@ -3101,44 +3098,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 });
             }
 
-            ui.spacing();
-            ui.separator();
-            ui.text_colored(ACCENT, "Quest Paths");
-            ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-            let before_paths = session.quester_paths.settings().clone();
-            let mut after_paths = before_paths.clone();
-            let mut paths_changed = false;
-            let path_reload_running = session.quester_paths.is_running();
-            let _path_controls_disabled = if path_reload_running {
-                Some(ui.begin_disabled())
-            } else {
-                None
-            };
-            let mut enabled = after_paths.enabled;
-            if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
-                after_paths.enabled = enabled;
-                paths_changed = true;
-            }
-            ui.text("Folder");
-            ui.set_next_item_width(-1.0);
-            ui.input_text("##quester-path-folder", &mut session.quester_paths_folder_edit)
-                .build();
-            if ui.is_item_deactivated_after_edit() {
-                after_paths.folder =
-                    PathBuf::from(session.quester_paths_folder_edit.clone());
-                paths_changed |= after_paths.folder != before_paths.folder;
-            }
-            drop(_path_controls_disabled);
-
-            let mut reload_requested = false;
-            if path_reload_running {
-                let _disabled = ui.begin_disabled();
-                ui.button(frontend_core::RELOAD_PATHS_LABEL);
-                ui.set_item_tooltip("Wait for the current Path reload to finish.");
-            } else {
-                reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
-            }
-
             if changed {
                 session.ui.nav = nav;
                 let after_permissions = frontend_core::WalkGlobalsView {
@@ -3178,17 +3137,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     (Err(error), _) | (_, Err(error)) => {
                         session.error = Some(format!("Nav config: {error}"));
                     }
-                }
-            }
-            if paths_changed {
-                let _ = session.persist_quester_paths(after_paths);
-            } else if reload_requested {
-                session.start_quester_paths_reload();
-            }
-            if let Some(notice) = session.quester_paths.notice() {
-                match notice {
-                    Ok(summary) => ui.text_wrapped(summary.as_ref()),
-                    Err(error) => ui.text_colored(ERROR, error.as_ref()),
                 }
             }
         });
@@ -3740,8 +3688,69 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             } else {
                 ui.text_disabled("parameter editors not available");
             }
+            if matches!(
+                &session.script_sel,
+                Some(script::ScriptSel::Compiled(id)) if *id == script::quester::card::CARD.id
+            ) {
+                quest_paths_section(ui, session);
+            }
         });
     session.script_prefs_open = open;
+}
+
+/// Quest Paths settings. They are host-wide and apply to every bot, so the
+/// Quester card shows them under its parameters.
+fn quest_paths_section(ui: &Ui, session: &mut Session) {
+    ui.spacing();
+    ui.separator();
+    ui.text_colored(ACCENT, frontend_core::QUEST_PATHS_HEADING);
+    ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
+    let before_paths = session.quester_paths.settings().clone();
+    let mut after_paths = before_paths.clone();
+    let mut paths_changed = false;
+    let path_reload_running = session.quester_paths.is_running();
+    let _path_controls_disabled = if path_reload_running {
+        Some(ui.begin_disabled())
+    } else {
+        None
+    };
+    let mut enabled = after_paths.enabled;
+    if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
+        after_paths.enabled = enabled;
+        paths_changed = true;
+    }
+    ui.text("Folder");
+    ui.set_next_item_width(-1.0);
+    ui.input_text(
+        "##quester-path-folder",
+        &mut session.quester_paths_folder_edit,
+    )
+    .build();
+    if ui.is_item_deactivated_after_edit() {
+        after_paths.folder = PathBuf::from(session.quester_paths_folder_edit.clone());
+        paths_changed |= after_paths.folder != before_paths.folder;
+    }
+    drop(_path_controls_disabled);
+
+    let mut reload_requested = false;
+    if path_reload_running {
+        let _disabled = ui.begin_disabled();
+        ui.button(frontend_core::RELOAD_PATHS_LABEL);
+        ui.set_item_tooltip("Wait for the current Path reload to finish.");
+    } else {
+        reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
+    }
+    if paths_changed {
+        let _ = session.persist_quester_paths(after_paths);
+    } else if reload_requested {
+        session.start_quester_paths_reload();
+    }
+    if let Some(notice) = session.quester_paths.notice() {
+        match notice {
+            Ok(summary) => ui.text_wrapped(summary.as_ref()),
+            Err(error) => ui.text_colored(ERROR, error.as_ref()),
+        }
+    }
 }
 
 /// Why a selected Loaded card is not in the library: its catalog has not been
@@ -5920,6 +5929,7 @@ fn ui_frame(
             }
         }
     }
+    state.session.poll_quester_paths_reload();
     state.session.pump_script_transpile();
     if let Some(live) = state.live.as_mut() {
         // Harness runs only: an interactive frame copies no status rows.
