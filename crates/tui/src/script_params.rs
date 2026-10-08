@@ -31,6 +31,8 @@ pub struct ParamsState {
     pub sync_prompt: Option<String>,
     /// The last Apply-to-all result, shown until the next key.
     pub report: Option<String>,
+    /// The selected profile's current card has saved settings awaiting a restart.
+    pub restart_badge: Option<String>,
 }
 
 /// Outcome of a params key.
@@ -605,6 +607,9 @@ impl Widget for ParamsPane<'_> {
         }
 
         let mut lines = Vec::new();
+        if let Some(badge) = self.state.restart_badge.as_deref() {
+            lines.push(Line::from(badge));
+        }
         let mut cursor_line = 0usize;
         let mut unavailable_current = None;
         let mut site_reason_detail = false;
@@ -2576,6 +2581,53 @@ mod tests {
             assert!(
                 compact.contains(&detail),
                 "{width}x{height}: the saved row's reason is missing: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn restart_badge_is_visible_at_reference_and_compact_sizes() {
+        let dir = temp_dir("restart-badge");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = vec![setting(
+            "skill",
+            "string",
+            Some("Fishing"),
+            Some("Skill"),
+            &[],
+        )];
+        let mut bag = serde_json::Map::new();
+        let mut state = ParamsState {
+            open: true,
+            restart_badge: Some("Restart required to apply saved settings.".into()),
+            ..Default::default()
+        };
+        for (width, height) in [(120, 40), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema: &schema,
+                        bag: &mut bag,
+                        commit: &mut store_commit(&mut store, "Gatherer"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state: &mut state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                text.contains("Restart required to apply saved settings."),
+                "{width}x{height}: missing restart badge: {text}"
             );
         }
     }

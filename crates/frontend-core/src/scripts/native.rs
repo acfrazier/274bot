@@ -201,7 +201,8 @@ impl Scripts {
                 );
             },
         );
-        if result.is_ok() {
+        if let Ok(op) = result.as_ref() {
+            self.track_settings_card(*op, script::ScriptSel::Compiled(id), card.name);
             self.sync.source_edited(profile, &key);
             self.clear_notice();
         }

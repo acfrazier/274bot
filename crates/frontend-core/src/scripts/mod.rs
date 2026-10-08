@@ -44,7 +44,7 @@ use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
 use crate::views::QueuePlace;
 
 pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
-pub use sync::{SyncReport, SyncScope};
+pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
 #[derive(Debug, Clone)]
@@ -164,6 +164,12 @@ struct PendingStart {
     tallied: bool,
 }
 
+#[derive(Debug, Clone)]
+struct SettingsCard {
+    selection: script::ScriptSel,
+    name: String,
+}
+
 /// Where a new skip or failure in the running tally is logged.
 #[derive(Debug, Clone, Copy)]
 enum LogTo {
@@ -263,6 +269,7 @@ pub struct Scripts {
     parameter_key_cache: Vec<ParameterEditKey>,
     parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
     parameter_edits: HashMap<ParameterEditKey, ParameterEdit>,
+    settings_cards: HashMap<OperationId, SettingsCard>,
     starts: HashMap<String, PendingStart>,
     /// Paced Start-all / marked-Start places. Empty in the idle path.
     admit: StartAdmit,
@@ -296,6 +303,7 @@ impl Scripts {
             parameter_key_cache: Vec::new(),
             parameter_key_scope: None,
             parameter_edits: HashMap::new(),
+            settings_cards: HashMap::new(),
             starts: HashMap::new(),
             admit: StartAdmit::default(),
             admit_catalog: None,
@@ -312,9 +320,57 @@ impl Scripts {
         }
     }
 
+    fn track_settings_card(&mut self, op: OperationId, selection: script::ScriptSel, name: &str) {
+        self.settings_cards.insert(
+            op,
+            SettingsCard {
+                selection,
+                name: name.to_string(),
+            },
+        );
+    }
+
     /// The message to show since the last take.
     pub fn take_notice(&mut self) -> Option<Notice> {
         self.notice.take()
+    }
+
+    pub fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
+        self.sync.pending_restart_prompt()
+    }
+
+    pub fn dismiss_restart_prompt(&mut self) {
+        self.sync.dismiss_restart_prompt();
+    }
+
+    pub fn restart_required_for(&self, profile: &str, selection: &script::ScriptSel) -> bool {
+        self.sync
+            .restart_card(profile)
+            .is_some_and(|required| required == selection)
+    }
+
+    pub fn has_restart_badge(&self, profile: &str) -> bool {
+        self.sync.has_restart_badge(profile)
+    }
+
+    pub fn restart_generation(&self) -> u64 {
+        self.sync.restart_generation()
+    }
+
+    pub fn restart_pending_settings<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+    ) -> Result<(), String> {
+        let (profiles, selection) = {
+            let prompt = self
+                .sync
+                .take_restart_prompt()
+                .ok_or_else(|| "no restart prompt".to_string())?;
+            (prompt.profiles().to_vec(), prompt.selection().clone())
+        };
+        crate::marked::assign_and_restart_profiles(&profiles, core, self, &selection, catalog_root);
+        Ok(())
     }
 
     fn show(&mut self, text: impl Into<String>) {
@@ -698,9 +754,10 @@ impl Scripts {
             .and_then(|p| p.settings.script_settings.get(&key).cloned())
             .unwrap_or_default();
         let migrated = script::migrate_legacy_setting_value(name, id, &value);
+        let lookup = lookup_name(source, name, path);
         let migrated = self
             .js
-            .get(source, &lookup_name(source, name, path))
+            .get(source, &lookup)
             .and_then(|card| card.settings_schema.iter().find(|setting| setting.id == id))
             .map(|setting| script::coerce_setting_value(&setting.ty, &migrated))
             .unwrap_or(migrated);
@@ -717,7 +774,8 @@ impl Scripts {
                 settings.script_settings.insert(key.clone(), bag);
             },
         );
-        if result.is_ok() {
+        if let Ok(op) = result.as_ref() {
+            self.track_settings_card(*op, script::ScriptSel::Loaded(source, lookup), name);
             self.sync.source_edited(profile, &key);
             self.clear_notice();
         }
@@ -1163,10 +1221,41 @@ impl Scripts {
         self.publish_start_places(core);
         self.settle_starts(core);
         for write in core.take_settings_writes() {
-            if let Some((op, outcome)) = self.sync.record(&write) {
+            let is_sync_write = self.sync.tracks_write(write.op);
+            let sync_outcome = self.sync.record(&write);
+            if matches!(
+                &write.result,
+                SettingsResult::Saved(LiveDelivery::RestartRequired)
+            ) {
+                let card = self.settings_cards.remove(&write.op).or_else(|| {
+                    let assignment = Self::assignment(core, &write.profile)?;
+                    Some(SettingsCard {
+                        selection: sel_from_assignment(&assignment)?,
+                        name: assignment.display_name,
+                    })
+                });
+                if let Some(card) = card {
+                    let status = core
+                        .play()
+                        .and_then(|play| play.script_native_status(&write.profile));
+                    self.sync.note_restart_required(
+                        &write.profile,
+                        &card.selection,
+                        status.as_deref().map(|status| status.active_settings),
+                    );
+                    if !is_sync_write {
+                        self.sync
+                            .queue_single_restart_prompt(write.op, card, &write.profile);
+                    }
+                }
+            } else {
+                self.settings_cards.remove(&write.op);
+            }
+            if let Some((op, outcome)) = sync_outcome {
                 core.set_outcome(op, &write.profile, outcome);
             }
         }
+        self.sync.observe_restart_activation(core);
         if let Some(summary) = self.sync.take_settled_summary() {
             self.show(summary);
         }
@@ -1182,6 +1271,9 @@ impl Scripts {
             let Some(pending) = self.starts.remove(&name) else {
                 continue;
             };
+            if matches!(&outcome, Some(script::StartOutcome::Ready)) {
+                self.sync.clear_restart_badge(&name);
+            }
             match outcome {
                 Some(script::StartOutcome::Ready) => match pending.card {
                     PendingCard::Compiled(id) => {

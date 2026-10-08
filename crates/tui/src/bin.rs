@@ -66,7 +66,7 @@ use host_play::map_cache::MapDemand;
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
-use crate::overlay::ConfirmKind;
+use crate::overlay::{ConfirmKind, Modal};
 use crate::script_shape::{
     categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
 };
@@ -1769,6 +1769,28 @@ impl TuiSession {
                 shown.push_str(report.summary());
             }
         }
+        app.params_state.restart_badge = app.focused_name().and_then(|profile| {
+            app.params_card()
+                .filter(|selection| self.scripts.restart_required_for(&profile, selection))
+                .map(|_| "Restart required to apply saved settings.".to_string())
+        });
+        let visible_prompt = app.modal.as_ref().and_then(|modal| match modal {
+            Modal::Confirm(confirm) => match &confirm.kind {
+                ConfirmKind::RestartSettings(prompt) => Some(prompt.clone()),
+                _ => None,
+            },
+            _ => None,
+        });
+        let pending_prompt = self.scripts.pending_restart_prompt().cloned();
+        match (visible_prompt, pending_prompt) {
+            (Some(current), Some(next)) if current == next => {}
+            (Some(_), Some(next)) => app.confirm(ConfirmKind::RestartSettings(next)),
+            (Some(_), None) => app.modal = None,
+            (None, Some(next)) if app.modal.is_none() => {
+                app.confirm(ConfirmKind::RestartSettings(next));
+            }
+            _ => {}
+        }
     }
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
@@ -2281,7 +2303,8 @@ impl TuiSession {
         // worker may still be logging out). Both copies reuse the app's
         // buffers, so a steady pump allocates nothing here.
         let members = self.core.members();
-        if app.names.as_slice() != members {
+        let names_changed = app.names.as_slice() != members;
+        if names_changed {
             app.names.truncate(members.len());
             let kept = app.names.len();
             app.names.clone_from_slice(&members[..kept]);
@@ -2303,6 +2326,16 @@ impl TuiSession {
                     .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
             }));
             app.table.selection.retain(app.profile_ids.iter().copied());
+        }
+        let restart_generation = self.scripts.restart_generation();
+        if restart_generation != app.restart_badge_generation || names_changed || ids_changed {
+            app.restart_badges.clear();
+            for (name, identity) in app.names.iter().zip(app.profile_ids.iter().copied()) {
+                if self.scripts.has_restart_badge(name) {
+                    app.restart_badges.insert(identity);
+                }
+            }
+            app.restart_badge_generation = restart_generation;
         }
         app.focused = self
             .core
@@ -3265,6 +3298,17 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),
         AppAction::ScriptSyncApply => session.apply_settings_sync(app),
         AppAction::ScriptSyncCancel => session.scripts.cancel_settings_sync(),
+        AppAction::ScriptRestartSettings => {
+            let root = session.start_catalog_root();
+            if let Err(error) = session
+                .scripts
+                .restart_pending_settings(&mut session.core, root.as_deref())
+            {
+                app.error = Some(error);
+            }
+            session.apply_script_notice(app);
+        }
+        AppAction::ScriptRestartLater => session.scripts.dismiss_restart_prompt(),
         AppAction::AckBackground => session.ack_background_bots(app),
         AppAction::ParamsKey(key) => {
             let action = session.params_key(app, key);

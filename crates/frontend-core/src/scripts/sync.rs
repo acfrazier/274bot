@@ -10,6 +10,7 @@
 //! and live delivery are reported separately. An assignment is persisted
 //! only with an accepted settings copy, never on its own.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -23,6 +24,77 @@ const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
 const NOT_LOADED: &str = "not loaded";
 const UNAVAILABLE: &str = "profile unavailable";
+
+/// A settled settings write (or sync) that needs the operator to choose
+/// whether its affected scripts should restart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartPrompt {
+    op: OperationId,
+    selection: script::ScriptSel,
+    card_name: String,
+    profiles: Vec<String>,
+}
+
+impl RestartPrompt {
+    pub fn operation(&self) -> OperationId {
+        self.op
+    }
+
+    pub fn selection(&self) -> &script::ScriptSel {
+        &self.selection
+    }
+
+    pub fn card_name(&self) -> &str {
+        &self.card_name
+    }
+
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "Restart {} on {} to apply the new settings?",
+            self.card_name,
+            self.profiles.join(", ")
+        )
+    }
+
+    fn new(
+        op: OperationId,
+        selection: script::ScriptSel,
+        card_name: String,
+        mut profiles: Vec<String>,
+    ) -> Option<Self> {
+        profiles.sort();
+        profiles.dedup();
+        (!profiles.is_empty()).then_some(Self {
+            op,
+            selection,
+            card_name,
+            profiles,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RestartBadge {
+    selection: script::ScriptSel,
+    baseline_active: Option<u64>,
+    pending_revision: Option<u64>,
+    observed_pending: bool,
+}
+
+impl RestartBadge {
+    fn new(selection: script::ScriptSel, baseline_active: Option<u64>) -> Self {
+        Self {
+            selection,
+            baseline_active,
+            pending_revision: None,
+            observed_pending: false,
+        }
+    }
+}
 
 /// A prepared sync, frozen for confirmation.
 #[derive(Debug, Clone, PartialEq)]
@@ -184,6 +256,7 @@ pub struct SyncReport {
     pub source: String,
     pub card: String,
     pub card_name: String,
+    selection: script::ScriptSel,
     pub skipped: Vec<(String, String)>,
     pub saved: usize,
     /// A newer edit of this card's parameters on the member (on a failed
@@ -197,6 +270,7 @@ pub struct SyncReport {
     pub applied: usize,
     pub pending_boundary: usize,
     pub restart_required: usize,
+    restart_profiles: Vec<String>,
     pub live_rejected: Vec<(String, String)>,
     pub excluded: Vec<(String, Vec<String>)>,
     /// Marked-scope syncs: the unmarked members left unchanged.
@@ -220,6 +294,15 @@ impl SyncReport {
     /// separately. Rebuilt only when a member settles.
     pub fn summary(&self) -> &str {
         &self.text
+    }
+
+    fn restart_prompt(&self) -> Option<RestartPrompt> {
+        RestartPrompt::new(
+            self.op,
+            self.selection.clone(),
+            self.card_name.clone(),
+            self.restart_profiles.clone(),
+        )
     }
 
     fn refresh(&mut self) {
@@ -314,6 +397,9 @@ pub(super) struct SyncState {
     earlier: Vec<SyncReport>,
     /// The last report settled and its final summary is not shown yet.
     announce: bool,
+    restart_prompts: VecDeque<RestartPrompt>,
+    restart_badges: HashMap<String, RestartBadge>,
+    restart_generation: u64,
 }
 
 impl SyncState {
@@ -345,25 +431,55 @@ impl SyncState {
             .enumerate()
             .find_map(|(slot, report)| owns(report).map(|index| (slot, index)))
         {
-            let report = &mut self.earlier[slot];
-            report.pending.swap_remove(index);
-            let settled = (report.op, fold(report, write));
-            if report.pending.is_empty() {
+            let (settled, prompt, complete) = {
+                let report = &mut self.earlier[slot];
+                report.pending.swap_remove(index);
+                let settled = (report.op, fold(report, write));
+                let complete = report.pending.is_empty();
+                let prompt = if complete {
+                    report.restart_prompt()
+                } else {
+                    None
+                };
+                (settled, prompt, complete)
+            };
+            if complete {
                 self.earlier.swap_remove(slot);
+            }
+            if let Some(prompt) = prompt {
+                self.restart_prompts.push_back(prompt);
             }
             return Some(settled);
         }
-        let report = self.last.as_mut()?;
-        let index = owns(report)?;
-        report.pending.swap_remove(index);
-        let outcome = fold(report, write);
-        report.refresh();
-        if report.pending.is_empty() {
+        let (settled, prompt, complete) = {
+            let report = self.last.as_mut()?;
+            let index = owns(report)?;
+            report.pending.swap_remove(index);
+            let outcome = fold(report, write);
+            report.refresh();
+            let complete = report.pending.is_empty();
+            let prompt = if complete {
+                report.restart_prompt()
+            } else {
+                None
+            };
+            ((report.op, outcome), prompt, complete)
+        };
+        if complete {
             self.announce = true;
         }
-        Some((report.op, outcome))
+        if let Some(prompt) = prompt {
+            self.restart_prompts.push_back(prompt);
+        }
+        Some(settled)
     }
 
+    pub(super) fn tracks_write(&self, op: OperationId) -> bool {
+        self.last
+            .iter()
+            .chain(self.earlier.iter())
+            .any(|report| report.pending.iter().any(|(pending, _)| *pending == op))
+    }
     /// Replace the shown report; one still waiting on writes keeps settling
     /// in `earlier`.
     fn push(&mut self, report: SyncReport) {
@@ -380,6 +496,105 @@ impl SyncState {
         }
         self.last.as_ref().map(|report| report.text.clone())
     }
+
+    pub(super) fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
+        self.restart_prompts.front()
+    }
+
+    pub(super) fn take_restart_prompt(&mut self) -> Option<RestartPrompt> {
+        self.restart_prompts.pop_front()
+    }
+
+    pub(super) fn dismiss_restart_prompt(&mut self) {
+        self.restart_prompts.pop_front();
+    }
+
+    pub(super) fn queue_single_restart_prompt(
+        &mut self,
+        op: OperationId,
+        card: super::SettingsCard,
+        profile: &str,
+    ) {
+        if let Some(prompt) =
+            RestartPrompt::new(op, card.selection, card.name, vec![profile.to_string()])
+        {
+            self.restart_prompts.push_back(prompt);
+        }
+    }
+
+    pub(super) fn restart_card(&self, profile: &str) -> Option<&script::ScriptSel> {
+        self.restart_badges
+            .get(profile)
+            .map(|badge| &badge.selection)
+    }
+
+    pub(super) fn restart_generation(&self) -> u64 {
+        self.restart_generation
+    }
+
+    pub(super) fn has_restart_badge(&self, profile: &str) -> bool {
+        self.restart_badges.contains_key(profile)
+    }
+
+    pub(super) fn note_restart_required(
+        &mut self,
+        profile: &str,
+        selection: &script::ScriptSel,
+        active_revision: Option<u64>,
+    ) {
+        let is_new = !self.restart_badges.contains_key(profile);
+        self.restart_badges.insert(
+            profile.to_string(),
+            RestartBadge::new(selection.clone(), active_revision),
+        );
+        if is_new {
+            self.restart_generation = self.restart_generation.wrapping_add(1);
+        }
+    }
+    pub(super) fn clear_restart_badge(&mut self, profile: &str) {
+        if self.restart_badges.remove(profile).is_none() {
+            return;
+        }
+        self.restart_generation = self.restart_generation.wrapping_add(1);
+        for prompt in &mut self.restart_prompts {
+            prompt.profiles.retain(|name| name != profile);
+        }
+        self.restart_prompts
+            .retain(|prompt| !prompt.profiles.is_empty());
+    }
+
+    pub(super) fn observe_restart_activation<Io>(&mut self, core: &OperatorSession<Io>) {
+        let Some(play) = core.play() else {
+            return;
+        };
+        let mut cleared = Vec::new();
+        for (profile, badge) in &mut self.restart_badges {
+            let Some(status) = play.script_native_status(profile) else {
+                continue;
+            };
+            if !matches!(badge.selection, script::ScriptSel::Compiled(id) if id == status.card) {
+                continue;
+            }
+            if let Some(revision) = status.pending_settings {
+                badge.pending_revision = Some(revision);
+                badge.observed_pending = true;
+                continue;
+            }
+            if (badge.observed_pending
+                && badge
+                    .pending_revision
+                    .is_some_and(|revision| status.active_settings >= revision))
+                || badge
+                    .baseline_active
+                    .is_some_and(|revision| status.active_settings > revision)
+            {
+                cleared.push(profile.clone());
+            }
+        }
+        for profile in cleared {
+            self.clear_restart_badge(&profile);
+        }
+    }
 }
 
 /// Count one settled member write into `report`; the member's outcome.
@@ -394,7 +609,12 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
                 LiveDelivery::NotRunning => report.not_running += 1,
                 LiveDelivery::Applied => report.applied += 1,
                 LiveDelivery::PendingBoundary => report.pending_boundary += 1,
-                LiveDelivery::RestartRequired => report.restart_required += 1,
+                LiveDelivery::RestartRequired => {
+                    report.restart_required += 1;
+                    if !report.restart_profiles.contains(&write.profile) {
+                        report.restart_profiles.push(write.profile.clone());
+                    }
+                }
                 LiveDelivery::Rejected(error) => {
                     report
                         .live_rejected
@@ -689,6 +909,11 @@ impl Scripts {
                     )
                 }
             };
+            if let Ok(write) = result.as_ref() {
+                if matches!(&selection, script::ScriptSel::Loaded(..)) {
+                    self.track_settings_card(*write, selection.clone(), &card_name);
+                }
+            }
             match result {
                 Ok(write) => {
                     if let (Some(token), Some(cancellation)) = (&_start_hold, &copy_cancellation) {
@@ -713,6 +938,7 @@ impl Scripts {
             source,
             card,
             card_name,
+            selection,
             skipped,
             saved: 0,
             superseded: 0,
@@ -724,6 +950,7 @@ impl Scripts {
             applied: 0,
             pending_boundary: 0,
             restart_required: 0,
+            restart_profiles: Vec::new(),
             live_rejected: Vec::new(),
             excluded,
             unmarked,

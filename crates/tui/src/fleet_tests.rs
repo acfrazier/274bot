@@ -1,6 +1,7 @@
 use frontend_core::{FleetRow, Phase, ProfileIdentity, QueuePlace};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use std::collections::HashSet;
 
 use super::*;
 
@@ -107,12 +108,14 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     let mut state = FleetState::default();
     state.sync_with_ids(&members, &[], &rows);
     state.toggle_mark(&members, 2);
+    let restart_badges = HashSet::from([ProfileIdentity::synthetic("bob")]);
     state.move_cursor(1, &members);
     let (rows, hits) = render(
         FleetTable {
             names: &members,
             ids: &[],
             rows: &rows,
+            restart_badges: &restart_badges,
             state: &mut state,
             selected: Some(0),
             keys: true,
@@ -126,6 +129,7 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
         rows[1].contains("w2") && rows[1].contains("idle"),
         "the panel's status label: {rows:?}"
     );
+    assert!(rows[2].contains('!'), "restart badge: {rows:?}");
     assert!(rows[2].starts_with("[ ] > bob"), "cursor row: {rows:?}");
     assert!(rows[2].contains("queued 2/5"), "{rows:?}");
     assert!(rows[3].starts_with("[x]   carol"), "selected row: {rows:?}");
@@ -150,6 +154,7 @@ fn a_long_fleet_scrolls_to_keep_the_cursor_visible() {
             names: &members,
             ids: &[],
             rows: &[],
+            restart_badges: &HashSet::new(),
             state: &mut state,
             selected: None,
             keys: true,
