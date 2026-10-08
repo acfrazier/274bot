@@ -1,6 +1,7 @@
 //! Native clue recovery identity, available without an isolate.
 
 /// Shared radius for clue destination walks and posted loc approach facts.
+#[cfg(feature = "load")]
 pub(crate) const ARRIVE_RADIUS: i32 = 1;
 
 /// Slot-retained clue debt. M-297 installs stripped gear and the abandon latch
