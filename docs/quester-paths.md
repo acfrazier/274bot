@@ -14,8 +14,9 @@ A direct progress fact (`stage_in`, `flag`, or `quest_colour`) anywhere inside a
 
 ## Loading draft Paths without rebuilding
 
-Open **Nav config** in panel, or **settings** (`o` on Overview) in TUI. Enable
-**Load quest Paths from folder** and choose a folder. The setting is off by
+In the panel, select the Quester card and open **Script prefs**. In the TUI, open
+**settings** (`o` on Overview). Enable **Load quest Paths from folder** and choose a
+folder. The setting is off by
 default. Changing it refreshes the picker. A saved enabled folder reloads
 automatically when selected game data is ready at startup. The default is
 `<profile data directory>/quester/paths/289`; a checkout's
@@ -53,7 +54,7 @@ load. Shipped server-unavailable quests retain their server-content restriction.
 Symlinked JSON files are followed; the opened target must be a regular file
 within the size limit. The report is capped at 32 diagnostic lines and ends
 with an `N more` summary when details are omitted. The TUI shows only the
-summary; per-file details are available in Logs and Nav config.
+summary; per-file details are available in Logs.
 
 Before asking for a live run, use the pinned AJV commands in §4.6 for document
 shape and `cargo test -p script bundled_paths_decode_and_compile` for bundled

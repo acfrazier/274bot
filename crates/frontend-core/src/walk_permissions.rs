@@ -51,13 +51,27 @@ pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.
 
 /// Label for the single-admission danger-zone control.
 pub const DANGER_THIS_WALK_LABEL: &str = "Route through danger zones";
-/// Shared scope copy for teleports, wilderness, and danger grants.
-pub const GLOBAL_PERMISSION_SCOPE: &str = "Global — applies to every walk.";
+/// One note above the routing grants, replacing the per-row scope suffixes.
+pub const ROUTING_SCOPE_NOTE: &str = "Settings are global except where otherwise specified. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 /// Bank-budget fetching is available to manual WalkTo only.
 pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
 
 /// Label for the stored middle level while the runtime net is unavailable.
 pub const WHEN_SURVIVABLE_HELD_LABEL: &str = "When survivable (not available yet: acts as Never)";
+
+/// Note under the Danger routing drop-down while the middle level is held.
+pub const WHEN_SURVIVABLE_HELD_NOTE: &str = "Not available yet: acts as Never.";
+/// Danger-routing levels in the order the drop-down lists them.
+pub const DANGER_ROUTING_LEVELS: [DangerLevel; 3] = [
+    DangerLevel::Never,
+    DangerLevel::WhenSurvivable,
+    DangerLevel::Always,
+];
+
+/// True while the stored middle level cannot admit routes because the runtime net is unavailable.
+pub const fn danger_routing_held(level: DangerLevel) -> bool {
+    matches!(level, DangerLevel::WhenSurvivable) && !host_play::NET_AVAILABLE
+}
 
 /// Display the saved danger level, identifying the gated middle level without
 /// changing the canonical preference value or its cycling order.
