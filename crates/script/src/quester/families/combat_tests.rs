@@ -226,6 +226,7 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
         keep_ids: &[],
         areas: &areas,
         loadouts: &loadouts,
+        loadout_carry: crate::quester::compile::empty_loadout_carry(),
         recipes: &recipes,
     };
     let stand = api::WorldTile {
@@ -534,6 +535,7 @@ fn fixture_compile_context<'a>(
         keep_ids: &[],
         areas,
         loadouts,
+        loadout_carry: crate::quester::compile::empty_loadout_carry(),
         recipes,
     }
 }

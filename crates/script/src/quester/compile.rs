@@ -40,6 +40,14 @@ pub struct CompileContext<'a> {
     pub bank_required: bool,
     pub keep_ids: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
+    pub loadout_carry: &'a HashMap<Arc<str>, Arc<[CompiledCarry]>>,
+}
+
+#[cfg(test)]
+pub(super) fn empty_loadout_carry() -> &'static HashMap<Arc<str>, Arc<[CompiledCarry]>> {
+    static CARRY: std::sync::LazyLock<HashMap<Arc<str>, Arc<[CompiledCarry]>>> =
+        std::sync::LazyLock::new(HashMap::new);
+    &CARRY
 }
 
 #[derive(Clone, Copy)]
@@ -846,7 +854,7 @@ pub(super) fn compile_uncached(
                 add_carry(&entry.item, entry.qty)?;
             }
         } else {
-            // The shared Loadouts rows use display names. Provisioning must
+            // Shared Loadouts rows use display names, but native consumers
             // retain authored aliases: different objects can share a name.
             for entry in &authored.carry {
                 add_carry(&entry.item, entry.qty)?;
@@ -865,7 +873,7 @@ pub(super) fn compile_uncached(
             stackable,
             latch_index: u8::MAX,
         });
-    let keep_ids = protected_item_ids(selected, &tools, &loadouts);
+    let keep_ids = protected_item_ids(selected, &tools, &loadouts, &loadout_carry);
     let mut base_spillover_keep = keep_ids.clone();
     for item in compiled_items.iter() {
         push_unique_id(&mut base_spillover_keep, item.id);
@@ -915,6 +923,7 @@ pub(super) fn compile_uncached(
         bank,
         bank_required,
         loadouts: &loadouts,
+        loadout_carry: &loadout_carry,
         keep_ids: &keep_ids,
     };
     let mut recipes: HashMap<String, Arc<[CompiledAcquireStep]>> =
@@ -1082,6 +1091,7 @@ pub(crate) fn protected_item_ids(
     selected: &SelectedGameData,
     path_tools: &[BankItem],
     loadouts: &super::loadouts::LoadoutOverlay,
+    loadout_carry: &HashMap<Arc<str>, Arc<[CompiledCarry]>>,
 ) -> Vec<i32> {
     let mut ids = Vec::with_capacity(path_tools.len());
     for item in path_tools {
@@ -1095,16 +1105,21 @@ pub(crate) fn protected_item_ids(
             push_unique_id(&mut ids, item.id);
         }
     }
+    for carry in loadout_carry.values().flat_map(|rows| rows.iter()) {
+        push_unique_id(&mut ids, carry.item.id);
+    }
     for loadout in loadouts.list() {
         let row = loadout.row();
-        for name in row
-            .worn
-            .values()
-            .chain(row.unassigned.iter())
-            .chain(row.carry.iter().map(|carry| &carry.item))
-        {
+        for name in row.worn.values().chain(row.unassigned.iter()) {
             if let Some(item) = selected.resolve_item_name(name) {
                 push_unique_id(&mut ids, item.id);
+            }
+        }
+        if !loadout_carry.contains_key(row.name.as_str()) {
+            for carry in &row.carry {
+                if let Some(item) = selected.resolve_item_name(&carry.item) {
+                    push_unique_id(&mut ids, item.id);
+                }
             }
         }
     }
@@ -1904,7 +1919,7 @@ mod tests {
             id: i32::MAX,
             name: Arc::from("Path tool"),
         };
-        let ids = protected_item_ids(&data, &[path_tool], &loadouts);
+        let ids = protected_item_ids(&data, &[path_tool], &loadouts, empty_loadout_carry());
         let expected: std::collections::BTreeSet<_> = gather_ids
             .into_iter()
             .chain([i32::MAX])
@@ -2628,6 +2643,16 @@ mod tests {
                 "carry": [{ "item": "coins", "qty": 1000 }]
             }
         });
+        document["roles"][0]["prelude"] = serde_json::json!([{
+            "id": "apply-cash", "kind": "loadout", "version": 1,
+            "args": { "loadout": "cash", "at": "nearest" },
+            "skip_if": PredicateDocument::Fact {
+                kind: "loadout_ready".into(),
+                version: 1,
+                args: serde_json::json!({ "loadout": "cash" }),
+            },
+            "settle": { "All": [] }
+        }]);
         let document: PathDocument = serde_json::from_value(document).unwrap();
         let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
         let carry = &path.provisioning.loadout_carry["cook/cash"];
@@ -2635,6 +2660,50 @@ mod tests {
         assert_eq!(carry[0].item.id, coins.id);
         assert_eq!(carry[0].qty, 1000);
         assert_eq!(carry[0].stackable, coins.stackable);
+        assert!(path.provisioning.keep_ids.contains(&coins.id));
+        assert!(path.provisioning.base_spillover_keep.contains(&coins.id));
+        assert!(!path
+            .provisioning
+            .keep_ids
+            .contains(&data.resolve_item_name("Coins").unwrap().id));
+
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_equipment(vec![]);
+        let mut held =
+            families::tests::loadout_test_item("coins", api::snapshot::ItemContainer::Inventory, 0);
+        held.count = 1000;
+        snapshot.seed_inventory(vec![held.clone()], 28);
+        assert_eq!(
+            families::tests::loadout_predicate_truth(path.prelude[0].skip_if.as_ref(), &snapshot),
+            Truth::True
+        );
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut ledger = None;
+        families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let required_after = tick.cx.evidence();
+            let mut context = StepContext {
+                tick,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                banks: &banks,
+                choices: &super::super::choices::QuestChoices::default(),
+            };
+            let mut run = path.prelude[0].plan.begin(&mut context).unwrap();
+            assert!(matches!(run.poll(&mut context), Poll::Ready(Ok(_))));
+        });
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+        held.def.id = data.resolve_item_name("Coins").unwrap().id;
+        snapshot.seed_inventory(vec![held], 28);
+        assert_eq!(
+            families::tests::loadout_predicate_truth(path.prelude[0].skip_if.as_ref(), &snapshot),
+            Truth::False,
+            "another object with the same display name cannot satisfy the authored carry"
+        );
 
         let potion = data.item_by_alias("4doseprayerrestore").unwrap();
         let display = potion.name.as_deref().unwrap();

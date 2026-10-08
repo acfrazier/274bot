@@ -1614,6 +1614,7 @@ fn path_bank_context<'a>(
         bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
         bank_required: required,
         loadouts: base.loadouts,
+        loadout_carry: base.loadout_carry,
         keep_ids: base.keep_ids,
     }
 }
@@ -2271,6 +2272,7 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         bank_required: false,
         keep_ids: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
+        loadout_carry: crate::quester::compile::empty_loadout_carry(),
     };
     let plan = compile_use_on(test_args::<UseOnArgs>(serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 })), &compile).unwrap();
     let id = resolve_obj(&compile, "grain").unwrap();
@@ -3027,6 +3029,7 @@ fn compile_context_test_with_keep<R>(
         bank_required: false,
         keep_ids,
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
+        loadout_carry: crate::quester::compile::empty_loadout_carry(),
     })
 }
 
@@ -5985,7 +5988,7 @@ fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     })
 }
 
-fn loadout_test_item(alias: &str, container: ItemContainer, slot: i32) -> ItemView {
+pub(crate) fn loadout_test_item(alias: &str, container: ItemContainer, slot: i32) -> ItemView {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias(alias).unwrap();
     ItemView {
@@ -6003,7 +6006,7 @@ fn loadout_test_item(alias: &str, container: ItemContainer, slot: i32) -> ItemVi
     }
 }
 
-fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) -> Truth {
+pub(crate) fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) -> Truth {
     let mut ledger = None;
     with_tick(snapshot, &mut ledger, 1, |tick| {
         plan.evaluate(&PredicateContext {

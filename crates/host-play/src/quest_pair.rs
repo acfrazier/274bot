@@ -2274,6 +2274,7 @@ mod tests {
         };
         let areas = HashMap::new();
         let recipes = HashMap::new();
+        let loadout_carry = HashMap::new();
         let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
         let handler = predicate_handlers()
             .find(|handler| handler.kind == "partner_item_count_at_least")
@@ -2300,6 +2301,7 @@ mod tests {
                 bank_required: false,
                 keep_ids: &[],
                 loadouts: &loadouts,
+                loadout_carry: &loadout_carry,
             };
             let supported =
                 (handler.compile)(&serde_json::json!({"obj":"arravshield2","qty":1}), &cx).is_ok();

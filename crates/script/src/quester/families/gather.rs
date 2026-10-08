@@ -629,6 +629,7 @@ mod tests {
             bank_required: false,
             keep_ids: &[],
             loadouts: &loadouts,
+            loadout_carry: crate::quester::compile::empty_loadout_carry(),
         };
         let args = serde_json::from_value(serde_json::json!({
             "skill": "woodcutting",

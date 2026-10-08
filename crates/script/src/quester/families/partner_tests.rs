@@ -754,6 +754,7 @@ fn recovery_item_fact_compiles_only_bounded_arrav_items_and_an_authored_pair_rol
         bank_required: false,
         keep_ids: &[],
         loadouts: &loadouts,
+        loadout_carry: crate::quester::compile::empty_loadout_carry(),
     };
     for obj in ["arravshield1", "obj:arravshield2", "arravcertificate"] {
         assert!(compile_partner_item_count(
