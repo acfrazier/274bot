@@ -28,9 +28,9 @@ use crate::script_picker::{
     self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
     card_transpile_label, card_width, centered_row_x, chip_frame_padding, chip_text_color,
     chip_wraps, dialog_date_color, display_category, format_mtime, move_category,
-    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, BROWSE_WINDOW_TITLE,
-    CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
-    GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
+    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, CARD_GAP, CARD_MIN_W,
+    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
+    SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -48,7 +48,7 @@ use host_play::progress::{
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, ProfilePreparationCompletion, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -1594,7 +1594,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     if ui.button_with_size("Log", [w, 0.0]) {
-        session.log_window_open = true;
+        session.open_window(PanelWindow::Log);
     }
     ui.set_item_tooltip("open log in a panel tab");
 }
@@ -1884,7 +1884,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     profile_combo(ui, session);
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("Profiles", [w, 0.0]) {
-        session.wall.chooser_open = true;
+        session.open_window(PanelWindow::Profiles);
     }
     ui.set_item_tooltip("pick or edit a vault profile");
 }
@@ -2027,7 +2027,7 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     if ui.button_with_size("Fleet", [cells[1].0, 0.0]) {
-        session.fleet_open = true;
+        session.open_window(PanelWindow::Fleet);
     }
     ui.set_item_tooltip("open the marked-bot Fleet window");
 }
@@ -2064,7 +2064,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         match *label {
             "DebugPanel" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    session.debug_panel_open = true;
+                    session.open_window(PanelWindow::Debug);
                 }
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
@@ -2083,7 +2083,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             }
             "maxme" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    session.debug_panel_open = true;
+                    session.open_window(PanelWindow::Debug);
                     crate::debug_panel::request_bulk_send(
                         ui,
                         session,
@@ -2196,8 +2196,9 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Browse…", [w, 0.0]) {
+            // Browse first: a first-use catalog prompt it raises takes the focus.
+            session.open_window(PanelWindow::Browse);
             session.on_script_browse_open();
-            session.script_browse_open = true;
         }
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
     }
@@ -2581,12 +2582,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     ui.spacing();
     if script::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
-            session.rs2b0t_catalog_defer_ok = false;
-            session.script_dialog_search.clear();
-            session.rs2b0t_catalog_dir = script_picker::default_load_browse_dir(
-                session.ui.script_catalog_last_dir.as_deref(),
-            );
-            session.rs2b0t_catalog_open = true;
+            session.open_rs2b0t_catalog_picker(false);
         }
         ui.spacing();
     }
@@ -2708,7 +2704,8 @@ fn browse_window(ui: &Ui, session: &mut Session) {
         let mut open = true;
         let size = scale_size(ui, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
         let pos = overlay_spawn_pos(ui, session, size);
-        ui.window(BROWSE_WINDOW_TITLE)
+        focus_if_requested(ui, session, PanelWindow::Browse);
+        ui.window(PanelWindow::Browse.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
             .position(pos, Condition::FirstUseEver)
@@ -2739,7 +2736,8 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     let pos = overlay_spawn_pos(ui, session, size);
     if session.script_load_open {
         let mut open = true;
-        ui.window("Load script")
+        focus_if_requested(ui, session, PanelWindow::LoadScript);
+        ui.window(PanelWindow::LoadScript.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
@@ -2749,7 +2747,8 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     }
     if session.rs2b0t_catalog_open {
         let mut open = true;
-        ui.window("Import rs2b0t catalog")
+        focus_if_requested(ui, session, PanelWindow::ImportCatalog);
+        ui.window(PanelWindow::ImportCatalog.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
@@ -2956,13 +2955,122 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         });
 }
 
+/// Routing group of the Nav config window: the global routing permissions and
+/// the Danger routing drop-down. The drop-down spans the full width so its
+/// level names never clip at the docked 330 px panel width; the held middle
+/// level explains itself in a wrapped note under the control. Returns whether
+/// a setting changed.
+fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
+    let mut changed = false;
+    ui.text_colored(ACCENT, "Routing");
+    {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::ROUTING_SCOPE_NOTE);
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[0].1,
+        &mut nav.allow_teleports,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip("Global routing permission for every walk.");
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[1].1,
+        &mut nav.allow_wilderness,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+    );
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[2].1,
+        &mut nav.allow_bank_fetch,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+    );
+    ui.same_line();
+    ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    let danger_level = nav.danger_level();
+    ui.text(frontend_core::GLOBAL_PERMISSION_LABELS[3].1);
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_next_item_width(-1.0);
+    let danger_combo = ui.begin_combo("##danger-routing", danger_level.label());
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(match danger_level {
+        frontend_core::DangerLevel::Never => {
+            "Danger-zone routes are refused unless this walk or its script overrides."
+        }
+        frontend_core::DangerLevel::WhenSurvivable => {
+            frontend_core::walk_permissions::survivable_routing_tooltip()
+        }
+        frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
+    });
+    if let Some(_open) = danger_combo {
+        for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
+            let selected = level == danger_level;
+            let picked = ui
+                .selectable_config(level.label())
+                .selected(selected)
+                .build();
+            #[cfg(test)]
+            record_test_routing_choice(ui);
+            if picked {
+                changed |= choose_danger_level(nav, level);
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    if frontend_core::walk_permissions::danger_routing_held(danger_level) {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_NOTE);
+        #[cfg(test)]
+        record_test_routing_item(ui);
+    }
+    if danger_level == frontend_core::DangerLevel::Always {
+        ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
+        #[cfg(test)]
+        record_test_routing_item(ui);
+    }
+    changed
+}
+
+/// Stores a level picked from the Danger routing drop-down. Returns whether
+/// the stored level changed; the caller persists the Nav config as before.
+fn choose_danger_level(
+    nav: &mut crate::nav_settings::NavSettings,
+    level: frontend_core::DangerLevel,
+) -> bool {
+    if nav.danger_level() == level {
+        return false;
+    }
+    nav.set_danger_level(level);
+    true
+}
+
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Preference edits write `session.ui.nav`
 /// through the checked shared-preferences writer; the pause toggle also
 /// updates the host policy immediately. FirstUseEver docks as a 274bot
 /// panel tab; undock to float.
 fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
-    session.poll_quester_paths_reload();
     if !session.nav_settings_open {
         return;
     }
@@ -2973,7 +3081,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Nav config")
+    focus_if_requested(ui, session, PanelWindow::NavConfig);
+    ui.window(PanelWindow::NavConfig.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
@@ -2984,58 +3093,10 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let previous_pause_script_on_manual_walk_abort =
                 previous_nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
-            ui.text_colored(ACCENT, "Routing");
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[0].1, &mut nav.allow_teleports) {
-                changed = true;
-            }
-            ui.set_item_tooltip("Global routing permission for every walk.");
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[1].1, &mut nav.allow_wilderness) {
-                changed = true;
-            }
-            ui.set_item_tooltip(
-                "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
-            );
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[2].1, &mut nav.allow_bank_fetch) {
-                changed = true;
-            }
-            ui.set_item_tooltip(
-                "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
-            );
-            ui.same_line();
-            ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
-            let danger_level = nav.danger_level();
-            let danger_label = format!(
-                "{}: {}",
-                frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
-                frontend_core::walk_permissions::danger_routing_label(danger_level)
-            );
-            if ui.button(&danger_label) {
-                nav.set_danger_level(danger_level.next());
-                changed = true;
-            }
-            ui.set_item_tooltip(match danger_level {
-                frontend_core::DangerLevel::Never => {
-                    "Danger-zone routes are refused unless this walk or its script overrides."
-                }
-                frontend_core::DangerLevel::WhenSurvivable => {
-                    frontend_core::walk_permissions::survivable_routing_tooltip()
-                }
-                frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
-            });
-            ui.same_line();
-            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
-            if danger_level == frontend_core::DangerLevel::Always {
-                ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
-            }
+            changed |= routing_group(ui, &mut nav);
             if !nav.script_scope_notice_ack {
                 ui.separator();
-                ui.text_wrapped(
-                    frontend_core::SCRIPT_SCOPE_NOTICE,
-                );
+                ui.text_wrapped(frontend_core::SCRIPT_SCOPE_NOTICE);
                 if ui.button("Dismiss walk permissions notice") {
                     nav.script_scope_notice_ack = true;
                     changed = true;
@@ -3112,44 +3173,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 });
             }
 
-            ui.spacing();
-            ui.separator();
-            ui.text_colored(ACCENT, "Quest Paths");
-            ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-            let before_paths = session.quester_paths.settings().clone();
-            let mut after_paths = before_paths.clone();
-            let mut paths_changed = false;
-            let path_reload_running = session.quester_paths.is_running();
-            let _path_controls_disabled = if path_reload_running {
-                Some(ui.begin_disabled())
-            } else {
-                None
-            };
-            let mut enabled = after_paths.enabled;
-            if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
-                after_paths.enabled = enabled;
-                paths_changed = true;
-            }
-            ui.text("Folder");
-            ui.set_next_item_width(-1.0);
-            ui.input_text("##quester-path-folder", &mut session.quester_paths_folder_edit)
-                .build();
-            if ui.is_item_deactivated_after_edit() {
-                after_paths.folder =
-                    PathBuf::from(session.quester_paths_folder_edit.clone());
-                paths_changed |= after_paths.folder != before_paths.folder;
-            }
-            drop(_path_controls_disabled);
-
-            let mut reload_requested = false;
-            if path_reload_running {
-                let _disabled = ui.begin_disabled();
-                ui.button(frontend_core::RELOAD_PATHS_LABEL);
-                ui.set_item_tooltip("Wait for the current Path reload to finish.");
-            } else {
-                reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
-            }
-
             if changed {
                 session.ui.nav = nav;
                 let after_permissions = frontend_core::WalkGlobalsView {
@@ -3166,10 +3189,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         session.ui.nav.pause_script_on_manual_walk_abort,
                     );
                 }
-                let save_result = crate::ui_state::save_at_checked(
-                    &session.walk_permissions_path,
-                    &session.ui,
-                );
+                let save_result =
+                    crate::ui_state::save_at_checked(&session.walk_permissions_path, &session.ui);
                 let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
                     &session.walk_permissions_path,
                     previous_permissions,
@@ -3189,17 +3210,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     (Err(error), _) | (_, Err(error)) => {
                         session.error = Some(format!("Nav config: {error}"));
                     }
-                }
-            }
-            if paths_changed {
-                let _ = session.persist_quester_paths(after_paths);
-            } else if reload_requested {
-                session.start_quester_paths_reload();
-            }
-            if let Some(notice) = session.quester_paths.notice() {
-                match notice {
-                    Ok(summary) => ui.text_wrapped(summary.as_ref()),
-                    Err(error) => ui.text_colored(ERROR, error.as_ref()),
                 }
             }
         });
@@ -3762,7 +3772,8 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Script prefs")
+    focus_if_requested(ui, session, PanelWindow::ScriptPrefs);
+    ui.window(PanelWindow::ScriptPrefs.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
@@ -3783,8 +3794,69 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             } else {
                 ui.text_disabled("parameter editors not available");
             }
+            if matches!(
+                &session.script_sel,
+                Some(script::ScriptSel::Compiled(id)) if *id == script::quester::card::CARD.id
+            ) {
+                quest_paths_section(ui, session);
+            }
         });
     session.script_prefs_open = open;
+}
+
+/// Quest Paths settings. They are host-wide and apply to every bot, so the
+/// Quester card shows them under its parameters.
+fn quest_paths_section(ui: &Ui, session: &mut Session) {
+    ui.spacing();
+    ui.separator();
+    ui.text_colored(ACCENT, frontend_core::QUEST_PATHS_HEADING);
+    ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
+    let before_paths = session.quester_paths.settings().clone();
+    let mut after_paths = before_paths.clone();
+    let mut paths_changed = false;
+    let path_reload_running = session.quester_paths.is_running();
+    let _path_controls_disabled = if path_reload_running {
+        Some(ui.begin_disabled())
+    } else {
+        None
+    };
+    let mut enabled = after_paths.enabled;
+    if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
+        after_paths.enabled = enabled;
+        paths_changed = true;
+    }
+    ui.text("Folder");
+    ui.set_next_item_width(-1.0);
+    ui.input_text(
+        "##quester-path-folder",
+        &mut session.quester_paths_folder_edit,
+    )
+    .build();
+    if ui.is_item_deactivated_after_edit() {
+        after_paths.folder = PathBuf::from(session.quester_paths_folder_edit.clone());
+        paths_changed |= after_paths.folder != before_paths.folder;
+    }
+    drop(_path_controls_disabled);
+
+    let mut reload_requested = false;
+    if path_reload_running {
+        let _disabled = ui.begin_disabled();
+        ui.button(frontend_core::RELOAD_PATHS_LABEL);
+        ui.set_item_tooltip("Wait for the current Path reload to finish.");
+    } else {
+        reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
+    }
+    if paths_changed {
+        let _ = session.persist_quester_paths(after_paths);
+    } else if reload_requested {
+        session.start_quester_paths_reload();
+    }
+    if let Some(notice) = session.quester_paths.notice() {
+        match notice {
+            Ok(summary) => ui.text_wrapped(summary.as_ref()),
+            Err(error) => ui.text_colored(ERROR, error.as_ref()),
+        }
+    }
 }
 
 /// Why a selected Loaded card is not in the library: its catalog has not been
@@ -3885,19 +3957,22 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
             match row[i] {
                 "General config" => {
                     if ui.button_with_size("General config", [w, 0.0]) {
-                        session.global_settings_open = true;
+                        session.open_window(PanelWindow::GeneralConfig);
                     }
                     ui.set_item_tooltip("slot render + global cadence / capture");
                 }
                 "Nav config" => {
                     if ui.button_with_size("Nav config", [w, 0.0]) {
-                        session.nav_settings_open = true;
+                        session.open_window(PanelWindow::NavConfig);
                     }
                     ui.set_item_tooltip("nav debug paints and labels");
                 }
                 "Loadouts" => {
-                    if ui.button_with_size("Loadouts", [w, 0.0]) {
-                        session.loadouts_open = true;
+                    // Only a closed Loadouts starts on the first preset; an
+                    // open one keeps its selection and unsaved draft.
+                    if ui.button_with_size("Loadouts", [w, 0.0])
+                        && session.open_window(PanelWindow::Loadouts)
+                    {
                         session.loadouts_sel = 0;
                         crate::loadouts::sync_draft(session);
                     }
@@ -3908,7 +3983,7 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                         mock_button(ui, "Script prefs", hint, [w, 0.0]);
                     } else {
                         if ui.button_with_size("Script prefs", [w, 0.0]) {
-                            session.script_prefs_open = true;
+                            session.open_window(PanelWindow::ScriptPrefs);
                         }
                         ui.set_item_tooltip("script parameter editors");
                     }
@@ -4039,7 +4114,8 @@ fn log_window_with_body(
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Log")
+    focus_if_requested(ui, session, PanelWindow::Log);
+    ui.window(PanelWindow::Log.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -4322,9 +4398,17 @@ fn slot_render_section(ui: &Ui, session: &mut Session) {
     raster_picker(ui, session);
 }
 
+/// What the profile's auto-login does (`SlotArm::new(uid, auto_login)` arms
+/// the login on spawn; a login keeps it armed for a disconnect; an active
+/// script wants the login regardless).
+const AUTO_LOGIN_TOOLTIP: &str = "Log in as soon as this bot starts (after unlocking the vault or loading the profile), and log back in after a disconnect. Off: the bot waits at the login screen until you press Log in; a running script still logs in.";
+
 fn slot_capture_section(ui: &Ui, session: &mut Session) {
     let mut auto_cur = session.cred_settings.auto_login;
-    if ui.checkbox("auto-login on title", &mut auto_cur) {
+    // Label only: the saved setting stays `ProfileSettings.auto_login`.
+    let toggled = ui.checkbox("Log in automatically", &mut auto_cur);
+    ui.set_item_tooltip(AUTO_LOGIN_TOOLTIP);
+    if toggled {
         session.cred_settings.auto_login = auto_cur;
         if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
             let name = name.to_string();
@@ -4824,6 +4908,59 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
     (bounds, colour)
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_ROUTING_ITEM_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static TEST_ROUTING_CHOICE_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn item_bounds(ui: &Ui) -> [f32; 4] {
+    let min = ui.item_rect_min();
+    let max = ui.item_rect_max();
+    [min[0], min[1], max[0], max[1]]
+}
+
+#[cfg(test)]
+fn record_test_routing_item(ui: &Ui) {
+    let bounds = item_bounds(ui);
+    TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(|items| items.push(bounds));
+}
+
+#[cfg(test)]
+fn record_test_routing_choice(ui: &Ui) {
+    let bounds = item_bounds(ui);
+    TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(|choices| choices.push(bounds));
+}
+
+/// One frame of the Routing group as a test sees it.
+#[cfg(test)]
+struct TestRouting {
+    /// Bounds of each routing row: the checkboxes, the drop-down, and the
+    /// notes under it.
+    items: Vec<[f32; 4]>,
+    /// Bounds of each drop-down entry while the popup is open.
+    choices: Vec<[f32; 4]>,
+    /// Whether this frame changed a setting.
+    changed: bool,
+}
+
+/// Draws only the Routing group, so a test can check the docked width and
+/// drive the drop-down without the rest of the Nav config window.
+#[cfg(test)]
+fn draw_test_nav_routing(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> TestRouting {
+    TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
+    let changed = routing_group(ui, nav);
+    TestRouting {
+        items: TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take),
+        choices: TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(std::mem::take),
+        changed,
+    }
+}
+
 /// Public world marker: a disc in the status colour, centred in the
 /// `width`-wide status cell and on the text line, with the world number
 /// knocked out in the background colour. Drawn as geometry so the digit is
@@ -4918,13 +5055,17 @@ fn rail_body(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, name: &str, draw: b
     cell_body(ui, gpu, state, name, scale_size(ui, [TILE_W, TILE_H]), draw)
 }
 
-/// `+ add bot`: opens the profile picker (same window as Profiles).
+/// Rail **Profiles…**: opens or focuses the profile picker (same window as
+/// the strip's Profiles button).
 fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     let w = ui.content_region_avail()[0];
-    if ui.button_with_size("+ add bot", [w, 0.0]) {
-        state.session.wall.chooser_open = true;
+    if ui.button_with_size("Profiles…", [w, 0.0]) {
+        state.session.open_window(PanelWindow::Profiles);
     }
+    ui.set_item_tooltip(
+        "Open or focus Profiles to add, edit, load or log in a bot. Selecting a profile does not start its script.",
+    );
 }
 
 /// Resource card at the rail bottom: the operator session's 1 Hz meter
@@ -4937,12 +5078,14 @@ fn resource_card(ui: &Ui, view: &ResourceView) {
     draw_resource_rows(ui, view, false);
 }
 
-/// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
-/// on the `want` false→true edge, so `+ add bot` reopens after a close;
-/// `new_prev` tracks `want` on **both** values, or a closed chooser would
-/// keep a stale `true` and the next reopen would never fire.
-pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
-    (want && !prev, want)
+/// Consume an opener's one-shot focus request for `window` (see
+/// [`Session::open_window`]). Call immediately before its `Begin`: an
+/// existing window comes to the front and a docked one has its tab
+/// selected; a window ImGui has not created yet is focused by appearing.
+pub(crate) fn focus_if_requested(ui: &Ui, session: &mut Session, window: PanelWindow) {
+    if session.take_window_focus(window) {
+        ui.set_window_focus(Some(window.title()));
+    }
 }
 
 /// Profiles always dock to the 274bot panel node, never the MultiBox rail
@@ -5019,17 +5162,16 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
-    // A leave prompt was staged from elsewhere (the tab's ✕, MultiBox): its
-    // popup draws inside this window, so bring the window's tab forward.
-    if std::mem::take(&mut session.focus_profiles) {
-        ui.set_window_focus(Some("Profiles"));
-    }
+    // An opener asked for Profiles, or a leave prompt was staged from
+    // elsewhere (the tab's ✕, MultiBox) and draws inside this window: bring
+    // the window (its dock tab) forward once.
+    focus_if_requested(ui, session, PanelWindow::Profiles);
     let mut open = true;
     ui.set_next_window_class(&panel_window_class());
     if let Some(id) = chooser_dock_id(panel_dock) {
         ui.set_next_window_dock_id_with_cond(id, Condition::Appearing);
     }
-    ui.window("Profiles")
+    ui.window(PanelWindow::Profiles.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [PANEL_WIDTH, 560.0]), Condition::FirstUseEver)
@@ -5234,7 +5376,8 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("General config")
+    focus_if_requested(ui, session, PanelWindow::GeneralConfig);
+    ui.window(PanelWindow::GeneralConfig.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -5267,7 +5410,8 @@ fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Debug")
+    focus_if_requested(ui, session, PanelWindow::Debug);
+    ui.window(PanelWindow::Debug.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -6006,6 +6150,7 @@ fn ui_frame(
             }
         }
     }
+    state.session.poll_quester_paths_reload();
     state.session.pump_script_transpile();
     if let Some(live) = state.live.as_mut() {
         // Harness runs only: an interactive frame copies no status rows.
@@ -6103,8 +6248,8 @@ fn ui_frame(
         ui.set_next_window_class(&rail_window_class());
         rail_window(ui, gpu, state);
     }
-    // Every frame, not only while open: the prev latches must track
-    // the close so the next open is a fresh rising edge.
+    // Called every frame; each returns early while closed and applies an
+    // opener's one-shot focus request just before its own Begin.
     chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
     debug_panel_window(ui, &mut state.session, state.panel_dock_node);
@@ -6241,3 +6386,7 @@ mod parameter_options_tests {
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_window_tests.rs"]
+mod window_tests;

@@ -7,12 +7,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
-    chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
-    edit_parameters_enabled, finish_panel_run, game_window_flags, hold_script_terminal_shot,
-    live_exit_code, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
-    loading_text, logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
+    game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
+    live_smoke_tick, live_stress_tick, loading_text, logout_enabled, manual_shot_label, parse_args,
+    parse_live_args, progress_channel, request_clean_stop_capture, request_native_failure_capture,
+    runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
@@ -885,35 +884,6 @@ fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     assert_eq!(session.ui.last_focus.as_deref(), Some("alice"));
     assert!(!session.ui.collapsed["alice"]["status"]);
     assert!(!session.ui.capture);
-}
-
-#[test]
-fn chooser_should_open_popup_table() {
-    // First open: rising edge opens the popup and latches prev.
-    assert_eq!(chooser_should_open_popup(true, false), (true, true));
-    // Already open: no re-open while want stays true.
-    assert_eq!(chooser_should_open_popup(true, true), (false, true));
-    // Esc closed it: want drops to false and prev must fall so a later
-    // `+ add bot` is a fresh rising edge.
-    assert_eq!(chooser_should_open_popup(false, true), (false, false));
-    assert_eq!(chooser_should_open_popup(false, false), (false, false));
-}
-
-#[test]
-fn chooser_reopens_after_a_close() {
-    let mut prev = false;
-    let (open, np) = chooser_should_open_popup(true, prev);
-    assert!(open, "first + add opens the chooser");
-    prev = np;
-    let (open, np) = chooser_should_open_popup(true, prev);
-    assert!(!open, "already open: no reopen");
-    prev = np;
-    let (open, np) = chooser_should_open_popup(false, prev);
-    assert!(!open);
-    prev = np;
-    assert!(!prev, "prev must track the close so + add can reopen");
-    let (open, _np) = chooser_should_open_popup(true, prev);
-    assert!(open, "the next + add bot reopens the chooser");
 }
 
 #[test]
@@ -5415,4 +5385,143 @@ fn typed_unlock_opens_terminal_and_trimmed_panel_vaults() {
         Session::open_vault_typed(&legacy, " nope "),
         Err(vault::VaultError::WrongPassphrase)
     ));
+}
+
+/// Content width of the docked Nav config window at scale 1: the width the
+/// review's screenshot clipped the Danger routing button at.
+const NAV_ROUTING_CONTENT_W: f32 = 330.0;
+/// Row of the Danger routing drop-down in the Routing group: after the scope
+/// note, the three checkboxes, the bank-fetch scope, and the drop-down's label.
+const DANGER_ROUTING_COMBO_ROW: usize = 6;
+
+/// One headless frame of the Routing group in a window whose content area is
+/// [`NAV_ROUTING_CONTENT_W`] wide. Returns the group as drawn and the content
+/// region's left and right edges.
+fn nav_routing_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    nav: &mut crate::nav_settings::NavSettings,
+) -> (super::TestRouting, [f32; 2]) {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let ui = ctx.frame();
+    let pad = ui.clone_style().window_padding()[0];
+    let mut drawn = None;
+    ui.window("##nav-routing")
+        .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+        .size(
+            [NAV_ROUTING_CONTENT_W + 2.0 * pad, 500.0],
+            dear_imgui_rs::Condition::Always,
+        )
+        .flags(
+            WindowFlags::NO_TITLE_BAR
+                | WindowFlags::NO_RESIZE
+                | WindowFlags::NO_MOVE
+                | WindowFlags::NO_SAVED_SETTINGS
+                | WindowFlags::NO_SCROLLBAR,
+        )
+        .build(|| {
+            let left = ui.cursor_screen_pos()[0];
+            let right = left + ui.content_region_avail()[0];
+            drawn = Some((super::draw_test_nav_routing(ui, nav), [left, right]));
+        });
+    ctx.render();
+    drawn.expect("the routing window draws its body")
+}
+
+/// [`nav_routing_frame`] with the pointer at `point`, the left button held
+/// when `pressed`.
+fn nav_routing_pointer_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    nav: &mut crate::nav_settings::NavSettings,
+    point: [f32; 2],
+    pressed: bool,
+) -> (super::TestRouting, [f32; 2]) {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    nav_routing_frame(ctx, nav)
+}
+
+/// Centre of an item rect, where a pointer click lands.
+fn rect_centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
+    [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
+}
+
+/// At the docked Nav config width every Routing row stays inside the content
+/// region at each Danger routing level. The drop-down spans the width, so its
+/// level names never clip; the old plain button ran past the edge at "availabl".
+#[test]
+fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
+        let mut nav = crate::nav_settings::NavSettings::default();
+        nav.set_danger_level(level);
+        let (routing, [left, right]) = nav_routing_frame(&mut ctx, &mut nav);
+        assert!(
+            ((right - left) - NAV_ROUTING_CONTENT_W).abs() < 0.5,
+            "the test window's content is the docked width, got {}",
+            right - left
+        );
+        // The scope note, three checkboxes, the bank-fetch scope, the drop-down's
+        // label and the drop-down, plus the note under a held level and the
+        // Always warning.
+        let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
+            + usize::from(level == frontend_core::DangerLevel::Always);
+        assert_eq!(routing.items.len(), 7 + notes, "routing rows at {level:?}");
+        for (index, item) in routing.items.iter().enumerate() {
+            let [min_x, _, max_x, _] = *item;
+            assert!(
+                min_x >= left - 0.5 && max_x <= right + 0.5,
+                "routing row {index} at {level:?} spans {min_x}..{max_x}, past the content region {left}..{right}"
+            );
+        }
+    }
+}
+
+/// Picking each Danger routing entry in the open drop-down stores that level
+/// and reports a change, so the Nav config saves the way the old button did.
+#[test]
+fn nav_danger_routing_drop_down_stores_each_picked_level() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let levels = frontend_core::walk_permissions::DANGER_ROUTING_LEVELS;
+    for (index, target) in levels.into_iter().enumerate() {
+        let mut nav = crate::nav_settings::NavSettings::default();
+        nav.set_danger_level(levels[(index + 1) % levels.len()]);
+        let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+        let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+
+        // Hover the drop-down, then press and release on it to open the popup.
+        for pressed in [false, true, false] {
+            nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+        }
+        // The popup lays out its entries a frame or two after it opens.
+        let mut choices = Vec::new();
+        for _ in 0..8 {
+            let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+            choices = routing.choices;
+            if choices.len() == levels.len() {
+                break;
+            }
+        }
+        assert_eq!(
+            choices.len(),
+            levels.len(),
+            "the open drop-down lists every level"
+        );
+
+        // Move onto the entry, then press and release on it.
+        let entry = rect_centre(choices[index]);
+        let mut changed = false;
+        for pressed in [false, false, true, false] {
+            let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, entry, pressed);
+            changed |= routing.changed;
+        }
+        assert!(changed, "picking {target:?} reports a change");
+        assert_eq!(nav.danger_level(), target, "the picked entry is stored");
+    }
 }

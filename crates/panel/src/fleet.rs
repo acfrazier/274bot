@@ -399,7 +399,8 @@ pub fn window(ui: &Ui, session: &mut Session) {
         return;
     }
     let mut open = true;
-    ui.window("Fleet###fleet-window")
+    crate::app::focus_if_requested(ui, session, crate::session::PanelWindow::Fleet);
+    ui.window(crate::session::PanelWindow::Fleet.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [760.0, 460.0]), Condition::FirstUseEver)

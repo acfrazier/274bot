@@ -1461,7 +1461,8 @@ pub fn draw_picker(
     let pos = ui.cursor_screen_pos();
     let avail = ui.content_region_avail();
     let mut open = true;
-    ui.window("WalkTo")
+    crate::app::focus_if_requested(ui, session, crate::session::PanelWindow::WalkTo);
+    ui.window(crate::session::PanelWindow::WalkTo.title())
         .opened(&mut open)
         .flags(walkto_window_flags() | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
         .position(pos, Condition::Always)

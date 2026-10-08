@@ -596,6 +596,10 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
         }
         let rows = draw(&mut app, width, height);
         assert!(
+            text(&rows).contains("Quester: Quest Paths (all bots)"),
+            "the Path-folder lead line stays visible at {width}x{height}: {rows:?}"
+        );
+        assert!(
             text(&rows).contains(frontend_core::quester_paths::LOAD_PATHS_LABEL),
             "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
         );
@@ -638,6 +642,37 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             app.on_key(key(KeyCode::Enter)),
             AppAction::ReloadPaths,
             "the settings command routes reload without starting a Path"
+        );
+    }
+}
+
+#[test]
+fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
+    for (width, height) in [(80, 24), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.show_screen(Screen::Overview);
+        assert_eq!(app.on_key(ch('o')), AppAction::None);
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Down));
+        }
+        let rows = draw(&mut app, width, height);
+        let shown = text(&rows);
+        assert_eq!(
+            shown
+                .matches("Settings are global except where otherwise specified.")
+                .count(),
+            1,
+            "the routing scope is one shared note at {width}x{height}: {rows:?}"
+        );
+        let note = shown.find("Settings are global").expect("routing note");
+        let teleports = shown.find("allow teleports:").expect("teleports row");
+        assert!(
+            note < teleports,
+            "the note heads the routing rows at {width}x{height}: {rows:?}"
+        );
+        assert!(
+            shown.contains("Manual WalkTo only."),
+            "bank fetch keeps its own scope at {width}x{height}: {rows:?}"
         );
     }
 }

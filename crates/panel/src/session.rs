@@ -900,11 +900,10 @@ pub struct Session {
     /// Explicit retarget of an unsaved edit form, awaiting the Discard /
     /// Keep editing prompt. `None` means no switch is waiting.
     pub pending_edit_switch: Option<EditSwitch>,
-    /// A Discard / Keep editing prompt was staged: the Profiles window must
-    /// come to the front (it may be a hidden tab when the leave came from
-    /// another window, or from the tab's own ✕) so the prompt shows. The
-    /// window takes it once.
-    pub focus_profiles: bool,
+    /// One-shot focus request from [`Session::open_window`] (or a staged
+    /// Profiles leave prompt, which must come to the front even from a
+    /// hidden tab): the named window's next `Begin` takes it once.
+    pub window_focus: Option<PanelWindow>,
     /// The edit form's save feedback (its inline refusal, or `Saved <name>.`
     /// once the write is durable) and the credentials Save still being
     /// written: its profile is selected (and spawned) only after the write
@@ -1410,7 +1409,7 @@ impl Session {
             chooser_edit: None,
             chooser_form: 0,
             pending_edit_switch: None,
-            focus_profiles: false,
+            window_focus: None,
             chooser_save: frontend_core::ProfileFormSave::default(),
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
@@ -3193,12 +3192,13 @@ impl Session {
 
     /// After unlock/`spawn_all`: restore `last_focus` when it is still a
     /// vault/slot name; otherwise focus the first so the combo and renderer
-    /// are not stuck on `None`.
+    /// are not stuck on `None`. Mode-aware like a chooser row pick: with
+    /// MultiBox already on, the profile joins the rail ([`Self::load`]).
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
         let last = crate::ui_state::load().last_focus;
         if let Some(name) = crate::ui_state::pick_focus(&names, last.as_deref()) {
-            self.select(&name);
+            self.pick_profile(&name);
         }
     }
 
@@ -4158,8 +4158,10 @@ impl Session {
         let (op, added) = core.load(name, &mut surface);
         self.report_failure(op);
         // Load all / chooser rows spawn onto the rail and focus the member
-        // (the flat model's "click" — the Game pane samples this slot).
+        // (the flat model's "click" — the Game pane samples this slot). The
+        // script card follows the focused profile, as in `select`.
         self.apply_focus(name);
+        self.restore_script_heading(name);
         self.sync_wall_focus();
         added
     }
@@ -4176,6 +4178,7 @@ impl Session {
         if let Some(last) = self.core.members().last() {
             let last = last.clone();
             self.apply_focus(&last);
+            self.restore_script_heading(&last);
         }
         self.sync_wall_focus();
         added
@@ -4789,10 +4792,11 @@ impl Session {
         self.walk_send.sync_walk_label();
     }
 
-    /// Open the WalkTo picker for the Fleet window's marked bots: group
-    /// mode, checked from the marks (a mark is never added here).
+    /// Open (or bring forward) the WalkTo picker for the Fleet window's
+    /// marked bots: group mode, checked from the marks (a mark is never
+    /// added here).
     pub fn open_walkto_for_marked(&mut self) {
-        self.walkto_open = true;
+        self.open_window(PanelWindow::WalkTo);
         self.refresh_walk_send();
         self.walk_send.mode = WalkSendMode::Group;
         self.walk_send.sync_walk_label();
@@ -5259,7 +5263,9 @@ impl Drop for Session {
 }
 
 mod chooser;
+mod windows;
 pub use chooser::{EditLeave, EditSwitch};
+pub use windows::PanelWindow;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

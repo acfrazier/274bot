@@ -212,7 +212,8 @@ pub fn window(ui: &Ui, session: &mut Session) {
     let position = viewport.pos();
     let scale = ui_scale(ui);
     let height = scale_px(ui, (viewport.size()[1] / scale - 40.0).clamp(240.0, 560.0));
-    ui.window("Loadouts")
+    crate::app::focus_if_requested(ui, session, crate::session::PanelWindow::Loadouts);
+    ui.window(crate::session::PanelWindow::Loadouts.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .position(
