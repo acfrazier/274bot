@@ -21,12 +21,12 @@
 //! matching `274bot.navflags`; borrowed older-format packs fail closed.
 //!
 //! ```text
-//! HOME=/Volumes/dev-scratch/274bot-evidence/COOK-BANK-LOOP/home CARGO_HOME=/Users/acfrazier/.cargo RUSTUP_HOME=/Users/acfrazier/.rustup \
-//! ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine BOT_NAV_SNAPSHOT_ROOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots \
+//! HOME=<throwaway-home> \
+//! ENGINE_DIR=<engine-dir> BOT_NAV_SNAPSHOT_ROOT=<decoded-cache-snapshot-root> \
 //! LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=ck WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 \
-//! WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine WORLD_NAV_PACK="$PWD/target/debug/nav/289/274bot.navpack" \
-//! NAV_FLAGS="$PWD/target/debug/nav/289/274bot.navflags" RS2B0T=/Users/acfrazier/experiments/rs2b0t \
-//! BOT_CACHE_DIR=<owned-writable-APFS-clone-prepared-for-this-run> LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/COOK-BANK-LOOP \
+//! WORLD_ENGINE_DIR=<engine-dir> WORLD_NAV_PACK="$PWD/target/debug/nav/289/274bot.navpack" \
+//! NAV_FLAGS="$PWD/target/debug/nav/289/274bot.navflags" RS2B0T=<catalog-root> \
+//! BOT_CACHE_DIR=<owned-writable-APFS-clone-prepared-for-this-run> LIVE_EVIDENCE_DIR=<evidence-root> \
 //! cargo test -p host-play --test cook_bank_loop_live --features "live-harness test-support" -- --ignored --nocapture --test-threads=1
 //! ```
 

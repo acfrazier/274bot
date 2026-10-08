@@ -8,7 +8,7 @@
 //! kept immutable. The common runner documents all required environment.
 //!
 //! ```text
-//! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qn WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<nav-pack> WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> BOT_CACHE_DIR=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/QUESTER-FAMILIES-1 cargo test -p host-play --test quester_families_live --features "live-harness test-support" live_quester_families_expected_combat -- --ignored --nocapture --test-threads=1
+//! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qn WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<nav-pack> WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> BOT_CACHE_DIR=<owned-writable-cache-snapshot> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --test quester_families_live --features "live-harness test-support" live_quester_families_expected_combat -- --ignored --nocapture --test-threads=1
 //! ```
 #![cfg(all(feature = "live-harness", feature = "test-support"))]
 

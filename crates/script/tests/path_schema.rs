@@ -1669,14 +1669,13 @@ fn totem_coin_float_covers_the_round_trip_fare() {
 /// `solve-combination` anchors east of the door while `disarm-trap`
 /// anchors west of it with no nav edge between.
 #[test]
-#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn totem_mansion_descent_reaches_the_return_boat() {
     use api::WorldTile;
     use nav::router::{find_with, FindOptions, Leg};
     use nav::transport::TransportKind;
     use nav::world::NavWorld;
     use nav::WorldState;
-    use std::path::PathBuf;
 
     let _home = script::IsolatedEnv::enter("path-schema-totem-descent-pack");
     let (selected, quests) = selected_and_quests();
@@ -1827,9 +1826,7 @@ fn totem_mansion_descent_reaches_the_return_boat() {
     );
     compile_value(value, &selected, &quests).expect("totem compiles");
 
-    let pack = PathBuf::from(
-        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
-    );
+    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -1925,14 +1922,13 @@ fn totem_mansion_descent_reaches_the_return_boat() {
 /// must end outside it at (3305,3492); the old (3305,3496) target is NoPath
 /// from outside even with zones exempt.
 #[test]
-#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn fluffs_yard_entry_walks_end_outside_the_fence() {
     use api::WorldTile;
     use nav::router::{find_with, FindOptions};
     use nav::world::NavWorld;
     use nav::zones::ZoneExempt;
     use nav::WorldState;
-    use std::path::PathBuf;
 
     let _home = script::IsolatedEnv::enter("path-schema-fluffs-fence-pack");
     let mut value = read_path(&paths_dir().join("fluffs.json"));
@@ -1946,9 +1942,7 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
         );
     }
 
-    let pack = PathBuf::from(
-        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
-    );
+    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -2005,14 +1999,13 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
 /// site back to Trufitus, cave back to the exit rocks) and the druid
 /// missing-meat recovery walk, which now carry the outbound grants.
 #[test]
-#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn danger_cross_grants_route_low_combat_legs() {
     use api::WorldTile;
     use nav::router::{find_with, FindOptions};
     use nav::world::NavWorld;
     use nav::zones::ZoneExempt;
     use nav::WorldState;
-    use std::path::PathBuf;
 
     let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
     let mut druid = read_path(&paths_dir().join("druid.json"));
@@ -2120,9 +2113,7 @@ fn danger_cross_grants_route_low_combat_legs() {
         );
     }
 
-    let pack = PathBuf::from(
-        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
-    );
+    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -2261,4 +2252,9 @@ fn danger_cross_grants_route_low_combat_legs() {
             panic!("named grants route ({fx},{fz}) -> ({tx},{tz}) at {cl}: {error:?}")
         });
     }
+}
+
+/// The real 289 nav pack for the ignored route tests, from `NAV_PACK`.
+fn real_nav_pack() -> PathBuf {
+    PathBuf::from(std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"))
 }
