@@ -65,6 +65,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Ranged fights that can't confirm the weapon's combat tab or the requested
   style now stop with a clear preparation-readiness reason after eight
   observed ticks, instead of waiting out the full fight budget.
+- Ranged fights count every shot the bot fires. Before, a fight could report
+  zero attacks, while arrows were used and Ranged XP rose, whenever another
+  player stood on the bot's tile.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
