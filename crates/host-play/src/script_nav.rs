@@ -295,7 +295,7 @@ pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey
 /// carries its own one-walk hint (`walk_map/actions.rs`); compat scripts get
 /// the `crossZones` hint from [`compat_zone_no_route_line`].
 const SCRIPT_DANGER_HINT: &str =
-    "to allow it, set Danger routing to Always in Nav config, or allow danger zones for this script in Script prefs";
+    "to allow it, set Danger routing to Always in Nav config, or allow danger zones in the script's own settings if it has that option";
 
 pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
     let names = keys
