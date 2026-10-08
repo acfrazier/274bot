@@ -1043,7 +1043,7 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  /** `null` until the card publishes its first status */\n");
     out.push_str("  status: CombatStatus | null;\n");
     out.push_str("}\n\n");
-    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'unresponsive'. */\n");
+    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive'. */\n");
     out.push_str("export interface CombatReport {\n");
     out.push_str(
         "  end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';\n",

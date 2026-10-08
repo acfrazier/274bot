@@ -484,7 +484,9 @@ The terminal is the nested `value` of the `done` envelope:
 - `fought` carries the machine's `report`: `end` (`killed`, `target-gone`,
   `no-target`, `budget`, `died` or `aborted`), `reason` for `aborted`
   (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
-  `prep-failed:<weapon|shield|ammo|staff|arm>`, `unresponsive`, ...), the
+  `prep-failed:<weapon|shield|ammo|staff|arm>`,
+  `prep-readiness:combat-root-missing`, `prep-readiness:combat-root-wrong`,
+  `prep-readiness:style-echo-missing`, `unresponsive`, ...), the
   engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,
   `damageTaken`, `food`, `prayerDoses`, `boostDoses`, `antifireDoses`,
   `protectSwitches`).

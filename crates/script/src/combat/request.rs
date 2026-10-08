@@ -221,6 +221,12 @@ pub enum PrepItem {
     Arm,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum PrepReadiness {
+    CombatRootMissing,
+    CombatRootWrong,
+    StyleEchoMissing,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AbortReason {
     Unprotected(Unprotected),
     Unattackable,
@@ -228,6 +234,7 @@ pub enum AbortReason {
     Retreated,
     RetreatFailed,
     PrepFailed(PrepItem),
+    PrepReadiness(PrepReadiness),
     Unresponsive,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
