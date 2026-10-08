@@ -813,17 +813,21 @@ pub(super) fn compile_uncached(
     }
     let mut loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>> = HashMap::new();
     let mut carry_row_count = 0usize;
-    for name in header.loadouts.keys() {
+    for (name, authored) in &header.loadouts {
         let qualified = format!("{}/{}", document.id.0, name);
-        let row = loadouts
+        let loadout = loadouts
             .resolve(&qualified)
-            .ok_or_else(|| CompileError::code("unknown-loadout"))?
-            .row();
-        let mut carry = Vec::with_capacity(row.carry.len());
-        for entry in &row.carry {
-            let (item, stackable) = resolve_bank_item_with_stackable(selected, &entry.item)?;
-            let qty =
-                i32::try_from(entry.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
+            .ok_or_else(|| CompileError::code("unknown-loadout"))?;
+        let row = loadout.row();
+        let operator_override = loadout.operator_override();
+        let mut carry = Vec::with_capacity(if operator_override {
+            row.carry.len()
+        } else {
+            authored.carry.len()
+        });
+        let mut add_carry = |key: &str, qty: u32| -> Result<(), CompileError> {
+            let (item, stackable) = resolve_bank_item_with_stackable(selected, key)?;
+            let qty = i32::try_from(qty).map_err(|_| CompileError::code("invalid-quantity"))?;
             if carry_row_count >= u64::BITS as usize {
                 return Err(CompileError::code("too-many-carry-rows"));
             }
@@ -835,6 +839,18 @@ pub(super) fn compile_uncached(
                 stackable,
                 latch_index,
             });
+            Ok(())
+        };
+        if operator_override {
+            for entry in &row.carry {
+                add_carry(&entry.item, entry.qty)?;
+            }
+        } else {
+            // The shared Loadouts rows use display names. Provisioning must
+            // retain authored aliases: different objects can share a name.
+            for entry in &authored.carry {
+                add_carry(&entry.item, entry.qty)?;
+            }
         }
         loadout_carry.insert(Arc::from(qualified), Arc::from(carry));
     }
@@ -2595,6 +2611,44 @@ mod tests {
         assert_eq!(error.code.as_ref(), "unresolved-progress-stage");
         assert_eq!(error.path, FactKey::new("cook"));
         assert!(error.step.is_some());
+    }
+
+    #[test]
+    fn compiled_loadout_carry_preserves_authored_alias_identity() {
+        let _home = crate::IsolatedEnv::enter("quester-carry-alias-identity");
+        let data = selected();
+        let quests = quests(&data);
+        let coins = data.item_by_alias("coins").unwrap();
+        assert!(coins.stackable);
+        assert_ne!(data.resolve_item_name("Coins").unwrap().id, coins.id);
+        let mut document: serde_json::Value = serde_json::from_str(COOK_JSON).unwrap();
+        document["quest"]["loadouts"] = serde_json::json!({
+            "cash": {
+                "worn": {},
+                "carry": [{ "item": "coins", "qty": 1000 }]
+            }
+        });
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let carry = &path.provisioning.loadout_carry["cook/cash"];
+        assert_eq!(carry.len(), 1);
+        assert_eq!(carry[0].item.id, coins.id);
+        assert_eq!(carry[0].qty, 1000);
+        assert_eq!(carry[0].stackable, coins.stackable);
+
+        let potion = data.item_by_alias("4doseprayerrestore").unwrap();
+        let display = potion.name.as_deref().unwrap();
+        let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
+        store.upsert(crate::loadouts_store::Loadout::new("cook/cash").with_carry(display, 2));
+        store.save().unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let carry = &path.provisioning.loadout_carry["cook/cash"];
+        assert_eq!(carry.len(), 1);
+        assert_eq!(
+            carry[0].item.id,
+            data.resolve_item_name(display).unwrap().id
+        );
+        assert_eq!(carry[0].qty, 2);
     }
 
     #[test]

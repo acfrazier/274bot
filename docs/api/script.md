@@ -366,9 +366,10 @@ step for retry selection; Start still rereads server quest evidence. Panel and
 TUI consume the same status fields.
 
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
-`4doseprayerrestore`. Compilation resolves each worn and carried item once into
-the display-name rows consumed by Loadouts; operator overrides remain ordinary
-display-name Loadouts rows.
+`4doseprayerrestore`. Compilation builds the display-name rows consumed by
+Loadouts, while provisioning preserves the authored aliases' exact item IDs and
+stackability even when items share a display name. Operator overrides remain
+ordinary display-name Loadouts rows.
 Certificate aliases in either header section are rejected before that conversion;
 the shared display name must not erase a certificate's distinct item identity.
 
