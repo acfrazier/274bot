@@ -706,14 +706,14 @@ freezes manual/scenario movement during script Starting/Running/Paused/
 Stopping, native movement or an existing escape obligation.
 Advisory `assess_walk` never acquires that movement ownership.
 
-The stored default is **When survivable**, but S2b's single
+The stored default is **When survivable**, but the survivable-routing change's single
 `NET_AVAILABLE=false` gate makes it effective Never for every preference
 source, including migration and explicit selection. While held, default and
-inherited walks keep exactly the pre-S2b router outcome and route, including
+inherited walks keep exactly the pre-survivable-routing router outcome and route, including
 origin-inside walks and destination-zone completion. Their assessments are
 informational, not new admission refusals; a held manual NoPath neither
 creates a walk arm nor stops the one already walking. Explicit script/per-walk
-overrides and named grants keep their S2b semantics. Panel and TUI display the
+overrides and named grants keep their survivable-routing semantics. Panel and TUI display the
 held middle level as **When survivable (not available yet: acts as Never)**; the
 host emits one informational held-state note per slot session, not a warning on
 every walk.
@@ -722,7 +722,7 @@ The hold lasts until the bot can track poison live: until then the middle level 
 The live observer, ordinary-walk safety behavior and escape execution belong
 to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and
-full FLOOR, may flip availability; an S2c merge by itself does not enable
+full FLOOR, may flip availability; a poison-observer merge by itself does not enable
 the middle level.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,

@@ -233,8 +233,8 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
         BUNDLED_INDEX
             .paths
             .iter()
-            .filter_map(|entry| registry::bundled_path(&entry.id))
-            .map(|bytes| {
+            .filter_map(|entry| registry::bundled_path(&entry.id).map(|bytes| (entry, bytes)))
+            .map(|(entry, bytes)| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
                 let mut stages = document
@@ -273,6 +273,7 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
                                 .as_ref()
                                 .is_some_and(|progress| !progress.rules.is_empty())
                         }),
+                    draft: entry.status == Some(ReleasePathStatus::Draft),
                     stages: stages.into(),
                 }
             })

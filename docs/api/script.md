@@ -142,8 +142,8 @@ the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session; `api.combat.fight` runs one
 fight of the native Combat machine the same way, and `api.snapshot.combat`
 reports its live session. `api.questPaths()` is a sync read of the release Path
-index for the twenty-five bundled Paths (twenty released, five draft guides),
-needing no seat;
+index for the twenty-five bundled Paths (twenty released, five draft guides; each
+row's `draft` says which), needing no seat;
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the
@@ -1382,12 +1382,12 @@ The panel Nav config and TUI settings share these global permissions in
 walks. Danger has three levels: **Never**, **When survivable** (the stored
 default), and **Always**. The middle level stores `allow_danger_zones=false`
 and `survivable_routing=true`; Always stores the danger grant, and Never
-clears both. **S2b keeps `host_play::NET_AVAILABLE=false`**: every middle-level
+clears both. **The survivable-routing change keeps `host_play::NET_AVAILABLE=false`**: every middle-level
 source resolves to Never, displayed as “When survivable (not available yet:
-acts as Never)”. Default/inherited walks preserve the pre-S2b router result,
+acts as Never)”. Default/inherited walks preserve the pre-survivable-routing router result,
 including origin-inside escapes and endpoint completion, with assessments
 informational only. A held-state informational note is logged once per session.
-Explicit script/per-walk overrides retain their S2b admission semantics.
+Explicit script/per-walk overrides retain their survivable-routing admission semantics.
 Only the integrated acceptance gate can enable the middle level.
 The map danger control remains an explicit grant for this walk, independent
 of the middle-level gate. Native scripts cannot use BankBudget, even when
@@ -1439,12 +1439,12 @@ walk/event budget, arms no route or guard, and may run during a live escape.
 It can be requested without a foreground action handle; its run-owned
 compute authority does not replace or revoke the foreground walk or interaction.
 Taking it, replacing it or revoking the script run invalidates the old request.
-It is not exposed as a new JS API in S2b.
+It is not exposed as a new JS API in the survivable-routing change.
 
-S2b has no trustworthy live poison observer. A fresh entering crossing's
+The survivable-routing change has no trustworthy live poison observer. A fresh entering crossing's
 assessment can therefore be `Unknown(Poison)`, not a claim of survivability.
 While activation is held, this does not change default/inherited admission.
-An explicit Forbid still applies S2b assessment refusal, while an explicit Allow
+An explicit Forbid still applies survivable-routing assessment refusal, while an explicit Allow
 may proceed with its honest Unknown assessment. A refused route cannot take its
 own first hop to clear uncertainty, and waiting alone does not clear it.
 Zero entering crossings are always admitted, even under unknown/player attackers,
@@ -1453,7 +1453,7 @@ engaged in (inside its active acquisition area) is not entry; walking into a
 zone from inside only its pursuit envelope is, and so is re-entry after
 exiting. A failed assessment (for example `Unknown(Overflow)`) is refused by
 every enforcing non-Proceed admission. The same rules hold at publication.
-Recovery evidence becomes usable only with S2c's observer.
+Recovery evidence becomes usable only with the live poison observer.
 An assessment does not fetch supplies or execute an escape.
 
 The guard holds protection without attacking or flicking. It uses Combat's eat

@@ -225,6 +225,7 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
                 "id": entry.id,
                 "display": document.display_name,
                 "journal": !role.progress.as_ref().unwrap().rules.is_empty(),
+                "draft": entry.status == Some(script::quester::queue::ReleasePathStatus::Draft),
                 "stages": stages,
             })
         })
@@ -234,8 +235,9 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
         iso.probe("__api.questPaths() instanceof Promise").unwrap(),
         false
     );
+    let paths = iso.probe("__api.questPaths()").unwrap();
     assert_eq!(
-        iso.probe("__api.questPaths()").unwrap(),
+        paths,
         serde_json::json!({
             "ok": true,
             "value": {
@@ -243,6 +245,17 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
             }
         })
     );
+    let draft_of = |id: &str| {
+        paths["value"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("{id} row is missing"))["draft"]
+            .clone()
+    };
+    assert_eq!(draft_of("druid"), serde_json::json!(true));
+    assert_eq!(draft_of("cook"), serde_json::json!(false));
     iso.join();
 }
 
