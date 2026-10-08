@@ -3558,6 +3558,140 @@ fn ranged_wrong_ammo_aborts_prep_without_attack() {
     );
 }
 
+fn ranged_readiness_fixture(style_echo: bool) -> (Scene, CombatRequest, i32) {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    let bow_id = bow.def.id;
+    let mut arrows = scene.held("steel_arrow", 13);
+    arrows.container = ItemContainer::Equipment;
+    arrows.count = 50;
+    let arrow_id = arrows.def.id;
+    let tab = scene.tables.weapon_style(bow_id).unwrap().tab.unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    if style_echo {
+        scene.varps.push(VarpView {
+            index: scene.data.ranged_mode_varp().unwrap(),
+            value: i32::from(rapid.slot),
+        });
+    }
+    scene.equipment = vec![bow, arrows];
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.ranged_style = RangedMode::Rapid;
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, bow_id), (13, arrow_id)]),
+        ..CompiledKit::default()
+    }));
+    (scene, request, root)
+}
+
+fn assert_readiness_aborts_after_eight(
+    scene: &Scene,
+    request: CombatRequest,
+    expected_reason: &str,
+) {
+    let mut harness = Harness::new(scene, request);
+    for tick in 1_u64..8 {
+        assert!(
+            matches!(harness.poll(&scene.snapshot, tick), Poll::Pending),
+            "readiness must remain pending through observed tick {tick}"
+        );
+        assert_eq!(harness.machine.end, None);
+        harness.drain(None);
+    }
+    let report = harness.ready(scene, 8);
+    let summary = crate::api_combat::CombatSummary::from(&report);
+    assert_eq!(summary.reason.as_deref(), Some(expected_reason));
+    assert_eq!(report.ticks, 8);
+}
+
+#[test]
+fn ranged_combat_root_missing_aborts_after_eight_observed_ticks() {
+    let (scene, request, _) = ranged_readiness_fixture(false);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-missing");
+}
+
+#[test]
+fn ranged_combat_root_wrong_aborts_after_eight_observed_ticks() {
+    let (mut scene, request, _) = ranged_readiness_fixture(false);
+    scene.combat_tab(5855);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-wrong");
+}
+
+#[test]
+fn ranged_style_echo_missing_aborts_after_eight_observed_ticks() {
+    let (mut scene, request, root) = ranged_readiness_fixture(false);
+    scene.combat_tab(root);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:style-echo-missing");
+}
+
+#[test]
+fn ranged_root_arriving_on_seventh_observed_tick_still_fights() {
+    let (mut scene, request, root) = ranged_readiness_fixture(true);
+    let mut harness = Harness::new(&scene, request);
+    for tick in 1..7 {
+        assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+        harness.drain(None);
+    }
+    scene.combat_tab(root);
+    let batch = harness.pending_batch(&scene, 7);
+    assert!(
+        (0..batch.len()).any(|index| matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack"
+        )),
+        "the requested style echo and a root arriving on tick 7 must let combat proceed"
+    );
+    assert_eq!(harness.machine.end, None);
+}
+
+#[test]
+fn ranged_readiness_bound_ignores_same_tick_repolls() {
+    let (scene, request, _) = ranged_readiness_fixture(false);
+    let mut harness = Harness::new(&scene, request);
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    for sequence in 2..=32 {
+        assert!(matches!(
+            harness.poll_stamp(&scene.snapshot, 1, sequence),
+            Poll::Pending
+        ));
+    }
+    assert_eq!(harness.machine.counters.ticks, 1);
+    harness.drain(None);
+    for tick in 2..8 {
+        assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+        assert_eq!(harness.machine.end, None);
+        harness.drain(None);
+    }
+    let report = harness.ready(&scene, 8);
+    let summary = crate::api_combat::CombatSummary::from(&report);
+    assert_eq!(
+        summary.reason.as_deref(),
+        Some("prep-readiness:combat-root-missing")
+    );
+    assert_eq!(report.ticks, 8);
+}
+
+#[test]
+fn ranged_readiness_bound_does_not_outlive_request_budget() {
+    let (scene, mut request, _) = ranged_readiness_fixture(false);
+    request.budget_ticks = 4;
+    let mut harness = Harness::new(&scene, request);
+    for tick in 1..4 {
+        assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+        harness.drain(None);
+    }
+    assert_eq!(harness.ready(&scene, 4).end, CombatEnd::Budget);
+}
+
 #[test]
 fn ranged_prep_waits_for_style_observation_then_ammo_out_is_explicit() {
     let mut scene = Scene::new("cow");

@@ -29,6 +29,18 @@ enum Phase {
     Escape,
     WindDown,
 }
+#[derive(Clone, Copy, Default)]
+enum RangedReadinessWait {
+    #[default]
+    Inactive,
+    CombatRoot {
+        since: u16,
+    },
+    StyleEcho {
+        since: u16,
+    },
+}
+const PREP_READINESS_TICKS: u16 = 8;
 #[derive(Default)]
 struct Counters {
     ticks: u16,
@@ -83,6 +95,7 @@ struct RangedState {
     pickup_baseline: i32,
     sweep_attempts: u8,
     sweep_done: bool,
+    readiness_wait: RangedReadinessWait,
 }
 
 /// One request has one attack style; idle runs do not carry other styles' state.
@@ -264,6 +277,7 @@ impl NativeMachine for Combat {
                 pickup_baseline: 0,
                 sweep_attempts: 0,
                 sweep_done: false,
+                readiness_wait: RangedReadinessWait::Inactive,
             })),
             Style::Melee => StyleState::Melee(MeleeState {
                 anim_id: -1,
@@ -465,6 +479,13 @@ impl NativeMachine for Combat {
                 };
                 if let Some(reason) = failure {
                     self.finish(CombatEnd::Aborted(reason), tick);
+                }
+            }
+            // The request-wide deadline is checked above; this narrower wait
+            // consumes only fresh observations, even while style work is locked.
+            if self.phase == Phase::Prep && self.request.style == Style::Ranged {
+                if let Some(reason) = self.ranged_readiness_abort(&frame, None) {
+                    self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
                 }
             }
         }
@@ -2168,8 +2189,14 @@ impl Combat {
             self.wear(&mut plan, frame, tick);
             self.style(&mut plan, frame, tick);
             // Ranged Prep waits for the exact tab and observed style echo.
-            if self.request.style == Style::Ranged && !self.ranged_ready(frame) {
-                return Ok(plan);
+            if self.request.style == Style::Ranged {
+                if let Some(reason) = self.ranged_readiness_abort(frame, Some(&plan)) {
+                    self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
+                    return self.plan(frame, tick, cx);
+                }
+                if !self.ranged_ready(frame) {
+                    return Ok(plan);
+                }
             }
             if self.request.style == Style::Mage && self.magic_prepare(&mut plan, frame, tick, cx) {
                 return Ok(plan);
@@ -2589,6 +2616,76 @@ impl Combat {
             .ranged_modes()
             .iter()
             .find(|row| row.tab == tab as u8 && row.mode == self.request.ranged_style as u8)
+    }
+
+    fn ranged_readiness_abort(
+        &mut self,
+        frame: &Frame<'_>,
+        plan: Option<&TickPlan>,
+    ) -> Option<PrepReadiness> {
+        if self.request.style != Style::Ranged {
+            return None;
+        }
+        if self.phase != Phase::Prep {
+            self.ranged_mut().readiness_wait = RangedReadinessWait::Inactive;
+            return None;
+        }
+        let ammo_id = self.ranged().ammo_pick;
+        let Some(weapon) = frame
+            .equipment
+            .iter()
+            .find(|row| row.slot == 3 && row.count > 0)
+        else {
+            self.ranged_mut().readiness_wait = RangedReadinessWait::Inactive;
+            return None;
+        };
+        if ammo_id < 0
+            || self.desired(3).is_some_and(|id| id != weapon.def.id)
+            || !frame.equipment.iter().any(|row| {
+                row.def.id == ammo_id && row.count > 0 && (row.slot == 3 || row.slot == 13)
+            })
+            || self.pending_row(RowKind::Wear)
+            || plan.is_some_and(|plan| plan.contains(RowKind::Wear))
+        {
+            self.ranged_mut().readiness_wait = RangedReadinessWait::Inactive;
+            return None;
+        }
+
+        let expected_root = self
+            .tables
+            .weapon_style(weapon.def.id)
+            .and_then(|style| style.tab)
+            .and_then(|tab| self.tables.combat_tab_root(tab));
+        let root_matches = expected_root.is_some() && frame.combat_tab == expected_root;
+        if root_matches && self.ranged_ready(frame) {
+            self.ranged_mut().readiness_wait = RangedReadinessWait::Inactive;
+            return None;
+        }
+
+        // `counters.ticks` advances once per fresh combat observation; the
+        // poll's evidence guard prevents same-tick re-polls aging this wait.
+        let since = match (root_matches, self.ranged().readiness_wait) {
+            (false, RangedReadinessWait::CombatRoot { since })
+            | (true, RangedReadinessWait::StyleEcho { since }) => since,
+            _ => self.counters.ticks,
+        };
+        self.ranged_mut().readiness_wait = if root_matches {
+            RangedReadinessWait::StyleEcho { since }
+        } else {
+            RangedReadinessWait::CombatRoot { since }
+        };
+        if self.counters.ticks.saturating_sub(since) < PREP_READINESS_TICKS - 1 {
+            return None;
+        }
+
+        self.ranged_mut().readiness_wait = RangedReadinessWait::Inactive;
+        Some(if root_matches {
+            PrepReadiness::StyleEchoMissing
+        } else if frame.combat_tab.is_none() {
+            PrepReadiness::CombatRootMissing
+        } else {
+            PrepReadiness::CombatRootWrong
+        })
     }
 
     fn ranged_ready(&self, frame: &Frame<'_>) -> bool {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::combat::{
     AbortReason, Allowances, CombatEnd, CombatReport, CombatRequest, Fallback, IntruderPolicy,
-    Pick, PrayerMode, Style, Tactic, Target, Unprotected,
+    Pick, PrayerMode, PrepReadiness, Style, Tactic, Target, Unprotected,
 };
 use crate::native::ActionError;
 use api::WorldTile;
@@ -145,6 +145,9 @@ const REASON_UNRESPONSIVE: u8 = 7;
 const REASON_RETREATED: u8 = 8;
 const REASON_RETREAT_FAILED: u8 = 9;
 const REASON_SAFESPOT_BROKEN: u8 = 10;
+const REASON_PREP_COMBAT_ROOT_MISSING: u8 = 11;
+const REASON_PREP_COMBAT_ROOT_WRONG: u8 = 12;
+const REASON_PREP_STYLE_ECHO_MISSING: u8 = 13;
 
 /// Compact combat report for the `combat` page field. Built by the driver
 /// from `Poll::Ready`; the machine only reads the JSON.
@@ -252,6 +255,9 @@ impl Outcome {
             REASON_NO_RUNES => "no_runes",
             REASON_UNATTACKABLE => "unattackable",
             REASON_PREP_FAILED => "prep_failed",
+            REASON_PREP_COMBAT_ROOT_MISSING => "prep-readiness:combat-root-missing",
+            REASON_PREP_COMBAT_ROOT_WRONG => "prep-readiness:combat-root-wrong",
+            REASON_PREP_STYLE_ECHO_MISSING => "prep-readiness:style-echo-missing",
             REASON_UNRESPONSIVE => "unresponsive",
             REASON_RETREATED => "retreated",
             REASON_RETREAT_FAILED => "retreat_failed",
@@ -269,6 +275,13 @@ fn abort_reason(reason: AbortReason) -> u8 {
         AbortReason::Unprotected(Unprotected::NoRunes) => REASON_NO_RUNES,
         AbortReason::Unattackable => REASON_UNATTACKABLE,
         AbortReason::PrepFailed(_) => REASON_PREP_FAILED,
+        AbortReason::PrepReadiness(PrepReadiness::CombatRootMissing) => {
+            REASON_PREP_COMBAT_ROOT_MISSING
+        }
+        AbortReason::PrepReadiness(PrepReadiness::CombatRootWrong) => REASON_PREP_COMBAT_ROOT_WRONG,
+        AbortReason::PrepReadiness(PrepReadiness::StyleEchoMissing) => {
+            REASON_PREP_STYLE_ECHO_MISSING
+        }
         AbortReason::Unresponsive => REASON_UNRESPONSIVE,
         AbortReason::Retreated => REASON_RETREATED,
         AbortReason::RetreatFailed => REASON_RETREAT_FAILED,
@@ -590,6 +603,38 @@ impl ClueRuntime {
                     None => self.emit("wait"),
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prep_readiness_reasons_remain_distinct_in_clue_reports() {
+        for (readiness, expected) in [
+            (
+                PrepReadiness::CombatRootMissing,
+                "prep-readiness:combat-root-missing",
+            ),
+            (
+                PrepReadiness::CombatRootWrong,
+                "prep-readiness:combat-root-wrong",
+            ),
+            (
+                PrepReadiness::StyleEchoMissing,
+                "prep-readiness:style-echo-missing",
+            ),
+        ] {
+            let outcome = Outcome {
+                id: 1,
+                engaged_type: 81,
+                ticks: 8,
+                end: OutcomeEnd::Aborted,
+                reason: abort_reason(AbortReason::PrepReadiness(readiness)),
+            };
+            assert_eq!(outcome.page()["reason"].as_str(), Some(expected));
         }
     }
 }

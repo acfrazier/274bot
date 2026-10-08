@@ -7,7 +7,7 @@
 //! [`crate::combat::CombatRequest`]. The machine itself is not changed.
 use crate::combat::{
     AbortReason, Allowances, CombatReport, CombatRequest, CombatTables, MeleeMode, Pick, PrepItem,
-    RangedMode, SpellRef, Style, Target, Unprotected,
+    PrepReadiness, RangedMode, SpellRef, Style, Target, Unprotected,
 };
 use crate::native::ConfigError;
 use api::gather_methods::SceneRegionInput;
@@ -653,6 +653,15 @@ fn abort_reason(reason: AbortReason) -> &'static str {
         AbortReason::PrepFailed(PrepItem::Ammo) => "prep-failed:ammo",
         AbortReason::PrepFailed(PrepItem::Staff) => "prep-failed:staff",
         AbortReason::PrepFailed(PrepItem::Arm) => "prep-failed:arm",
+        AbortReason::PrepReadiness(PrepReadiness::CombatRootMissing) => {
+            "prep-readiness:combat-root-missing"
+        }
+        AbortReason::PrepReadiness(PrepReadiness::CombatRootWrong) => {
+            "prep-readiness:combat-root-wrong"
+        }
+        AbortReason::PrepReadiness(PrepReadiness::StyleEchoMissing) => {
+            "prep-readiness:style-echo-missing"
+        }
         AbortReason::Unresponsive => "unresponsive",
     }
 }
@@ -1185,6 +1194,27 @@ mod tests {
                 }
             })
         );
+        for (readiness, expected) in [
+            (
+                PrepReadiness::CombatRootMissing,
+                "prep-readiness:combat-root-missing",
+            ),
+            (
+                PrepReadiness::CombatRootWrong,
+                "prep-readiness:combat-root-wrong",
+            ),
+            (
+                PrepReadiness::StyleEchoMissing,
+                "prep-readiness:style-echo-missing",
+            ),
+        ] {
+            report.end = crate::combat::CombatEnd::Aborted(AbortReason::PrepReadiness(readiness));
+            assert_eq!(
+                CombatSummary::from(&report).reason.as_deref(),
+                Some(expected)
+            );
+        }
+
         report.end = crate::combat::CombatEnd::Killed;
         let summary = CombatSummary::from(&report);
         assert_eq!((summary.end, summary.reason), (ReportEnd::Killed, None));
