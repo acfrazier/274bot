@@ -44,7 +44,7 @@ use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
 use crate::views::QueuePlace;
 
 pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
-pub use sync::{SyncReport, SyncScope};
+pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
 #[derive(Debug, Clone)]
@@ -141,11 +141,12 @@ impl Notice {
 }
 
 /// Which operator action a pending Start came from: it decides where a
-/// setup failure is reported once it is observed.
+/// setup failure is reported and whether the saved assignment may change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartKind {
     Start,
     Reload,
+    RestartSettings,
 }
 
 /// A Start whose worker has not settled. Assignment changes only on Ready.
@@ -162,6 +163,12 @@ struct PendingStart {
     /// Counted as started in the running Start tally: a setup failure
     /// moves it to failed there.
     tallied: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SettingsCard {
+    selection: script::ScriptSel,
+    name: String,
 }
 
 /// Where a new skip or failure in the running tally is logged.
@@ -263,6 +270,7 @@ pub struct Scripts {
     parameter_key_cache: Vec<ParameterEditKey>,
     parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
     parameter_edits: HashMap<ParameterEditKey, ParameterEdit>,
+    settings_cards: HashMap<OperationId, SettingsCard>,
     starts: HashMap<String, PendingStart>,
     /// Paced Start-all / marked-Start places. Empty in the idle path.
     admit: StartAdmit,
@@ -296,6 +304,7 @@ impl Scripts {
             parameter_key_cache: Vec::new(),
             parameter_key_scope: None,
             parameter_edits: HashMap::new(),
+            settings_cards: HashMap::new(),
             starts: HashMap::new(),
             admit: StartAdmit::default(),
             admit_catalog: None,
@@ -312,9 +321,169 @@ impl Scripts {
         }
     }
 
+    fn track_settings_card(&mut self, op: OperationId, selection: script::ScriptSel, name: &str) {
+        self.settings_cards.insert(
+            op,
+            SettingsCard {
+                selection,
+                name: name.to_string(),
+            },
+        );
+    }
+
     /// The message to show since the last take.
     pub fn take_notice(&mut self) -> Option<Notice> {
         self.notice.take()
+    }
+
+    pub fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
+        self.sync.pending_restart_prompt()
+    }
+
+    pub fn dismiss_restart_prompt(&mut self) {
+        self.sync.dismiss_restart_prompt();
+    }
+
+    pub fn restart_required_for(&self, profile: &str, selection: &script::ScriptSel) -> bool {
+        self.sync
+            .restart_card(profile)
+            .is_some_and(|required| required == selection)
+    }
+
+    pub fn has_restart_badge(&self, profile: &str) -> bool {
+        self.sync.has_restart_badge(profile)
+    }
+
+    pub fn restart_generation(&self) -> u64 {
+        self.sync.restart_generation()
+    }
+
+    pub fn restart_pending_settings<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+    ) -> Result<(), String> {
+        self.restart_pending_settings_with_after_check(core, catalog_root, |_, _| {})
+    }
+
+    /// Keep the check-to-stop boundary deterministic in tests.
+    fn restart_pending_settings_with_after_check<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+        mut after_check: impl FnMut(&mut OperatorSession<Io>, &sync::RestartTarget),
+    ) -> Result<(), String> {
+        let prompt = self
+            .sync
+            .take_restart_prompt()
+            .ok_or_else(|| "no restart prompt".to_string())?;
+        let mut skipped = Vec::new();
+        for target in prompt.targets() {
+            let (identity, generation) = match self.restart_target_skip(core, target) {
+                Ok(run) => run,
+                Err(reason) => {
+                    self.sync.clear_restart_badge(&target.profile);
+                    skipped.push((target.profile.clone(), reason.to_string()));
+                    continue;
+                }
+            };
+            if self.admit.contains(&target.profile) {
+                skipped.push((target.profile.clone(), "start already queued".into()));
+                continue;
+            }
+            after_check(core, target);
+            let stopped = core.play().is_some_and(|play| {
+                play.script_stop_if_identity_generation(&target.profile, &identity, generation)
+            });
+            if !stopped {
+                self.sync.clear_restart_badge(&target.profile);
+                skipped.push((target.profile.clone(), "not running".into()));
+                continue;
+            }
+            match self.queue_pending_restart_settings(
+                core,
+                &target.profile,
+                target.selection.clone(),
+            ) {
+                Ok(()) => {}
+                Err(reason) => skipped.push((target.profile.clone(), reason)),
+            }
+        }
+        self.admit_starts(core, catalog_root);
+        if !skipped.is_empty() {
+            self.show(
+                skipped
+                    .iter()
+                    .map(|(profile, reason)| format!("Skipped {profile}: {reason}"))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            );
+        }
+        Ok(())
+    }
+
+    fn restart_target_skip<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        target: &sync::RestartTarget,
+    ) -> Result<(String, u64), &'static str> {
+        let profile = &target.profile;
+        if !wall_member(core, profile) {
+            return Err("not loaded");
+        }
+        let Some(play) = core.play() else {
+            return Err("not running");
+        };
+        let Some(generation) = play.script_runtime_generation(profile) else {
+            return Err("not running");
+        };
+        if !matches!(
+            play.script_state(profile),
+            script::RunState::Running | script::RunState::Paused
+        ) {
+            return Err("not running");
+        }
+        let Some(run_identity) = play.script_source_identity(profile) else {
+            return Err("different script");
+        };
+        let (has_arm, logged_out) = arm_flags(core, profile);
+        if !has_arm || logged_out {
+            return Err("logged out");
+        }
+        let Some(assignment) = Self::assignment(core, profile) else {
+            return Err("reassigned");
+        };
+        if sel_from_assignment(&assignment).as_ref() != Some(&target.selection) {
+            return Err("reassigned");
+        }
+        let identity = vault::assignment_key(&assignment.source_kind, &assignment.identity);
+        if run_identity != identity {
+            return Err("different script");
+        }
+        let status = play.script_native_status(profile);
+        if let Some(status) = status.as_deref() {
+            if play.script_native_run(profile) != Some(status.run)
+                || !matches!(target.selection, script::ScriptSel::Compiled(id) if id == status.card)
+            {
+                return Err("different script");
+            }
+            if status
+                .pending_settings
+                .is_none_or(|pending| pending <= status.active_settings)
+            {
+                return Err("settings no longer pending");
+            }
+        }
+        if !self.sync.restart_target_is_current(
+            profile,
+            &target.selection,
+            target.generation,
+            status.as_deref().map(|status| status.active_settings),
+            status.as_deref().and_then(|status| status.pending_settings),
+        ) {
+            return Err("settings no longer pending");
+        }
+        Ok((run_identity, generation))
     }
 
     fn show(&mut self, text: impl Into<String>) {
@@ -698,9 +867,10 @@ impl Scripts {
             .and_then(|p| p.settings.script_settings.get(&key).cloned())
             .unwrap_or_default();
         let migrated = script::migrate_legacy_setting_value(name, id, &value);
+        let lookup = lookup_name(source, name, path);
         let migrated = self
             .js
-            .get(source, &lookup_name(source, name, path))
+            .get(source, &lookup)
             .and_then(|card| card.settings_schema.iter().find(|setting| setting.id == id))
             .map(|setting| script::coerce_setting_value(&setting.ty, &migrated))
             .unwrap_or(migrated);
@@ -717,7 +887,8 @@ impl Scripts {
                 settings.script_settings.insert(key.clone(), bag);
             },
         );
-        if result.is_ok() {
+        if let Ok(op) = result.as_ref() {
+            self.track_settings_card(*op, script::ScriptSel::Loaded(source, lookup), name);
             self.sync.source_edited(profile, &key);
             self.clear_notice();
         }
@@ -1088,6 +1259,7 @@ impl Scripts {
             assigned,
             latched,
             had_arm,
+            kind: StartKind::Start,
         });
         self.tally_record(profile, Outcome::Queued, LogTo::None);
         Ok(())
@@ -1163,10 +1335,41 @@ impl Scripts {
         self.publish_start_places(core);
         self.settle_starts(core);
         for write in core.take_settings_writes() {
-            if let Some((op, outcome)) = self.sync.record(&write) {
+            let is_sync_write = self.sync.tracks_write(write.op);
+            if matches!(
+                &write.result,
+                SettingsResult::Saved(LiveDelivery::RestartRequired)
+            ) {
+                let card = self.settings_cards.remove(&write.op).or_else(|| {
+                    let assignment = Self::assignment(core, &write.profile)?;
+                    Some(SettingsCard {
+                        selection: sel_from_assignment(&assignment)?,
+                        name: assignment.display_name,
+                    })
+                });
+                if let Some(card) = card {
+                    let status = core
+                        .play()
+                        .and_then(|play| play.script_native_status(&write.profile));
+                    self.sync.note_restart_required(
+                        &write.profile,
+                        &card.selection,
+                        status.as_deref().map(|status| status.active_settings),
+                    );
+                    if !is_sync_write {
+                        self.sync
+                            .queue_single_restart_prompt(write.op, card, &write.profile);
+                    }
+                }
+            } else {
+                self.settings_cards.remove(&write.op);
+            }
+            let sync_outcome = self.sync.record(&write);
+            if let Some((op, outcome)) = sync_outcome {
                 core.set_outcome(op, &write.profile, outcome);
             }
         }
+        self.sync.observe_restart_activation(core);
         if let Some(summary) = self.sync.take_settled_summary() {
             self.show(summary);
         }
@@ -1182,7 +1385,12 @@ impl Scripts {
             let Some(pending) = self.starts.remove(&name) else {
                 continue;
             };
+            if matches!(&outcome, Some(script::StartOutcome::Ready)) {
+                self.sync.clear_restart_badge(&name);
+            }
             match outcome {
+                Some(script::StartOutcome::Ready) if pending.kind == StartKind::RestartSettings => {
+                }
                 Some(script::StartOutcome::Ready) => match pending.card {
                     PendingCard::Compiled(id) => {
                         let key = script::compiled_identity_key(id);
@@ -1327,28 +1535,37 @@ impl Scripts {
             return false;
         }
         let catalog = self.admit_catalog.clone();
+        let tallied = entry.kind != StartKind::RestartSettings;
         match self.start_sel(
             core,
             &entry.profile,
             &entry.sel,
             catalog.as_deref(),
-            StartKind::Start,
-            true,
+            entry.kind,
+            tallied,
         ) {
-            Ok(()) => self.credit_started(&entry.profile),
+            Ok(()) if tallied => self.credit_started(&entry.profile),
+            Ok(()) => {}
             Err(script::StartLoadError::Waiting(reason)) => {
-                self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
+                if tallied {
+                    self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
+                    self.publish_bulk();
+                }
                 self.admit.return_head(entry);
-                self.publish_bulk();
                 return true;
             }
-            Err(error) => self.credit_failed(&entry.profile, &error.to_string()),
+            Err(error) if tallied => self.credit_failed(&entry.profile, &error.to_string()),
+            Err(error) => self.show(format!("Restart failed for {}: {error}", entry.profile)),
         }
         true
     }
 
     fn drop_queued(&mut self, entry: &QueuedStart, reason: &str) {
-        self.credit_skipped(&entry.profile, reason);
+        if entry.kind == StartKind::RestartSettings {
+            self.show(format!("Skipped {}: {reason}", entry.profile));
+        } else {
+            self.credit_skipped(&entry.profile, reason);
+        }
     }
 
     /// Credit a Start that left the queue through [`Self::start_sel`].

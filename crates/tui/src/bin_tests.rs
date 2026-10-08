@@ -2952,6 +2952,89 @@ fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
     session.pump(app);
 }
 
+#[test]
+fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
+    let iso = IsolatedEnv::enter("tui-restart-settings-prompt");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    session.core.play_mut().unwrap().bind_script_test_data(data);
+    let id = script::CompiledId("Gatherer");
+    assert!(session.scripts.persist_assignment(
+        &mut session.core,
+        "alice",
+        script::compiled_assignment(id)
+    ));
+    session.core.flush_writes();
+    session
+        .scripts
+        .set_compiled_setting(
+            &mut session.core,
+            "alice",
+            id,
+            "skill",
+            serde_json::json!("Fishing"),
+        )
+        .unwrap();
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    session
+        .scripts
+        .start_profile(&mut session.core, "alice", None)
+        .unwrap();
+    settle_starts(&mut session, &mut app);
+    wait_script_state(
+        session.core.play().unwrap(),
+        "alice",
+        script::RunState::Running,
+    );
+
+    session
+        .scripts
+        .set_compiled_setting(
+            &mut session.core,
+            "alice",
+            id,
+            "skill",
+            serde_json::json!("Mining"),
+        )
+        .unwrap();
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    let prompt = session.scripts.pending_restart_prompt().unwrap();
+    let summary = prompt.summary();
+    assert!(matches!(
+        app.modal.as_ref(),
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(
+                &confirm.kind,
+                crate::overlay::ConfirmKind::RestartSettings(current) if current == prompt
+            )
+    ));
+
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.draw_modal(frame)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains(&summary), "{width}x{height}: {text}");
+        assert!(
+            text.contains("[Restart y]"),
+            "{width}x{height}: missing restart action: {text}"
+        );
+        assert!(
+            text.contains("[Later n]"),
+            "{width}x{height}: missing Later action: {text}"
+        );
+    }
+    session.scripts.dismiss_restart_prompt();
+}
+
 /// Live finding (TUI parity): the settings popup closed without explanation
 /// when focus moved, dropping the draft. It must stay open and bound to the
 /// profile it was opened for, and persist there — never to the newly

@@ -121,6 +121,15 @@ starts the pick through the same one-per-frame Start permit as Start all) and
 parameters for the Browse pick to the marked bots on that card; the dialog
 names the bots it copies to, each marked bot it skips with the reason and how
 many unmarked bots stay unchanged, and nothing is written until you confirm).
+
+**Script settings restarts.** Saved settings needing a restart show a `!`
+badge in the fleet; Parameters says `Restart required to apply saved
+settings.` The prompt offers **Restart** and **Later**. **Restart** applies
+only to listed bots still running the same assigned script with its pending
+settings. Stopped, logged-out, reassigned or different-script bots are
+skipped and named in the status line. **Later** leaves their current scripts
+running and suppresses the prompt until settings change again.
+
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
 from its own position. Each of these prints one report with every marked bot
 counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:

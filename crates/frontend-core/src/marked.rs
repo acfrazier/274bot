@@ -200,15 +200,26 @@ pub fn assign_and_restart_marked<Io>(
     card: &script::ScriptSel,
     catalog_root: Option<&Path>,
 ) {
-    scripts.open_tally("Assign & restart");
     let Resolved { names, gone } = resolve(selection, core);
-    for profile in &gone {
+    assign_and_restart_names(&names, &gone, core, scripts, card, catalog_root);
+}
+
+fn assign_and_restart_names<Io>(
+    names: &[String],
+    gone: &[String],
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+    card: &script::ScriptSel,
+    catalog_root: Option<&Path>,
+) {
+    scripts.open_tally("Assign & restart");
+    for profile in gone {
         scripts.tally_skip_unavailable(profile, UNAVAILABLE);
     }
     let assignment = match scripts.assignment_for(card, catalog_root) {
         Ok(assignment) => assignment,
         Err(reason) => {
-            for name in &names {
+            for name in names {
                 scripts.tally_fail(name, &reason);
             }
             scripts.publish_bulk();
@@ -217,24 +228,24 @@ pub fn assign_and_restart_marked<Io>(
     };
     let mut stopping = Vec::new();
     for name in names {
-        if !core.members().contains(&name) {
-            scripts.tally_skip(&name, "not loaded");
+        if !core.members().contains(name) {
+            scripts.tally_skip(name, "not loaded");
             continue;
         }
-        if !scripts.persist_assignment(core, &name, assignment.clone()) {
-            scripts.tally_fail(&name, "could not save");
+        if !scripts.persist_assignment(core, name, assignment.clone()) {
+            scripts.tally_fail(name, "could not save");
             continue;
         }
-        scripts.clear_pending_browse(&name);
-        let running = state(core, &name);
+        scripts.clear_pending_browse(name);
+        let running = state(core, name);
         if matches!(
             running,
             script::RunState::Starting | script::RunState::Running | script::RunState::Paused
         ) {
             stopping.push(name.clone());
         }
-        if let Err(reason) = scripts.queue_restart(core, &name, card.clone(), active(running)) {
-            scripts.tally_fail(&name, &reason);
+        if let Err(reason) = scripts.queue_restart(core, name, card.clone(), active(running)) {
+            scripts.tally_fail(name, &reason);
         }
     }
     if !stopping.is_empty() {

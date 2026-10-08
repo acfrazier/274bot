@@ -20,8 +20,8 @@ use nav::WorldState;
 
 use crate::session::Session;
 
-const LOCAL_GAME_PORT: u16 = 45_594;
-const LOCAL_ASSET_PORT: u16 = 2_080;
+const LOCAL_GAME_PORT: u16 = 44_594;
+const LOCAL_ASSET_PORT: u16 = 1_080;
 const SCENE_WAIT: Duration = Duration::from_secs(150);
 const WALK_WAIT: Duration = Duration::from_secs(90);
 const TERMINAL_WAIT: Duration = Duration::from_secs(30);
@@ -1494,4 +1494,259 @@ fn live_manual_click_panel_route_less_resilient() {
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_route_less_resilient_pause_resume() {
     run_route_less_resilient(true);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
+fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
+    fn active_skill(status: &script::native::ScriptStatus) -> String {
+        status
+            .fields
+            .iter()
+            .find(|field| field.key == "skill")
+            .and_then(|field| match &field.value {
+                script::native::StatusValue::Text(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .expect("Gatherer skill status")
+    }
+
+    let inputs = live_inputs().unwrap();
+    let (mut session, source) = prepare_session_n(&inputs, false, 2).unwrap();
+    let target = session
+        .statuses
+        .iter()
+        .find(|row| row.username != source)
+        .expect("second live profile")
+        .username
+        .clone();
+    let id = script::CompiledId("Gatherer");
+    let target_uid = session.core.vault().unwrap().get(&target).unwrap().uid;
+    session
+        .fleet_selection
+        .set(frontend_core::ProfileIdentity::uid(target_uid), true);
+
+    session.select(&source);
+    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session
+        .scripts
+        .set_compiled_setting(
+            &mut session.core,
+            &source,
+            id,
+            "skill",
+            serde_json::json!("Fishing"),
+        )
+        .unwrap();
+    session.core.flush_writes();
+    session.poll_scripts();
+    session.fleet_prepare_apply_settings();
+    let first_scope = session.scripts.prepared_settings_sync().unwrap();
+    assert_eq!(
+        first_scope.targets.as_slice(),
+        std::slice::from_ref(&target)
+    );
+    session.apply_settings_sync();
+    session.core.flush_writes();
+    session.poll_scripts();
+    assert_eq!(
+        session
+            .scripts
+            .compiled_bag(&session.core, &target, id)
+            .unwrap()["skill"],
+        "Fishing"
+    );
+
+    session.select(&target);
+    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_start_selected();
+    assert!(
+        session.error.is_none(),
+        "panel Start failed: {:?}",
+        session.error
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let fishing = loop {
+        session.pump_status();
+        if let Some(status) = session
+            .core
+            .play()
+            .and_then(|play| play.script_native_status(&target))
+        {
+            if active_skill(&status) == "Fishing" {
+                break status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Gatherer did not publish Fishing status: {:?}",
+            session.error
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(active_skill(&fishing), "Fishing");
+
+    session.select(&source);
+    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_start_selected();
+    assert!(
+        session.error.is_none(),
+        "source Start failed: {:?}",
+        session.error
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let source_fishing = loop {
+        session.pump_status();
+        if let Some(status) = session
+            .core
+            .play()
+            .and_then(|play| play.script_native_status(&source))
+        {
+            if active_skill(&status) == "Fishing" {
+                break status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "source Gatherer did not publish Fishing status: {:?}",
+            session.error
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(active_skill(&source_fishing), "Fishing");
+
+    session.select(&source);
+    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session
+        .scripts
+        .set_compiled_setting(
+            &mut session.core,
+            &source,
+            id,
+            "skill",
+            serde_json::json!("Mining"),
+        )
+        .unwrap();
+    session.core.flush_writes();
+    session.poll_scripts();
+    let source_prompt = session
+        .scripts
+        .pending_restart_prompt()
+        .expect("source setting restart confirmation");
+    assert_eq!(
+        source_prompt.summary(),
+        format!("Restart Gatherer on {source} to apply the new settings?")
+    );
+    session.restart_pending_settings();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let source_restarted = loop {
+        session.pump_status();
+        if let Some(status) = session
+            .core
+            .play()
+            .and_then(|play| play.script_native_status(&source))
+        {
+            if active_skill(&status) == "Mining" {
+                break status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "source Gatherer did not restart with Mining: {:?}",
+            session.error
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(active_skill(&source_restarted), "Mining");
+    session.fleet_prepare_apply_settings();
+    session.apply_settings_sync();
+    session.core.flush_writes();
+    session.poll_scripts();
+
+    let (saved_count, restart_required, sync_summary) = {
+        let report = session.scripts.last_settings_sync().unwrap();
+        (
+            report.saved,
+            report.restart_required,
+            report.summary().to_string(),
+        )
+    };
+    let saved = session
+        .scripts
+        .compiled_bag(&session.core, &target, id)
+        .unwrap();
+    let status = session
+        .core
+        .play()
+        .and_then(|play| play.script_native_status(&target))
+        .expect("running Gatherer status after sync");
+    let live_skill = active_skill(&status);
+    assert_eq!(saved_count, 1);
+    assert_eq!(restart_required, 1);
+    assert_eq!(saved["skill"], "Mining");
+    assert_eq!(live_skill, "Fishing");
+    let prompt = session
+        .scripts
+        .pending_restart_prompt()
+        .expect("restart confirmation");
+    assert_eq!(
+        prompt.summary(),
+        format!("Restart Gatherer on {target} to apply the new settings?")
+    );
+    assert!(session
+        .scripts
+        .restart_required_for(&target, &script::ScriptSel::Compiled(id)));
+
+    session.restart_pending_settings();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let restarted = loop {
+        session.pump_status();
+        if let Some(status) = session
+            .core
+            .play()
+            .and_then(|play| play.script_native_status(&target))
+        {
+            if active_skill(&status) == "Mining" {
+                break status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Gatherer did not restart with Mining: {:?}",
+            session.error
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(!session
+        .scripts
+        .restart_required_for(&target, &script::ScriptSel::Compiled(id)));
+    assert_eq!(active_skill(&source_restarted), "Mining");
+
+    let proof = serde_json::json!({
+        "source": source,
+        "target": target,
+        "first_active_skill": active_skill(&fishing),
+        "saved_skill_after_sync": saved["skill"],
+        "live_skill_before_restart": live_skill,
+        "live_skill_after_restart": active_skill(&restarted),
+        "source_active_skill_after_restart": active_skill(&source_restarted),
+        "restart_required": restart_required,
+        "sync_summary": sync_summary,
+        "active_settings_revision": status.active_settings,
+        "pending_settings_revision": status.pending_settings,
+        "restarted_active_settings_revision": restarted.active_settings,
+        "restarted_pending_settings_revision": restarted.pending_settings,
+    });
+    fs::write(
+        inputs
+            .evidence
+            .join("panel-gatherer-skill-sync-restart.json"),
+        serde_json::to_vec_pretty(&proof).unwrap(),
+    )
+    .unwrap();
+    println!("PASS panel Gatherer restart prompt witness: {proof}");
+
+    session.select(&target);
+    session.script_stop();
+    session.core.set_play(None);
 }
