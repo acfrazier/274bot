@@ -39,7 +39,7 @@
       "mansion_stair_room": {
         "boxes": [
           [2627, 3322, 2633, 3325, 0],
-          [2629, 3320, 2633, 3321, 0]
+          [2631, 3320, 2633, 3321, 0]
         ],
         "source": "C:maps/m41_51.jm2:6748 (combodoor 2705 at [2634,3323,0], the wall between the stair room and the hall); C:scripts/ladders+stairs/scripts/stairs.rs2:54 (case 1_41_51_7_58 lands 0_41_51_7_61 = [2631,3325,0]); C:scripts/areas/area_ardougne_east/scripts/wizard_cromperty.rs2:74-78 (rpdt_teleport lands 0_41_51_14_57 = [2638,3321,0], hall side of the door). West-of-door floor verified on the real 289 nav pack: every walkable tile x <= 2633 routes to the landing and every tile x >= 2634 routes to the hall, with no cross route (PORT-S6-DRAFTS-R5 grid probe)"
       }
