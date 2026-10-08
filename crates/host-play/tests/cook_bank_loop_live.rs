@@ -8,6 +8,9 @@
 //! the unchanged bundled `cook.json` with native Quester and never spawns a
 //! world target. Evidence, including captured host session logs, is saved under
 //! `LIVE_EVIDENCE_DIR`.
+//! Bank intent is witnessed while closed and bound to the same Cook run's next
+//! session generation. Snapshot wakes can settle the scan before this observer
+//! samples the modal, so current status at opening is recorded separately.
 //!
 //! Run from the repository root against Engine A (the parent prepares the
 //! owned writable APFS cache clone first):
@@ -561,6 +564,7 @@ struct BankSession {
     child_recipe_at_open: Option<String>,
     child_step_at_open: Option<String>,
     action_state_at_open: Option<String>,
+    opening_provision: Value,
     bank_loaded_seen: bool,
     first_loaded_bank_counts: Option<[i32; 3]>,
     minimum_loaded_bank_counts: Option<[i32; 3]>,
@@ -573,6 +577,7 @@ impl BankSession {
         generation: u64,
         snapshot: &GameSnapshot,
         status: Option<&ScriptStatus>,
+        preparation: &ScriptStatus,
         ids: &[i32; 3],
     ) -> Self {
         Self {
@@ -582,6 +587,15 @@ impl BankSession {
             child_recipe_at_open: status_text(status, "child_recipe_id").map(str::to_owned),
             child_step_at_open: status_text(status, "child_step_id").map(str::to_owned),
             action_state_at_open: status_text(status, "action_state").map(str::to_owned),
+            opening_provision: json!({
+                "expected_generation": generation,
+                "run": {
+                    "slot": preparation.run.slot,
+                    "run": preparation.run.run,
+                    "session": preparation.run.session,
+                },
+                "status": snapshot_status(Some(preparation)),
+            }),
             bank_loaded_seen: false,
             first_loaded_bank_counts: None,
             minimum_loaded_bank_counts: None,
@@ -617,6 +631,7 @@ struct CookWitness {
     seen_open_generations: HashSet<u64>,
     preparation_generations: HashSet<u64>,
     active_generation: Option<u64>,
+    pending_preparation: Option<(u64, ScriptStatus)>,
     bank_sessions: Vec<BankSession>,
     observations: u64,
 }
@@ -632,13 +647,19 @@ impl CookWitness {
             seen_open_generations: HashSet::new(),
             preparation_generations: HashSet::new(),
             active_generation: None,
+            pending_preparation: None,
             bank_sessions: Vec::new(),
             observations: 0,
         }
     }
 
     fn preparation_step_is_related(status: Option<&ScriptStatus>) -> bool {
-        if status_text(status, "action_state") != Some("banking") {
+        if !status.is_some_and(|status| {
+            status.phase == script::native::NativePhase::Working
+                && status.card == script::CompiledId("Quester")
+        }) || status_text(status, "quest_id") != Some("cook")
+            || status_text(status, "action_state") != Some("banking")
+        {
             return false;
         }
         match (status_text(status, "stage"), status_text(status, "step_id")) {
@@ -705,6 +726,14 @@ impl CookWitness {
         let bank_open = snapshot.bank_component_id() >= 0;
         if !bank_open {
             self.active_generation = None;
+            self.pending_preparation = if Self::preparation_step_is_related(status) {
+                snapshot
+                    .bank_session_generation()
+                    .checked_add(1)
+                    .zip(status.cloned())
+            } else {
+                None
+            };
         } else {
             let generation = snapshot.bank_session_generation();
             if generation == 0 {
@@ -721,15 +750,34 @@ impl CookWitness {
                         "bank session generation {generation} reopened without a new generation"
                     ));
                 }
-                if !Self::preparation_step_is_related(status) {
+                let preparation = self.pending_preparation.take().filter(|(expected, prior)| {
+                    *expected == generation
+                        && status.is_some_and(|current| {
+                            current.run == prior.run
+                                && current.card == prior.card
+                                && current.phase == script::native::NativePhase::Working
+                                && status_text(Some(current), "quest_id") == Some("cook")
+                                && status_text(Some(current), "stage")
+                                    == status_text(Some(prior), "stage")
+                                && status_text(Some(current), "step_id")
+                                    == status_text(Some(prior), "step_id")
+                        })
+                });
+                let Some((_, preparation)) = preparation else {
                     return Err(format!(
-                        "pre-completion bank session opened on an unrelated Cook step: {:?}",
+                        "pre-completion bank session opened without the same Cook run's \
+                         related preparation intent for generation {generation}: {:?}",
                         snapshot_status(status)
                     ));
-                }
+                };
                 self.preparation_generations.insert(generation);
-                self.bank_sessions
-                    .push(BankSession::new(generation, snapshot, status, &self.ids));
+                self.bank_sessions.push(BankSession::new(
+                    generation,
+                    snapshot,
+                    status,
+                    &preparation,
+                    &self.ids,
+                ));
                 self.active_generation = Some(generation);
             }
             let session = self
@@ -1157,6 +1205,150 @@ mod witness_lifecycle_tests {
         assert_eq!(witness.observe(&snapshot(false), None, None).unwrap(), None);
         assert!(witness.all_ingredients_seen_before_completion.is_some());
         witness
+    }
+
+    fn preparing_status(step: &str, action: &str) -> ScriptStatus {
+        ScriptStatus {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: script::native::NativePhase::Working,
+            active_settings: 0,
+            pending_settings: None,
+            fields: [
+                ("quest_id", "cook"),
+                ("stage", "cook:1"),
+                ("step_id", step),
+                ("action_state", action),
+                ("colour", "in_progress"),
+            ]
+            .map(|(key, value)| script::native::StatusField {
+                key,
+                label: key,
+                value: StatusValue::Text(Arc::from(value)),
+            })
+            .into(),
+            failure: None,
+        }
+    }
+
+    fn pending_bank() -> (CookWitness, GameSnapshot) {
+        let mut witness = CookWitness::new(FixtureCase::Neither, IDS);
+        let snapshot = snapshot(false);
+        witness
+            .observe(&snapshot, Some(&preparing_status("egg", "banking")), None)
+            .unwrap();
+        assert!(witness.pending_preparation.is_some());
+        (witness, snapshot)
+    }
+
+    fn open_bank(snapshot: &mut GameSnapshot) {
+        snapshot.seed_bank_observation(5382, 1, Some(Vec::new()), Vec::new());
+    }
+
+    #[test]
+    fn same_frame_scan_settlement_preserves_causal_opening_proof() {
+        let (mut witness, mut snapshot) = pending_bank();
+        open_bank(&mut snapshot);
+        assert_eq!(
+            witness
+                .observe(&snapshot, Some(&preparing_status("egg", "working")), None)
+                .unwrap(),
+            None
+        );
+        assert!(witness.pending_preparation.is_none());
+        let session = &witness.bank_sessions[0];
+        assert_eq!(session.generation, 1);
+        assert_eq!(session.action_state_at_open.as_deref(), Some("working"));
+        assert_eq!(
+            session.opening_provision["status"]["action_state"],
+            "banking"
+        );
+        assert_eq!(session.opening_provision["run"]["run"], 1);
+        assert!(session.bank_loaded_seen);
+    }
+
+    #[test]
+    fn modal_without_observed_preparation_is_not_a_cook_bank_session() {
+        let mut witness = CookWitness::new(FixtureCase::Neither, IDS);
+        let mut snapshot = snapshot(false);
+        open_bank(&mut snapshot);
+        assert!(witness
+            .observe(&snapshot, Some(&preparing_status("egg", "working")), None)
+            .unwrap_err()
+            .contains("related preparation intent"));
+    }
+
+    #[test]
+    fn closed_non_banking_observation_clears_stale_preparation() {
+        let (mut witness, mut snapshot) = pending_bank();
+        let status = preparing_status("egg", "working");
+        witness.observe(&snapshot, Some(&status), None).unwrap();
+        assert!(witness.pending_preparation.is_none());
+        open_bank(&mut snapshot);
+        assert!(witness.observe(&snapshot, Some(&status), None).is_err());
+    }
+
+    #[test]
+    fn preparation_cannot_cross_native_run_or_step_or_blocked_boundary() {
+        for boundary in ["run", "step", "blocked", "card"] {
+            let (mut witness, mut snapshot) = pending_bank();
+            let mut status = preparing_status("egg", "working");
+            match boundary {
+                "run" => status.run.run += 1,
+                "step" => status = preparing_status("hand-in", "working"),
+                "blocked" => status.phase = script::native::NativePhase::Blocked,
+                "card" => status.card = script::CompiledId("Other"),
+                _ => unreachable!(),
+            }
+            open_bank(&mut snapshot);
+            assert!(
+                witness.observe(&snapshot, Some(&status), None).is_err(),
+                "{boundary} must not inherit the earlier Cook bank intent"
+            );
+        }
+    }
+
+    #[test]
+    fn preparation_is_bound_to_exactly_the_next_session_generation() {
+        let (mut witness, mut snapshot) = pending_bank();
+        open_bank(&mut snapshot);
+        snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+        open_bank(&mut snapshot);
+        assert_eq!(snapshot.bank_session_generation(), 3);
+        assert!(witness
+            .observe(&snapshot, Some(&preparing_status("egg", "working")), None)
+            .is_err());
+    }
+
+    #[test]
+    fn consumed_preparation_cannot_authorize_another_opening() {
+        let (mut witness, mut snapshot) = pending_bank();
+        let status = preparing_status("egg", "working");
+        open_bank(&mut snapshot);
+        witness.observe(&snapshot, Some(&status), None).unwrap();
+        snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+        witness.observe(&snapshot, Some(&status), None).unwrap();
+        open_bank(&mut snapshot);
+        assert!(witness.observe(&snapshot, Some(&status), None).is_err());
+        assert_eq!(witness.bank_sessions.len(), 1);
+    }
+
+    #[test]
+    fn earlier_preparation_never_authorizes_a_post_completion_opening() {
+        let (mut witness, _) = pending_bank();
+        let mut snapshot = snapshot(true);
+        let status = preparing_status("egg", "working");
+        witness.observe(&snapshot, Some(&status), None).unwrap();
+        assert!(witness.completed_seen);
+        open_bank(&mut snapshot);
+        assert!(witness
+            .observe(&snapshot, Some(&status), None)
+            .unwrap_err()
+            .contains("after Cook completion"));
     }
 
     #[test]
