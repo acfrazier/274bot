@@ -212,7 +212,7 @@ A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
 **Login all** / **Logout all**, then **Start all** / **Stop all** (script
 bulk — separate from login bulk; see [script.md](script.md)), an
 **only render selected** checkbox, one
-tile per wall member, **+ add bot**, and the 1 Hz resource card. A tile is
+tile per wall member, **Profiles…**, and the 1 Hz resource card. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
 body focuses the member. The dot is error **red**, then ingame **amber**,
@@ -234,9 +234,12 @@ reaches **only** the focused cell; the queue card overlays it while queued.
 ### Chooser
 
 A fitted **Profiles** window (same one as the strip **Profiles** button
-and rail **+ add bot**), not a blocking modal. Clicking a row focuses it
-(and loads it onto the wall while MultiBox is on; stays open for more).
+and rail **Profiles…**), not a blocking modal. Clicking a row focuses it
+(and loads it onto the wall while MultiBox is on; stays open for more);
+the focused profile's own script card shows, and no script starts.
 Single-bot pick closes the picker. **Load all** is MultiBox-only.
+Unlocking the vault while MultiBox is already on focuses the remembered
+(or first) profile the same way, so it joins the rail.
 **Close**/Esc closes without loading. **Edit** (next to **✕**) shows
 username/password; **New profile** is a blank edit. The editor stays on
 the profile it opened on while other rows are loaded or focused. **Save**
@@ -363,10 +366,20 @@ focused slot ingame). WalkTo is full-width under that row, then
 not clipped). **Profile** is below those buttons and above **debug**
 when the local-engine heading is shown: a black combo with orange current
 name and a black-on-orange dropdown arrow, then a full-width **Profiles**
-button (same window as MultiBox **+ add bot**).
+button (same window as MultiBox **Profiles…**).
 Username/password only appear when **Edit** or **New profile** is used
-in the picker. **Auto-login on title** is per-profile, under General
-config → slot.
+in the picker. **Log in automatically** (saved as
+`ProfileSettings.auto_login`) is per-profile, in that edit form.
+
+Non-toggle window buttons — **Profiles** / **Profiles…**, **General
+config**, **Nav config**, **Loadouts**, **Script prefs**, **Log**,
+**Fleet** (and Debug's **Open Fleet**), **Panel** / **maxme** (Debug),
+**Browse…**, **Load**, **Import catalog…** and Fleet's **Walk N to…** —
+open a closed window where it first appears (docked or floating as
+before) and bring an already-open one to the front, selecting its dock
+tab. The focus is requested once per click (`Session::open_window`), never
+every frame; an open Loadouts or file browser keeps its selection, draft,
+folder and search. **WalkTo**, **MultiBox** and **Grid** stay toggles.
 
 **Log** is **per client thread** (per username status-transition lines),
 not one concatenated process log. When nothing is focused the view shows
@@ -423,18 +436,19 @@ settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
 Start persists the per-profile script assignment. **Nav config** is live
-as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map,
-and Quest Paths groups): the durable walk permissions — teleports, wilderness
-and bank fetch (all default off) plus **Danger routing** (Never, When survivable
-(the default), Always; When survivable currently shows `When survivable (not
-available yet: acts as Never)` and admits routes as Never) — **Pause script on
+as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map
+groups): the durable walk permissions — teleports, wilderness
+and bank fetch (all default off) plus **Danger routing**, a full-width drop-down
+(Never, When survivable (the default), Always; When survivable shows the note
+`Not available yet: acts as Never.` under it and admits routes as Never) — **Pause script on
 manual movement** (default on; it also pauses the script behind a Gatherer or
 combat session), and debug paints / labels. A script allows danger zones for its
 own walks in its Script prefs Walk permissions; a single WalkTo walk is allowed
-with its own checkbox (below). WalkTo map holds **ask before baking terrain**;
-Quest Paths holds the Quester folder-paths loader (folder, reload). **General config** (under
+with its own checkbox (below). WalkTo map holds **ask before baking terrain**.
+The Quest Paths folder loader (folder, reload) sits under the Quester card's
+parameters in Script prefs and applies to every bot. **General config** (under
 WalkTo, above profile) is
-**slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
+**slot** (capture), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**
 (sidecar 50 / only-render-selected). **Loadouts** is a live window (CRUD
 presets; `optionsFrom: 'loadouts'` combos in Parameters). Text and buttons

@@ -57,7 +57,8 @@ pub use profile_form::{
 };
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use quester_paths::{
-    QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL,
+    QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
+    QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,
 };
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
@@ -73,6 +74,6 @@ pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
     DangerLevel, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, SCRIPT_SCOPE_NOTICE,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
     SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };

@@ -8,6 +8,42 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ### Scripts
 
 - When saved settings need a script restart, the panel and TUI offer to restart only the affected profiles or leave their current scripts running and apply the settings on a later Start.
+### Panel
+
+- Turning MultiBox on before unlocking the vault no longer leaves the bot
+  that logs in at unlock off the rail: it joins the rail like any profile
+  you pick, so selecting another profile keeps both on the rail and the
+  first one stays visible and controllable instead of running unseen.
+- Picking a profile in MultiBox now shows that profile's own script card.
+  Before, the previous bot's card stayed on screen, so Start or a parameter
+  edit could act on the wrong card for the newly focused bot.
+- Window buttons (Profiles, General config, Nav config, Loadouts, Script
+  prefs, Log, Fleet, Debug, Browse, Load, Import catalog and the Fleet
+  window's Walk to) now bring their window to the front, selecting its
+  tab, when it is already open, instead of doing nothing. An open Loadouts
+  keeps its selection and unsaved edits, and an open file browser keeps
+  its folder and search.
+- The rail's **+ add bot** button is now **Profiles…**; selecting a profile
+  never starts its script.
+- The profile setting **auto-login on title** is now called **Log in
+  automatically**, with a tooltip saying what it does. Saved profiles keep
+  their value.
+- Nav config no longer scrolls sideways: the routing rows don't repeat
+  "Global — applies to every walk." on each line, and one note above them
+  says settings are global unless stated and that rs2b0t-compatible scripts
+  always allow wilderness and bank fetch. Danger routing is now a full-width
+  drop-down, with "When survivable"'s "not available yet" explanation on its
+  own line.
+- The Quest Paths folder, its load switch and Reload Paths moved from Nav
+  config to Script prefs, under the Quester card. They still apply to every
+  bot, and the heading says so.
+
+### TUI
+
+- Settings: the routing rows no longer repeat "· Global — applies to every
+  walk." on each line; one note above them says the same as the panel's.
+  The Quest Paths rows sit under a "Quester: Quest Paths (all bots)"
+  heading.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 

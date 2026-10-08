@@ -421,7 +421,7 @@ fn draw_target_controls(ui: &Ui, session: &mut Session) {
     if marked_count == 0 {
         ui.text_wrapped(frontend_core::EMPTY_MARKS_HINT);
         if ui.button("Open Fleet##debug-open-fleet") {
-            session.fleet_open = true;
+            session.open_window(crate::session::PanelWindow::Fleet);
         }
     }
     ui.text_wrapped(format!(

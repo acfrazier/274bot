@@ -219,7 +219,7 @@ impl Session {
             leave,
             saving: saving.is_some(),
         });
-        self.focus_profiles = true;
+        self.request_window_focus(super::PanelWindow::Profiles);
     }
 
     /// Switch the form to `target` (`""` is the blank new-profile row),
