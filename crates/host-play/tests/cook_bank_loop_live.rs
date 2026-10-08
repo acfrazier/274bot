@@ -392,6 +392,28 @@ fn build_case(case: FixtureCase) -> Result<(Cell, StartFamily, [i32; 3]), String
         ));
     }
     scenario.steps.splice(relog_index..relog_index, pre_relog);
+    let final_relog = scenario
+        .steps
+        .iter()
+        .rposition(|step| matches!(step.kind, StepKind::Relog))
+        .ok_or("Cook fixture has no final relog")?;
+    scenario.steps.insert(
+        final_relog + 1,
+        Step {
+            name: "reseed tutorial after Cook fixture relog",
+            kind: StepKind::Repeat {
+                send: Box::new(|client, _| {
+                    api::interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                    api::interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::FreshTutorial,
+                budget_ticks: 200,
+            },
+        },
+    );
 
     let maxed_gate =
         Box::new(move |snapshot: &GameSnapshot| validate_maxed_start(snapshot, case, ids).is_ok());
@@ -430,6 +452,10 @@ fn build_case(case: FixtureCase) -> Result<(Cell, StartFamily, [i32; 3]), String
     );
 
     seed_commands.extend(inserted_seed_commands);
+    seed_commands.extend([
+        scenario::tutorial::TUTORIAL_SETVAR.to_owned(),
+        scenario::tutorial::TUTORIAL_GETVAR.to_owned(),
+    ]);
     seed_commands.push(return_to_stand);
 
     let observe_ids = ids;
@@ -1045,6 +1071,19 @@ fn original_cook_fixtures_build_without_a_synthetic_stage_zero_varp_hint() {
                 .filter(|step| matches!(step.kind, StepKind::Relog))
                 .count(),
             2,
+        );
+        let final_relog = cell.scenario.steps[..start]
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .unwrap();
+        assert!(matches!(
+            cell.scenario.steps[final_relog + 1].kind,
+            StepKind::Repeat { .. }
+        ));
+        assert_eq!(
+            cell.scenario.steps[final_relog + 1].wait.arm,
+            Proof::FreshTutorial,
+            "Cook must confirm a fresh tutorial reseed after the final relog",
         );
     }
 }

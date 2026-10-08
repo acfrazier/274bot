@@ -1141,11 +1141,16 @@ fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
     tick(&mut slot, &frame, 2);
     for _ in 0..3 {
         wake(&mut slot, &frame, 2);
-        assert!(!slot.has_native_actions(), "scene-entry locs cannot retarget");
+        assert!(
+            !slot.has_native_actions(),
+            "scene-entry locs cannot retarget"
+        );
         assert_eq!(slot.native_status().unwrap().failure, None);
     }
     tick(&mut slot, &frame, 3);
-    let next = slot.take_native_action().expect("new tree after scene settles");
+    let next = slot
+        .take_native_action()
+        .expect("new tree after scene settles");
     assert!(matches!(
         next.effect,
         HostEffect::Interaction(InteractReq::Loc { action, .. }) if action == "Chop down"

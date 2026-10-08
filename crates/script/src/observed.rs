@@ -1062,7 +1062,8 @@ impl Scene {
                 };
                 Some(crate::native::ledger::SceneKey::from_parts(
                     here.level,
-                    view.collision().map(|collision| (collision.base_x, collision.base_z)),
+                    view.collision()
+                        .map(|collision| (collision.base_x, collision.base_z)),
                 ))
             } else {
                 None

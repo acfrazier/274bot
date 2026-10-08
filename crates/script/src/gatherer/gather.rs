@@ -723,9 +723,7 @@ mod tests {
         snapshot.seed_chat_modal(4882, vec!["A stray page.".into()]);
         snapshot.seed_chat_options(vec![], 4883);
         with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.cx.action_id = tick.cx.ledger.as_ref().unwrap().outbox[0]
-                .action_id()
-                .get();
+            tick.cx.action_id = tick.cx.ledger.as_ref().unwrap().outbox[0].action_id().get();
             tick.cx.emit(InteractReq::CloseModal).unwrap();
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
             assert_eq!(
@@ -743,7 +741,15 @@ mod tests {
                 "the same gather run should begin its continue action on the next tick"
             );
             assert!(matches!(
-                &tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                &tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .unwrap()
+                    .effect,
                 crate::native::HostEffect::Interaction(InteractReq::ContinueDialog { .. })
             ));
         });
@@ -764,7 +770,10 @@ mod tests {
             ),
             "after the page closes, GatherRun returns Refused so the runner revalidates: {continuation:?}"
         );
-        assert_eq!(handle.inspect(|machine| machine.tend.is_none()), Some(true));
+        assert!(
+            handle.inspect(|machine| machine.tend.is_none()).is_none(),
+            "Ready releases the completed gather run"
+        );
     }
 
     #[test]

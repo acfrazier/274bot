@@ -1750,9 +1750,7 @@ impl Script for Gatherer {
         }
         let bank_closed_this_tick = !bank_close_before_poll
             && self.last_event.as_ref() == "bank closed; validating equipment";
-        if self.active_matches_none()
-            && tick.cx.may_continue_this_tick()
-            && self.failure.is_none()
+        if self.active_matches_none() && tick.cx.may_continue_this_tick() && self.failure.is_none()
         {
             let disposal_due = tick.cx.snapshot().stock().pack_full() == Some(true);
             if let Some(revision) = self.apply_pending(disposal_due) {

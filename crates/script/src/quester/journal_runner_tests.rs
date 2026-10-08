@@ -2373,6 +2373,7 @@ impl super::super::compile::StepPlan for ProgressOutcomePlan {
         Ok(Box::new(ProgressOutcomeRun {
             progress,
             stamp: self.stamp,
+            first_poll: true,
             previous_poll: None,
         }))
     }
@@ -2382,11 +2383,15 @@ struct ProgressOutcomeRun {
     progress: QuestProgress,
     stamp: ProgressOutcomeStamp,
     previous_poll: Option<api::quest_progress::EvidenceStamp>,
+    first_poll: bool,
 }
 
 impl StepRun for ProgressOutcomeRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let current = cx.tick.cx.evidence();
+        if std::mem::take(&mut self.first_poll) {
+            return Poll::Pending;
+        }
         let begin = self.progress.evidence;
         self.progress.evidence = match self.stamp {
             ProgressOutcomeStamp::StepBegin => begin,
@@ -2442,9 +2447,9 @@ fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot,
     });
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
         Arc::new(ProgressOutcomePlan { progress, stamp });
-    // A spent tick begins the step without its same-tick poll (TICK-FIX #4),
-    // so the stamps below stay relative to a later poll tick.
-    drive_spent(&mut script, &snapshot, &mut ledger, 1);
+    // Begin on an admissible tick. The fixture's first poll stays pending,
+    // so each progress stamp is tested against a later outcome poll.
+    drive(&mut script, &snapshot, &mut ledger, 1);
     assert!(
         script.step.is_some(),
         "the runner must begin the authored step"
