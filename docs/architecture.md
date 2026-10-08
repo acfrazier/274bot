@@ -340,6 +340,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
+| `slot/combat.rs` | API-owned combat seat; one `api.combat.fight` session per slot | mirrors the gather seat; Pause, reconnect and manual movement cancel at any point |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
@@ -347,6 +348,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `combat/` | shared observed-state combat machine | melee, ranged and magic on one planner (`machine.rs`, `style/`); `policy.rs`, `prayer.rs`, `guard.rs` WalkGuard, `threats.rs`, `schedule.rs`, `select.rs`, `tables.rs`, `request.rs` |
 | `combat/risk.rs`, `combat/risk/{facts,geometry,input,replay}.rs` | pure conservative route assessment | shared combat facts and food picker; complete route geometry; persistent poison input; no admission, route-worker or runtime escape wiring |
 | `api_gather.rs`, `api_progress.rs`, `api_session.rs` | JS API v2 session wire and output types | Gatherer sessions and quest progress for Load scripts |
+| `api_combat.rs`, `combat_session.rs` | JS API v2 combat session wire and its native card | typed request decode and resolve; drives the shared combat machine once per session |
 | `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |
 | `isolate_fb.rs` | isolate wire codec | flatc-generated bindings (`schema/generated`) plus delta/`IsolateBuf` domain layer; one verified root per message |
 | `host_js.rs` | generated Host JS types | from verb tables, not rs2b0t names |
@@ -355,6 +357,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
 | `bank_access.rs`, `bank_deposit.rs`, `bank_op.rs`, `bank_open.rs`, `bank_withdraw.rs`, `bank_select.rs`, `banking_open.rs` | bank open, op, deposit, withdraw and select steps | machine families, shared pieces |
+| `bank_hints.rs` | persisted last-seen bank hint | one schema-1 file per account; planning before any bank opens in a new process |
 | `clue.rs`, `clue/isolate.rs` | native recovery declaration; load-only clue session machine | isolate token, clock, identify, verbs stay private to the crate |
 | `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
 | `sherlock.rs` | Sherlock card wiring | marshals the frame, maps verbs, no second solver |
@@ -389,7 +392,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
 | `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
 | `load/*_v8.rs` | typed local V8 marshalling | one native call each, no machines |
-| `load/buyout_plan.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs`, `load/wait_clock.rs` | small typed V8 helpers | planning, geometry marshalling, paused-time wait clock |
+| `load/area.rs`, `load/buyout_plan.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs`, `load/wait_clock.rs` | small typed V8 helpers | Area rect/circle compat constructor, planning, geometry marshalling, paused-time wait clock |
 | `load/canvas_tape.rs` | canvas op tape | typed flush onto the recorder |
 | `load/snapshot.rs` | snapshot-to-V8 materializer | typed settings and event rows |
 | `load/paint_chrome.rs`, `load/paint_jive.rs` | paint payload builders | chrome and jive paints |
@@ -426,6 +429,9 @@ declarations) and `examples/`.
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
 | `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, route worker and walk continuation, WalkGuard, bank selection, paint status, the BroadcastChannel broker |
 | `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions |
+| `admission.rs` | shared route-admission seam | advisory survivability estimate under Proceed; no net or poison-clear observer claimed |
+| `slot_bank_memory.rs` | slot thread's hand on its account bank memory | one shared handle per account; the slot thread is the only writer, never across file IO |
+| `evidence_writer.rs` | background live-evidence PNG and JSON writer | one thread per cell; the slot thread only hands over pixels and receipts |
 | `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
@@ -458,6 +464,8 @@ declarations) and `examples/`.
 | `shot.rs` | window shot files | shared naming for both runners |
 | `catalog.rs` | scenario catalog | names and lookup |
 | `quester.rs` | Path-backed Quester qualification fixtures | `QuesterStage`, `FIXTURE_PROFILES`, miniquest and role stages; never product gameplay |
+| `quest_fast.rs` | shared world tick-speed send and fresh confirmation | one `::speed` command with its chat sequence; Engine Q only |
+| `tutorial.rs` | post-relog tutorial reseed for fresh live accounts | fresh same-session `tutorial 1000` confirm before the cell continues |
 | `render_betty_views.rs` | fixed-orbit render captures | station times yaw and pitch |
 | `scenarios/mod.rs` | scenario facade | re-exports families |
 | `scenarios/production.rs` | production facade and shared vocabulary | seed and watch helpers |
@@ -605,7 +613,7 @@ bounded structs and read the snapshot Rust already holds.
 | --- | --- | --- |
 | Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](quester-paths.md). |
 | Gatherer (`script/src/gatherer/`) | `Gatherer` | Woodcutting, mining and fishing from live observation: held-tool loop, disposal including power-drop batching, bank trips and provisioning, over methods from the selected content facts. |
-| Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter. |
+| Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
 | Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |
 
 ## Compatibility shim boundary

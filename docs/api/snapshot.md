@@ -71,10 +71,13 @@ unchanged, while a present empty vector clears it.
 (typecode/layer/shape/angle + resolved name/actions), `GroundItemView`,
 `ItemView` (`container`/`action_family`/`slot`/`count`/`def`),
 `WidgetView`, `SideTabView`, `StatView`, `VarpView`, `ChatLineView`,
-`SceneView` (collision flags), `WorldStateView`, `CameraView`,
+`SceneView` (collision flags), `WorldStateView`, `CameraView`, `CombatView`,
 `MapFlagView`, `TradeView`, `ShopView` (open, stock, player, player_available), `ModalView`,
 `QuestStatusView`, `MakeProductView`, `ToggleControlsView`, plus
 `WorldTile`/`LocalTile` and `ItemDefView`/`LocDefView` (from `api::obj_names`).
+
+`SnapshotView::in_combat()` reports the local combat flag and current target
+as `CombatView` (`in_combat`, `target`); it is unready without a local player.
 
 `PlayerView.headicons` carries the client's appearance bitmask unchanged for
 local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,

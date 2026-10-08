@@ -8,16 +8,17 @@ The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start /
 
 Native scripts compiled into the host, driven through the panel or TUI script chrome like any other card:
 
-- **Quester** — runs built-in quest Paths on revision 289, reading progress from the quest journal and picking up again after Stop/Start. Pick quests, skips and their order from lists; each run by default recovers from two deaths (setting) across the queue and stops on the next. Path format: [docs/quester-paths.md](docs/quester-paths.md).
+- **Quester** — runs built-in quest Paths on revision 289 (20 guides, plus 5 untested drafts marked `[draft]` that run only when picked by name or when "Include draft guides when no quests are picked" is on; members quests run only on members worlds), reading progress from the quest journal and picking up again after Stop/Start. Pick quests, skips and their order from lists; each run by default recovers from two deaths (setting) across the queue and stops on the next. Custom guides load from a folder set in Nav config. Path format: [docs/quester-paths.md](docs/quester-paths.md).
 - **Gatherer** — woodcutting, mining and fishing at a named site, a start tile, a custom area, or Auto search for the nearest usable spots. Power disposition drops products; Bank disposition banks them at the nearest bank you can walk to (or a bank you pick) and walks back.
 - **Combat** — the shared native fight behind the native scripts: melee, ranged and magic with protection prayers, potion sips and eating. Prayers you turned on yourself stay on; only the prayers the bot raised are switched off afterwards.
 - **Clues (Sherlock)** — the Rust-native clue-trail solver: waits for a held clue and works it through the shared clue machine.
 - **Fleet** — mark bots once and drive them from the panel Fleet window or the TUI fleet table: Start, Stop, Assign, Assign & restart, Log in/out, Walk N to one destination, and Apply the focused bot's settings to the marks. Marks and per-bot outcomes are shared between the two front ends.
+- **Load scripts** — JS/TS scripts can run the bot's own fighter (`api.combat.fight(...)` / `api.combat.stop()`, shown in `api.snapshot.combat`), start, watch and stop a Gatherer session, read quest progress, and use the rs2b0t `Area` class. Bundled examples live in `crates/script/examples/`.
 
 Getting around and paying your way:
 
 - **Server profiles** — one entry from `~/.274bot/servers.json` per process (`local-274`, `local-289`, `rs2b2t` built in; see below).
-- **Danger-zone routing** — walks route around dangerous monsters and similar zones by default and say which monsters block the way when no safe route exists; WalkTo offers a per-walk "Route through danger zones" opt-in plus a global grant in Nav config.
+- **Danger routing** — walks route around dangerous monsters and the Temple of Ikov lava bridge by default and name the monsters in the way when no safe route exists. Nav config's **Danger routing** has three levels: Never, When survivable (the default; it acts as Never until the bot can track poison) and Always. WalkTo offers a per-walk "Route through danger zones" opt-in, and scripts can allow danger zones for their own walks in Script prefs.
 - **Fares and tolls** — boat and cart rides pay their real fares and the Lumbridge–Al Kharid gate takes its 10 coins; a walk that cannot pay refuses before boarding and says how many coins are missing.
 - **Bank choice** — Gatherer banks at Nearest by default or a named bank you pick; map-walk bank fetch withdraws only what the walk is missing.
 

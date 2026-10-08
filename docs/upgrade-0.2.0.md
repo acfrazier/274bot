@@ -40,8 +40,8 @@ are refused with a message to rebake them with
 
 The bot no longer guesses where a local game engine is. Give it with
 `--engine`, the `ENGINE_DIR` environment variable, or the profile's
-`engine_dir` in `servers.json`; without one, a local profile stops with a
-message saying how to set it. Public (rs2b2t) profiles need nothing.
+`login_key.engine_dir` in `servers.json`; without one, a local profile stops
+with a message saying how to set it. Public (rs2b2t) profiles need nothing.
 
 ## Graphics
 

@@ -1,7 +1,7 @@
 # Contributing
 
-274bot is in **beta** for 0.2.0 (host workspace crate versions still
-`0.1.9`, no crates.io publish; public history tags `0.1.x`). The host, API,
+274bot is in **beta**: 0.2.0 is Beta 1 (host workspace crate versions
+`0.2.0`, no crates.io publish; public release tags such as `0.1.9.1` and `0.2.0`). The host, API,
 nav execute, random-event guardian, headless TUI, panel, script kernel
 (Browse / Start / Pause / Stop / Load / Reload, bulk Start all / Stop all,
 catalog refresh), revision profiles, the native Quester / Gatherer /

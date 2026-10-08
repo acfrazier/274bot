@@ -25,6 +25,17 @@ Compatibility is **partial**. Unsupported helpers and options fail
 explicitly. Do not treat runner PASS, a single live gold, or a historical
 inventory count as “all catalog scripts / all options qualified.”
 
+Members that still stop a script with `not impl` include `Game.castOnNpc`,
+`Shop.buyById`, `ChatDialog.makeOne`, `Quests.journal`, `Traversal.remaining`
+and `requestRepath`, `EntityQuery.inside` and `nearestPreferLocal`, script
+events (`events.on`/`off`, `registerScript`), the `InvItem` class, the
+task-tree classes (`AcquireTask`, `BranchTask`, `LeafTask`) and several
+gathering, fishing and banking data helpers. The generated
+`crates/script/src/shim/declared_surface.js` and
+`crates/script/compat-js/overlay-not-impl.json` list the unconditional ones. A
+helper that refuses one request at run time (for example `Traversal.walkTo`
+given `pathFollow`) raises the same `not impl` error with the reason.
+
 ## Native contract boundary
 
 Compiled cards and the slot use `script::native::Script` exclusively. Each
@@ -54,7 +65,8 @@ lifecycle receipt, host observation resets the navigation session exactly
 once, including routes, route inspect, bank picks, carried walks, and duel
 offers. A blocked instance is dropped and the slot is Idle, not Running. Its
 terminal blocked status and reason remain available to panel and TUI through
-frontend-core and to the change-only status log. They carry no run/control
+frontend-core, which label the stopped slot `stopped (blocked)`, and to the
+change-only status log. They carry no run/control
 authority. Watchdog, reconnect and fleet polling cannot restart that run; the
 operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
@@ -81,10 +93,15 @@ queue/dispatch behavior through one crate-private borrowed host frame (no raw
 driver). It remains `load`-gated for the existing clue implementation, but never
 creates a V8 isolate.
 
-Compat machines opt in to evidence-only snapshot passes individually. The
-dedupe key tracks changed snapshot evidence, not the native input lease's
-lifecycle identity. A later dirty drain in the same tick can therefore settle
-a bank/shop acknowledgement, while unchanged evidence gets no duplicate pass.
+Compat machines opt in to evidence-only snapshot passes individually. The bank
+open and select families, `Bank.close`, `withdrawLoad`, the single-transfer bank
+ops (`Bank.deposit`, `withdraw`, `withdrawById`, `withdrawX`, `withdrawXById`)
+and the `Shop` calls do, so they finish on the snapshot that confirms them
+instead of the next game tick; the deposit loops, `withdrawTo` and note-mode
+still advance on game ticks. The dedupe key tracks changed snapshot evidence,
+not the native input lease's lifecycle identity. A later dirty drain in the
+same tick can therefore settle a bank/shop acknowledgement, while unchanged
+evidence gets no duplicate pass.
 These passes do not call `on_game_tick`, run `loop`, advance `delayTicks`, or
 replenish callback/action budgets.
 
@@ -122,16 +139,19 @@ instance; `want_run` distinguishes operator Pause from offline.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
-`api.snapshot.gather` reports its live session. `api.questPaths()` is a sync
-read of the release Path index for the seventeen released quests, needing no seat;
+`api.snapshot.gather` reports its live session; `api.combat.fight` runs one
+fight of the native Combat machine the same way, and `api.snapshot.combat`
+reports its live session. `api.questPaths()` is a sync read of the release Path
+index for the twenty-five bundled Paths (twenty released, five draft guides),
+needing no seat;
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the
 host owns the slot's foreground: only the script's game rows are drained and
 dropped at admission — never dispatched, never deferred. A `questProgress`
-read while a gather session is live — and a gather `run` while a read is
-live — is refused `busy`. Control rows
-(`gather.stop`, run-policy) still pass while paused. BroadcastChannel
+read while a gather or combat session is live — and a gather `run` or combat
+`fight` while a read is live — is refused `busy`. Control rows
+(`gather.stop`, `combat.stop`, run-policy) still pass while paused. BroadcastChannel
 open/post/close, inspect-route requests and acknowledgements, and host-local
 camera yaw writes survive foreground admission, but stay queued while the Load
 slot is Starting or Paused, even offline, held, or without a snapshot. They
@@ -145,6 +165,9 @@ The Load-slot seat's worked example is
 `gather_quest_v2.js` (checked-in plain-JS form): one Power-mode gather session
 to a drop quota, then one read-only `questProgress` check, with no script game
 actions. See [js-api-v2.md](js-api-v2.md) "Worked example: GatherQuest v2".
+The combat seat's examples are `fight_v2.ts` (one fight) and
+`combat_showcase_v2.ts` (melee, ranged and magic fights, prayer, eating and a
+clean stop); see "Combat sessions" there.
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
@@ -167,7 +190,8 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 `quests` selects quest IDs. An empty list queues every available Path except
 rows marked `"status": "draft"`. The off-by-default `include_draft_guides` setting
 (**Include draft guides when no quests are picked**) adds those bundled drafts
-in release-roster order. Explicit quest picks always run; with an empty quest
+in release-roster order; quest pickers label them `[draft]`. Explicit quest
+picks always run; with an empty quest
 selection, a draft listed in `order_override` is also an explicit pick.
 `order_override` prioritizes selected IDs and `skip` excludes
 IDs. `partner_account` and `gang` are per-account settings, not bulk-copy
@@ -319,8 +343,13 @@ Maze or Mime declines the guardian's solve/hold, not the slot's terminal
 `random-trapped` protection if the script is left unheld on the trap square.
 
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
+A members quest is BLOCKED on a free-to-play world (`quest requires a members
+world`) and while the world's membership is unobserved.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
-already consumed them. An unread bank is unknown, not an empty bank.
+already consumed them. An unread bank is unknown, not an empty bank: a
+`must_have` item blocks only when the pack, the worn items and a bank seen open
+this login together hold less than required. An unseen bank, or one known only
+from the saved record, never blocks, and a worn item counts as carried.
 
 An unobserved quest-list family waits without compiling a Path or sending gameplay
 effects for up to 30 seconds of eligible active time. It admits automatically when
@@ -348,19 +377,33 @@ the pass rather than replenished after every dose or meal; death resets those
 latches. Paths marked `owns_inventory` retain their authored inventory steps.
 Automatic coin funding is not provided.
 
+Needs are planned from the account's bank memory. The host keeps one per
+account: the rows of the bank as last seen open, saved to
+`~/.274bot/bank-hints/<profile>/<account>.json` when the bank closes and loaded
+at login as an advisory hint. After a new login the rows stay but count only as
+that hint until the bank is opened again. A bank never seen costs one scan trip,
+and a shortage that only the saved hint predicts costs one verifying trip. A
+shortage in a bank seen open this login is final: a required provisioning item
+blocks in place, and an authored `bank` `withdraw` refuses before any walk with
+the counts (for example `need 300 Coins; held 0, banked 0`); with `partial_ok`
+it refuses only when none of its items is obtainable. The Quester keeps no bank
+table of its own, so Stop/Start and watchdog recreation do not forget what the
+bank held.
+
 Acquisition recipes can call other recipes with `acquire` steps. The compiler
 binds dependencies first and compiles each recipe once, independent of its
 declaration order. A chain can contain at most 32 recipes. A cycle returns
 `recipe-cycle` with the cycle's recipe names. A missing dependency remains
 `unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
-Completed bank scans inside nested acquisition recipes update the existing bank
-knowledge once, before the parent recipe evaluates its next child or settlement
-predicate. This applies to authored acquisition steps and loadout provisioning.
+A scan inside a nested acquisition recipe needs no receipt hand-off: the host
+observes the open bank into the account's bank memory every frame, so later
+children and settlement predicates read the stock the scan saw. This applies to
+authored acquisition steps and loadout provisioning.
 Recipe settlement receives its completed child's outcome, including outcome facts.
 An observed empty bank is known zero stock; missing bank evidence remains unknown.
-Finishing an acquisition outside the bank preserves the memo: inventory changes
-do not change bank stock. Cancel or Stop discards pending child evidence; a
-recreated Quester starts with an unknown memo.
+Finishing an acquisition outside the bank leaves the memory alone: inventory
+changes do not change bank stock. Cancel or Stop discards pending child evidence;
+the memory belongs to the host, so a recreated Quester reads the same rows.
 
 When an acquisition child fails, parked status retains its recipe and child
 step IDs alongside the failure reason. A settle-timeout park shows the timed-out
@@ -383,6 +426,8 @@ step without an unnecessary withdrawal.
 The wait shows `Waiting for inventory/equipment observation`. It has a
 30-second active-time limit. Missing observations at that limit park the step
 with a `needs-evidence` reason, rather than waiting indefinitely.
+A loadout trip closes an open bank before it sends any equipment request; a
+carry-only loadout leaves the bank open for the next bank run to reuse.
 
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
@@ -460,6 +505,11 @@ on change; unchanged polls do not allocate or republish it. These intermediate
 status fields do not complete the step or replace the final outcome used by
 Path predicates.
 
+An advancing combat step that killed an NPC rereads quest progress only once
+that NPC has left the scene, bounded at six observed ticks: the content writes
+the quest's progress from the NPC's death queue, after the step has already
+seen zero health.
+
 Loot is optional: an unreachable drop is skipped and the combat step continues.
 `loot: [{"obj": "selected_config", "qty": N}]` uses `N` as an inventory threshold
 for optional per-kill looting, not a promised total. A loot phase may finish
@@ -478,17 +528,21 @@ includes every body text line and each option's component id and text; a new
 chat-history ring line is not page progress. The host computes the shared native
 fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
-the action.
+the action. A Continue page or a new chat root is answered on the tick it is
+first observed; a page that changed text on the same root, or that offers no
+input yet, waits one tick.
 
 Selected dialogue UI identities distinguish the generic `scroll_root` used by
 pirate scrolls from `quest_scroll_root`, which the authored quest-completion
 script opens. These are packed identities, not a general mapping for custom
 scroll variants.
 
-Closed chat completes after four quiet game ticks. Observed inventory changes,
+Closed chat completes after one quiet game tick, counted from the observation of
+the close, unless the step authors `gap_ticks` (1–30) for an NPC script that
+closes the chat and delays before its next page. Observed inventory changes,
 server-driven player movement, new game messages (scripted `mes` output) and
-active scripted animation can extend that gap using the same finite
-per-dialogue budget. An unchanged player position is not activity and does not
+active scripted animation extend that gap by the same amount, using the same
+finite per-dialogue budget. An unchanged player position is not activity and does not
 delay completion. A chat page that opens after the driver closed its own quest
 scroll (a level-up page after a hand-in) is drained as part of the same
 dialogue.
@@ -520,8 +574,8 @@ pages. It drains Continue pages and refuses option menus without sending an
 answer. It leaves unrelated main interfaces untouched. If no page opens, the
 operation waits for acceptance and a newer evidence tick with an observed player
 who is not moving and has no primary animation. Scene targets also need
-post-acceptance movement or a primary animation unless the player was already
-within interaction range at acceptance. A fresh idle tick is required in either
+post-acceptance movement or a primary animation unless the target was already
+within interaction range when the click was chosen. A fresh idle tick is required in either
 case. Adjacent instant scene actions can therefore settle without visible
 activity, while a distant target still requires activity. Loc/Npc/name
 interactions require their own accepted dispatch receipt. This observation
@@ -775,8 +829,9 @@ qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
 
-Native Quester dialogue completion requires four observed game ticks with
-chat closed, rather than an elapsed host-millisecond gap. Inventory changes and
+Native Quester dialogue completion requires its end gap of observed game ticks
+with chat closed (one by default, or the step's `gap_ticks`), rather than an
+elapsed host-millisecond gap. Inventory changes and
 active scripted work may re-arm this gap using a finite budget. This drains
 delayed reward/work pages without allowing unrelated activity to wait forever.
 Combat interruption
@@ -985,6 +1040,16 @@ reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Product deposits succeed only
 after inventory confirms that no unprotected gathering products remain.
 
+A bank trip is admitted from the account's bank memory (see Quester queue and
+provisioning). The pack and worn pages decide whether a trip is due; the memory
+decides what the trip will find. A bank never seen is learned by walking to it,
+and a shortage predicted only by the saved hint still earns one verifying trip.
+Only a bank seen open this login that cannot serve a required tool, bait,
+configured food or complete reserve cast fails in place with `supply-missing`,
+without a walk. At the open bank the live rows are planned afresh and win over
+the memory. A wielded tool counts as carried, and so does a worn required item;
+consumed bait counts only from the pack.
+
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank
 trip tops it up to the target. `food` is an optional selected-cache item name;
@@ -1154,8 +1219,17 @@ vault bag.
 Missing catalog/file sources stay visible with `unavailable` rather than
 silently dropping the assignment.
 
+A Load script whose settings carry a `loadout` key is checked against the saved
+Loadouts at Start: an exact name wins, a blank value selects the first loadout,
+and any other value must match exactly one loadout after trimming and ignoring
+ASCII case. An unknown or ambiguous name (or a blank one when no loadouts exist)
+refuses the Start with a message listing the matching and available loadouts,
+rather than running the script without its gear. Quester Path loadouts keep
+their exact-name lookup.
+
 Native settings use the same per-account map, under `compiled_identity_key`,
-with envelopes `{"schema_version":1,"values":{...}}`; JS bags are unchanged.
+with envelopes `{"schema_version":N,"values":{...}}` (N is the card's schema
+version: 3 for Quester, 4 for Gatherer, 1 for Sherlock); JS bags are unchanged.
 Missing entries use current defaults; legacy empty native entries mean schema
 1. Malformed or unknown versions remain unavailable and are never overwritten
 with defaults. Merge precedence remains defaults → account overrides → explicit
@@ -1203,7 +1277,7 @@ Refresh catalog and the MultiBox bulk script controls described below.
 | **Browse…** | Pick a compiled or loaded/catalog card for the focused profile (pending until Start). |
 | **Load** | Open a file picker; register/transpile a File card. Disabled while a script is active on the focus. |
 | **Reload** | Hash current card origin (+ siblings). Unchanged → “Nothing changed; nothing to reload”. Changed with no running/paused owners → apply. Changed with owners → **Confirm** / **Cancel reload**: running bots that still match the warned generation **restart**; named **paused** bots are **Stopped** (not left half-reloaded). |
-| **Start / Pause / Resume / Stop** | Focused profile only. Per-bot Stop also cancels a Start that is still waiting. |
+| **Start / Pause / Resume / Stop** | Focused profile only. Per-bot Stop also cancels a Start that is still waiting. Start refuses a File card whose file is gone (`missing file: <name>`) instead of running the copy loaded before the delete; Start all and Start on marked refuse it the same way. |
 | **Start all / Start on marked / Stop all** | Bulk script controls (panel MultiBox rail; TUI Script tab `T` / `E`). Separate from **Login all / Logout all**. Start all and Start on marked bots (one shared command for panel and TUI) skip already running/paused/stopping members and start the rest one after another over the next frames, not all in one frame. One running report covers every Start click while any of its bots still waits or is still setting up: it counts each bot once as `started`, `queued`, `skipped` or `failed`, lists failures before skips, and updates as waiting bots start or are refused. A second click in that time joins the same report instead of replacing it. Every skipped or failed bot also gets a line in its own log. Waiting rows show `queued k/n`. Marked Start with a heading card starts that card on every marked row. Stop on marked rows reports waiting bots as `cancelled`. Stop all stops running and paused across wall members and live slots **and cancels waiting Starts**. A member removed, re-assigned, or operator-logged-out while waiting does not start stale work. |
 | **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
 
@@ -1296,9 +1370,10 @@ host outcomes with their run, action and request owners. Inherited walk options
 resolve against the current global grants and the instance's committed script
 permissions, captured at Start and when a settings revision becomes effective.
 Either may allow the walk, while a walk-local `false` forbids it even when a global or
-per-script setting allows it. Native script settings default off and use
-`allow_teleports`, `allow_wilderness` and `allow_danger_zones` (Gatherer
-exposes camelCase ids). Path `walk` steps accept the same three optional
+per-script setting allows it. Native script settings (**Script prefs** in the
+panel, **Params** in the TUI) default off and use `allow_teleports`,
+`allow_wilderness` and `allow_danger_zones` (Gatherer exposes camelCase ids).
+Path `walk` steps accept the same three optional
 booleans, so omitted bits inherit and `true` opts in for only that step. Native
 script walking never exposes bank fetch.
 
@@ -1355,6 +1430,9 @@ endpoint crossing judged.
 `ActionError::Blocked(detail)`, never ordinary arrival. Quester/Gatherer keep
 their existing parked/blocked handling with the reason; both frontends show
 the current or last reason under **Walk risk**.
+A native walk refused for its danger zones names them and how to allow the
+crossing: `blocked by danger zones: <zones>; to allow it, set Danger routing to
+Always in Nav config, or allow danger zones for this script in Script prefs`.
 `NativeActions::assess_walk(request, cx)` is compute-only: its independent
 correlated `AssessReceipt` includes the assessment and route ticks, spends no
 walk/event budget, arms no route or guard, and may run during a live escape.

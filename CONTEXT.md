@@ -175,5 +175,5 @@ One entry from `servers.json` binding revision and world roster for the whole pr
 _Avoid_: switching worlds mid-process, `--prod` / `BOT_TARGET` (removed)
 
 **Danger zone**:
-Content-derived nav exclusion (dangerous monsters and similar areas). Walks avoid it by default and name what blocks them; crossing needs the per-walk opt-in or the global grant.
+Content-derived nav exclusion (dangerous monsters and similar areas). Walks avoid it by default and name what blocks them. Crossing needs the global Danger routing level Always, the per-walk WalkTo opt-in, or a script's or quest step's own allowance. The middle level, When survivable (the default), acts as Never until the bot can track poison.
 _Avoid_: hand-written monster lists, policy tables as routing
