@@ -339,10 +339,11 @@ fn spawn(src: &str) -> LoadIsolate {
 /// The walked step the search membership's decoded tile is: the select
 /// defaults are the ones an absent option takes on the isolate wire.
 fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
-    InteractReq::Walk {
+    InteractReq::WalkNear {
         x,
         z,
         level,
+        radius: 1,
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
@@ -2868,7 +2869,7 @@ export default class T extends TaskBot {
     let logs = iso.drain_logs();
     iso.join();
     assert!(
-        interacted.is_empty() || matches!(interacted[0], InteractReq::Walk { .. }),
+        interacted.is_empty() || matches!(interacted[0], InteractReq::WalkNear { .. }),
         "the row's own arm runs with the list still owed: {interacted:?}"
     );
     assert_clean(&logs);

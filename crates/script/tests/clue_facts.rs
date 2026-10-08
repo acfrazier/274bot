@@ -990,10 +990,11 @@ export async function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Walk {
+        vec![InteractReq::WalkNear {
             x: 3209,
             z: 3218,
             level: 1,
+            radius: 1,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -1106,10 +1107,11 @@ export async function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Walk {
+        vec![InteractReq::WalkNear {
             x: 3209,
             z: 3218,
             level: 1,
+            radius: 1,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -1235,10 +1237,11 @@ fn assert_live_yield(iso: &LoadIsolate) {
 }
 
 fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
-    InteractReq::Walk {
+    InteractReq::WalkNear {
         x,
         z,
         level,
+        radius: 1,
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,

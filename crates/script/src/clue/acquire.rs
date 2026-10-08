@@ -248,7 +248,7 @@ impl ClueRuntime {
         match arrival(tile, input) {
             // No posted `here`: no arrival claim to make and no walk to measure.
             Arrival::Unknown => self.emit("wait"),
-            Arrival::Walking => self.walk(tile),
+            Arrival::Walking => self.walk(tile, None),
             // Arrived behind an open chat: the answer, the continue, or nothing
             // this arm may send.
             Arrival::Arrived if ready => self.chat(&stop, input),

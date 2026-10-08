@@ -141,7 +141,7 @@ impl ClueRuntime {
             failed: false,
             closed: false,
         });
-        Some(self.walk(shantay_spawn()))
+        Some(self.walk(shantay_spawn(), None))
     }
 
     /// One call of the live shop trip, one verb per call: the walk to the
@@ -168,7 +168,7 @@ impl ClueRuntime {
                 Arrival::Unknown => self.shop_wait(shop, input),
                 Arrival::Walking => {
                     self.shop = Some(shop);
-                    Some(self.walk(spawn))
+                    Some(self.walk(spawn, None))
                 }
                 Arrival::Arrived => {
                     // The first arrived call opens this step's own observation
@@ -278,6 +278,6 @@ impl ClueRuntime {
             return Some(self.emit(NO_SHOP));
         }
         self.shop = None;
-        Some(self.walk(shop.dest))
+        Some(self.walk(shop.dest, None))
     }
 }
