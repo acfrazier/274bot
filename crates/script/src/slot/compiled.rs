@@ -837,12 +837,16 @@ impl SlotScript {
     pub fn native_run(&self) -> Option<RunKey> {
         self.compiled.as_ref().map(|run| run.run)
     }
-    /// Permissions frozen in this instance's effective committed revision.
-    /// Pending boundary/restart edits are not grants until the card applies them.
+    /// Permissions from this slot's committed card, or its active Load API
+    /// Gather card. Pending boundary/restart edits are not grants.
     pub fn native_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
-        self.compiled
+        let permissions = self
+            .compiled
             .as_ref()
-            .map(|run| run.config.walk_permissions())
+            .map(|run| run.config.walk_permissions());
+        #[cfg(feature = "load")]
+        let permissions = permissions.or_else(|| self.api_gather_walk_permissions());
+        permissions
     }
 
     pub fn native_status(&self) -> Option<Arc<ScriptStatus>> {

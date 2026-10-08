@@ -1691,3 +1691,210 @@ export function tick(api) { globalThis.__api = api; }"#,
     );
     assert_eq!(rig.probe("globalThis.__secondSettles"), 1);
 }
+
+const WALK_PERMISSION_SOURCE: &str = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const page = api.snapshot.gather;
+  globalThis.__page = page;
+  if (globalThis.__launch && !globalThis.__run) {
+    const settings = Object.assign(
+      { skill: 'Woodcutting', disposition: 'Power' },
+      globalThis.__settings || {}
+    );
+    globalThis.__run = api.gather.run(settings);
+  }
+}
+"#;
+
+fn active_gather_permission_rig(settings: serde_json::Value) -> GatherReconnectRig {
+    let mut rig = GatherReconnectRig::with_source(WALK_PERMISSION_SOURCE);
+    rig.probe(&format!("globalThis.__settings = {settings}; true"));
+    let token = rig.start_un_drained();
+    rig.expect_running_page(token);
+    rig
+}
+
+fn danger_route_world() -> NavWorld {
+    let width = 12;
+    let height = 1;
+    let flags = vec![0u32; width * height * 4];
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let collision = nav::collision::WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut graph = nav::transport::TransportGraph::default();
+    graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            vec![nav::zones::Zone::npc(
+                WorldTile {
+                    x: 6,
+                    z: 0,
+                    level: 0,
+                },
+                0,
+                nav::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav::zones::ZoneKind::new(
+                "danger",
+                "Danger zone",
+                1,
+                1,
+                false,
+                false,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            collision.origin,
+            collision.width as u32,
+            collision.height as u32,
+            &graph.wilderness,
+        )
+        .expect("valid synthetic danger zone"),
+    );
+    NavWorld::from_parts(collision, graph, Vec::new())
+}
+
+fn wilderness_route_world() -> NavWorld {
+    let flags = vec![0u32; 5 * 12];
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let graph = nav::transport::TransportGraph {
+        wilderness: nav::transport::WildernessRules {
+            zones: vec![nav::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..nav::transport::TransportGraph::default()
+    };
+    NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            width: 5,
+            height: 12,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        Vec::new(),
+    )
+}
+
+fn route_exists(
+    world: &NavWorld,
+    from: WorldTile,
+    to: WorldTile,
+    options: nav::router::FindOptions,
+) -> bool {
+    nav::router::find_with_avoid(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        options,
+        &nav::WorldState::default(),
+        &[],
+    )
+    .is_ok()
+}
+
+#[test]
+fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
+    let defaults = active_gather_permission_rig(serde_json::json!({}));
+    let allowed = active_gather_permission_rig(serde_json::json!({
+        "allowDangerZones": true,
+        "allowWilderness": true,
+    }));
+    for rig in [&defaults, &allowed] {
+        let mut navs = rig.navs.lock().unwrap();
+        navs.get_mut(SLOT).unwrap().walk_globals =
+            Some(Arc::new(Mutex::new(crate::WalkGlobals::fail_closed())));
+    }
+    let default_options = crate::walk_permissions::native_admission(
+        &defaults.navs,
+        SLOT,
+        script::native::WalkOptions::default(),
+    )
+    .0;
+    let allowed_options = crate::walk_permissions::native_admission(
+        &allowed.navs,
+        SLOT,
+        script::native::WalkOptions::default(),
+    )
+    .0;
+
+    let danger_world = danger_route_world();
+    let danger_from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let danger_to = WorldTile {
+        x: 11,
+        z: 0,
+        level: 0,
+    };
+    assert!(!route_exists(
+        &danger_world,
+        danger_from,
+        danger_to,
+        default_options,
+    ));
+    assert!(route_exists(
+        &danger_world,
+        danger_from,
+        danger_to,
+        allowed_options,
+    ));
+
+    let wilderness_world = wilderness_route_world();
+    let wilderness_from = WorldTile {
+        x: 3100,
+        z: 3519,
+        level: 0,
+    };
+    let wilderness_to = WorldTile {
+        x: 3100,
+        z: 3525,
+        level: 0,
+    };
+    assert!(!route_exists(
+        &wilderness_world,
+        wilderness_from,
+        wilderness_to,
+        default_options,
+    ));
+    assert!(route_exists(
+        &wilderness_world,
+        wilderness_from,
+        wilderness_to,
+        allowed_options,
+    ));
+
+    defaults.slot().lock().unwrap().stop();
+    allowed.slot().lock().unwrap().stop();
+}

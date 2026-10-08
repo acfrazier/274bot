@@ -48,6 +48,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   close after each crossing, such as the Fishing Guild door; anyone held
   back retries automatically once the door is available again.
 
+### Scripts
+
+- Load scripts using `api.gather.run` now honor the card's
+  `allowTeleports`, `allowWilderness` and `allowDangerZones` options for
+  Gatherer routes; those permissions remain off by default.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
@@ -508,10 +514,6 @@ that aren't here yet. Where we know the target, it's noted.
   (`events.on`/`off`, `registerScript`), the `InvItem` class and task-tree
   classes, and several gathering, fishing and banking data helpers. Closing
   these, checked against rs2b0t's own tests, is planned for 0.2.0.1 and 0.2.1.
-- In Load scripts, `api.gather.run`'s `allowTeleports`, `allowWilderness`
-  and `allowDangerZones` options are accepted but not applied yet: the
-  Gatherer's walks follow the global Nav config settings. Planned for
-  0.2.0.1.
 - Script errors don't yet tell "not possible right now" apart from "not
   implemented".
 - Equipping an item while the bank is open isn't handled reliably; close
