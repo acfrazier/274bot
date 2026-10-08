@@ -76,6 +76,8 @@ enum SeedPhase {
     WaitTutorial,
     Logout,
     WaitRelog,
+    ReseedTutorial,
+    WaitReseedConfirm,
     SeedWoodcutting,
     SeedAttack,
     SeedDefence,
@@ -92,6 +94,7 @@ struct LiveSetup {
     disconnect_requested: bool,
     disconnected: bool,
     reconnected: bool,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 impl Default for LiveSetup {
@@ -102,6 +105,7 @@ impl Default for LiveSetup {
             disconnect_requested: false,
             disconnected: false,
             reconnected: false,
+            tutorial_reseed: None,
         }
     }
 }
@@ -246,25 +250,19 @@ fn live_frame(
                 Ok(())
             }
             SeedPhase::SkipTutorial => {
-                send_cheat(client, "setvar tutorial 1000")?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
                 state.phase = SeedPhase::QueryTutorial;
                 Ok(())
             }
             SeedPhase::QueryTutorial => {
-                send_cheat(client, "getvar tutorial")?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
                 state.phase = SeedPhase::WaitTutorial;
                 Ok(())
             }
             SeedPhase::WaitTutorial => {
-                if snapshot.chat_lines().iter().any(|line| {
-                    line.text
-                        .to_ascii_lowercase()
-                        .contains("get tutorial: 1000")
-                }) || snapshot
-                    .chat_modal_texts()
-                    .iter()
-                    .any(|text| text.to_ascii_lowercase().contains("get tutorial: 1000"))
-                {
+                // Pre-relog proof (island exit); the durable post-relog proof
+                // below uses a fresh same-session baseline.
+                if scenario::tutorial::tutorial_confirmed(&snapshot, 0) {
                     state.phase = SeedPhase::Logout;
                 }
                 Ok(())
@@ -286,7 +284,31 @@ fn live_frame(
                         .iter()
                         .any(|tab| tab.index == 3 && tab.available)
                 {
-                    state.phase = SeedPhase::SeedWoodcutting;
+                    state.phase = SeedPhase::ReseedTutorial;
+                }
+                Ok(())
+            }
+            SeedPhase::ReseedTutorial => {
+                // Post-relog reseed after the kit-close queue has run.
+                let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                state.tutorial_reseed = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                state.phase = SeedPhase::WaitReseedConfirm;
+                Ok(())
+            }
+            SeedPhase::WaitReseedConfirm => {
+                let reseed = state
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed");
+                match reseed.check(&snapshot) {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
+                        state.phase = SeedPhase::SeedWoodcutting;
+                    }
+                    Ok(false) => {}
+                    Err(error) => return Err(error),
                 }
                 Ok(())
             }
@@ -811,7 +833,11 @@ fn live_quest_progress_complete_cook_through_load_api() {
     let names = play_bootstrap::mint_live_names(1);
     let account = names[0].clone();
     let credentials = mint_live_entries(&names);
-    let setup = Arc::new(Mutex::new((0u8, None::<String>)));
+    let setup = Arc::new(Mutex::new((
+        0u8,
+        None::<String>,
+        None::<scenario::tutorial::PostRelogTutorial>,
+    )));
     let frame_setup = Arc::clone(&setup);
     let frame_account = account.clone();
     let mut play = run_with_template(
@@ -840,18 +866,10 @@ fn live_quest_progress_complete_cook_through_load_api() {
                         state.0 = 1;
                     }
                     1 => {
-                        send_cheat(client, "getvar tutorial")?;
+                        send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
                         state.0 = 2;
                     }
-                    2 if snapshot.chat_lines().iter().any(|line| {
-                        line.text
-                            .to_ascii_lowercase()
-                            .contains("get tutorial: 1000")
-                    }) || snapshot
-                        .chat_modal_texts()
-                        .iter()
-                        .any(|line| line.to_ascii_lowercase().contains("get tutorial: 1000")) =>
-                    {
+                    2 if scenario::tutorial::tutorial_confirmed(&snapshot, 0) => {
                         let ifaces = Arc::clone(&client.ifaces);
                         if !api::interact::logout(client, &ifaces) {
                             return Err("tutorial logout interface unavailable".into());
@@ -865,9 +883,25 @@ fn live_quest_progress_complete_cook_through_load_api() {
                             .iter()
                             .any(|tab| tab.index == 3 && tab.available) =>
                     {
-                        // The local 289 engine's variable is cookquest, not cook.
-                        send_cheat(client, "setvar cookquest 2")?;
-                        state.0 = 4;
+                        // Post-relog reseed after the kit-close queue has run.
+                        let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                        send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                        send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                        state.2 = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                        state.0 = 10;
+                    }
+                    10 => {
+                        let reseed = state.2.as_ref().expect("tutorial reseed armed");
+                        match reseed.check(&snapshot) {
+                            Ok(true) => {
+                                println!("{}", scenario::tutorial::confirmation_log());
+                                // The local 289 engine's variable is cookquest, not cook.
+                                send_cheat(client, "setvar cookquest 2")?;
+                                state.0 = 4;
+                            }
+                            Ok(false) => {}
+                            Err(error) => return Err(error),
+                        }
                     }
                     4 => {
                         send_cheat(client, "getvar cookquest")?;

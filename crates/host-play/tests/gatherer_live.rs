@@ -960,6 +960,8 @@ enum Prep {
     WaitTutorial,
     Relog,
     WaitRelog,
+    ReseedTutorial,
+    WaitReseedConfirm,
     Seed,
     WaitSeed,
     WaitEdgeStart,
@@ -1669,6 +1671,7 @@ struct GatherSlot {
     witness: Witness,
     error: Option<String>,
     pause_plane_teleport_sent: bool,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 impl GatherSlot {
     fn new(
@@ -1710,6 +1713,7 @@ impl GatherSlot {
             witness: Witness::default(),
             error: None,
             pause_plane_teleport_sent: false,
+            tutorial_reseed: None,
         }
     }
     fn fixture_progress(&self) -> FixtureProgress {
@@ -3033,19 +3037,6 @@ impl GatherSlot {
         Ok(())
     }
 
-    fn chat_has(&self, needle: &str) -> bool {
-        let needle = needle.to_ascii_lowercase();
-        self.snapshot
-            .chat_lines()
-            .iter()
-            .any(|line| line.text.to_ascii_lowercase().contains(&needle))
-            || self
-                .snapshot
-                .chat_modal_texts()
-                .iter()
-                .any(|text| text.to_ascii_lowercase().contains(&needle))
-    }
-
     fn inventory_tab_available(&self) -> bool {
         self.snapshot
             .side_tabs()
@@ -3118,12 +3109,12 @@ impl GatherSlot {
                 }
             }
             Prep::TutSkip => {
-                send_cheat(client, "setvar tutorial 1000")?;
-                send_cheat(client, "getvar tutorial")?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
                 self.phase = Prep::WaitTutorial;
             }
             Prep::WaitTutorial => {
-                if self.chat_has("get tutorial: 1000") {
+                if scenario::tutorial::tutorial_confirmed(&self.snapshot, 0) {
                     self.phase = Prep::Relog;
                 }
             }
@@ -3139,7 +3130,29 @@ impl GatherSlot {
                     && self.snapshot.scene_state() == 2
                     && self.inventory_tab_available()
                 {
-                    self.phase = Prep::Seed;
+                    self.phase = Prep::ReseedTutorial;
+                }
+            }
+            Prep::ReseedTutorial => {
+                // Post-relog reseed after the kit-close queue has run.
+                let baseline = scenario::tutorial::chat_baseline(&self.snapshot);
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                self.tutorial_reseed = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                self.phase = Prep::WaitReseedConfirm;
+            }
+            Prep::WaitReseedConfirm => {
+                let reseed = self
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed");
+                match reseed.check(&self.snapshot) {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
+                        self.phase = Prep::Seed;
+                    }
+                    Ok(false) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Prep::Seed => {
