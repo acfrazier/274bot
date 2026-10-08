@@ -548,6 +548,7 @@ fn native_bank_access(
     ))
 }
 
+#[allow(clippy::too_many_arguments)] // Session permissions come from locked slot dispatch.
 pub(super) fn queue_native_bank_pick(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -556,6 +557,7 @@ pub(super) fn queue_native_bank_pick(
     request: NativeBankPickRequest,
     authority: HostAuthority,
     evidence: EvidenceStamp,
+    session_permissions: Option<script::native::WalkPermissions>,
 ) {
     let from = request.from;
     let preferences = request.preferences;
@@ -573,6 +575,7 @@ pub(super) fn queue_native_bank_pick(
                 allow_teleports: script::native::WalkBit::Forbid,
                 ..request.options
             },
+            session_permissions,
         )
         .0,
         request_id,

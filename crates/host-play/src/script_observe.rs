@@ -886,7 +886,6 @@ pub(crate) fn script_observe_cached_with_channels(
             let mut navs = navs.lock().unwrap();
             let bot = navs.entry(name.to_owned()).or_default();
             bot.native_permissions = slot.native_walk_permissions();
-            bot.api_gather_permissions = slot.api_gather_walk_permissions();
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
         }
         emit_script_debug_logs(&mut slot, name);
@@ -1145,7 +1144,6 @@ pub(crate) fn script_observe_cached_with_channels(
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
                         bot.native_permissions = slot.native_walk_permissions();
-                        bot.api_gather_permissions = slot.api_gather_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
                     }
                     let mut refused_batch = None;
@@ -1345,7 +1343,12 @@ pub(crate) fn script_observe_cached_with_channels(
                                 };
                                 // A refusal reaches the owner as a typed
                                 // `Refused` receipt on the next observation.
-                                arm.queue_native_route(snapshot, request, authority);
+                                arm.queue_native_route(
+                                    snapshot,
+                                    request,
+                                    authority,
+                                    slot.api_gather_walk_permissions(),
+                                );
                             }
                             script::native::HostEffect::AssessWalk(request) => {
                                 let arm = super::ScriptWalkArm {
@@ -1365,6 +1368,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         tick,
                                         sequence: tick,
                                     },
+                                    slot.api_gather_walk_permissions(),
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
@@ -1380,6 +1384,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         tick,
                                         sequence: tick,
                                     },
+                                    slot.api_gather_walk_permissions(),
                                 );
                             }
                         }

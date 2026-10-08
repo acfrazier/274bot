@@ -103,9 +103,6 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
-    /// Permissions for this Load slot's running API Gatherer walk family.
-    /// Kept separate from `native_permissions`, the script-row option marker.
-    pub(crate) api_gather_permissions: Option<script::native::WalkPermissions>,
     pub(crate) compat_v1: bool,
     /// The held runtime-net setting was reported during this session.
     pub(crate) runtime_gate_logged: bool,
@@ -433,6 +430,7 @@ impl ScriptWalkArm {
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
         evidence: api::quest_progress::EvidenceStamp,
+        session_permissions: Option<script::native::WalkPermissions>,
     ) {
         if !authority.live() {
             return;
@@ -484,8 +482,12 @@ impl ScriptWalkArm {
             ));
         }
         let from = WorldTile { x, z, level };
-        let (options, policy, enforce) =
-            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let (options, policy, enforce) = super::walk_permissions::native_admission(
+            &self.navs,
+            &self.name,
+            request.options,
+            session_permissions,
+        );
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
@@ -633,6 +635,7 @@ impl ScriptWalkArm {
         snapshot: &GameSnapshot,
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
+        session_permissions: Option<script::native::WalkPermissions>,
     ) -> bool {
         if !authority.live() {
             return false;
@@ -693,8 +696,12 @@ impl ScriptWalkArm {
         } else {
             None
         };
-        let (options, policy, enforce) =
-            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let (options, policy, enforce) = super::walk_permissions::native_admission(
+            &self.navs,
+            &self.name,
+            request.options,
+            session_permissions,
+        );
         let off_debt = self
             .navs
             .lock()

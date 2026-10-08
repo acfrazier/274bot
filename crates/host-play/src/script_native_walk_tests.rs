@@ -1922,6 +1922,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                 &rig.navs,
                 "alice",
                 rig.shared.lock().options,
+                None,
             )
             .0
             .allow_bank_fetch,
@@ -3878,7 +3879,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2952, 4072, 512, 264)
+        (2944, 4072, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

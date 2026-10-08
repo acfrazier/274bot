@@ -1887,15 +1887,15 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         let bot = navs.get_mut(SLOT).unwrap();
         bot.walk_globals = Some(Arc::new(Mutex::new(crate::WalkGlobals::fail_closed())));
         assert_eq!(bot.native_permissions, None);
-        assert_eq!(
-            bot.api_gather_permissions,
-            Some(script::native::WalkPermissions {
-                allow_teleports: true,
-                allow_wilderness: true,
-                allow_danger_zones: true,
-            })
-        );
     }
+    assert_eq!(
+        rig.slot().lock().unwrap().api_gather_walk_permissions(),
+        Some(script::native::WalkPermissions {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_danger_zones: true,
+        })
+    );
 
     let world = Some(Arc::new(wilderness_route_world()));
     crate::script_runtime::apply_watchdog_nav_action(
@@ -1953,12 +1953,18 @@ fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
         &defaults.navs,
         SLOT,
         script::native::WalkOptions::default(),
+        defaults
+            .slot()
+            .lock()
+            .unwrap()
+            .api_gather_walk_permissions(),
     )
     .0;
     let allowed_options = crate::walk_permissions::native_admission(
         &allowed.navs,
         SLOT,
         script::native::WalkOptions::default(),
+        allowed.slot().lock().unwrap().api_gather_walk_permissions(),
     )
     .0;
 
