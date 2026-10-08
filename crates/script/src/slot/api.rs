@@ -231,7 +231,8 @@ impl SlotScript {
     }
 
     /// Permissions from a running Load API Gather card's committed config.
-    pub(super) fn api_gather_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
+    /// Applies to its native Gatherer walks, not the Load script's own rows.
+    pub fn api_gather_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
         let seat = self.api.as_ref()?;
         match &seat.gather {
             GatherSeat::Running { run, .. } => Some(run.config.walk_permissions()),

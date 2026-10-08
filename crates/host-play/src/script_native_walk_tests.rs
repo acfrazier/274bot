@@ -3878,7 +3878,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2944, 4072, 512, 264)
+        (2952, 4072, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

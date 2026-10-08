@@ -103,6 +103,9 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
+    /// Permissions for this Load slot's running API Gatherer walk family.
+    /// Kept separate from `native_permissions`, the script-row option marker.
+    pub(crate) api_gather_permissions: Option<script::native::WalkPermissions>,
     pub(crate) compat_v1: bool,
     /// The held runtime-net setting was reported during this session.
     pub(crate) runtime_gate_logged: bool,

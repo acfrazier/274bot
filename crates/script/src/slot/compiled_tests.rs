@@ -1437,6 +1437,7 @@ mod api_gather_seat {
         let snapshot = gatherer_snapshot();
         let mut slot = load_slot(206, true);
         assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
 
         let mut settings = SettingsBag::new();
         settings.insert("disposition".into(), serde_json::json!("Power"));
@@ -1450,8 +1451,9 @@ mod api_gather_seat {
         });
         installed(&mut slot, &snapshot);
 
+        assert_eq!(slot.native_walk_permissions(), None);
         assert_eq!(
-            slot.native_walk_permissions(),
+            slot.api_gather_walk_permissions(),
             Some(crate::native::WalkPermissions {
                 allow_teleports: true,
                 allow_wilderness: true,
@@ -1461,6 +1463,7 @@ mod api_gather_seat {
 
         stop(&mut slot, 206);
         assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
         slot.stop();
     }
 
@@ -1471,13 +1474,15 @@ mod api_gather_seat {
         run(&mut slot, 207);
         installed(&mut slot, &snapshot);
 
+        assert_eq!(slot.native_walk_permissions(), None);
         assert_eq!(
-            slot.native_walk_permissions(),
+            slot.api_gather_walk_permissions(),
             Some(crate::native::WalkPermissions::default())
         );
 
         stop(&mut slot, 207);
         assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
         slot.stop();
     }
 

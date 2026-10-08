@@ -1695,6 +1695,7 @@ export function tick(api) { globalThis.__api = api; }"#,
 const WALK_PERMISSION_SOURCE: &str = r#"
 export const apiVersion = 2;
 export function tick(api) {
+  globalThis.__api = api;
   const page = api.snapshot.gather;
   globalThis.__page = page;
   if (globalThis.__launch && !globalThis.__run) {
@@ -1820,6 +1821,120 @@ fn route_exists(
         &[],
     )
     .is_ok()
+}
+
+#[test]
+fn load_gather_inspect_route_keeps_load_script_options() {
+    let mut rig = active_gather_permission_rig(serde_json::json!({
+        "allowDangerZones": true,
+        "allowWilderness": true,
+        "allowTeleports": true,
+    }));
+    rig.navs.lock().unwrap().get_mut(SLOT).unwrap().walk_globals =
+        Some(Arc::new(Mutex::new(crate::WalkGlobals::fail_closed())));
+
+    let _ = rig.drain_host();
+    assert_eq!(
+        rig.probe("globalThis.__api.request({op:'inspect-route', from:{x:3200,z:3200,level:0}, to:{x:3210,z:3210,level:0}, allow_bank_fetch:true, request_id:0}); true"),
+        serde_json::Value::Bool(true)
+    );
+    rig.isolate_tick_without_host_drain();
+    let (requests, owned) = rig.drain_host();
+    assert!(owned, "the Load Gather session owns the foreground");
+    let (allow_teleports, allow_wilderness, allow_bank_fetch) = requests
+        .iter()
+        .find_map(|request| match request {
+            script::shim::InteractReq::InspectRoute {
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
+                ..
+            } => Some((*allow_teleports, *allow_wilderness, *allow_bank_fetch)),
+            _ => None,
+        })
+        .expect("the Load script's inspect-route row survives while Gather owns foreground");
+    let options = crate::walk_permissions::compiled_options(
+        &rig.navs,
+        SLOT,
+        nav::router::FindOptions {
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            ..nav::router::FindOptions::default()
+        },
+    );
+    assert_eq!(
+        (
+            options.allow_teleports,
+            options.allow_wilderness,
+            options.allow_bank_fetch
+        ),
+        (false, false, true),
+        "Load script bools must not inherit the session card's Gather permissions"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
+fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
+    let mut rig = active_gather_permission_rig(serde_json::json!({
+        "allowDangerZones": true,
+        "allowWilderness": true,
+        "allowTeleports": true,
+    }));
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut(SLOT).unwrap();
+        bot.walk_globals = Some(Arc::new(Mutex::new(crate::WalkGlobals::fail_closed())));
+        assert_eq!(bot.native_permissions, None);
+        assert_eq!(
+            bot.api_gather_permissions,
+            Some(script::native::WalkPermissions {
+                allow_teleports: true,
+                allow_wilderness: true,
+                allow_danger_zones: true,
+            })
+        );
+    }
+
+    let world = Some(Arc::new(wilderness_route_world()));
+    crate::script_runtime::apply_watchdog_nav_action(
+        script::WatchdogAction::ArmWalk {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        },
+        &mut rig.client,
+        Some(&rig.snapshot),
+        Some((3100, 3519, 0)),
+        &rig.navs,
+        &world,
+        Some(nav::WorldState::empty()),
+        None,
+        SLOT,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if rig.navs.lock().unwrap()[SLOT].route_worker.is_none() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "watchdog ArmWalk route worker did not settle"
+        );
+        std::thread::yield_now();
+    }
+    let navs = rig.navs.lock().unwrap();
+    let bot = &navs[SLOT];
+    assert!(
+        bot.walk_outcome_failed,
+        "the non-inheriting arm cannot cross"
+    );
+    assert!(bot.route.is_none());
+    assert!(bot.requested_route.is_none());
+    drop(navs);
+    rig.slot().lock().unwrap().stop();
 }
 
 #[test]
