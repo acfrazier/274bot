@@ -8,6 +8,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ### Panel
 
 - **Navigation settings.** The routing permissions no longer repeat "Global — applies to every walk." beside each row. One note now sits above the Routing group.
+- **Navigation settings.** Danger routing is now a full-width drop-down, so its level names no longer clip at the default docked width. When survivable shows its "not available yet" explanation as a note under the drop-down.
 - **Quest Paths.** The Path folder, its load switch and the Reload Paths button moved from Navigation settings to Script prefs, under the Quester card. They still apply to every bot, and the heading says so.
 
 ### TUI
