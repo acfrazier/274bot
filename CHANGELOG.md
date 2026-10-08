@@ -53,6 +53,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Ranged fights that can't confirm the weapon's combat tab or the requested
   style now stop with a clear preparation-readiness reason after eight
   observed ticks, instead of waiting out the full fight budget.
+- Ranged fights count every shot the bot fires. Before, a fight could report
+  zero attacks, while arrows were used and Ranged XP rose, whenever another
+  player stood on the bot's tile.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
@@ -182,12 +185,6 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Loot that can't be reached is skipped instead of getting the bot stuck, and
   a target that turns out not to be attackable makes the bot walk out and say
   why.
-- Ranged fights that cannot confirm the weapon's combat tab or requested style
-  now stop with a clear preparation-readiness reason after eight observed
-  ticks, rather than waiting out the full fight budget.
-- Native ranged swings now follow the local player's selected attack-animation
-  onsets, including same-sequence restarts, so stacked players cannot hide
-  local shots or lend foreign projectiles as swings.
 
 ### Clues
 
