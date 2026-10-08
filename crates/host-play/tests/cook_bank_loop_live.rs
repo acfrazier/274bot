@@ -11,6 +11,8 @@
 //! Bank intent is witnessed while closed and bound to the same Cook run's next
 //! session generation. Snapshot wakes can settle the scan before this observer
 //! samples the modal, so current status at opening is recorded separately.
+//! Hand-in settlement uses same-run status, real ingredient consumption and a
+//! durable Completed receipt, not prose that the 32-event trace cap can omit.
 //!
 //! Run from the repository root against Engine A (the parent prepares the
 //! owned writable APFS cache clone first):
@@ -64,7 +66,7 @@ const LIVE_DEADLINE: Duration = Duration::from_secs(1800);
 const PREPARATION_STEPS: [&str; 3] = ["egg", "milk", "flour"];
 const ROOT_BEGIN_LINES: [(&str, &str, &str); 2] =
     [("cook:0", "start", "talk"), ("cook:1", "hand-in", "talk")];
-const ROOT_SETTLED_STEPS: [(&str, &str); 2] = [("start", "talk"), ("hand-in", "talk")];
+const ROOT_SETTLED_STEPS: [(&str, &str); 1] = [("start", "talk")];
 const ACQUISITION_CHILD_LINES: [(&str, &str); 3] = [
     ("acquire:egg", "take-egg"),
     ("acquire:milk", "take-bucket"),
@@ -628,6 +630,9 @@ struct CookWitness {
     completed_seen: bool,
     completion_tile: Option<(i32, i32, i32)>,
     all_ingredients_seen_before_completion: Option<Value>,
+    cook_run: Option<RunKey>,
+    hand_in_intent: Option<(ScriptStatus, u32)>,
+    hand_in_consumed: Option<Value>,
     seen_open_generations: HashSet<u64>,
     preparation_generations: HashSet<u64>,
     active_generation: Option<u64>,
@@ -644,6 +649,9 @@ impl CookWitness {
             completed_seen: false,
             completion_tile: None,
             all_ingredients_seen_before_completion: None,
+            cook_run: None,
+            hand_in_intent: None,
+            hand_in_consumed: None,
             seen_open_generations: HashSet::new(),
             preparation_generations: HashSet::new(),
             active_generation: None,
@@ -681,6 +689,48 @@ impl CookWitness {
         let complete_now = quest_is_green
             || status_text(status, "colour") == Some("complete")
             || status_text(status, "stage") == Some("cook:2");
+        if let Some(status) = status {
+            if status.card != script::CompiledId("Quester")
+                || status_text(Some(status), "quest_id") != Some("cook")
+                || self.cook_run.is_some_and(|run| run != status.run)
+            {
+                return Err("Cook witness observed an unrelated native run or family".into());
+            }
+            self.cook_run = Some(status.run);
+            if !complete_now
+                && !self.completed_seen
+                && status.phase == script::native::NativePhase::Working
+                && status_text(Some(status), "stage") == Some("cook:1")
+                && status_text(Some(status), "step_id") == Some("hand-in")
+                && status_text(Some(status), "action_state") == Some("talking")
+                && inventory.iter().all(|count| *count >= 1)
+                && self.hand_in_intent.is_none()
+            {
+                self.hand_in_intent = Some((status.clone(), snapshot.tick()));
+            }
+            if self.hand_in_intent.is_some()
+                && !complete_now
+                && (status.phase != script::native::NativePhase::Working
+                    || status_text(Some(status), "stage") != Some("cook:1")
+                    || status_text(Some(status), "step_id") != Some("hand-in"))
+            {
+                return Err("Cook hand-in crossed a blocked or unrelated step boundary".into());
+            }
+        }
+        if quest_is_green && inventory == [0; 3] && self.hand_in_consumed.is_none() {
+            if let Some((intent, _)) = &self.hand_in_intent {
+                self.hand_in_consumed = Some(json!({
+                    "run": {
+                        "slot": intent.run.slot,
+                        "run": intent.run.run,
+                        "session": intent.run.session,
+                    },
+                    "inventory_counts": inventory,
+                    "quest_complete": true,
+                    "tick": snapshot.tick(),
+                }));
+            }
+        }
         if complete_now && !self.completed_seen {
             self.completion_tile = Some(
                 snapshot
@@ -813,6 +863,20 @@ impl CookWitness {
                     .into(),
             );
         }
+        let (hand_in, hand_in_tick) = self
+            .hand_in_intent
+            .as_ref()
+            .ok_or("Cook completion lacks observed same-run hand-in with all ingredients")?;
+        let lifecycle = lifecycle.expect("Completed lifecycle was checked above");
+        if lifecycle.runtime_generation != hand_in.run.run {
+            return Err(
+                "Cook hand-in and Completed receipt belong to different native runs".into(),
+            );
+        }
+        let consumed = self
+            .hand_in_consumed
+            .as_ref()
+            .ok_or("Cook hand-in did not consume all ingredients with real green completion")?;
         match self.case {
             FixtureCase::Banked => {
                 if self.preparation_generations.len() != 1 {
@@ -873,12 +937,23 @@ impl CookWitness {
             },
             "quest_complete": true,
             "native_phase": status.map(|status| format!("{:?}", status.phase)),
-            "lifecycle": lifecycle.map(|receipt| json!({
-                "runtime_generation": receipt.runtime_generation,
-                "state": receipt.state,
-                "tick": receipt.tick,
-                "reason": receipt.reason,
-            })),
+            "lifecycle": {
+                "runtime_generation": lifecycle.runtime_generation,
+                "state": lifecycle.state,
+                "tick": lifecycle.tick,
+                "reason": lifecycle.reason,
+            },
+            "hand_in_settlement": {
+                "run": {
+                    "slot": hand_in.run.slot,
+                    "run": hand_in.run.run,
+                    "session": hand_in.run.session,
+                },
+                "intent_status": snapshot_status(Some(hand_in)),
+                "intent_tick": hand_in_tick,
+                "consumption": consumed,
+                "completed_runtime_generation": lifecycle.runtime_generation,
+            },
             "completion_tile": self.completion_tile,
             "all_ingredients_seen_before_completion": self.all_ingredients_seen_before_completion,
             "preparation_bank_open_generations": sorted_generations(&self.preparation_generations),
@@ -1013,6 +1088,15 @@ fn run_case(case: FixtureCase) {
     assert_eq!(
         receipt["family_receipt"]["path_identity"]["owns_inventory"],
         json!(false)
+    );
+    assert_eq!(
+        receipt["family_receipt"]["hand_in_settlement"]["consumption"]["quest_complete"],
+        json!(true),
+        "same-run hand-in must consume the ingredients before native completion",
+    );
+    assert_eq!(
+        receipt["family_receipt"]["hand_in_settlement"]["consumption"]["inventory_counts"],
+        json!([0, 0, 0]),
     );
 
     let account = receipt["account"]
@@ -1193,7 +1277,7 @@ mod witness_lifecycle_tests {
 
     fn receipt(state: script::ScriptTerminalState) -> script::ScriptLifecycleReceipt {
         script::ScriptLifecycleReceipt {
-            runtime_generation: 7,
+            runtime_generation: 1,
             state,
             tick: 42,
             reason: "test terminal".into(),
@@ -1202,9 +1286,24 @@ mod witness_lifecycle_tests {
 
     fn witness_with_prior_ingredients() -> CookWitness {
         let mut witness = CookWitness::new(FixtureCase::Held, IDS);
-        assert_eq!(witness.observe(&snapshot(false), None, None).unwrap(), None);
+        assert_eq!(
+            witness
+                .observe(
+                    &snapshot(false),
+                    Some(&preparing_status("hand-in", "talking")),
+                    None,
+                )
+                .unwrap(),
+            None
+        );
         assert!(witness.all_ingredients_seen_before_completion.is_some());
         witness
+    }
+
+    fn completed_snapshot() -> GameSnapshot {
+        let mut snapshot = snapshot(true);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot
     }
 
     fn preparing_status(step: &str, action: &str) -> ScriptStatus {
@@ -1352,11 +1451,107 @@ mod witness_lifecycle_tests {
     }
 
     #[test]
+    fn completion_without_observed_hand_in_never_succeeds() {
+        let mut witness = CookWitness::new(FixtureCase::Held, IDS);
+        witness.observe(&snapshot(false), None, None).unwrap();
+        assert!(witness
+            .observe(
+                &completed_snapshot(),
+                None,
+                Some(&receipt(script::ScriptTerminalState::Completed)),
+            )
+            .unwrap_err()
+            .contains("observed same-run hand-in"));
+    }
+
+    #[test]
+    fn hand_in_cannot_cross_run_family_phase_or_step_boundaries() {
+        for boundary in [
+            "run", "slot", "session", "card", "quest", "blocked", "step", "stage",
+        ] {
+            let mut witness = witness_with_prior_ingredients();
+            let mut status = preparing_status("hand-in", "talking");
+            match boundary {
+                "run" => status.run.run += 1,
+                "slot" => status.run.slot += 1,
+                "session" => status.run.session += 1,
+                "card" => status.card = script::CompiledId("Other"),
+                "quest" | "stage" => {
+                    let key = if boundary == "quest" {
+                        "quest_id"
+                    } else {
+                        "stage"
+                    };
+                    Arc::make_mut(&mut status.fields)
+                        .iter_mut()
+                        .find(|field| field.key == key)
+                        .unwrap()
+                        .value = StatusValue::Text(Arc::from("other"));
+                }
+                "blocked" => status.phase = script::native::NativePhase::Blocked,
+                "step" => status = preparing_status("egg", "talking"),
+                _ => unreachable!(),
+            }
+            assert!(
+                witness
+                    .observe(&snapshot(false), Some(&status), None)
+                    .is_err(),
+                "{boundary} must not inherit an earlier hand-in intent"
+            );
+        }
+    }
+
+    #[test]
+    fn green_quest_cannot_create_retroactive_hand_in_intent() {
+        let mut witness = CookWitness::new(FixtureCase::Held, IDS);
+        witness.observe(&snapshot(false), None, None).unwrap();
+        witness
+            .observe(
+                &snapshot(true),
+                Some(&preparing_status("hand-in", "talking")),
+                None,
+            )
+            .unwrap();
+        assert!(witness.hand_in_intent.is_none());
+        assert!(witness
+            .observe(
+                &completed_snapshot(),
+                None,
+                Some(&receipt(script::ScriptTerminalState::Completed)),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn hand_in_requires_real_consumption_of_every_ingredient() {
+        let mut witness = witness_with_prior_ingredients();
+        assert!(witness
+            .observe(
+                &snapshot(true),
+                None,
+                Some(&receipt(script::ScriptTerminalState::Completed)),
+            )
+            .unwrap_err()
+            .contains("consume all ingredients"));
+    }
+
+    #[test]
+    fn completed_receipt_from_another_runtime_cannot_settle_hand_in() {
+        let mut witness = witness_with_prior_ingredients();
+        let mut lifecycle = receipt(script::ScriptTerminalState::Completed);
+        lifecycle.runtime_generation += 1;
+        assert!(witness
+            .observe(&completed_snapshot(), None, Some(&lifecycle))
+            .unwrap_err()
+            .contains("different native runs"));
+    }
+
+    #[test]
     fn native_status_none_completed_lifecycle_and_green_quest_succeed() {
         let mut witness = witness_with_prior_ingredients();
         let result = witness
             .observe(
-                &snapshot(true),
+                &completed_snapshot(),
                 None,
                 Some(&receipt(script::ScriptTerminalState::Completed)),
             )
@@ -1366,6 +1561,19 @@ mod witness_lifecycle_tests {
         assert!(result["native_phase"].is_null());
         assert_eq!(result["lifecycle"]["state"], "completed");
         assert_eq!(result["quest_complete"], true);
+        assert_eq!(result["hand_in_settlement"]["run"]["run"], 1);
+        assert_eq!(
+            result["hand_in_settlement"]["intent_status"]["step_id"],
+            "hand-in",
+        );
+        assert_eq!(
+            result["hand_in_settlement"]["consumption"]["inventory_counts"],
+            json!([0, 0, 0]),
+        );
+        assert_eq!(
+            result["hand_in_settlement"]["completed_runtime_generation"],
+            1,
+        );
     }
 
     #[test]
