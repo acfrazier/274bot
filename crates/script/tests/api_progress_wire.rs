@@ -237,6 +237,7 @@ fn progress_refusal_and_path_rows_keep_their_public_shapes() {
         id: Arc::from("cook"),
         display: Arc::from("Cook's Assistant"),
         journal: false,
+        draft: false,
         stages: vec![Arc::from("cook:0"), Arc::from("cook:1")].into(),
     };
     assert_eq!(
@@ -245,6 +246,7 @@ fn progress_refusal_and_path_rows_keep_their_public_shapes() {
             "id": "cook",
             "display": "Cook's Assistant",
             "journal": false,
+            "draft": false,
             "stages": ["cook:0", "cook:1"]
         })
     );

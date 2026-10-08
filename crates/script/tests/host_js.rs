@@ -428,8 +428,9 @@ function paths(): QuestPathRow[] | null {
     const id: string = row.id;
     const display: string = row.display;
     const journal: boolean = row.journal;
+    const draft: boolean = row.draft;
     const stages: string[] = row.stages;
-    void [id, display, journal, stages];
+    void [id, display, journal, draft, stages];
   }
   return out.value.rows;
 }

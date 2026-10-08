@@ -66,6 +66,7 @@ pub struct QuestPathRow {
     pub id: Arc<str>,
     pub display: Arc<str>,
     pub journal: bool,
+    pub draft: bool,
     pub stages: Arc<[Arc<str>]>,
 }
 
