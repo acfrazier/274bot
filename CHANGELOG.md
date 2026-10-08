@@ -286,6 +286,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 
 ### WalkTo map
 
+- A map walk that banks on the way spends less time at the bank: opening it,
+  withdrawing and closing follow each other without waiting a tick between
+  steps.
 - Map markers that said "Rare Trees" now show the nearby tree's own name (for
   example Yew, Willow, Maple tree, Magic tree).
 - Quest-start markers show the quest's name where the game content identifies
@@ -344,6 +347,8 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 
 ### Scripts
 
+- Bank and shop actions in scripts finish as soon as the game confirms them,
+  instead of waiting for the next game tick.
 - Food choices in script settings now list every food the game heals with,
   best heal first, instead of a fixed list of 25.
 - Starting a script waits if a settings change is still being saved, including
@@ -481,6 +486,14 @@ that aren't here yet. Where we know the target, it's noted.
 Fixes to problems that appeared and were fixed during 0.2.0 development.
 They are listed here for completeness and are left out of the release notes.
 
+- Quester: shorter pauses between actions, after opening a door, while
+  reading the quest journal and when collecting supplies from the bank.
+- Gatherer: work resumes sooner after a bank trip and after walking back to
+  the resources, and an empty withdrawal no longer costs a pause.
+- Quester and Gatherer: walks finish as soon as the server says the player has
+  arrived, instead of waiting for the character on screen to catch up.
+- Quester: a quest's carried supplies keep their exact item when two items
+  share a name (Gertrude's Cat could try to take the wrong kind of coins).
 - Combat: the per-attacker protection prayers treated several monsters as
   switching attack style when you prayed against them (for example the
   Zamorak wizard, which now counts as magic).
