@@ -89,6 +89,7 @@ pub(crate) fn post(tick: u64, f: impl FnOnce(&mut Post<'_>)) {
         let mut scene = scene.borrow_mut();
         let mut post = scene.begin_post(tick);
         f(&mut post);
+        scene.observe_scene();
     });
 }
 
@@ -574,6 +575,7 @@ macro_rules! scene_pages {
             /// The post that last carried `ingame == false` (0 = none).
             logout_seq: u64,
             tick: Option<u64>,
+            scene_fence: crate::native::ledger::SceneFence,
             $( $cname: Slot<$cty>, )*
             $( $rname: Slot<$rty>, )*
         }
@@ -1039,6 +1041,38 @@ impl Scene {
         self.tick
     }
 
+    pub(crate) fn entered_scene(&self) -> bool {
+        self.scene_fence.entered_scene()
+    }
+
+    fn observe_scene(&mut self) {
+        let view = self.latest();
+        // Partial synthetic posts need not invent scene identity. Production
+        // keyframes carry both fields; subsequent posts retain them.
+        let Some(ingame) = view.ingame() else {
+            return;
+        };
+        let scene = if ingame {
+            let Some(state) = view.scene_state() else {
+                return;
+            };
+            if state == 2 {
+                let Some(here) = view.here() else {
+                    return;
+                };
+                Some(crate::native::ledger::SceneKey::from_parts(
+                    here.level,
+                    view.collision().map(|collision| (collision.base_x, collision.base_z)),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.scene_fence.observe(scene);
+    }
+
     /// The last posted tick, unless the last post was the logout post.
     pub fn session_tick(&self) -> Option<u64> {
         if self.seq != 0 && self.seq == self.logout_seq {
@@ -1054,6 +1088,9 @@ impl Scene {
     }
 
     fn begin_post(&mut self, tick: u64) -> Post<'_> {
+        if self.tick != Some(tick) {
+            self.scene_fence.next_tick();
+        }
         self.seq += 1;
         self.tick = Some(tick);
         let seq = self.seq;
@@ -1064,6 +1101,7 @@ impl Scene {
         let mut strings = std::mem::take(&mut self.strings);
         self.apply_rows(snap, &mut strings);
         self.strings = strings;
+        self.observe_scene();
     }
 
     fn apply_rows(&mut self, snap: &Snapshot<'_>, strings: &mut Interner) {

@@ -294,11 +294,7 @@ pub(crate) struct TickBudget {
     tick: Option<u64>,
     transitions: u8,
     pub(super) events: u8,
-    /// The scene the last observed frame showed the local player in.
-    scene: SceneKey,
-    seen: Seen,
-    /// This observed tick is the first to show the player in a new scene.
-    entered_scene: bool,
+    scene: SceneFence,
 }
 
 /// What the last observed frame showed of the player's scene.
@@ -310,7 +306,7 @@ enum Seen {
     Nothing,
     /// Out of game, or the scene was not built.
     Outside,
-    /// In the scene `TickBudget::scene`.
+    /// In the scene `SceneFence::scene`.
     Scene,
 }
 
@@ -321,7 +317,7 @@ enum Seen {
 /// changes. Packed into 32 bits: the origin's zone x and z (11 bits each,
 /// above a known-origin bit) and the level (2 bits).
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct SceneKey(u32);
+pub(crate) struct SceneKey(u32);
 
 impl SceneKey {
     fn observe(snapshot: Option<&api::snapshot::GameSnapshot>) -> Option<Self> {
@@ -329,29 +325,36 @@ impl SceneKey {
         if !snapshot.ingame() || snapshot.scene_state() != 2 {
             return None;
         }
-        let level = (snapshot.local_player()?.player.network.level as u32) & 0b11;
-        let origin = snapshot.base().map_or(0, |(x, z)| {
+        Some(Self::from_parts(
+            snapshot.local_player()?.player.network.level,
+            snapshot.base(),
+        ))
+    }
+
+    pub(crate) fn from_parts(level: i32, origin: Option<(i32, i32)>) -> Self {
+        let level = (level as u32) & 0b11;
+        let origin = origin.map_or(0, |(x, z)| {
             (1 << 22) | ((((x as u32) >> 3) & 0x7ff) << 11) | (((z as u32) >> 3) & 0x7ff)
         });
-        Some(Self((origin << 2) | level))
+        Self((origin << 2) | level)
     }
 }
 
-impl TickBudget {
-    pub fn observe(&mut self, tick: u64) {
-        if self.tick != Some(tick) {
-            self.tick = Some(tick);
-            self.transitions = 0;
-            self.events = 0;
-            self.entered_scene = false;
-        }
+/// Shared native/compat latch: evidence wakes cannot clear scene entry.
+#[derive(Default)]
+pub(crate) struct SceneFence {
+    scene: SceneKey,
+    seen: Seen,
+    entered_scene: bool,
+}
+
+impl SceneFence {
+    pub(crate) fn next_tick(&mut self) {
+        self.entered_scene = false;
     }
 
-    /// One host frame: replenish on a new tick, and mark the tick that first
-    /// shows the player on a new level or in a rebuilt build area.
-    pub fn observe_frame(&mut self, tick: u64, snapshot: Option<&api::snapshot::GameSnapshot>) {
-        self.observe(tick);
-        let (seen, scene) = match SceneKey::observe(snapshot) {
+    pub(crate) fn observe(&mut self, scene: Option<SceneKey>) {
+        let (seen, scene) = match scene {
             Some(scene) => (Seen::Scene, scene),
             None => (Seen::Outside, SceneKey::default()),
         };
@@ -362,6 +365,28 @@ impl TickBudget {
         self.scene = scene;
     }
 
+    pub(crate) fn entered_scene(&self) -> bool {
+        self.entered_scene
+    }
+}
+
+impl TickBudget {
+    pub fn observe(&mut self, tick: u64) {
+        if self.tick != Some(tick) {
+            self.tick = Some(tick);
+            self.transitions = 0;
+            self.events = 0;
+            self.scene.next_tick();
+        }
+    }
+
+    /// One host frame: replenish on a new tick, and mark the tick that first
+    /// shows the player on a new level or in a rebuilt build area.
+    pub fn observe_frame(&mut self, tick: u64, snapshot: Option<&api::snapshot::GameSnapshot>) {
+        self.observe(tick);
+        self.scene.observe(SceneKey::observe(snapshot));
+    }
+
     /// This observed tick is the first to show the player on a new level or
     /// in a rebuilt build area. The engine writes the PLAYER_INFO that moves
     /// the player before the resets and loc changes of the zones it now
@@ -370,7 +395,7 @@ impl TickBudget {
     /// locs can still be the old ones. The next observed tick's PLAYER_INFO
     /// arrives after all of them.
     pub fn entered_scene(&self) -> bool {
-        self.entered_scene
+        self.scene.entered_scene()
     }
 
     pub fn transition(&mut self) -> bool {

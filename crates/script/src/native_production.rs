@@ -179,7 +179,7 @@ impl NativeMachine for MakeMachine {
                                 MakeXPhase::Select => "make menu did not expose the product",
                                 MakeXPhase::WaitCountOpen => "Make-X count dialog did not open",
                                 MakeXPhase::WaitCountClose => "Make-X count dialog did not close",
-                                MakeXPhase::WaitMenuClose => "make menu did not close",
+                                MakeXPhase::WaitMenuClose => "Make-X menu did not close",
                             };
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(message))));
                         }
