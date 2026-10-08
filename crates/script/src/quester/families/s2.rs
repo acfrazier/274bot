@@ -967,7 +967,7 @@ pub(super) fn compile_loadout(
     }))
 }
 
-fn compile_loadout_carry(
+pub(super) fn compile_loadout_carry(
     qualified: &str,
     row: &crate::loadouts_store::Loadout,
     cx: &CompileContext<'_>,
