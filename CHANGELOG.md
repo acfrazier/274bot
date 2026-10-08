@@ -3,6 +3,29 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Panel
+
+- Turning MultiBox on before unlocking the vault no longer leaves the bot
+  that logs in at unlock off the rail: it joins the rail like any profile
+  you pick, so selecting another profile keeps both on the rail and the
+  first one stays visible and controllable instead of running unseen.
+- Picking a profile in MultiBox now shows that profile's own script card.
+  Before, the previous bot's card stayed on screen, so Start or a parameter
+  edit could act on the wrong card for the newly focused bot.
+- Window buttons (Profiles, General config, Nav config, Loadouts, Script
+  prefs, Log, Fleet, Debug, Browse, Load, Import catalog and the Fleet
+  window's Walk to) now bring their window to the front, selecting its
+  tab, when it is already open, instead of doing nothing. An open Loadouts
+  keeps its selection and unsaved edits, and an open file browser keeps
+  its folder and search.
+- The rail's **+ add bot** button is now **Profiles…**; selecting a profile
+  never starts its script.
+- The profile setting **auto-login on title** is now called **Log in
+  automatically**, with a tooltip saying what it does. Saved profiles keep
+  their value.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1

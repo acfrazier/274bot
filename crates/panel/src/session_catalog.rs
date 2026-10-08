@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::session::Session;
+use crate::session::{PanelWindow, Session};
 
 fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
     crate::script_picker::default_load_browse_dir(last)
@@ -77,8 +77,17 @@ impl Session {
         if script::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
             return;
         }
-        self.rs2b0t_catalog_open = true;
-        self.rs2b0t_catalog_defer_ok = true;
+        self.open_rs2b0t_catalog_picker(true);
+    }
+
+    /// Open (or bring forward) the rs2b0t catalog folder picker. Only a
+    /// closed picker is initialised: the last catalog folder, a clear
+    /// search, and **Not now** when `defer_ok` (the first-run prompt).
+    pub fn open_rs2b0t_catalog_picker(&mut self, defer_ok: bool) {
+        if !self.open_window(PanelWindow::ImportCatalog) {
+            return;
+        }
+        self.rs2b0t_catalog_defer_ok = defer_ok;
         self.script_dialog_search.clear();
         self.rs2b0t_catalog_dir =
             default_catalog_browse_dir(self.ui.script_catalog_last_dir.as_deref());
@@ -260,12 +269,15 @@ impl Session {
     }
 
     /// Open the Load file browser at the last visited directory, else the
-    /// process working directory (where the OS started the app).
+    /// process working directory (where the OS started the app). An open
+    /// browser is only brought forward, keeping its folder and search.
     pub fn open_script_load_browser(&mut self) {
+        if !self.open_window(PanelWindow::LoadScript) {
+            return;
+        }
         self.script_load_dir =
             crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
         self.script_load_sel = 0;
         self.script_dialog_search.clear();
-        self.script_load_open = true;
     }
 }

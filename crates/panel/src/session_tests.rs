@@ -2529,6 +2529,210 @@ fn unlock_at_uses_the_given_path() {
     assert!(s.core.vault().is_some());
 }
 
+/// alice (catalog Thiever) and bob (compiled Gatherer), both auto-login,
+/// last focus alice; the vault is locked and no worker threads spawn.
+fn multibox_unlock_fixture() -> (Session, TestPath) {
+    let path = tmp_vault("multibox-unlock.vault");
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut alice = profile("alice", "pw", 1);
+    alice.settings.auto_login = true;
+    alice.settings.script_assignment = Some(vault::ScriptAssignment {
+        source_kind: "catalog".into(),
+        identity: "Thiever".into(),
+        display_name: "Thiever".into(),
+        unavailable: None,
+    });
+    vault.upsert(alice).unwrap();
+    let mut bob = profile("bob", "pw", 2);
+    bob.settings.auto_login = true;
+    bob.settings.script_assignment = Some(vault::ScriptAssignment {
+        source_kind: "compiled".into(),
+        identity: "Gatherer".into(),
+        display_name: "Gatherer".into(),
+        unavailable: None,
+    });
+    vault.upsert(bob).unwrap();
+    drop(vault);
+    crate::ui_state::save(&crate::ui_state::PanelUiState {
+        last_focus: Some("alice".into()),
+        ..Default::default()
+    });
+    let mut session = Session::new();
+    session.persist_ui = false;
+    session.core.set_spawn_workers(false);
+    (session, path)
+}
+
+#[test]
+fn multibox_before_unlock_registers_auto_focused_profile() {
+    let (mut session, path) = multibox_unlock_fixture();
+    assert!(session.set_multibox(true));
+    assert!(session.multibox && session.wall.chooser_open);
+    assert!(session.core.vault().is_none());
+    assert!(session.core.slots().is_empty());
+    assert!(session.core.members().is_empty());
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session
+        .core
+        .play()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    assert!(
+        session.core.fleet().contains("alice"),
+        "unlock while MultiBox is already on must register its spawned profile"
+    );
+    assert_eq!(
+        session.core.play().unwrap().script_state("alice"),
+        script::RunState::Idle
+    );
+    session.pick_profile("bob");
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    assert_eq!(session.core.slots().len(), 2);
+    assert!(session
+        .core
+        .play()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    assert!(session.core.fleet().contains("alice"));
+    assert!(session.core.fleet().contains("bob"));
+}
+
+#[test]
+fn single_mode_unlock_still_selects_without_joining_the_rail() {
+    let (mut session, path) = multibox_unlock_fixture();
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session.core.slots().contains_key("alice"));
+    assert!(session.core.members().is_empty(), "no MultiBox, no rail");
+}
+
+#[test]
+fn multibox_profile_pick_restores_that_profiles_script_heading() {
+    let (mut session, path) = multibox_unlock_fixture();
+    session.set_multibox(true);
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    let thiever = Some(script::ScriptSel::Loaded(
+        script::ScriptSource::Catalog,
+        "Thiever".into(),
+    ));
+    let gatherer = Some(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
+    assert_eq!(session.script_sel, thiever, "unlock shows alice's own card");
+    session.pick_profile("bob");
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.tv_name().as_deref(), Some("bob"));
+    assert_eq!(
+        session.script_sel, gatherer,
+        "a MultiBox row pick must not leave the outgoing profile's card bound to the incoming profile"
+    );
+    // Both directions, onto profiles that are already loaded.
+    session.pick_profile("alice");
+    assert_eq!(session.script_sel, thiever);
+    session.pick_profile("bob");
+    assert_eq!(session.script_sel, gatherer);
+    assert!(session
+        .core
+        .last_operation()
+        .is_none_or(|op| op.action != frontend_core::ActionKind::ScriptStart));
+}
+
+#[test]
+fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
+    let dir = TestDir::new("multibox-roundtrip");
+    let path = dir.join("vault");
+    let legacy_path = dir.join("script-settings.json");
+    let legacy_bytes = br#"{"catalog:Thiever":{"target":"legacy-only","radius":99}}"#;
+    std::fs::write(&legacy_path, legacy_bytes).unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    for (i, (name, kind, card)) in [
+        ("alice", "catalog", "Thiever"),
+        ("bob", "compiled", "Gatherer"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut row = profile(name, "pw", i as i32 + 1);
+        row.settings.auto_login = true;
+        row.settings.script_assignment = Some(vault::ScriptAssignment {
+            source_kind: kind.into(),
+            identity: card.into(),
+            display_name: card.into(),
+            unavailable: None,
+        });
+        row.settings.script_settings.insert(
+            vault::assignment_key(kind, card),
+            serde_json::json!({"owner": name, "radius": i + 7})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        vault.upsert(row).unwrap();
+    }
+    let expected: Vec<_> = vault
+        .profiles()
+        .map(|row| (row.username.clone(), row.settings.clone()))
+        .collect();
+    drop(vault);
+    crate::ui_state::save(&crate::ui_state::PanelUiState {
+        last_focus: Some("alice".into()),
+        ..Default::default()
+    });
+    let mut session = Session::new();
+    session.persist_ui = false;
+    session.core.set_spawn_workers(false);
+    session.scripts.legacy = script::ScriptSettingsStore::at(legacy_path.clone());
+    session.set_multibox(true);
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+
+    for (step, selected) in [
+        ("unlock", "alice"),
+        ("pick other", "bob"),
+        ("pick first back", "alice"),
+        ("pick other back", "bob"),
+    ] {
+        if step != "unlock" {
+            session.pick_profile(selected);
+        }
+        session.pump_status();
+        assert_eq!(session.core.selected(), Some(selected));
+        let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
+        for (name, settings) in &expected {
+            assert_eq!(
+                &session.core.vault().unwrap().get(name).unwrap().settings,
+                settings,
+                "{step}: in-memory {name} settings must stay owned by {name}"
+            );
+            assert_eq!(
+                &disk.get(name).unwrap().settings,
+                settings,
+                "{step}: persisted {name} settings must stay owned by {name}"
+            );
+            assert!(session.scripts.pending_browse(name).is_none());
+            if session.core.slots().contains_key(name) {
+                assert_eq!(
+                    session.core.play().unwrap().script_state(name),
+                    script::RunState::Idle,
+                    "{step}: no script may start without Start"
+                );
+                assert!(session
+                    .core
+                    .play()
+                    .unwrap()
+                    .arm(name)
+                    .unwrap()
+                    .wants_login());
+            }
+        }
+        assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_bytes);
+    }
+    assert!(session.core.fleet().contains("alice"));
+    assert!(session.core.fleet().contains("bob"));
+}
+
 #[test]
 fn wrong_pass_does_not_delete_or_replace_the_vault() {
     let path = tmp_vault("wrong-pass.vault");

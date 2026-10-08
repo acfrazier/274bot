@@ -45,7 +45,7 @@ v.upsert(profile)?                              // rewrites the file; error leav
 `Profile.settings.lowmem` defaults to `true` (headless clients).
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
-panel's General config → slot "auto-login on title" checkbox reads and upserts it.
+panel's Profiles edit form "Log in automatically" checkbox reads and upserts it.
 `ProfileSettings.random_events` defaults **on** (detect + dialog act);
 off still detects and publishes `RandomStatus`. `lamp_skill` /
 `lamp_auto` persist with the profile.

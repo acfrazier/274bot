@@ -28,9 +28,9 @@ use crate::script_picker::{
     self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
     card_transpile_label, card_width, centered_row_x, chip_frame_padding, chip_text_color,
     chip_wraps, dialog_date_color, display_category, format_mtime, move_category,
-    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, BROWSE_WINDOW_TITLE,
-    CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
-    GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
+    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, CARD_GAP, CARD_MIN_W,
+    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
+    SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -48,7 +48,7 @@ use host_play::progress::{
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, ProfilePreparationCompletion, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -1583,7 +1583,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     if ui.button_with_size("Log", [w, 0.0]) {
-        session.log_window_open = true;
+        session.open_window(PanelWindow::Log);
     }
     ui.set_item_tooltip("open log in a panel tab");
 }
@@ -1873,7 +1873,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     profile_combo(ui, session);
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("Profiles", [w, 0.0]) {
-        session.wall.chooser_open = true;
+        session.open_window(PanelWindow::Profiles);
     }
     ui.set_item_tooltip("pick or edit a vault profile");
 }
@@ -2016,7 +2016,7 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     if ui.button_with_size("Fleet", [cells[1].0, 0.0]) {
-        session.fleet_open = true;
+        session.open_window(PanelWindow::Fleet);
     }
     ui.set_item_tooltip("open the marked-bot Fleet window");
 }
@@ -2053,7 +2053,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         match *label {
             "DebugPanel" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    session.debug_panel_open = true;
+                    session.open_window(PanelWindow::Debug);
                 }
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
@@ -2072,7 +2072,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             }
             "maxme" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    session.debug_panel_open = true;
+                    session.open_window(PanelWindow::Debug);
                     crate::debug_panel::request_bulk_send(
                         ui,
                         session,
@@ -2185,8 +2185,9 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Browse…", [w, 0.0]) {
+            // Browse first: a first-use catalog prompt it raises takes the focus.
+            session.open_window(PanelWindow::Browse);
             session.on_script_browse_open();
-            session.script_browse_open = true;
         }
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
     }
@@ -2570,12 +2571,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     ui.spacing();
     if script::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
-            session.rs2b0t_catalog_defer_ok = false;
-            session.script_dialog_search.clear();
-            session.rs2b0t_catalog_dir = script_picker::default_load_browse_dir(
-                session.ui.script_catalog_last_dir.as_deref(),
-            );
-            session.rs2b0t_catalog_open = true;
+            session.open_rs2b0t_catalog_picker(false);
         }
         ui.spacing();
     }
@@ -2697,7 +2693,8 @@ fn browse_window(ui: &Ui, session: &mut Session) {
         let mut open = true;
         let size = scale_size(ui, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
         let pos = overlay_spawn_pos(ui, session, size);
-        ui.window(BROWSE_WINDOW_TITLE)
+        focus_if_requested(ui, session, PanelWindow::Browse);
+        ui.window(PanelWindow::Browse.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
             .position(pos, Condition::FirstUseEver)
@@ -2728,7 +2725,8 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     let pos = overlay_spawn_pos(ui, session, size);
     if session.script_load_open {
         let mut open = true;
-        ui.window("Load script")
+        focus_if_requested(ui, session, PanelWindow::LoadScript);
+        ui.window(PanelWindow::LoadScript.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
@@ -2738,7 +2736,8 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     }
     if session.rs2b0t_catalog_open {
         let mut open = true;
-        ui.window("Import rs2b0t catalog")
+        focus_if_requested(ui, session, PanelWindow::ImportCatalog);
+        ui.window(PanelWindow::ImportCatalog.title())
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
@@ -2962,7 +2961,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Nav config")
+    focus_if_requested(ui, session, PanelWindow::NavConfig);
+    ui.window(PanelWindow::NavConfig.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
@@ -3719,7 +3719,8 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Script prefs")
+    focus_if_requested(ui, session, PanelWindow::ScriptPrefs);
+    ui.window(PanelWindow::ScriptPrefs.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
@@ -3842,19 +3843,22 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
             match row[i] {
                 "General config" => {
                     if ui.button_with_size("General config", [w, 0.0]) {
-                        session.global_settings_open = true;
+                        session.open_window(PanelWindow::GeneralConfig);
                     }
                     ui.set_item_tooltip("slot render + global cadence / capture");
                 }
                 "Nav config" => {
                     if ui.button_with_size("Nav config", [w, 0.0]) {
-                        session.nav_settings_open = true;
+                        session.open_window(PanelWindow::NavConfig);
                     }
                     ui.set_item_tooltip("nav debug paints and labels");
                 }
                 "Loadouts" => {
-                    if ui.button_with_size("Loadouts", [w, 0.0]) {
-                        session.loadouts_open = true;
+                    // Only a closed Loadouts starts on the first preset; an
+                    // open one keeps its selection and unsaved draft.
+                    if ui.button_with_size("Loadouts", [w, 0.0])
+                        && session.open_window(PanelWindow::Loadouts)
+                    {
                         session.loadouts_sel = 0;
                         crate::loadouts::sync_draft(session);
                     }
@@ -3865,7 +3869,7 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                         mock_button(ui, "Script prefs", hint, [w, 0.0]);
                     } else {
                         if ui.button_with_size("Script prefs", [w, 0.0]) {
-                            session.script_prefs_open = true;
+                            session.open_window(PanelWindow::ScriptPrefs);
                         }
                         ui.set_item_tooltip("script parameter editors");
                     }
@@ -3996,7 +4000,8 @@ fn log_window_with_body(
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Log")
+    focus_if_requested(ui, session, PanelWindow::Log);
+    ui.window(PanelWindow::Log.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -4279,9 +4284,17 @@ fn slot_render_section(ui: &Ui, session: &mut Session) {
     raster_picker(ui, session);
 }
 
+/// What the profile's auto-login does (`SlotArm::new(uid, auto_login)` arms
+/// the login on spawn; a login keeps it armed for a disconnect; an active
+/// script wants the login regardless).
+const AUTO_LOGIN_TOOLTIP: &str = "Log in as soon as this bot starts (after unlocking the vault or loading the profile), and log back in after a disconnect. Off: the bot waits at the login screen until you press Log in; a running script still logs in.";
+
 fn slot_capture_section(ui: &Ui, session: &mut Session) {
     let mut auto_cur = session.cred_settings.auto_login;
-    if ui.checkbox("auto-login on title", &mut auto_cur) {
+    // Label only: the saved setting stays `ProfileSettings.auto_login`.
+    let toggled = ui.checkbox("Log in automatically", &mut auto_cur);
+    ui.set_item_tooltip(AUTO_LOGIN_TOOLTIP);
+    if toggled {
         session.cred_settings.auto_login = auto_cur;
         if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
             let name = name.to_string();
@@ -4832,13 +4845,17 @@ fn rail_body(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, name: &str, draw: b
     cell_body(ui, gpu, state, name, scale_size(ui, [TILE_W, TILE_H]), draw)
 }
 
-/// `+ add bot`: opens the profile picker (same window as Profiles).
+/// Rail **Profiles…**: opens or focuses the profile picker (same window as
+/// the strip's Profiles button).
 fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     let w = ui.content_region_avail()[0];
-    if ui.button_with_size("+ add bot", [w, 0.0]) {
-        state.session.wall.chooser_open = true;
+    if ui.button_with_size("Profiles…", [w, 0.0]) {
+        state.session.open_window(PanelWindow::Profiles);
     }
+    ui.set_item_tooltip(
+        "Open or focus Profiles to add, edit, load or log in a bot. Selecting a profile does not start its script.",
+    );
 }
 
 /// Resource card at the rail bottom: the operator session's 1 Hz meter
@@ -4851,12 +4868,14 @@ fn resource_card(ui: &Ui, view: &ResourceView) {
     draw_resource_rows(ui, view, false);
 }
 
-/// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
-/// on the `want` false→true edge, so `+ add bot` reopens after a close;
-/// `new_prev` tracks `want` on **both** values, or a closed chooser would
-/// keep a stale `true` and the next reopen would never fire.
-pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
-    (want && !prev, want)
+/// Consume an opener's one-shot focus request for `window` (see
+/// [`Session::open_window`]). Call immediately before its `Begin`: an
+/// existing window comes to the front and a docked one has its tab
+/// selected; a window ImGui has not created yet is focused by appearing.
+pub(crate) fn focus_if_requested(ui: &Ui, session: &mut Session, window: PanelWindow) {
+    if session.take_window_focus(window) {
+        ui.set_window_focus(Some(window.title()));
+    }
 }
 
 /// Profiles always dock to the 274bot panel node, never the MultiBox rail
@@ -4933,17 +4952,16 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
-    // A leave prompt was staged from elsewhere (the tab's ✕, MultiBox): its
-    // popup draws inside this window, so bring the window's tab forward.
-    if std::mem::take(&mut session.focus_profiles) {
-        ui.set_window_focus(Some("Profiles"));
-    }
+    // An opener asked for Profiles, or a leave prompt was staged from
+    // elsewhere (the tab's ✕, MultiBox) and draws inside this window: bring
+    // the window (its dock tab) forward once.
+    focus_if_requested(ui, session, PanelWindow::Profiles);
     let mut open = true;
     ui.set_next_window_class(&panel_window_class());
     if let Some(id) = chooser_dock_id(panel_dock) {
         ui.set_next_window_dock_id_with_cond(id, Condition::Appearing);
     }
-    ui.window("Profiles")
+    ui.window(PanelWindow::Profiles.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [PANEL_WIDTH, 560.0]), Condition::FirstUseEver)
@@ -5148,7 +5166,8 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("General config")
+    focus_if_requested(ui, session, PanelWindow::GeneralConfig);
+    ui.window(PanelWindow::GeneralConfig.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -5181,7 +5200,8 @@ fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if let Some(id) = panel_dock {
         ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
     }
-    ui.window("Debug")
+    focus_if_requested(ui, session, PanelWindow::Debug);
+    ui.window(PanelWindow::Debug.title())
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(
@@ -6017,8 +6037,8 @@ fn ui_frame(
         ui.set_next_window_class(&rail_window_class());
         rail_window(ui, gpu, state);
     }
-    // Every frame, not only while open: the prev latches must track
-    // the close so the next open is a fresh rising edge.
+    // Called every frame; each returns early while closed and applies an
+    // opener's one-shot focus request just before its own Begin.
     chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
     debug_panel_window(ui, &mut state.session, state.panel_dock_node);
@@ -6154,3 +6174,7 @@ mod parameter_options_tests {
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_window_tests.rs"]
+mod window_tests;
