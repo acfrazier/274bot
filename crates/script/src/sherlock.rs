@@ -46,9 +46,8 @@
 //! defaulted, so the machine never reads an invented `-1`, `28` or slot `0`.
 //! The `next` page set is the adapter's: required keys always, optional
 //! chat / bank / shop / overlay slots only when this frame carried them.
-//! [`enqueue`] maps every adapter `ENQUEUED_KINDS` verb onto this slot's
-//! interact queue. `walk_missing_carry` is isolate-posted from a walk
-//! outcome this compiled tick does not observe, so it stays omitted.
+//! Native Sherlock starts a typed `Walk` action for every `walk-near` step, so
+//! the clue machine is not pumped again until its destination settles.
 //!
 //! Out of scope for this card, on purpose: keyboard, the duel `3554` family,
 //! honor-SETTINGS and loadout provisioning.
@@ -75,6 +74,7 @@ use crate::shim::{InteractReq, ScriptPaint};
 use crate::{CompiledId, SettingDef};
 use api::selected::RunKey;
 use std::task::Poll;
+use std::time::Duration;
 
 pub(crate) const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Sherlock"),
@@ -268,6 +268,8 @@ pub struct Sherlock {
     tables: Option<Arc<CombatTables>>,
     blocked: Option<ScriptFailure>,
     block_user_input: bool,
+    clue_walk: Option<ActionHandle<crate::native::walk::Walk>>,
+    clue_walk_deadline: Option<Duration>,
 }
 
 impl Script for Sherlock {
@@ -275,6 +277,10 @@ impl Script for Sherlock {
         // A reconnect advances the run's session; publish the current key.
         let run = tick.cx.run();
         if self.run != Some(run) {
+            if let Some(handle) = self.clue_walk.take() {
+                tick.actions.cancel(handle);
+            }
+            self.clue_walk_deadline = None;
             self.run = Some(run);
             self.dirty = true;
         }
@@ -324,6 +330,13 @@ impl Script for Sherlock {
             // consumed by the terminal branch instead of being lost.
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
+        }
+        match self.poll_clue_walk(tick) {
+            Poll::Pending => {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
+            Poll::Ready(()) => {}
         }
         match self.poll_fight(tick) {
             Poll::Pending => {
@@ -426,6 +439,8 @@ impl Script for Sherlock {
                 self.outcome = Some(Outcome::cancelled(id));
             }
             self.fight = None;
+            self.clue_walk = None;
+            self.clue_walk_deadline = None;
             self.hygiene_pending = !self.hygiene_owned.is_empty();
         }
     }
@@ -443,6 +458,37 @@ impl Sherlock {
         let retained = tick.cx.retained().sherlock();
         retained.death_seq = self.death.watermark();
         retained.death_pending = self.death_pending;
+    }
+
+    fn poll_clue_walk(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
+        let Some(handle) = self.clue_walk.as_ref() else {
+            return Poll::Ready(());
+        };
+        match tick.actions.poll(handle, &mut tick.cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(receipt)) => {
+                let timed_out = self
+                    .clue_walk_deadline
+                    .is_some_and(|deadline| tick.cx.active_now() >= deadline);
+                self.clue_walk = None;
+                self.clue_walk_deadline = None;
+                if receipt.end != crate::native::WalkEnd::Arrived {
+                    self.blocked = Some(clue_walk_receipt_failure(receipt, timed_out));
+                }
+                Poll::Ready(())
+            }
+            Poll::Ready(Err(ActionError::Stale | ActionError::Cancelled)) => {
+                self.clue_walk = None;
+                self.clue_walk_deadline = None;
+                Poll::Ready(())
+            }
+            Poll::Ready(Err(error)) => {
+                self.clue_walk = None;
+                self.clue_walk_deadline = None;
+                self.blocked = Some(clue_walk_action_failure(error));
+                Poll::Ready(())
+            }
+        }
     }
 
     fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
@@ -687,6 +733,10 @@ impl Sherlock {
                     }
                     return;
                 }
+                "walk-near" => {
+                    self.begin_clue_walk(tick, &answer);
+                    return;
+                }
                 "combat" => {
                     self.begin_combat(tick, &answer);
                     return;
@@ -795,9 +845,44 @@ impl Sherlock {
         }
     }
 
-    /// Abort the current action authority after the chat latch confirms death.
-    /// The clue machine receives the terminal signal separately so this cannot
-    /// be mistaken for a combat result or a solved clue.
+    /// Starts one native `Walk` action for a clue `walk-near` step. Keeping the
+    /// handle until its arrival receipt prevents the clue pump from dispatching
+    /// the same route again every tick.
+    fn begin_clue_walk(&mut self, tick: &mut NativeTick<'_>, answer: &Value) {
+        let Some((target, radius, loc_id)) = clue_walk_target(answer) else {
+            self.blocked = Some(ScriptFailure {
+                code: Arc::from("clue-walk-invalid"),
+                message: Arc::from("clue walk target is malformed"),
+            });
+            return;
+        };
+        let request = crate::quester::families::reach::walk_request(
+            target,
+            radius,
+            loc_id,
+            tick.cx.evidence(),
+        );
+        match tick
+            .actions
+            .begin::<crate::native::walk::Walk>(request, &mut tick.cx)
+        {
+            Ok(handle) => {
+                self.clue_walk_deadline = Some(
+                    tick.cx
+                        .active_now()
+                        .saturating_add(crate::native::walk::WALK_DEADLINE),
+                );
+                self.clue_walk = Some(handle);
+            }
+            Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {}
+            Err(ActionError::Stale | ActionError::Cancelled) => {}
+            Err(error) => self.blocked = Some(clue_walk_action_failure(error)),
+        }
+    }
+
+    /// Abort action authorities after the chat latch confirms death. The clue
+    /// machine receives the terminal signal separately so this cannot be
+    /// mistaken for a combat result or a solved clue.
     fn cancel_for_death(&mut self, actions: &mut crate::native::NativeActions) {
         if let Some(fight) = self.fight.take() {
             match fight {
@@ -805,6 +890,10 @@ impl Sherlock {
                 Fight::ClearPrayers(handle) => actions.cancel(handle),
             }
         }
+        if let Some(handle) = self.clue_walk.take() {
+            actions.cancel(handle);
+        }
+        self.clue_walk_deadline = None;
         // Death turns prayers off. A later activation belongs to the user,
         // not to the Combat owner that died.
         self.hygiene_owned = RaisedPrayers::empty();
@@ -952,22 +1041,44 @@ fn held_page(ctx: &HostFrame<'_>) -> Value {
 }
 
 /// The posted scene page: every placed loc on the observed frame with its
-/// native ops.
+/// native ops and, only when nearby, its current approach proof.
 fn loc_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::LocView] = ctx.snapshot.map_or(&[], GameSnapshot::locs);
     Value::Array(
         rows.iter()
             .map(|loc| {
-                json!({
+                let mut row = json!({
                     "id": loc.id,
                     "x": loc.tile.x,
                     "z": loc.tile.z,
                     "level": loc.tile.level,
                     "actions": action_strings(&loc.actions),
-                })
+                });
+                if let Some(can_operate_here) = loc_operable_here(ctx, loc) {
+                    row["can_operate_here"] = json!(can_operate_here);
+                }
+                row
             })
             .collect(),
     )
+}
+
+/// Native-only approach proof for a clue loc already at the player's stand.
+/// Keep it off distant rows and omit unknown geometry rather than posting a
+/// guessed false.
+fn loc_operable_here(ctx: &HostFrame<'_>, loc: &api::snapshot::LocView) -> Option<bool> {
+    let (x, z, level) = ctx.here?;
+    let here = WorldTile { x, z, level };
+    if loc.tile.level != level
+        || (i64::from(loc.tile.x) - i64::from(x))
+            .abs()
+            .max((i64::from(loc.tile.z) - i64::from(z)).abs())
+            > i64::from(crate::clue::ARRIVE_RADIUS)
+    {
+        return None;
+    }
+    let snapshot = ctx.snapshot?;
+    api::query::loc_approach::can_operate_from(loc, snapshot.scene(), here)
 }
 
 /// The posted ground page the collect arm Takes from: the scene shape plus the
@@ -1163,6 +1274,63 @@ fn action_strings(actions: &[Option<String>]) -> Vec<&str> {
         .filter_map(|action| action.as_deref())
         .collect()
 }
+fn clue_walk_target(step: &Value) -> Option<(WorldTile, u16, Option<i32>)> {
+    if step.get("kind").and_then(Value::as_str) != Some("walk-near") {
+        return None;
+    }
+    let radius = u16::try_from(i32::try_from(step.get("radius")?.as_i64()?).ok()?).ok()?;
+    let loc_id = match step.get("loc_id") {
+        Some(value) => Some(i32::try_from(value.as_i64()?).ok()?),
+        None => None,
+    };
+    Some((
+        WorldTile {
+            x: i32::try_from(step.get("x")?.as_i64()?).ok()?,
+            z: i32::try_from(step.get("z")?.as_i64()?).ok()?,
+            level: i32::try_from(step.get("level")?.as_i64()?).ok()?,
+        },
+        radius,
+        loc_id,
+    ))
+}
+
+fn clue_walk_receipt_failure(
+    receipt: crate::native::WalkReceipt,
+    timed_out: bool,
+) -> ScriptFailure {
+    if receipt.end == crate::native::WalkEnd::UserInput {
+        return ScriptFailure {
+            code: Arc::from("manual-movement"),
+            message: Arc::from("manual movement"),
+        };
+    }
+    if timed_out {
+        return ScriptFailure {
+            code: Arc::from("clue-walk-timeout"),
+            message: Arc::from("clue walk timed out"),
+        };
+    }
+    ScriptFailure {
+        code: Arc::from("clue-walk-failed"),
+        message: receipt
+            .failure_detail()
+            .unwrap_or_else(|| Arc::from("clue walk ended before arrival")),
+    }
+}
+
+fn clue_walk_action_failure(error: ActionError) -> ScriptFailure {
+    let (code, message) = match error {
+        ActionError::UserInput => ("manual-movement", Arc::from("manual movement")),
+        ActionError::Failed(message)
+        | ActionError::Blocked(message)
+        | ActionError::Unavailable(message) => ("clue-walk-failed", message),
+        _ => ("clue-walk-failed", Arc::from("clue walk action failed")),
+    };
+    ScriptFailure {
+        code: Arc::from(code),
+        message,
+    }
+}
 
 fn hygiene_failure(error: ActionError) -> ScriptFailure {
     let message = match error {
@@ -1203,13 +1371,12 @@ fn answered_token(answer: &Value) -> Option<u64> {
 /// Map one machine verb onto this slot's interact queue: the same variants the
 /// isolate forwards for the same verbs, one explicit arm per kind.
 ///
-/// The walk is the ordinary [`InteractReq::Walk`], retaining its existing
-/// boolean wire bits. This compiled card's false values are interpreted as
-/// Inherit by the host admission; they do not veto captured script permissions.
-/// It is never `WalkTo` (host navigation) or a driver call. The loc, npc and obj
-/// verbs keep the identity the machine posted beside them, so the host matches
-/// that row and refuses a stale one. An unknown kind is not a verb: nothing is
-/// enqueued for it, and a step missing a field it needs is not a verb either.
+/// The compatibility path maps ordinary `walk-near` verbs to radius walks.
+/// A loc-backed `walk-near` is native-only: native Sherlock starts the shared
+/// `Walk` action with the explicit loc identity, while `verb_req` rejects that
+/// enriched step rather than silently dropping the approach target. Other
+/// loc, npc and obj verbs keep the identity the machine posted beside them, so
+/// the host matches that row and refuses a stale one.
 fn enqueue(sink: &mut Vec<InteractReq>, _kind: &str, step: &Value) {
     if let Some(req) = crate::clue::verb_req(step) {
         sink.push(req);
@@ -1219,6 +1386,7 @@ fn enqueue(sink: &mut Vec<InteractReq>, _kind: &str, step: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native::{ledger, HostEffect, NativeActions, NativeTick, RetainedMemory};
     use api::game_data::TrailMembershipRow;
     use client::client::{Client, ClientConfig, Skill};
     use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
@@ -1228,6 +1396,7 @@ mod tests {
     use client::io::{ClientRevision, ServerProt};
     use serde::Deserialize;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
     const SCENE_BASE: i32 = 2_000;
 
     #[test]
@@ -1628,6 +1797,53 @@ mod tests {
         }
     }
 
+    /// Entrana drawers2: forceapproach=east (mask 13), shape 10, angle 3
+    /// in m44_52.jm2. Only the north stand is operable after rotation.
+    fn entrana_clue_frame(here: WorldTile) -> Frame {
+        let mut frame = wounded(&[(3579, 1)], 10);
+        frame.here = Some((here.x, here.z, here.level));
+        frame.snapshot.seed_ingame(2);
+        frame.snapshot.seed_tile(here);
+        frame.snapshot.seed_scene(api::snapshot::SceneView {
+            available: true,
+            base_x: 2816,
+            base_z: 3349,
+            level: 0,
+            width: 5,
+            height: 5,
+            collision_flags: vec![0; 25],
+        });
+        frame.snapshot.seed_locs(vec![api::snapshot::LocView {
+            typecode: 0,
+            info: 10 | (3 << 6),
+            id: 350,
+            name: Some("drawers2".into()),
+            description: None,
+            actions: vec![Some("Open".into())],
+            tile: WorldTile {
+                x: 2818,
+                z: 3351,
+                level: 0,
+            },
+            distance: 1,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 3,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: true,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 13,
+        }]);
+        frame
+    }
+
     /// A frame whose chat modal posts a continue button and nothing else:
     /// the observed `chat_continue` the frozen `drainChat` reads, with no
     /// option list for the professor arm to steal.
@@ -1693,18 +1909,70 @@ mod tests {
         ctx.compiled.interacts.take().unwrap_or_default()
     }
 
+    /// One real native tick through the shared action ledger.
+    fn tick_native(
+        frame: &mut Frame,
+        script: &mut Sherlock,
+        selected: &SelectedGameData,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        tick: u64,
+    ) -> (ScriptFlow, Vec<InteractReq>) {
+        let pin = selected.selected_pin().expect("selected pin");
+        let evidence = api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence: tick,
+        };
+        let mut retained = RetainedMemory::default();
+        let mut budget = ledger::TickBudget::default();
+        budget.observe(tick);
+        let mut actions = NativeActions { _private: () };
+        let mut output = crate::slot::compiled::TestOutput::default();
+        let mut driver = crate::ctx::test_support::NullDriver::default();
+        let host = frame.ctx(&mut driver, Some(selected));
+        let snapshot = api::snapshot::SnapshotView::new(host.snapshot, evidence);
+        let eligible = !host.compiled.hold;
+        let mut native = NativeTick {
+            actions: &mut actions,
+            cx: crate::native::ActionContext {
+                evidence,
+                observed_walk_outcome_seq: 0,
+                pin: &pin,
+                snapshot,
+                retained: &mut retained,
+                action_id: 0,
+                active_now: Duration::from_millis(tick.saturating_mul(600)),
+                wall_now: Instant::now(),
+                ledger,
+                budget: &mut budget,
+                eligible,
+            },
+            output: &mut output,
+            pairs: None,
+            frame: host,
+        };
+        let flow = script.tick(&mut native).expect("Sherlock native tick");
+        let interacts = native.frame.compiled.interacts.take().unwrap_or_default();
+        (flow, interacts)
+    }
+
     /// A tile far enough from the decoded search tile that the machine walks.
     fn far() -> (i32, i32, i32) {
         (2000, 2000, 0)
     }
 
-    /// The one walk the machine dispatches for that search step: the ordinary
-    /// `Walk` with every option the machine itself leaves off.
+    /// The one walk the machine dispatches for that destination: the frozen
+    /// arrival radius with every optional walk permission left off.
     fn walk_to(tile: (i32, i32, i32)) -> InteractReq {
-        InteractReq::Walk {
+        InteractReq::WalkNear {
             x: tile.0,
             z: tile.1,
             level: tile.2,
+            radius: crate::clue::ARRIVE_RADIUS,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -1889,6 +2157,219 @@ mod tests {
     }
 
     #[test]
+    fn native_clue_walk_latches_one_radius_request_until_arrival() {
+        let data = selected();
+        let (held_id, target) = search_row(&data);
+        let mut frame = wounded(&[(held_id, 1)], 10);
+        let here = far();
+        frame.here = Some(here);
+        frame.snapshot.seed_ingame(2);
+        frame.snapshot.seed_tile(WorldTile {
+            x: here.0,
+            z: here.1,
+            level: here.2,
+        });
+        let mut script = Sherlock::default();
+        let mut ledger = None;
+        crate::clue::on_reset();
+
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
+        assert_eq!(flow, ScriptFlow::Continue);
+        assert!(interacts.is_empty());
+        assert!(script.clue_walk.is_some());
+        let outbox = &ledger.as_ref().expect("native walk ledger").outbox;
+        assert_eq!(outbox.len(), 1);
+        let request = match &outbox[0].effect {
+            HostEffect::Walk(request) => request,
+            _ => panic!("unexpected host effect for clue route"),
+        };
+        assert_eq!(
+            request.target,
+            WorldTile {
+                x: target.0,
+                z: target.1,
+                level: target.2,
+            }
+        );
+        assert_eq!(request.radius, 1);
+        assert_eq!(request.loc_id, None);
+
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 2);
+        assert_eq!(flow, ScriptFlow::Continue);
+        assert!(interacts.is_empty());
+        assert!(script.clue_walk.is_some());
+        assert_eq!(
+            ledger.as_ref().expect("native walk ledger").outbox.len(),
+            1,
+            "the live action owns the only route request"
+        );
+        crate::clue::on_reset();
+    }
+
+    #[test]
+    fn native_clue_walk_deadline_blocks_with_named_reason_without_reissuing() {
+        let data = selected();
+        let (held_id, _) = search_row(&data);
+        let mut frame = wounded(&[(held_id, 1)], 10);
+        let here = far();
+        frame.here = Some(here);
+        frame.snapshot.seed_ingame(2);
+        frame.snapshot.seed_tile(WorldTile {
+            x: here.0,
+            z: here.1,
+            level: here.2,
+        });
+        let mut script = Sherlock::default();
+        let mut ledger = None;
+        crate::clue::on_reset();
+        let (flow, _) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
+        assert_eq!(flow, ScriptFlow::Continue);
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1000);
+        assert_eq!(flow, ScriptFlow::Continue, "not yet ten active minutes");
+        assert!(interacts.is_empty());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1001);
+        let ScriptFlow::Blocked(failure) = flow else {
+            panic!("the finite walk deadline must block: {flow:?}");
+        };
+        assert_eq!(failure.code.as_ref(), "clue-walk-timeout");
+        assert_eq!(failure.message.as_ref(), "clue walk timed out");
+        assert!(interacts.is_empty());
+        assert!(script.clue_walk.is_none());
+        assert!(script.clue_walk_deadline.is_none());
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1002);
+        assert!(matches!(flow, ScriptFlow::Blocked(_)));
+        assert!(interacts.is_empty());
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|envelope| { matches!(envelope.effect, HostEffect::Walk(_)) })
+                .count(),
+            0,
+            "timeout cancels the queued walk and never rearms it"
+        );
+        crate::clue::on_reset();
+    }
+
+    #[test]
+    fn manual_clue_movement_keeps_its_reason_after_the_deadline() {
+        for timed_out in [false, true] {
+            let failure = clue_walk_receipt_failure(
+                crate::native::WalkReceipt {
+                    request_id: 1,
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: RunKey {
+                            slot: 1,
+                            run: 1,
+                            session: 1,
+                        },
+                        tick: 1002,
+                        sequence: 1002,
+                    },
+                    end: crate::native::WalkEnd::UserInput,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                timed_out,
+            );
+            assert_eq!(failure.code.as_ref(), "manual-movement");
+            assert_eq!(failure.message.as_ref(), "manual movement");
+        }
+    }
+
+    #[test]
+    fn native_entrana_search_uses_the_posted_loc_approach() {
+        let data = selected();
+        let south = WorldTile {
+            x: 2818,
+            z: 3350,
+            level: 0,
+        };
+        let mut frame = entrana_clue_frame(south);
+        let page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = frame.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, 1, None)
+        };
+        assert_eq!(page["locs"][0]["can_operate_here"], false, "{page}");
+
+        let mut east = entrana_clue_frame(WorldTile {
+            x: 2819,
+            z: 3351,
+            level: 0,
+        });
+        let east_page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = east.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, 1, None)
+        };
+        assert_eq!(
+            east_page["locs"][0]["can_operate_here"], false,
+            "{east_page}"
+        );
+
+        let mut north = entrana_clue_frame(WorldTile {
+            x: 2818,
+            z: 3352,
+            level: 0,
+        });
+        let north_page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = north.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, 1, None)
+        };
+        assert_eq!(
+            north_page["locs"][0]["can_operate_here"], true,
+            "{north_page}"
+        );
+
+        let mut distant = entrana_clue_frame(WorldTile {
+            x: 2000,
+            z: 2000,
+            level: 0,
+        });
+        let distant_page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = distant.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, 1, None)
+        };
+        assert!(
+            distant_page["locs"][0].get("can_operate_here").is_none(),
+            "{distant_page}"
+        );
+
+        let mut script = Sherlock::default();
+        let mut ledger = None;
+        crate::clue::on_reset();
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
+        assert_eq!(flow, ScriptFlow::Continue);
+        assert!(interacts.is_empty());
+        let outbox = &ledger.as_ref().expect("native reach ledger").outbox;
+        assert_eq!(outbox.len(), 1);
+        let request = match &outbox[0].effect {
+            HostEffect::Walk(request) => request,
+            _ => panic!("unexpected host effect for loc approach"),
+        };
+        assert_eq!(
+            request.target,
+            WorldTile {
+                x: 2818,
+                z: 3351,
+                level: 0,
+            }
+        );
+        assert_eq!(request.radius, 1);
+        assert_eq!(request.loc_id, Some(350));
+        crate::clue::on_reset();
+    }
+
+    #[test]
     fn a_held_search_row_walks_with_every_walk_option_off() {
         let data = selected();
         let (held_id, tile) = search_row(&data);
@@ -1901,7 +2382,7 @@ mod tests {
         assert_eq!(
             sink,
             vec![walk_to(tile)],
-            "the decoded search tile, on the ordinary Walk with every option off"
+            "the decoded search tile on an optionless radius-one WalkNear"
         );
         assert!(script.token.is_some(), "the begin started this session");
         assert_eq!(script.solved, 0);
@@ -2063,10 +2544,11 @@ mod tests {
         let mut walking = Frame::new(&[(dig, 1)], Some(far()));
         let walked = tick(&mut walking, &mut script, Some(&data));
         let tile = match walked.as_slice() {
-            [InteractReq::Walk {
+            [InteractReq::WalkNear {
                 x,
                 z,
                 level,
+                radius: crate::clue::ARRIVE_RADIUS,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
@@ -2074,7 +2556,7 @@ mod tests {
                 avoid: _,
                 cross: _,
             }] => (*x, *z, *level),
-            other => panic!("the dig arm answers with one optionless walk: {other:?}"),
+            other => panic!("the dig arm answers with one optionless WalkNear: {other:?}"),
         };
         let token = script.token.expect("a live session");
 
@@ -2412,7 +2894,7 @@ mod tests {
         let mut walking = Frame::new(&[(held_id, 1)], Some(far()));
         let first = tick(&mut walking, &mut script, Some(&data));
         assert!(
-            matches!(first.as_slice(), [InteractReq::Walk { .. }]),
+            matches!(first.as_slice(), [InteractReq::WalkNear { radius: 1, .. }]),
             "the talk arm walks when no chat is posted: {first:?}"
         );
         assert!(script.token.is_some());
@@ -2459,6 +2941,25 @@ mod tests {
             ),
             Some(InteractReq::Walk { .. })
         ));
+        assert!(matches!(
+            crate::clue::verb_req(&serde_json::json!({
+                "kind": "walk-near",
+                "x": 1,
+                "z": 2,
+                "level": 0,
+                "radius": 1
+            })),
+            Some(InteractReq::WalkNear { radius: 1, .. })
+        ));
+        assert!(crate::clue::verb_req(&serde_json::json!({
+            "kind": "walk-near",
+            "x": 1,
+            "z": 2,
+            "level": 0,
+            "radius": 1,
+            "loc_id": 350
+        }))
+        .is_none());
     }
 
     #[test]

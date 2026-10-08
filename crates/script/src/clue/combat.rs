@@ -377,7 +377,7 @@ impl ClueRuntime {
     pub(super) fn spawn(&mut self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
-            Arrival::Walking => self.walk(tile),
+            Arrival::Walking => self.walk(tile, None),
             Arrival::Arrived if !spade_posted(input) => self.emit(SUPPLIES_NEEDED),
             Arrival::Arrived => {
                 self.guardian = Some(Guardian {
@@ -552,7 +552,7 @@ impl ClueRuntime {
         let after_kill = self.keeper.as_ref().is_some_and(|keeper| keeper.post_kill);
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
-            Arrival::Walking => self.walk(tile),
+            Arrival::Walking => self.walk(tile, None),
             Arrival::Arrived if after_kill => match pick_key(input, key.key_id, tile) {
                 Some(drop) => {
                     let Some(size) = posted_inv_size(input) else {

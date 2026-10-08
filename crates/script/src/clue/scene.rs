@@ -1,4 +1,5 @@
 use super::*;
+use crate::clue::ARRIVE_RADIUS;
 
 /// What this call's posted `here` says about the decoded tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,10 +83,6 @@ pub(super) const SQUARE: i32 = 64;
 
 /// Planes `0..=3`.
 pub(super) const LEVELS: i32 = 4;
-
-/// The frozen picker's `ARRIVE_RADIUS`: the decoded tile itself, and one step
-/// off it on either axis.
-pub(super) const ARRIVE_RADIUS: i32 = 1;
 
 /// A world tile: the same three fields the posted `here` object and every
 /// posted `SceneEntity` row carry.
@@ -365,11 +362,12 @@ pub(super) fn posted_tile(value: &Value) -> Option<Tile> {
 }
 
 /// The picker's chosen row: the posted tile and id the verb is dispatched at,
-/// and the canonical action.
+/// the canonical action, and an optional native fact about operating it here.
 pub(super) struct Pick {
     pub(super) tile: Tile,
     pub(super) id: i32,
     pub(super) action: &'static str,
+    pub(super) can_operate_here: Option<bool>,
 }
 
 /// The frozen `pickSearchLoc` rank: `Search` before `Open`, matched
@@ -390,14 +388,13 @@ pub(super) fn posted_action(row: &Value, wanted: &str) -> bool {
     })
 }
 
-/// The frozen picker over this call's posted loc page: posted rows on the
-/// decoded tile's level, within `ARRIVE_RADIUS` Chebyshev **of the decoded
-/// tile** (not of `here`), whose actions carry `Search` then `Open`.
-/// Nearest wins, then the action rank, then posted order — the scan only
-/// replaces the best on a strict improvement. The verb keeps the row's own
-/// tile and posted id, so the host matches the type identity it was posted
-/// with; a row that is not the marshalled `{ id, x, z, level, actions }`
-/// shape is skipped rather than guessed at.
+/// The frozen `pickSearchLoc` rank: posted rows on the decoded tile's level,
+/// within `ARRIVE_RADIUS` Chebyshev of the decoded tile (not of `here`), whose
+/// actions carry `Search` then `Open`. Nearest wins, then the action rank, then
+/// posted order — the scan only replaces the best on a strict improvement. The
+/// verb keeps the row's own tile and posted id, so the host matches the type
+/// identity it was posted with. Native Sherlock may also post
+/// `can_operate_here`; absent or malformed facts remain unknown.
 pub(super) fn pick_loc(input: &Value, tile: Tile) -> Option<Pick> {
     let rows = input.get("locs")?.as_array()?;
     let mut best: Option<(Pick, i64, usize)> = None;
@@ -427,6 +424,7 @@ pub(super) fn pick_loc(input: &Value, tile: Tile) -> Option<Pick> {
                     tile: row_tile,
                     id,
                     action: SEARCH_OPS[rank],
+                    can_operate_here: row.get("can_operate_here").and_then(Value::as_bool),
                 },
                 distance,
                 rank,
