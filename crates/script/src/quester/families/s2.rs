@@ -9,8 +9,8 @@ use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
 use crate::quester::bank_run::BankRun;
 use crate::quester::compile::{
-    CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
-    StepOutcome, StepPlan, StepRun,
+    CompileContext, CompileError, CompiledCarry, FamilyReceipt, PredicateContext, PredicatePlan,
+    StepContext, StepOutcome, StepPlan, StepRun,
 };
 use api::bank_memory::Origin;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
@@ -226,6 +226,13 @@ pub(super) fn compile_quantity(
 }
 
 fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileError> {
+    named_item_with_stackable(cx, name).map(|(item, _)| item)
+}
+
+fn named_item_with_stackable(
+    cx: &CompileContext<'_>,
+    name: &str,
+) -> Result<(BankItem, bool), CompileError> {
     let item = cx
         .selected
         .resolve_item_name(name)
@@ -235,10 +242,13 @@ fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileEr
         .name
         .as_deref()
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
-    Ok(BankItem {
-        id: item.id,
-        name: Arc::from(display),
-    })
+    Ok((
+        BankItem {
+            id: item.id,
+            name: Arc::from(display),
+        },
+        item.stackable,
+    ))
 }
 
 fn anchor(tile: [i32; 3]) -> WorldTile {
@@ -892,12 +902,11 @@ pub(super) fn compile_loadout(
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
     let mut resolved = Vec::new();
-    let mut carry_ids = Vec::with_capacity(row.carry.len());
-    for carry in &row.carry {
-        let item = named_item(cx, &carry.item)?;
-        carry_ids.push(item.id);
+    let carry = compile_loadout_carry(&qualified, row, cx)?;
+    for entry in carry.iter() {
+        let item = &entry.item;
         if !resolved.iter().any(|known: &BankItem| known.id == item.id) {
-            resolved.push(item);
+            resolved.push(item.clone());
         }
     }
     let mut worn_items = Vec::with_capacity(row.worn.len());
@@ -926,7 +935,7 @@ pub(super) fn compile_loadout(
             .resolve_item_name(name)
             .is_some_and(|item| item.id == candidate.id);
         let relevant = canonical
-            && (carry_ids.contains(&candidate.id)
+            && (carry.iter().any(|entry| entry.item.id == candidate.id)
                 || worn_items.iter().any(|(slot, wanted)| {
                     wanted.id == candidate.id
                         || (wanted.name.eq_ignore_ascii_case("dragon longsword")
@@ -948,6 +957,7 @@ pub(super) fn compile_loadout(
         bank: cx.bank,
         bank_required: cx.bank_required,
         row: Arc::new(row.clone()),
+        carry,
         resolved: Arc::from(resolved),
         melee_family,
         keep_ids: Arc::from(cx.keep_ids),
@@ -957,11 +967,35 @@ pub(super) fn compile_loadout(
     }))
 }
 
+fn compile_loadout_carry(
+    qualified: &str,
+    row: &crate::loadouts_store::Loadout,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<[CompiledCarry]>, CompileError> {
+    if let Some(carry) = cx.loadout_carry.get(qualified) {
+        return Ok(Arc::clone(carry));
+    }
+    // Operator-only rows have no authored Path carry to reuse.
+    row.carry
+        .iter()
+        .map(|entry| {
+            let (item, stackable) = named_item_with_stackable(cx, &entry.item)?;
+            Ok(CompiledCarry {
+                item,
+                qty: i32::try_from(entry.qty).unwrap_or(i32::MAX),
+                stackable,
+                latch_index: u8::MAX,
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone)]
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
     row: Arc<crate::loadouts_store::Loadout>,
+    carry: Arc<[CompiledCarry]>,
     resolved: Arc<[BankItem]>,
     melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
     keep_ids: Arc<[i32]>,
@@ -1028,11 +1062,12 @@ impl LoadoutPlan {
         let mut bank_actions = Vec::new();
         let mut worn = Vec::new();
         if !self.strip {
-            for carry in &self.row.carry {
-                let item = resolve(&carry.item)?;
-                let qty = i32::try_from(carry.qty).unwrap_or(i32::MAX);
-                if stock.holds(item.id, qty) != Truth::True {
-                    bank_actions.push(BankAction::Withdraw { item, qty });
+            for carry in self.carry.iter() {
+                if stock.holds(carry.item.id, carry.qty) != Truth::True {
+                    bank_actions.push(BankAction::Withdraw {
+                        item: carry.item.clone(),
+                        qty: carry.qty,
+                    });
                 }
             }
             for (slot, name) in &self.row.worn {
@@ -1430,16 +1465,7 @@ pub(super) fn compile_loadout_ready(
         .resolve(&qualified)
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
-    let carry = row
-        .carry
-        .iter()
-        .map(|entry| {
-            Ok((
-                named_item(cx, &entry.item)?.id,
-                i32::try_from(entry.qty).unwrap_or(i32::MAX),
-            ))
-        })
-        .collect::<Result<Vec<_>, CompileError>>()?;
+    let carry = compile_loadout_carry(&qualified, row, cx)?;
     let worn = row
         .worn
         .iter()
@@ -1476,7 +1502,7 @@ pub(super) fn compile_loadout_ready(
         })
         .collect::<Result<Vec<_>, CompileError>>()?;
     Ok(Arc::new(LoadoutReady {
-        carry: Arc::from(carry),
+        carry,
         worn: Arc::from(worn),
         keep_ids: Arc::from(cx.keep_ids),
         strip: args.strip,
@@ -1485,7 +1511,7 @@ pub(super) fn compile_loadout_ready(
 }
 
 struct LoadoutReady {
-    carry: Arc<[(i32, i32)]>,
+    carry: Arc<[CompiledCarry]>,
     worn: Arc<[Arc<[i32]>]>,
     strip: bool,
     keep_ids: Arc<[i32]>,
@@ -1504,7 +1530,7 @@ impl PredicatePlan for LoadoutReady {
         let carry_ready = self
             .carry
             .iter()
-            .all(|(id, qty)| stock.holds(*id, *qty) == Truth::True);
+            .all(|carry| stock.holds(carry.item.id, carry.qty) == Truth::True);
         let worn_ready = if self.strip {
             equipment
                 .value

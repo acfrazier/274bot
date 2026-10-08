@@ -1090,6 +1090,7 @@ fn chopping_snapshot(selected: &Arc<api::game_data::SelectedGameData>) -> GameSn
         x: target.tile.x + 1,
         ..target.tile
     };
+    player.player.network = player.player.actor.tile;
     frame.seed_local_player(player);
     frame.seed_locs(vec![target]);
     frame
@@ -1111,14 +1112,42 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
 
 #[test]
 fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
+    use api::gather_methods::{known_rows, SceneRegionInput, TargetClass};
+    use api::selected::EntityId;
+
     let selected = selected();
     let mut slot = started(4392, &selected);
     let mut frame = chopping_snapshot(&selected);
-    let mut locs = frame.locs().to_vec();
-    let mut next_tree = locs[0].clone();
-    next_tree.tile.x += 1;
-    locs.push(next_tree);
-    frame.seed_locs(locs);
+    let first_tree = frame.locs()[0].clone();
+    let catalog = fixture_catalog(&selected);
+    let method = catalog.methods_for_resource("normal").next().unwrap();
+    let region = SceneRegionInput {
+        min_x: first_tree.tile.x - 11,
+        min_z: first_tree.tile.z - 11,
+        max_x: first_tree.tile.x + 11,
+        max_z: first_tree.tile.z + 11,
+        level: first_tree.tile.level,
+    };
+    let (next_tile, next_id) = catalog
+        .spots(method, &region)
+        .unwrap()
+        .filter_map(|spot| match spot.entity {
+            EntityId::Loc(id)
+                if spot.origin != first_tree.tile
+                    && known_rows(&method.targets).iter().any(|row| {
+                        row.class == TargetClass::Resource && row.entity == spot.entity
+                    }) =>
+            {
+                Some((spot.origin, id))
+            }
+            _ => None,
+        })
+        .min_by_key(|(tile, _)| {
+            tile.x
+                .abs_diff(first_tree.tile.x)
+                .max(tile.z.abs_diff(first_tree.tile.z))
+        })
+        .expect("another real tree near the initial stand");
     tick(&mut slot, &frame, 1);
     let chop = slot.take_native_action().expect("initial tree chop");
     assert!(matches!(
@@ -1127,10 +1156,20 @@ fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
     ));
     assert!(!slot.has_native_actions());
 
-    let mut locs = frame.locs().to_vec();
-    locs[0].id = depleted_snapshot(&selected).locs()[0].id;
-    locs[0].actions.clear();
-    frame.seed_locs(locs);
+    let mut depleted = first_tree.clone();
+    depleted.id = depleted_snapshot(&selected).locs()[0].id;
+    depleted.actions.clear();
+    let mut next_tree = first_tree;
+    next_tree.id = next_id;
+    next_tree.tile = next_tile;
+    frame.seed_locs(vec![depleted, next_tree]);
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = WorldTile {
+        x: next_tile.x + 1,
+        ..next_tile
+    };
+    player.player.network = player.player.actor.tile;
+    frame.seed_local_player(player);
     let (x, z) = frame.base().unwrap();
     frame.seed_world(WorldStateView {
         map_base_x: x + 8,
@@ -1153,7 +1192,9 @@ fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
         .expect("new tree after scene settles");
     assert!(matches!(
         next.effect,
-        HostEffect::Interaction(InteractReq::Loc { action, .. }) if action == "Chop down"
+        HostEffect::Interaction(InteractReq::Loc { x, z, level, action, .. })
+            if action == "Chop down"
+                && (WorldTile { x, z, level }) == next_tile
     ));
     assert!(!slot.has_native_actions());
     slot.stop();
