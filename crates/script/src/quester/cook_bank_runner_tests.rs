@@ -1170,12 +1170,6 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
                 });
             }
         }
-        // Model the engine's stacked Coins bank row, as the carry fixtures
-        // do; the selected alias declaration is not a runtime bank definition.
-        let coin_id = fixture.script.selected.item_by_alias("coins").unwrap().id;
-        if let Some(coins) = fixture.stock.iter_mut().find(|row| row.def.id == coin_id) {
-            coins.def.stackable = true;
-        }
         fixture.until_root_begin();
         assert!(
             !fixture.script.parked,
