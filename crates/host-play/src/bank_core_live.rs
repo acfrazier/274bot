@@ -78,6 +78,8 @@ const TINDERBOX: i32 = 590;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Prep {
     Session,
+    TutorialReseed,
+    WaitTutorialReseed,
     Teleport,
     WaitArrive,
     Clear,
@@ -153,6 +155,9 @@ pub(super) struct Cell {
     pub(super) last_action: Instant,
     session_runner: scenario::ScenarioRunner,
     preparation_failure: Option<String>,
+    /// Post-relog tutorial reseed (`setvar tutorial 1000` + fresh `getvar`
+    /// confirm in the new session, after the kit-close queue has run).
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
     /// Seed cheats sent in order once the pack is cleared.
     seed: &'static [&'static str],
     seeded: usize,
@@ -201,6 +206,7 @@ impl Cell {
             last_action: preparation_started,
             session_runner: session_fixture_runner(),
             preparation_failure: None,
+            tutorial_reseed: None,
             seed,
             seeded: 0,
             seed_ready,
@@ -257,14 +263,14 @@ fn session_fixture_runner() -> scenario::ScenarioRunner {
                 name: "skip tutorial and verify the server value",
                 kind: StepKind::Perform {
                     send: Box::new(|client, _| {
-                        let _ = interact::cheat(client, "setvar tutorial 1000");
-                        let _ = interact::cheat(client, "getvar tutorial");
+                        let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                        let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Chat {
-                        needle: "get tutorial: 1000",
+                        needle: scenario::tutorial::TUTORIAL_CHAT_NEEDLE,
                     },
                     budget_ticks: 200,
                 },
@@ -602,7 +608,7 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
             cell.session_runner.tick(client);
             match cell.session_runner.status() {
                 scenario::RunnerStatus::Passed => {
-                    cell.phase = Prep::Teleport;
+                    cell.phase = Prep::TutorialReseed;
                     cell.last_action = now;
                 }
                 scenario::RunnerStatus::Failed(error) => {
@@ -616,6 +622,35 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
         let spaced = now.duration_since(cell.last_action) >= Duration::from_millis(400);
         match cell.phase {
             Prep::Session | Prep::PrerequisiteFailed => {}
+            Prep::TutorialReseed => {
+                // Fresh-account post-relog reseed: the kit-close queue has
+                // already run in the new session, so this `setvar` sticks.
+                // Baseline is captured before sending, so only a strictly
+                // newer same-session `getvar` reply can satisfy the wait.
+                let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                let reseed = scenario::tutorial::PostRelogTutorial::new(baseline);
+                reseed.send_reseed(client);
+                cell.tutorial_reseed = Some(reseed);
+                cell.last_action = now;
+                cell.phase = Prep::WaitTutorialReseed;
+            }
+            Prep::WaitTutorialReseed => {
+                let reseed = cell
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed before waiting");
+                match reseed.check(&snapshot) {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
+                        cell.phase = Prep::Teleport;
+                        cell.last_action = now;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        cell.fail_prerequisite(error);
+                    }
+                }
+            }
             Prep::Teleport if spaced => {
                 let _ = interact::cheat(client, &tele_args(DRAYNOR));
                 cell.last_action = now;

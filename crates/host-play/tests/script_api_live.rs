@@ -69,6 +69,7 @@ struct Fixture {
     hidden_journals: usize,
     normal_closed: bool,
     initial: Option<Value>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 fn cheat(client: &mut Client, command: &str) -> Result<(), String> {
@@ -182,6 +183,14 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 // Closing a fresh character-design modal queues tutorial=1 after
                 // the initial hop. Seed completion on this clean relog before
                 // preparing equipment or the quest witness.
+                if !journal {
+                    // Baseline before the reseed send: only a strictly newer
+                    // same-session `getvar` reply proves the durable value.
+                    // The bronze axe wear below needs `tutorial > 400`.
+                    let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                    state.tutorial_reseed =
+                        Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                }
                 cheat(client, "setvar tutorial 1000")?;
                 if journal {
                     cheat(client, "setvar rjquest 30")?;
@@ -212,9 +221,16 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 cheat(client, "getvar tutorial")?;
                 state.phase = 9;
             }
-            9 if !journal && chat_has(&snapshot, "get tutorial: 1000") => {
-                cheat(client, "give bronze_axe 1")?;
-                state.phase = 6;
+            9 if !journal => {
+                let confirmed = match state.tutorial_reseed.as_ref() {
+                    Some(reseed) => reseed.check(&snapshot)?,
+                    None => false,
+                };
+                if confirmed {
+                    println!("{}", scenario::tutorial::confirmation_log());
+                    cheat(client, "give bronze_axe 1")?;
+                    state.phase = 6;
+                }
             }
             6 if !journal => {
                 cheat(
