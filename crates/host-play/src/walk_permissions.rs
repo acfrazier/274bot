@@ -232,7 +232,7 @@ pub(crate) fn native_admission(
         log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
     }
     let script = bot
-        .and_then(|bot| bot.native_permissions)
+        .and_then(|bot| bot.native_permissions.or(bot.api_gather_permissions))
         .unwrap_or_default();
     let policy = globals.risk_policy(script, walk);
     (

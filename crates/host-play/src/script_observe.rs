@@ -886,6 +886,7 @@ pub(crate) fn script_observe_cached_with_channels(
             let mut navs = navs.lock().unwrap();
             let bot = navs.entry(name.to_owned()).or_default();
             bot.native_permissions = slot.native_walk_permissions();
+            bot.api_gather_permissions = slot.api_gather_walk_permissions();
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
         }
         emit_script_debug_logs(&mut slot, name);
@@ -1144,6 +1145,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
                         bot.native_permissions = slot.native_walk_permissions();
+                        bot.api_gather_permissions = slot.api_gather_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
                     }
                     let mut refused_batch = None;
