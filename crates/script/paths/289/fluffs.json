@@ -1,0 +1,2748 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "fluffs",
+  "display_name": "Gertrude's Cat",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "doogleleaves",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "raw_sardine",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "seasoned_sardine",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bucket_milk",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "gertrudekittens",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {
+      "acquire:sardine": [
+        {
+          "id": "take-doogle-leaves",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "ground": "doogleleaves"
+            },
+            "op": "Take",
+            "anchor": {
+              "tile": [
+                3153,
+                3400,
+                0
+              ],
+              "source": "A defs/gertrudescat.ts:65"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "doogleleaves"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "doogleleaves"
+              }
+            }
+          }
+        },
+        {
+          "id": "buy-raw-sardine",
+          "kind": "buy",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "shop": {
+              "npc": "gerrant",
+              "anchor": {
+                "tile": [
+                  3016,
+                  3223,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:66"
+              }
+            },
+            "obj": "raw_sardine",
+            "qty": 1,
+            "est_gp": 100
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_sardine"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_sardine"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "season-sardine",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "doogleleaves",
+            "target": {
+              "item": "raw_sardine"
+            },
+            "product": "seasoned_sardine",
+            "settle_ms": 20000
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "doogleleaves"
+                    }
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "raw_sardine"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "seasoned_sardine"
+              }
+            }
+          }
+        }
+      ],
+      "acquire:milk": [
+        {
+          "id": "take-milk-bucket",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "ground": "bucket_empty"
+            },
+            "op": "Take",
+            "anchor": {
+              "tile": [
+                3225,
+                3294,
+                0
+              ],
+              "source": "A defs/cooksassistant.ts:13"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_milk"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_empty"
+              }
+            }
+          }
+        },
+        {
+          "id": "milk-cow",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "bucket_empty",
+            "target": {
+              "npc": "cow"
+            },
+            "anchor": {
+              "tile": [
+                3255,
+                3288,
+                0
+              ],
+              "source": "A defs/cooksassistant.ts:14"
+            },
+            "radius": 4,
+            "product": "bucket_milk",
+            "settle_ms": 20000
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_milk"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "bucket_empty"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_milk"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 1000,
+    "loadouts": {
+      "cash": {
+        "worn": {},
+        "carry": [
+          {
+            "item": "coins",
+            "qty": 1000
+          }
+        ]
+      }
+    },
+    "areas": {
+      "yard": {
+        "boxes": [
+          [
+            3288,
+            3494,
+            3327,
+            3527,
+            0
+          ]
+        ],
+        "source": "A defs/gertrudescat.ts:168-170"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:bucket_empty",
+      "obj:doogleleaves",
+      "obj:raw_sardine",
+      "obj:seasoned_sardine",
+      "obj:bucket_milk",
+      "obj:gertrudekittens"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:fluffs",
+      "progress": {
+        "colour": {
+          "not_started": "fluffs:0",
+          "in_progress": "fluffs:1",
+          "complete": "fluffs:6"
+        },
+        "rules": [
+          {
+            "stage": "fluffs:6",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": null
+          },
+          {
+            "stage": "fluffs:5",
+            "all": [
+              "i gave fluffs her kitten back"
+            ],
+            "varp": 5
+          },
+          {
+            "stage": "fluffs:4",
+            "all": [
+              "i gave the cat milk and sardines"
+            ],
+            "varp": 4
+          },
+          {
+            "stage": "fluffs:3",
+            "all": [
+              "i found the lost cat but it"
+            ],
+            "varp": 3
+          },
+          {
+            "stage": "fluffs:2",
+            "all": [
+              "go to their play area"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "fluffs:1",
+            "all": [
+              "i accepted the challenge of finding"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "fluffs:0",
+            "all": [
+              "i can start this quest by talking to"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "fluffs:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "load-cash-float",
+              "kind": "loadout",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "loadout": "cash",
+                "at": "nearest",
+                "allow_lower_tier": false,
+                "strip": false
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "cash"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "cash"
+                  }
+                }
+              }
+            },
+            {
+              "id": "start-with-gertrude",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "gertrude",
+                "anchor": {
+                  "tile": [
+                    3151,
+                    3410,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:54-59"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Well, I suppose I could"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "fluffs",
+                    "any": [
+                      "fluffs:1"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-play-area-from-brothers",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "shilop",
+                "anchor": {
+                  "tile": [
+                    3221,
+                    3434,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:61-63"
+                },
+                "leash": 6,
+                "prefer": [
+                  "What will make you tell me?",
+                  "I'll pay"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "fluffs",
+                    "any": [
+                      "fluffs:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "acquire-seasoned-sardine-before-milk",
+              "kind": "acquire",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "recipe": "acquire:sardine"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              }
+            },
+            {
+              "id": "acquire-bucket-of-milk",
+              "kind": "acquire",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "recipe": "acquire:milk"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_milk"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_milk"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-yard-entry",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3492,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-76,181-195",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "yard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3492,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3492,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-broken-fence",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "gertrudefence"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    3305,
+                    3496,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-76,181-195; C quest_fluffs.loc:1-7"
+                },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "yard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "yard"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-ladder-base",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3310,
+                  3509,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,212-224",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3310,
+                          3509,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3310,
+                      3509,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-to-fluffs",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    3310,
+                    3509,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,212-224"
+                },
+                "radius": 4,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-cat-stand",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3306,
+                  3512,
+                  1
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,198-228",
+                "radius": 2
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3306,
+                      3512,
+                      1
+                    ],
+                    "radius": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3306,
+                      3512,
+                      1
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-fluffs-milk",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "bucket_milk",
+                "target": {
+                  "npc": "gertrudescat"
+                },
+                "anchor": {
+                  "tile": [
+                    3306,
+                    3512,
+                    1
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,253-287"
+                },
+                "radius": 4,
+                "product": "bucket_empty",
+                "settle_ms": 12000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "bucket_milk"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "fluffs",
+                    "any": [
+                      "fluffs:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "acquire-seasoned-sardine",
+              "kind": "acquire",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "recipe": "acquire:sardine"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "seasoned_sardine"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-yard-entry-for-sardine",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3492,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-76,181-195",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "yard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3492,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3492,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-broken-fence-for-sardine",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "gertrudefence"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    3305,
+                    3496,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-76,181-195; C quest_fluffs.loc:1-7"
+                },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "yard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "yard"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-ladder-base-for-sardine",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3310,
+                  3509,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,212-224",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3310,
+                          3509,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3310,
+                      3509,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-to-fluffs-for-sardine",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    3310,
+                    3509,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,212-224"
+                },
+                "radius": 4,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-cat-stand-for-sardine",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3306,
+                  3512,
+                  1
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,198-228",
+                "radius": 2
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3306,
+                      3512,
+                      1
+                    ],
+                    "radius": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3306,
+                      3512,
+                      1
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "feed-fluffs-sardine",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "seasoned_sardine",
+                "target": {
+                  "npc": "gertrudescat"
+                },
+                "anchor": {
+                  "tile": [
+                    3306,
+                    3512,
+                    1
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,253-287"
+                },
+                "radius": 4,
+                "settle_ms": 12000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "seasoned_sardine"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "fluffs",
+                    "any": [
+                      "fluffs:4"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-to-ladder-top-for-crates",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3310,
+                  3509,
+                  1
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,231-249",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 0
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3310,
+                          3509,
+                          1
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3310,
+                      3509,
+                      1
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-down-to-lumber-yard",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    3310,
+                    3509,
+                    1
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,231-249"
+                },
+                "radius": 4,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 0
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-broken-fence",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3496,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-76,181-195",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "yard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3496,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3496,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "enter-yard-through-broken-fence",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "gertrudefence"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    3305,
+                    3496,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-76,181-195; C quest_fluffs.loc:1-7"
+                },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "yard"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "yard"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-yard-hub",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-nw-corner-in-1",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3304,
+                  3511,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:78-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3304,
+                          3511,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3304,
+                      3511,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-nw-corner-in-2",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3300,
+                  3512,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:78-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3300,
+                          3512,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3300,
+                      3512,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-nw-corner-in-3",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3298,
+                  3513,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:78-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3298,
+                          3513,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3298,
+                      3513,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-nw-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3298,
+                    3514,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-nw-corner-out-1",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3300,
+                  3512,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:78-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3300,
+                          3512,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3300,
+                      3512,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-nw-corner-out-2",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3304,
+                  3511,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:78-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3304,
+                          3511,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3304,
+                      3511,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-nw-corner-out-3",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-hub-before-east-crate",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-east-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3307,
+                    3507,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-hub-before-north-crate",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-north-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3311,
+                    3511,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-hub-before-west-crate",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-west-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3303,
+                    3506,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-hub-before-southwest-crate",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-southwest-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3305,
+                    3500,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-hub-before-southeast-crate",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-southeast-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "kittens_mew"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3310,
+                    3499,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:93-101"
+                },
+                "radius": 1,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "gertrudekittens"
+                  }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": {
+                        "any": [
+                          "you find nothing"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-to-hub-after-crates",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3305,
+                  3504,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:75-83",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "gertrudekittens"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3305,
+                          3504,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3305,
+                      3504,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-ladder-base-with-kitten",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  3310,
+                  3509,
+                  0
+                ],
+                "source": "A defs/gertrudescat.ts:68-71,212-224",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3310,
+                          3509,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3310,
+                      3509,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-to-fluffs-with-kitten",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    3310,
+                    3509,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,212-224"
+                },
+                "radius": 4,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-fluffs-her-kitten",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "gertrudekittens",
+                "target": {
+                  "npc": "gertrudescat"
+                },
+                "anchor": {
+                  "tile": [
+                    3306,
+                    3512,
+                    1
+                  ],
+                  "source": "A defs/gertrudescat.ts:68-71,253-296"
+                },
+                "radius": 4,
+                "settle_ms": 12000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "gertrudekittens"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "gertrudekittens"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "wait-for-fluffs-cutscene-to-finish",
+              "kind": "wait",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "npc_absent",
+                    "version": 1,
+                    "args": {
+                      "npc": "gertrudescat"
+                    }
+                  }
+                },
+                "max_ticks": 40
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_absent",
+                  "version": 1,
+                  "args": {
+                    "npc": "gertrudescat"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_absent",
+                  "version": 1,
+                  "args": {
+                    "npc": "gertrudescat"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "report-to-gertrude",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "gertrude",
+                "anchor": {
+                  "tile": [
+                    3151,
+                    3410,
+                    0
+                  ],
+                  "source": "A defs/gertrudescat.ts:54-59,371-383"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Well, I suppose I could"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "fluffs",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "fluffs:6",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

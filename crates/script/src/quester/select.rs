@@ -810,4 +810,135 @@ mod tests {
             assert_eq!(probe.choice("cook:0", cursor, &empty), chosen("step-1"));
         }
     }
+
+    /// PORT-S6-DRAFTS-R5 D1: the combination-door prelude steps are
+    /// side-aware. The stateless prelude selector re-runs from index 0 on
+    /// every selection, so a door step whose skip holds on both sides of the
+    /// door is re-selected after crossing and oscillates: the R4 step skipped
+    /// on the mansion-wide area (true in the hall too) with a vacuous settle,
+    /// so `return-totem` was only reached at x >= 2644. This runs the real
+    /// selector on the compiled `totem.json`: the stair-room step must fire
+    /// only west of `combodoor`, the hall step only east of it before the
+    /// totem is held, and `return-totem` from every hall tile. Fails on the
+    /// R4 document (hall tiles select the stair-room door step there, and
+    /// the hall step does not exist).
+    #[test]
+    fn totem_combo_door_steps_are_side_aware() {
+        let data = selected();
+        let quests = quests(&data);
+        let bank = known_empty_bank();
+        let json = include_str!("../../paths/289/totem.json");
+        let compiled = path(json, &data, &quests);
+        let snapshot_at = |x, z, level, items: &[(&str, i32)]| {
+            let mut snapshot = inventory_snapshot(&data, items);
+            let tile = api::WorldTile { x, z, level };
+            snapshot.seed_tile(tile);
+            snapshot.seed_local_player(crate::quester::families::tests::local_player(tile));
+            snapshot
+        };
+        let totem = [("tribal_totem", 1)];
+        // With the totem held (post search-chest, combination solved): down
+        // the stairs on level 1, through the door in the stair room, and
+        // straight home from every hall tile, including the door tile itself.
+        for (name, x, z, level, expected) in [
+            ("l1-chest-room", 2637, 3323, 1, "climb-down-stairs"),
+            (
+                "stair-landing",
+                2631,
+                3325,
+                0,
+                "open-combo-door-from-stair-room",
+            ),
+            (
+                "stair-room-w33",
+                2633,
+                3323,
+                0,
+                "open-combo-door-from-stair-room",
+            ),
+            (
+                "stair-room-w27",
+                2627,
+                3324,
+                0,
+                "open-combo-door-from-stair-room",
+            ),
+            ("hall-e34-door-tile", 2634, 3323, 0, "return-totem"),
+            ("hall-e35", 2635, 3323, 0, "return-totem"),
+            ("hall-teleport", 2638, 3321, 0, "return-totem"),
+            ("hall-e40", 2640, 3322, 0, "return-totem"),
+            ("hall-e43", 2643, 3322, 0, "return-totem"),
+            ("outside-box-e46", 2646, 3322, 0, "return-totem"),
+        ] {
+            let progress = [progress_for_stage(
+                &compiled,
+                &data,
+                "totem:4",
+                &[("combo", Truth::True, None)],
+            )];
+            let probe = Probe {
+                path: &compiled,
+                selected: &data,
+                quests: &quests,
+                progress: &progress,
+                bank: &bank,
+            };
+            assert_eq!(
+                probe.choice("totem:4", 0, &snapshot_at(x, z, level, &totem)),
+                chosen(expected),
+                "{name} ({x},{z},{level}) with the totem must select {expected}"
+            );
+        }
+        // Without the totem (stage-4 ascent): solve first, then through the
+        // door from the hall side, then the stairs sequence takes over.
+        for (name, x, z, combo, expected) in [
+            (
+                "hall-pre-combo",
+                2638,
+                3321,
+                Truth::False,
+                "solve-combination",
+            ),
+            (
+                "hall-post-combo",
+                2638,
+                3321,
+                Truth::True,
+                "open-combo-door-from-hall",
+            ),
+            (
+                "hall-e35-post-combo",
+                2635,
+                3323,
+                Truth::True,
+                "open-combo-door-from-hall",
+            ),
+            (
+                "stair-room-post-combo",
+                2631,
+                3325,
+                Truth::True,
+                "disarm-trap",
+            ),
+        ] {
+            let progress = [progress_for_stage(
+                &compiled,
+                &data,
+                "totem:4",
+                &[("combo", combo, None)],
+            )];
+            let probe = Probe {
+                path: &compiled,
+                selected: &data,
+                quests: &quests,
+                progress: &progress,
+                bank: &bank,
+            };
+            assert_eq!(
+                probe.choice("totem:4", 0, &snapshot_at(x, z, 0, &[])),
+                chosen(expected),
+                "{name} ({x},{z},0) without the totem must select {expected}"
+            );
+        }
+    }
 }

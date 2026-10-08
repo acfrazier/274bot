@@ -1112,6 +1112,9 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
         );
         // Required supplies are available in the bank, not preloaded in the
         // pack. This sweep tests inventory capacity, not a supply shortfall.
+        // An empty pack still observes empty equipment: loadout-first Paths
+        // (e.g. fluffs) need worn evidence to evaluate their first skip.
+        fixture.snapshot.seed_equipment(Vec::new());
         fixture.stock = fixture
             .script
             .path

@@ -1098,10 +1098,12 @@ pub fn script_status_rows(
 ) -> impl Iterator<Item = (&str, &str)> {
     status.fields.iter().filter_map(|field| match &field.value {
         script::native::StatusValue::Text(value)
-            if matches!(field.key, "display" | "queue" | "path_source")
-                || (field.key == "step_comment"
-                    && !value.is_empty()
-                    && status.fields.iter().any(|field| field.key == "path_source")) =>
+            if matches!(
+                field.key,
+                "display" | "queue" | "path_source" | "draft_status"
+            ) || (field.key == "step_comment"
+                && !value.is_empty()
+                && status.fields.iter().any(|field| field.key == "path_source")) =>
         {
             Some((field.label, value.as_ref()))
         }

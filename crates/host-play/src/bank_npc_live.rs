@@ -146,6 +146,8 @@ enum Phase {
     WaitRelog,
     WaitReady,
     TutSkip,
+    TutorialReseed,
+    WaitTutorialReseed,
     Tele { leg: usize },
     WaitStreet { leg: usize },
     Seed { leg: usize, next: usize },
@@ -214,6 +216,7 @@ struct Live {
     run: LegRun,
     name: String,
     passed: Vec<String>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 impl Live {
@@ -345,7 +348,7 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
             }
         }
         Phase::TutSkip if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
-            let _ = interact::cheat(client, "setvar tutorial 1000");
+            let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
             g.last_cheat = now;
             g.phase = Phase::Relog;
         }
@@ -373,9 +376,37 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
                     client.side_icon[3],
                     g.snap.inventory_size()
                 );
-                g.phase = Phase::Tele { leg: 0 };
+                g.phase = Phase::TutorialReseed;
             } else if now.duration_since(g.last_cheat) > Duration::from_secs(60) {
                 g.phase = Phase::Fail("no inv tab 60s after the relog".into());
+            }
+        }
+        Phase::TutorialReseed => {
+            // Fresh-account post-relog reseed: the kit-close queue has
+            // already run in the new session, so this `setvar` sticks. The
+            // dagger wear below needs `tutorial > 400` for the combat tab.
+            let baseline = scenario::tutorial::chat_baseline(&g.snap);
+            let reseed = scenario::tutorial::PostRelogTutorial::new(baseline);
+            reseed.send_reseed(client);
+            g.tutorial_reseed = Some(reseed);
+            g.last_cheat = now;
+            g.phase = Phase::WaitTutorialReseed;
+        }
+        Phase::WaitTutorialReseed => {
+            let reseed = g
+                .tutorial_reseed
+                .as_ref()
+                .expect("tutorial reseed armed before waiting");
+            match reseed.check(&g.snap) {
+                Ok(true) => {
+                    println!("{}", scenario::tutorial::confirmation_log());
+                    g.phase = Phase::Tele { leg: 0 };
+                    g.last_cheat = now;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    g.phase = Phase::Fail(error);
+                }
             }
         }
         Phase::Tele { leg } if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
@@ -803,6 +834,7 @@ fn live_bankbudget_fetch_from_the_street() {
         run: LegRun::default(),
         name,
         passed: Vec::new(),
+        tutorial_reseed: None,
     }));
     let hook_state = Arc::clone(&live_state);
     let play = run_with_template(
@@ -1652,7 +1684,7 @@ fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) 
             TellerPrep::SkipTutorial
                 if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
             {
-                let _ = interact::cheat(client, "setvar tutorial 1000");
+                let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
                 live.last_action = now;
                 live.phase = TellerPrep::Logout;
             }

@@ -51,8 +51,13 @@ guides.
   Peril, Clock Tower, Monk's Friend, Hazeel Cult and Plague City. Members
   quests run only on members worlds. A quest the server can't run (Haunted
   Mine) is listed with the reason instead of being offered.
+- Five more guides ship as drafts that haven't been run yet: Druidic Ritual,
+  Gertrude's Cat, Jungle Potion, Sea Slug and Tribal Totem. They're marked
+  `[draft]` in the quest lists, and the script's status shows "Untested draft
+  Path" while one runs. An empty list leaves them out unless "Include draft
+  guides when no quests are picked" is on; picking one by name always runs it.
 - Pick quests, skips and priorities from lists. An empty list runs every
-  quest in the built-in order; priorities run first. Finished quests are
+  non-draft quest in the built-in order; priorities run first. Finished quests are
   skipped, and a quest that can't run on this server stays visible with its
   reason but can't be picked.
 - Before a quest starts, the Quester checks its requirements (members world,

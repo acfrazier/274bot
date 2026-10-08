@@ -322,13 +322,21 @@ fn resolve_released_path_options(
         let display = if row.source == script::quester::registry::PathSource::Bundled
             && row.unavailable.is_none()
         {
-            def.options
+            let display = def
+                .options
                 .iter()
                 .position(|option| option == &id)
                 .and_then(|index| def.option_labels.get(index))
-                .unwrap_or(&row.label)
+                .unwrap_or(&row.label);
+            if row.status == Some(script::quester::queue::ReleasePathStatus::Draft)
+                && !display.ends_with("[draft]")
+            {
+                format!("{display} [draft]")
+            } else {
+                display.clone()
+            }
         } else {
-            &row.label
+            row.label.clone()
         };
         let label = priority
             .iter()
@@ -1752,5 +1760,44 @@ mod tests {
             .iter()
             .any(|value| value == "broken-draft"));
         assert!(ordered.label_for("broken-draft").contains("invalid-args"));
+    }
+    #[test]
+    fn bundled_drafts_are_marked_in_both_quest_and_priority_pickers() {
+        use script::quester::registry::PathRegistry;
+
+        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "parameter-draft-path-loadouts-{}",
+            std::process::id()
+        )));
+        let registry = PathRegistry::Bundled;
+        let bag = serde_json::Map::new();
+        let quests = resolve_parameter_options_with_registry(
+            quester_setting("quests"),
+            &bag,
+            &loadouts,
+            None,
+            Some(&registry),
+        );
+        let priorities = resolve_parameter_options_with_registry(
+            quester_setting("order_override"),
+            &bag,
+            &loadouts,
+            None,
+            Some(&registry),
+        );
+        for id in ["druid", "fluffs", "junglepotion", "seaslug", "totem"] {
+            for options in [&quests, &priorities] {
+                let position = options
+                    .values
+                    .iter()
+                    .position(|value| value == id)
+                    .unwrap_or_else(|| panic!("{id} missing from picker"));
+                assert!(
+                    options.labels[position].ends_with("[draft]"),
+                    "{id} label was {}",
+                    options.labels[position]
+                );
+            }
+        }
     }
 }

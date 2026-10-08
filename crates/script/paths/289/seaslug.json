@@ -1,0 +1,636 @@
+{
+  "schema": 3,
+  "$schema": "../path.schema.json",
+  "id": "seaslug",
+  "display_name": "Sea Slug Quest",
+  "required": ["firemaking:30"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "firemaking:30",
+        "kind": { "Skill": { "skill": "firemaking", "level": 30 } },
+        "at": "Start",
+        "source": "A data/quests.ts:533; C quest_seaslug.rs2 opheld1 dry_sticks Firemaking 30"
+      }
+    ],
+    "items": [
+      { "obj": "swamppaste", "qty": 1, "kind": "acquirable", "acquire": "acquire:paste" },
+      { "obj": "torch_unlit", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "torch_lit", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "damp_sticks", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "dry_sticks", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "broken_glass", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:paste": [
+        {
+          "id": "withdraw-paste",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "swamppaste", "qty": 1 }],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "swamppaste" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "swamppaste" } } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "buy-paste",
+          "kind": "buy",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "shop": {
+              "npc": "khazard_shopkeeper",
+              "anchor": { "tile": [2641, 3171, 0], "source": "A defs/seaslug/areas.ts:46" }
+            },
+            "obj": "swamppaste",
+            "qty": 1,
+            "est_gp": 1000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "swamppaste" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "swamppaste" } } }
+        }
+      ]
+    },
+    "bank": { "tile": [2655, 3283, 0], "source": "A defs/seaslug/areas.ts:23" },
+    "coin_float": 1000,
+    "loadouts": {},
+    "areas": {
+      "platform": {
+        "boxes": [[2758, 3268, 2798, 3294, 0], [2758, 3268, 2798, 3294, 1]],
+        "source": "A defs/seaslug/areas.ts:80-82"
+      },
+      "island": {
+        "boxes": [[2786, 3310, 2804, 3328, 0]],
+        "source": "A defs/seaslug/areas.ts:84-86"
+      }
+    },
+    "tools": ["obj:torch_unlit", "obj:torch_lit", "obj:damp_sticks", "obj:dry_sticks", "obj:broken_glass", "obj:swamppaste"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:seaslug",
+      "progress": {
+        "colour": {
+          "not_started": "seaslug:0",
+          "in_progress": "seaslug:1",
+          "complete": "seaslug:12"
+        },
+        "rules": [
+          { "stage": "seaslug:12", "all": ["quest complete!"], "varp": 12 },
+          { "stage": "seaslug:11", "all": ["i've used the crane to lower kennith into the boat"], "varp": 11 },
+          { "stage": "seaslug:10", "all": ["kennith can't get downstairs without some help"], "varp": 10 },
+          { "stage": "seaslug:8", "all": ["i've created an opening to let kenneth escape"], "varp": 8 },
+          { "stage": "seaslug:7", "all": ["kennith won't go near the sea slugs"], "varp": 7 },
+          { "stage": "seaslug:6", "all": ["i've found kent on a small island"], "varp": 6 },
+          { "stage": "seaslug:4", "all": ["i've found kennith"], "varp": 4 },
+          { "stage": "seaslug:3", "all": ["i gave holgart the swamp paste"], "varp": 3 },
+          { "stage": "seaslug:2", "any": ["his boat is broken", "i need to take the swamp paste to holgart"], "varp": 2 },
+          { "stage": "seaslug:1", "all": ["i need to talk to holgart"], "varp": 1 },
+          { "stage": "seaslug:0", "all": ["i can start this quest by speaking to caroline"], "varp": 0 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "seaslug:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "caroline",
+                "anchor": { "tile": [2716, 3302, 0], "source": "A defs/seaslug/areas.ts:48-53" },
+                "leash": 6,
+                "prefer": ["I suppose so, how do I get there?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:1"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "holgart-boat",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "holgartland",
+                "anchor": { "tile": [2720, 3306, 0], "source": "A defs/seaslug/areas.ts:55-60" },
+                "leash": 6,
+                "prefer": ["Okay, lets do it.", "Okay, let's do it.", "Will you take me there?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:2"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "paste",
+              "kind": "acquire",
+              "version": 1,
+              "advances": false,
+              "args": { "recipe": "acquire:paste" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "swamppaste" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "swamppaste" } } }
+            },
+            {
+              "id": "give-paste",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "holgartland",
+                "anchor": { "tile": [2720, 3306, 0], "source": "A defs/seaslug/areas.ts:55-60" },
+                "leash": 6,
+                "prefer": ["Okay, lets do it.", "Okay, let's do it.", "Will you take me there?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:3"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "sail-platform",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "holgartland",
+                "anchor": { "tile": [2720, 3306, 0], "source": "A defs/seaslug/areas.ts:55-60" },
+                "leash": 6,
+                "prefer": ["Okay, lets do it.", "Okay, let's do it.", "Will you take me there?"]
+              },
+              "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } }
+            },
+            {
+              "id": "climb-crates",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "slugladder" },
+                "op": "Climb-up",
+                "anchor": { "tile": [2784, 3286, 0], "source": "A defs/seaslug/areas.ts:32" },
+                "radius": 4
+              },
+              "skip_if": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+            },
+            {
+              "id": "call-kennith",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "kennithwall" },
+                "op": "Shout-across",
+                "anchor": { "tile": [2764, 3286, 1], "source": "A defs/seaslug/areas.ts:36" },
+                "radius": 4,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:4"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "sail-island",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "holgartplatform",
+                "anchor": { "tile": [2782, 3276, 0], "source": "A defs/seaslug/areas.ts:62-68" },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "island" } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "island" } } }
+            },
+            {
+              "id": "talk-kent",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "kent",
+                "anchor": { "tile": [2794, 3321, 0], "source": "A defs/seaslug/areas.ts:41-43" },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:6"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "return-platform-torch",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "holgartsunkboat",
+                "anchor": { "tile": [2798, 3321, 0], "source": "A defs/seaslug/areas.ts:69-74" },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } }
+            },
+            {
+              "id": "climb-down-torch",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "laddertop" },
+                "op": "Climb-down",
+                "anchor": { "tile": [2784, 3286, 1], "source": "A defs/seaslug/areas.ts:35" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } },
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } }
+            },
+            {
+              "id": "bailey-torch",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "bailey",
+                "anchor": { "tile": [2763, 3277, 0], "source": "A defs/seaslug/areas.ts:31" },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_unlit" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_unlit" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              }
+            },
+            {
+              "id": "take-damp-sticks",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "damp_sticks" },
+                "op": "Take",
+                "anchor": { "tile": [2784, 3289, 0], "source": "A defs/seaslug/areas.ts:33" },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "damp_sticks" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dry_sticks" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "damp_sticks" } } }
+            },
+            {
+              "id": "take-glass",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "broken_glass" },
+                "op": "Take",
+                "anchor": { "tile": [2765, 3289, 0], "source": "A defs/seaslug/areas.ts:34" },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "broken_glass" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dry_sticks" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "broken_glass" } } }
+            },
+            {
+              "id": "dry-sticks",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "broken_glass",
+                "target": { "item": "damp_sticks" },
+                "product": "dry_sticks"
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dry_sticks" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dry_sticks" } } }
+            },
+            {
+              "id": "rub-sticks",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "held": "dry_sticks" },
+                "op": "Rub-together"
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "torch_lit" } } }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-show-torch",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "slugladder" },
+                "op": "Climb-up",
+                "anchor": { "tile": [2784, 3286, 0], "source": "A defs/seaslug/areas.ts:32" },
+                "radius": 4
+              },
+              "skip_if": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+            },
+            {
+              "id": "show-torch",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "kennithwall" },
+                "op": "Shout-across",
+                "anchor": { "tile": [2764, 3286, 1], "source": "A defs/seaslug/areas.ts:36" },
+                "radius": 4,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:8"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-panel",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "slugladder" },
+                "op": "Climb-up",
+                "anchor": { "tile": [2784, 3286, 0], "source": "A defs/seaslug/areas.ts:32" },
+                "radius": 4
+              },
+              "skip_if": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+            },
+            {
+              "id": "kick-panel",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "loosepanel" },
+                "op": "Kick",
+                "anchor": { "tile": [2766, 3288, 1], "source": "A defs/seaslug/areas.ts:37" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:10"] } }
+                  },
+                  {
+                    "Fact": { "kind": "message", "version": 1, "args": { "any": ["you kick the loose panel"] } }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "call-after-panel",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "kennithwall" },
+                "op": "Shout-across",
+                "anchor": { "tile": [2764, 3286, 1], "source": "A defs/seaslug/areas.ts:36" },
+                "radius": 4,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:10"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-crane",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "slugladder" },
+                "op": "Climb-up",
+                "anchor": { "tile": [2784, 3286, 0], "source": "A defs/seaslug/areas.ts:32" },
+                "radius": 4
+              },
+              "skip_if": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+            },
+            {
+              "id": "rotate-crane",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "fishingcrane" },
+                "op": "Rotate",
+                "anchor": { "tile": [2769, 3290, 1], "source": "A defs/seaslug/areas.ts:38" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:11"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:11",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "sail-shore-from-platform",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "holgartplatform",
+                "anchor": { "tile": [2782, 3276, 0], "source": "A defs/seaslug/areas.ts:62-68" },
+                "leash": 6,
+                "prefer": ["Okay, let's go back."]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } } },
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "island" } } }
+                ]
+              },
+              "settle": {
+                "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "platform" } } }
+              }
+            },
+            {
+              "id": "sail-shore-from-island",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "holgartsunkboat",
+                "anchor": { "tile": [2798, 3321, 0], "source": "A defs/seaslug/areas.ts:69-74" },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "island" } } } },
+              "settle": {
+                "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "island" } } }
+              }
+            },
+            {
+              "id": "caroline-finish",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "caroline",
+                "anchor": { "tile": [2716, 3302, 0], "source": "A defs/seaslug/areas.ts:48-53" },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "seaslug", "is": "complete" } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "seaslug:12",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

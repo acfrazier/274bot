@@ -1,0 +1,1056 @@
+{
+  "schema": 3,
+  "$schema": "../path.schema.json",
+  "id": "junglepotion",
+  "display_name": "Jungle Potion",
+  "required": ["herblore:3", "quest:druid"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "herblore:3",
+        "kind": { "Skill": { "skill": "herblore", "level": 3 } },
+        "at": "Start",
+        "source": "A data/quests.ts:427"
+      },
+      {
+        "id": "quest:druid",
+        "kind": { "Quest": "druid" },
+        "at": "Start",
+        "source": "A data/quests.ts:428; C trufitus.rs2:294-298"
+      }
+    ],
+    "items": [
+      { "obj": "unidentified_snake_weed", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "snake_weed", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "unidentified_ardrigal", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "ardrigal", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "unidentified_sito_foil", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "sito_foil", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "unidentified_volencia_moss", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "volencia_moss", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "unidentified_rogues_purse", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "rogues_purse", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": { "tile": [2616, 3332, 0], "source": "A defs/junglepotion.ts:18" },
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "caves": {
+        "boxes": [[2820, 9472, 2865, 9540, 0]],
+        "source": "A defs/junglepotion.ts:78-80 inCaves z>=9400; C p_telejump 0_44_148_14_48; low corner clamped to baked region 44_148 (engine has no m44_147 map)"
+      }
+    },
+    "tools": [
+      "obj:unidentified_snake_weed",
+      "obj:snake_weed",
+      "obj:unidentified_ardrigal",
+      "obj:ardrigal",
+      "obj:unidentified_sito_foil",
+      "obj:sito_foil",
+      "obj:unidentified_volencia_moss",
+      "obj:volencia_moss",
+      "obj:unidentified_rogues_purse",
+      "obj:rogues_purse"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:junglepotion",
+      "progress": {
+        "colour": {
+          "not_started": "junglepotion:0",
+          "in_progress": "junglepotion:1",
+          "complete": "junglepotion:12"
+        },
+        "rules": [
+          { "stage": "junglepotion:12", "all": ["quest complete!"], "varp": 12 },
+          { "stage": "junglepotion:0", "all": ["i can start this quest"], "varp": 0 },
+          { "stage": "junglepotion:11", "all": ["trufitus needs to commune with the gods"], "varp": 11 },
+          { "stage": "junglepotion:10", "any": ["i need to give the rogue purse", "i picked some fresh rogues purse"], "varp": 10 },
+          { "stage": "junglepotion:9", "all": ["i need to pick some fresh rogues purse"], "varp": 9 },
+          { "stage": "junglepotion:8", "any": ["i need to give the volencia moss", "i picked some fresh volencia moss"], "varp": 8 },
+          { "stage": "junglepotion:7", "all": ["i need to pick some fresh volencia moss"], "varp": 7 },
+          { "stage": "junglepotion:6", "any": ["i need to give the sito foil", "i picked some fresh sito foil"], "varp": 6 },
+          { "stage": "junglepotion:5", "all": ["i need to pick some fresh sito foil"], "varp": 5 },
+          { "stage": "junglepotion:4", "any": ["i need to give the ardrigal", "i picked some fresh ardrigal"], "varp": 4 },
+          { "stage": "junglepotion:3", "all": ["i need to pick some fresh ardrigal"], "varp": 3 },
+          { "stage": "junglepotion:2", "any": ["i need to give the snake weed", "i picked some fresh snakeweed"], "varp": 2 },
+          { "stage": "junglepotion:1", "all": ["i need to pick some fresh snakeweed"], "varp": 1 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "junglepotion:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": [
+                  "It's a nice village, where is everyone?",
+                  "Me? How can I help?",
+                  "It sounds like just the challenge for me."
+                ]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:1"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-to-snake-weed",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2761, 3015, 0],
+                "source": "A defs/junglepotion.ts:40-41",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-snake",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "snake_vine_full" },
+                "op": "Search",
+                "anchor": { "tile": [2761, 3015, 0], "source": "A defs/junglepotion.ts:40-41" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } }
+              }
+            },
+            {
+              "id": "identify-snake",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_snake_weed" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
+            },
+            {
+              "id": "walk-back-to-trufitus",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2809, 3086, 0],
+                "source": "A defs/junglepotion.ts:16",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "comment": "Return leg with the weed; mirrors walk-to-snake-weed with the same 8 named grants.",
+              "skip_if": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "give-snake",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:3"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-to-snake-weed-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2761, 3015, 0],
+                "source": "A defs/junglepotion.ts:40-41",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-snake-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "snake_vine_full" },
+                "op": "Search",
+                "anchor": { "tile": [2761, 3015, 0], "source": "A defs/junglepotion.ts:40-41" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } }
+              }
+            },
+            {
+              "id": "identify-snake-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_snake_weed" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
+            },
+            {
+              "id": "walk-back-to-trufitus-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2809, 3086, 0],
+                "source": "A defs/junglepotion.ts:16",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "comment": "Return leg with the weed; mirrors walk-to-snake-weed-found with the same 8 named grants.",
+              "skip_if": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "give-snake-found",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:3"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pick-ardrigal",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "ardrigal_palm_full" },
+                "op": "Search",
+                "anchor": { "tile": [2869, 3115, 0], "source": "A defs/junglepotion.ts:45-47" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_ardrigal" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_ardrigal" } }
+              }
+            },
+            {
+              "id": "identify-ardrigal",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_ardrigal" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } }
+            },
+            {
+              "id": "give-ardrigal",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:5"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pick-ardrigal-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "ardrigal_palm_full" },
+                "op": "Search",
+                "anchor": { "tile": [2869, 3115, 0], "source": "A defs/junglepotion.ts:45-47" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_ardrigal" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_ardrigal" } }
+              }
+            },
+            {
+              "id": "identify-ardrigal-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_ardrigal" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ardrigal" } } }
+            },
+            {
+              "id": "give-ardrigal-found",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:5"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pick-sito",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "sito_soil_full" },
+                "op": "Search",
+                "anchor": { "tile": [2785, 3068, 0], "source": "A defs/junglepotion.ts:51-52" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_sito_foil" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_sito_foil" } }
+              }
+            },
+            {
+              "id": "identify-sito",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_sito_foil" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } }
+            },
+            {
+              "id": "give-sito",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:7"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pick-sito-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "sito_soil_full" },
+                "op": "Search",
+                "anchor": { "tile": [2785, 3068, 0], "source": "A defs/junglepotion.ts:51-52" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_sito_foil" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_sito_foil" } }
+              }
+            },
+            {
+              "id": "identify-sito-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_sito_foil" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "sito_foil" } } }
+            },
+            {
+              "id": "give-sito-found",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:7"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-to-volencia-moss",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2851, 3034, 0],
+                "source": "A defs/junglepotion.ts:56-57",
+                "radius": 1,
+                "cross": [
+                  "snake@2836,3043,0",
+                  "snake@2838,3039,0",
+                  "snake@2838,3047,0",
+                  "snake@2847,3042,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-volencia",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "volencia_moss_rock_full" },
+                "op": "Search",
+                "anchor": { "tile": [2851, 3034, 0], "source": "A defs/junglepotion.ts:56-57" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } }
+              }
+            },
+            {
+              "id": "identify-volencia",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_volencia_moss" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } }
+            },
+            {
+              "id": "give-volencia",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:9"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-to-volencia-moss-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2851, 3034, 0],
+                "source": "A defs/junglepotion.ts:56-57",
+                "radius": 1,
+                "cross": [
+                  "snake@2836,3043,0",
+                  "snake@2838,3039,0",
+                  "snake@2838,3047,0",
+                  "snake@2847,3042,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-volencia-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "volencia_moss_rock_full" },
+                "op": "Search",
+                "anchor": { "tile": [2851, 3034, 0], "source": "A defs/junglepotion.ts:56-57" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } }
+              }
+            },
+            {
+              "id": "identify-volencia-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_volencia_moss" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } }
+            },
+            {
+              "id": "give-volencia-found",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:9"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:9",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-pothole",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "pothole_cave_entrance" },
+                "op": "Search",
+                "anchor": { "tile": [2823, 3119, 0], "source": "A defs/junglepotion.ts:67" },
+                "radius": 2,
+                "dialogue": { "prefer": ["Yes, I'll enter the cave."] }
+              },
+              "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+            },
+            {
+              "id": "walk-to-rogues-purse",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2850, 9477, 0],
+                "source": "A defs/junglepotion.ts:61-63",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Jogres are level 53 aggressive (engine hunters); the named crossing is an explicit opt-in, not a blanket allowance.",
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-rogues",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "rogues_purse_cave_full" },
+                "op": "Search",
+                "anchor": { "tile": [2850, 9477, 0], "source": "A defs/junglepotion.ts:61-63" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } }
+              }
+            },
+            {
+              "id": "walk-to-cave-exit",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2830, 9521, 0],
+                "source": "A defs/junglepotion.ts:68",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Return leg to the exit rocks; mirrors walk-to-rogues-purse with the same 6 named grants.",
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "leave-pothole",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "jp_caverocksout" },
+                "op": "Climb",
+                "anchor": { "tile": [2830, 9521, 0], "source": "A defs/junglepotion.ts:68" },
+                "radius": 4,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+              "settle": {
+                "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+              }
+            },
+            {
+              "id": "identify-rogues",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_rogues_purse" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } }
+            },
+            {
+              "id": "give-rogues",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:11"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-pothole-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "pothole_cave_entrance" },
+                "op": "Search",
+                "anchor": { "tile": [2823, 3119, 0], "source": "A defs/junglepotion.ts:67" },
+                "radius": 2,
+                "dialogue": { "prefer": ["Yes, I'll enter the cave."] }
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+            },
+            {
+              "id": "walk-to-rogues-purse-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2850, 9477, 0],
+                "source": "A defs/junglepotion.ts:61-63",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Jogres are level 53 aggressive (engine hunters); the named crossing is an explicit opt-in, not a blanket allowance.",
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "pick-rogues-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "rogues_purse_cave_full" },
+                "op": "Search",
+                "anchor": { "tile": [2850, 9477, 0], "source": "A defs/junglepotion.ts:61-63" },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } }
+              }
+            },
+            {
+              "id": "walk-to-cave-exit-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2830, 9521, 0],
+                "source": "A defs/junglepotion.ts:68",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Return leg to the exit rocks; mirrors walk-to-rogues-purse-found with the same 6 named grants.",
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } }
+              }
+            },
+            {
+              "id": "leave-pothole-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "jp_caverocksout" },
+                "op": "Climb",
+                "anchor": { "tile": [2830, 9521, 0], "source": "A defs/junglepotion.ts:68" },
+                "radius": 4,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+              "settle": {
+                "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+              }
+            },
+            {
+              "id": "identify-rogues-found",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": { "target": { "held": "unidentified_rogues_purse" }, "op": "Identify" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } }
+            },
+            {
+              "id": "give-rogues-found",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "junglepotion", "any": ["junglepotion:11"] } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:11",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "commune",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "trufitus",
+                "anchor": { "tile": [2809, 3086, 0], "source": "A defs/junglepotion.ts:16" },
+                "leash": 6,
+                "prefer": ["Of course!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "junglepotion", "is": "complete" } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "junglepotion:12",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

@@ -439,6 +439,9 @@
         },
         {
           "$ref": "#/$defs/step.thieve.v1"
+        },
+        {
+          "$ref": "#/$defs/step.x:totem:solve_combination.v1"
         }
       ]
     },
@@ -3992,6 +3995,96 @@
         },
         "args": {
           "$ref": "#/$defs/Args3"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "Args4": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "combination": {
+          "type": "string",
+          "description": "Four-letter word the security door accepts (`KURT` on 289)."
+        },
+        "door": {
+          "type": "string",
+          "description": "Combo-door loc config name (`combodoor`)."
+        },
+        "anchor": {
+          "$ref": "#/$defs/AnchorArg2"
+        },
+        "radius": {
+          "type": "integer",
+          "default": 0
+        }
+      },
+      "required": [
+        "combination",
+        "door",
+        "anchor"
+      ]
+    },
+    "AnchorArg2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "source": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "tile"
+      ]
+    },
+    "step.x:totem:solve_combination.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "x:totem:solve_combination"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args4"
         },
         "comment": {
           "type": [

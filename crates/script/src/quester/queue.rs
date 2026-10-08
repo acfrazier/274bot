@@ -11,6 +11,13 @@ pub struct ReleaseIndex {
     pub paths: Vec<ReleasePath>,
 }
 
+/// Publication status for an indexed Path.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleasePathStatus {
+    Draft,
+}
+
 /// One release roster row. A released row names its Path `file`. An
 /// unavailable row names the quest and an end-user reason instead; it is never
 /// compiled or started, and may keep a `file` so the authored Path stays
@@ -26,12 +33,17 @@ pub struct ReleasePath {
     pub name: Option<String>,
     #[serde(default)]
     pub unavailable: Option<String>,
+    /// Draft rows are opt-in for an empty selection; explicit picks are preserved.
+    #[serde(default)]
+    pub status: Option<ReleasePathStatus>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueSettings {
-    /// Empty selects every row in the release index.
+    /// Empty selects every available row except drafts unless draft guides are enabled.
     pub quests: Vec<String>,
+    /// Include draft rows in the default selection when no quests are picked.
+    pub include_draft_guides: bool,
     /// Explicit priority rows; remaining picked rows retain release-index order.
     pub order_override: Vec<String>,
     pub skip: Vec<String>,
@@ -129,9 +141,7 @@ impl Queue {
             .collect::<std::collections::HashMap<_, _>>();
         let picked_ids = unique_setting_ids("quests", &settings.quests, &positions)?;
         let skipped_ids = unique_setting_ids("skip", &settings.skip, &positions)?;
-        let _order_ids =
-            unique_setting_ids("order_override", &settings.order_override, &positions)?;
-
+        let order_ids = unique_setting_ids("order_override", &settings.order_override, &positions)?;
         let pick_all = settings.quests.is_empty();
         for id in &settings.order_override {
             if !pick_all && !picked_ids.contains(id.as_str()) {
@@ -147,8 +157,13 @@ impl Queue {
         for (ordinal, path) in index.paths.iter().enumerate() {
             let explicit = picked_ids.contains(path.id.as_str());
             let skipped = skipped_ids.contains(path.id.as_str());
-            // An empty selection means every quest this server can run.
-            let picked = explicit || (pick_all && path.unavailable.is_none());
+            // Empty selections exclude drafts unless opted in or explicitly prioritized.
+            let picked = explicit
+                || (pick_all
+                    && path.unavailable.is_none()
+                    && (path.status != Some(ReleasePathStatus::Draft)
+                        || settings.include_draft_guides
+                        || order_ids.contains(path.id.as_str())));
             let status = if path.unavailable.is_some() {
                 QueueStatus::Blocked
             } else if !picked || skipped {
@@ -256,6 +271,13 @@ impl Queue {
     pub fn path_source(&self, position: usize) -> PathSource {
         self.id(position)
             .map_or(PathSource::Bundled, |id| self.index.path_source(id))
+    }
+
+    pub fn path_is_draft(&self, position: usize) -> bool {
+        self.rows
+            .get(position)
+            .and_then(|row| self.index.paths.get(usize::from(row.index)))
+            .is_some_and(|path| path.status == Some(ReleasePathStatus::Draft))
     }
 
     pub fn path_report(&self) -> Option<&Arc<str>> {
@@ -436,6 +458,84 @@ mod tests {
             skip: skip.iter().map(|id| (*id).to_string()).collect(),
             ..QueueSettings::default()
         }
+    }
+
+    #[test]
+    fn bundled_draft_guides_are_opt_in_for_empty_selection_but_explicit_picks_run() {
+        let index: ReleaseIndex =
+            serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
+        let drafts = ["druid", "fluffs", "junglepotion", "seaslug", "totem"];
+        let row_index = |id: &str| index.paths.iter().position(|path| path.id == id).unwrap();
+
+        let default = Queue::from_index(&index, QueueSettings::default()).unwrap();
+        for id in drafts {
+            let position = row_index(id);
+            assert!(
+                !default.rows()[position].picked,
+                "{id} should stay excluded"
+            );
+            assert!(
+                default.path_is_draft(position),
+                "{id} should carry draft status"
+            );
+            assert_eq!(default.status(position), Some(QueueStatus::Parked));
+        }
+
+        let included = Queue::from_index(
+            &index,
+            QueueSettings {
+                include_draft_guides: true,
+                ..QueueSettings::default()
+            },
+        )
+        .unwrap();
+        for id in drafts {
+            assert!(
+                included.rows()[row_index(id)].picked,
+                "{id} should be included"
+            );
+        }
+        let default_order = included
+            .order
+            .iter()
+            .filter_map(|position| included.id(usize::from(*position)))
+            .collect::<Vec<_>>();
+        let draft_start = default_order
+            .iter()
+            .position(|id| *id == drafts[0])
+            .unwrap();
+        assert_eq!(
+            &default_order[draft_start..draft_start + drafts.len()],
+            &drafts[..]
+        );
+
+        let explicit = Queue::from_index(
+            &index,
+            QueueSettings {
+                quests: vec!["druid".into()],
+                ..QueueSettings::default()
+            },
+        )
+        .unwrap();
+        assert!(explicit.rows()[row_index("druid")].picked);
+        assert_eq!(
+            explicit.id(explicit.next_candidate().unwrap()),
+            Some("druid")
+        );
+
+        let prioritized = Queue::from_index(
+            &index,
+            QueueSettings {
+                order_override: vec!["druid".into()],
+                ..QueueSettings::default()
+            },
+        )
+        .unwrap();
+        assert!(prioritized.rows()[row_index("druid")].picked);
+        assert_eq!(
+            prioritized.id(prioritized.next_candidate().unwrap()),
+            Some("druid")
+        );
     }
 
     #[test]

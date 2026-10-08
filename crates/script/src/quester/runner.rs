@@ -3366,6 +3366,20 @@ impl QueuedQuester {
                 });
             }
         }
+        if self.active.is_some()
+            && self
+                .active_index
+                .is_some_and(|index| self.queue.path_is_draft(index))
+        {
+            static DRAFT_STATUS: std::sync::LazyLock<Arc<str>> =
+                std::sync::LazyLock::new(|| Arc::from("Untested draft Path"));
+            fields.push(StatusField {
+                key: "draft_status",
+                label: "Path status",
+                value: StatusValue::Text(Arc::clone(&DRAFT_STATUS)),
+            });
+        }
+
         if let Some(reason) = self
             .active_index
             .and_then(|index| self.queue.reason(index))
