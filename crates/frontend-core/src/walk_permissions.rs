@@ -59,6 +59,20 @@ pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
 /// Label for the stored middle level while the runtime net is unavailable.
 pub const WHEN_SURVIVABLE_HELD_LABEL: &str = "When survivable (not available yet: acts as Never)";
 
+/// Note under the Danger routing drop-down while the middle level is held.
+pub const WHEN_SURVIVABLE_HELD_NOTE: &str = "Not available yet: acts as Never.";
+/// Danger-routing levels in the order the drop-down lists them.
+pub const DANGER_ROUTING_LEVELS: [DangerLevel; 3] = [
+    DangerLevel::Never,
+    DangerLevel::WhenSurvivable,
+    DangerLevel::Always,
+];
+
+/// True while the stored middle level cannot admit routes because the runtime net is unavailable.
+pub const fn danger_routing_held(level: DangerLevel) -> bool {
+    matches!(level, DangerLevel::WhenSurvivable) && !host_play::NET_AVAILABLE
+}
+
 /// Display the saved danger level, identifying the gated middle level without
 /// changing the canonical preference value or its cycling order.
 pub const fn danger_routing_label(level: DangerLevel) -> &'static str {

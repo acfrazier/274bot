@@ -2945,6 +2945,116 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         });
 }
 
+/// Routing group of the Nav config window: the global routing permissions and
+/// the Danger routing drop-down. The drop-down spans the full width so its
+/// level names never clip at the docked 330 px panel width; the held middle
+/// level explains itself in a wrapped note under the control. Returns whether
+/// a setting changed.
+fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
+    let mut changed = false;
+    ui.text_colored(ACCENT, "Routing");
+    {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::ROUTING_SCOPE_NOTE);
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[0].1,
+        &mut nav.allow_teleports,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip("Global routing permission for every walk.");
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[1].1,
+        &mut nav.allow_wilderness,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+    );
+    if ui.checkbox(
+        frontend_core::GLOBAL_PERMISSION_LABELS[2].1,
+        &mut nav.allow_bank_fetch,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+    );
+    ui.same_line();
+    ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    let danger_level = nav.danger_level();
+    ui.text(frontend_core::GLOBAL_PERMISSION_LABELS[3].1);
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_next_item_width(-1.0);
+    let danger_combo = ui.begin_combo("##danger-routing", danger_level.label());
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(match danger_level {
+        frontend_core::DangerLevel::Never => {
+            "Danger-zone routes are refused unless this walk or its script overrides."
+        }
+        frontend_core::DangerLevel::WhenSurvivable => {
+            frontend_core::walk_permissions::survivable_routing_tooltip()
+        }
+        frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
+    });
+    if let Some(_open) = danger_combo {
+        for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
+            let selected = level == danger_level;
+            let picked = ui
+                .selectable_config(level.label())
+                .selected(selected)
+                .build();
+            #[cfg(test)]
+            record_test_routing_choice(ui);
+            if picked {
+                changed |= choose_danger_level(nav, level);
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    if frontend_core::walk_permissions::danger_routing_held(danger_level) {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_NOTE);
+        #[cfg(test)]
+        record_test_routing_item(ui);
+    }
+    if danger_level == frontend_core::DangerLevel::Always {
+        ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
+        #[cfg(test)]
+        record_test_routing_item(ui);
+    }
+    changed
+}
+
+/// Stores a level picked from the Danger routing drop-down. Returns whether
+/// the stored level changed; the caller persists the Nav config as before.
+fn choose_danger_level(
+    nav: &mut crate::nav_settings::NavSettings,
+    level: frontend_core::DangerLevel,
+) -> bool {
+    if nav.danger_level() == level {
+        return false;
+    }
+    nav.set_danger_level(level);
+    true
+}
+
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Preference edits write `session.ui.nav`
 /// through the checked shared-preferences writer; the pause toggle also
@@ -2972,56 +3082,10 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let previous_pause_script_on_manual_walk_abort =
                 previous_nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
-            ui.text_colored(ACCENT, "Routing");
-            {
-                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
-                ui.text_wrapped(frontend_core::ROUTING_SCOPE_NOTE);
-            }
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[0].1, &mut nav.allow_teleports) {
-                changed = true;
-            }
-            ui.set_item_tooltip("Global routing permission for every walk.");
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[1].1, &mut nav.allow_wilderness) {
-                changed = true;
-            }
-            ui.set_item_tooltip(
-                "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
-            );
-            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[2].1, &mut nav.allow_bank_fetch) {
-                changed = true;
-            }
-            ui.set_item_tooltip(
-                "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
-            );
-            ui.same_line();
-            ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
-            let danger_level = nav.danger_level();
-            let danger_label = format!(
-                "{}: {}",
-                frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
-                frontend_core::walk_permissions::danger_routing_label(danger_level)
-            );
-            if ui.button(&danger_label) {
-                nav.set_danger_level(danger_level.next());
-                changed = true;
-            }
-            ui.set_item_tooltip(match danger_level {
-                frontend_core::DangerLevel::Never => {
-                    "Danger-zone routes are refused unless this walk or its script overrides."
-                }
-                frontend_core::DangerLevel::WhenSurvivable => {
-                    frontend_core::walk_permissions::survivable_routing_tooltip()
-                }
-                frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
-            });
-            if danger_level == frontend_core::DangerLevel::Always {
-                ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
-            }
+            changed |= routing_group(ui, &mut nav);
             if !nav.script_scope_notice_ack {
                 ui.separator();
-                ui.text_wrapped(
-                    frontend_core::SCRIPT_SCOPE_NOTICE,
-                );
+                ui.text_wrapped(frontend_core::SCRIPT_SCOPE_NOTICE);
                 if ui.button("Dismiss walk permissions notice") {
                     nav.script_scope_notice_ack = true;
                     changed = true;
@@ -3114,10 +3178,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         session.ui.nav.pause_script_on_manual_walk_abort,
                     );
                 }
-                let save_result = crate::ui_state::save_at_checked(
-                    &session.walk_permissions_path,
-                    &session.ui,
-                );
+                let save_result =
+                    crate::ui_state::save_at_checked(&session.walk_permissions_path, &session.ui);
                 let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
                     &session.walk_permissions_path,
                     previous_permissions,
@@ -4745,6 +4807,59 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
     let _ = rail_cap(ui, &row, &labels, true, width, false, &mut marked);
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_ROUTING_ITEM_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static TEST_ROUTING_CHOICE_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn item_bounds(ui: &Ui) -> [f32; 4] {
+    let min = ui.item_rect_min();
+    let max = ui.item_rect_max();
+    [min[0], min[1], max[0], max[1]]
+}
+
+#[cfg(test)]
+fn record_test_routing_item(ui: &Ui) {
+    let bounds = item_bounds(ui);
+    TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(|items| items.push(bounds));
+}
+
+#[cfg(test)]
+fn record_test_routing_choice(ui: &Ui) {
+    let bounds = item_bounds(ui);
+    TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(|choices| choices.push(bounds));
+}
+
+/// One frame of the Routing group as a test sees it.
+#[cfg(test)]
+struct TestRouting {
+    /// Bounds of each routing row: the checkboxes, the drop-down, and the
+    /// notes under it.
+    items: Vec<[f32; 4]>,
+    /// Bounds of each drop-down entry while the popup is open.
+    choices: Vec<[f32; 4]>,
+    /// Whether this frame changed a setting.
+    changed: bool,
+}
+
+/// Draws only the Routing group, so a test can check the docked width and
+/// drive the drop-down without the rest of the Nav config window.
+#[cfg(test)]
+fn draw_test_nav_routing(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> TestRouting {
+    TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
+    let changed = routing_group(ui, nav);
+    TestRouting {
+        items: TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take),
+        choices: TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(std::mem::take),
+        changed,
+    }
 }
 
 /// Public world marker: a disc in the status colour, centred in the

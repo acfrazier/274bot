@@ -5416,3 +5416,142 @@ fn typed_unlock_opens_terminal_and_trimmed_panel_vaults() {
         Err(vault::VaultError::WrongPassphrase)
     ));
 }
+
+/// Content width of the docked Nav config window at scale 1: the width the
+/// review's screenshot clipped the Danger routing button at.
+const NAV_ROUTING_CONTENT_W: f32 = 330.0;
+/// Row of the Danger routing drop-down in the Routing group: after the scope
+/// note, the three checkboxes, the bank-fetch scope, and the drop-down's label.
+const DANGER_ROUTING_COMBO_ROW: usize = 6;
+
+/// One headless frame of the Routing group in a window whose content area is
+/// [`NAV_ROUTING_CONTENT_W`] wide. Returns the group as drawn and the content
+/// region's left and right edges.
+fn nav_routing_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    nav: &mut crate::nav_settings::NavSettings,
+) -> (super::TestRouting, [f32; 2]) {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let ui = ctx.frame();
+    let pad = ui.clone_style().window_padding()[0];
+    let mut drawn = None;
+    ui.window("##nav-routing")
+        .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+        .size(
+            [NAV_ROUTING_CONTENT_W + 2.0 * pad, 500.0],
+            dear_imgui_rs::Condition::Always,
+        )
+        .flags(
+            WindowFlags::NO_TITLE_BAR
+                | WindowFlags::NO_RESIZE
+                | WindowFlags::NO_MOVE
+                | WindowFlags::NO_SAVED_SETTINGS
+                | WindowFlags::NO_SCROLLBAR,
+        )
+        .build(|| {
+            let left = ui.cursor_screen_pos()[0];
+            let right = left + ui.content_region_avail()[0];
+            drawn = Some((super::draw_test_nav_routing(ui, nav), [left, right]));
+        });
+    ctx.render();
+    drawn.expect("the routing window draws its body")
+}
+
+/// [`nav_routing_frame`] with the pointer at `point`, the left button held
+/// when `pressed`.
+fn nav_routing_pointer_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    nav: &mut crate::nav_settings::NavSettings,
+    point: [f32; 2],
+    pressed: bool,
+) -> (super::TestRouting, [f32; 2]) {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    nav_routing_frame(ctx, nav)
+}
+
+/// Centre of an item rect, where a pointer click lands.
+fn rect_centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
+    [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
+}
+
+/// At the docked Nav config width every Routing row stays inside the content
+/// region at each Danger routing level. The drop-down spans the width, so its
+/// level names never clip; the old plain button ran past the edge at "availabl".
+#[test]
+fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
+        let mut nav = crate::nav_settings::NavSettings::default();
+        nav.set_danger_level(level);
+        let (routing, [left, right]) = nav_routing_frame(&mut ctx, &mut nav);
+        assert!(
+            ((right - left) - NAV_ROUTING_CONTENT_W).abs() < 0.5,
+            "the test window's content is the docked width, got {}",
+            right - left
+        );
+        // The scope note, three checkboxes, the bank-fetch scope, the drop-down's
+        // label and the drop-down, plus the note under a held level and the
+        // Always warning.
+        let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
+            + usize::from(level == frontend_core::DangerLevel::Always);
+        assert_eq!(routing.items.len(), 7 + notes, "routing rows at {level:?}");
+        for (index, item) in routing.items.iter().enumerate() {
+            let [min_x, _, max_x, _] = *item;
+            assert!(
+                min_x >= left - 0.5 && max_x <= right + 0.5,
+                "routing row {index} at {level:?} spans {min_x}..{max_x}, past the content region {left}..{right}"
+            );
+        }
+    }
+}
+
+/// Picking each Danger routing entry in the open drop-down stores that level
+/// and reports a change, so the Nav config saves the way the old button did.
+#[test]
+fn nav_danger_routing_drop_down_stores_each_picked_level() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let levels = frontend_core::walk_permissions::DANGER_ROUTING_LEVELS;
+    for (index, target) in levels.into_iter().enumerate() {
+        let mut nav = crate::nav_settings::NavSettings::default();
+        nav.set_danger_level(levels[(index + 1) % levels.len()]);
+        let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+        let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+
+        // Hover the drop-down, then press and release on it to open the popup.
+        for pressed in [false, true, false] {
+            nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+        }
+        // The popup lays out its entries a frame or two after it opens.
+        let mut choices = Vec::new();
+        for _ in 0..8 {
+            let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+            choices = routing.choices;
+            if choices.len() == levels.len() {
+                break;
+            }
+        }
+        assert_eq!(
+            choices.len(),
+            levels.len(),
+            "the open drop-down lists every level"
+        );
+
+        // Move onto the entry, then press and release on it.
+        let entry = rect_centre(choices[index]);
+        let mut changed = false;
+        for pressed in [false, false, true, false] {
+            let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, entry, pressed);
+            changed |= routing.changed;
+        }
+        assert!(changed, "picking {target:?} reports a change");
+        assert_eq!(nav.danger_level(), target, "the picked entry is stored");
+    }
+}
