@@ -11,14 +11,14 @@
 //! engine, with a throwaway HOME containing the `local-289q` profile:
 //!
 //! ```text
-//! env ISOHOME_DIR=<throwaway-home> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh \
+//! env HOME=<throwaway-home> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh \
 //!   BOT_NAV_BUILD=skip BOT_SERVER_PROFILE=local-289q \
 //!   WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 QUESTER_LIVE_KEEP_HOME=1 \
-//!   WORLD_NAV_PACK=<274bot.navpack> WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289-q/engine \
+//!   WORLD_NAV_PACK=<274bot.navpack> WORLD_ENGINE_DIR=<engine-q-dir> \
 //!   RS2B0T=<catalog-root> BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> \
 //!   LIVE_EVIDENCE_DIR=<evidence-root> QUESTER_PATH=cook \
 //!   QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
-//!   /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome cargo test \
+//!   cargo test \
 //!     -p host-play --features "live-harness test-support" \
 //!     --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 //! ```

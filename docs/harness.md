@@ -80,7 +80,7 @@ PASS/FAIL cleanup restores `::speed 600`. A process interrupted before terminal
 cleanup can leave Q at the fast rate, so keep Q quest-only.
 
 ```sh
-ISOHOME_DIR=/path/to/throwaway-home BOT_SERVER_PROFILE=local-289q \
+HOME=/path/to/throwaway-home BOT_SERVER_PROFILE=local-289q \
 QUESTER_LIVE_KEEP_HOME=1 LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
 BOT_LIVE_NAME_PREFIX=qh WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 \
 WORLD_ENGINE_DIR=/path/to/lostcity-289-q/engine \
@@ -88,7 +88,7 @@ WORLD_NAV_PACK=/path/to/274bot.navpack RS2B0T=/path/to/rs2b0t \
 BOT_CACHE_DIR=/path/to/owned-client-cache LIVE_EVIDENCE_DIR=/path/to/evidence \
 QUESTER_PATH=priestperil QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 \
 QUESTER_SEEDS=/path/to/seeds/priestperil.json \
-/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome cargo test -p host-play --features "live-harness test-support" \
+cargo test -p host-play --features "live-harness test-support" \
   --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 ```
 
