@@ -363,16 +363,41 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
+        self.restart_pending_settings_with_after_check(core, catalog_root, |_, _| {})
+    }
+
+    /// Keep the check-to-stop boundary deterministic in tests.
+    fn restart_pending_settings_with_after_check<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+        mut after_check: impl FnMut(&mut OperatorSession<Io>, &sync::RestartTarget),
+    ) -> Result<(), String> {
         let prompt = self
             .sync
             .take_restart_prompt()
             .ok_or_else(|| "no restart prompt".to_string())?;
-        let mut stopping = Vec::new();
         let mut skipped = Vec::new();
         for target in prompt.targets() {
-            if let Some(reason) = self.restart_target_skip(core, target) {
+            let (identity, generation) = match self.restart_target_skip(core, target) {
+                Ok(run) => run,
+                Err(reason) => {
+                    self.sync.clear_restart_badge(&target.profile);
+                    skipped.push((target.profile.clone(), reason.to_string()));
+                    continue;
+                }
+            };
+            if self.admit.contains(&target.profile) {
+                skipped.push((target.profile.clone(), "start already queued".into()));
+                continue;
+            }
+            after_check(core, target);
+            let stopped = core.play().is_some_and(|play| {
+                play.script_stop_if_identity_generation(&target.profile, &identity, generation)
+            });
+            if !stopped {
                 self.sync.clear_restart_badge(&target.profile);
-                skipped.push((target.profile.clone(), reason.to_string()));
+                skipped.push((target.profile.clone(), "not running".into()));
                 continue;
             }
             match self.queue_pending_restart_settings(
@@ -380,12 +405,9 @@ impl Scripts {
                 &target.profile,
                 target.selection.clone(),
             ) {
-                Ok(()) => stopping.push(target.profile.clone()),
+                Ok(()) => {}
                 Err(reason) => skipped.push((target.profile.clone(), reason)),
             }
-        }
-        if !stopping.is_empty() {
-            core.stop_scripts(&stopping);
         }
         self.admit_starts(core, catalog_root);
         if !skipped.is_empty() {
@@ -404,46 +426,52 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         target: &sync::RestartTarget,
-    ) -> Option<&'static str> {
+    ) -> Result<(String, u64), &'static str> {
         let profile = &target.profile;
         if !wall_member(core, profile) {
-            return Some("not loaded");
+            return Err("not loaded");
         }
         let Some(play) = core.play() else {
-            return Some("not running");
+            return Err("not running");
+        };
+        let Some(generation) = play.script_runtime_generation(profile) else {
+            return Err("not running");
         };
         if !matches!(
             play.script_state(profile),
             script::RunState::Running | script::RunState::Paused
         ) {
-            return Some("not running");
+            return Err("not running");
         }
+        let Some(run_identity) = play.script_source_identity(profile) else {
+            return Err("different script");
+        };
         let (has_arm, logged_out) = arm_flags(core, profile);
         if !has_arm || logged_out {
-            return Some("logged out");
+            return Err("logged out");
         }
         let Some(assignment) = Self::assignment(core, profile) else {
-            return Some("reassigned");
+            return Err("reassigned");
         };
         if sel_from_assignment(&assignment).as_ref() != Some(&target.selection) {
-            return Some("reassigned");
+            return Err("reassigned");
         }
         let identity = vault::assignment_key(&assignment.source_kind, &assignment.identity);
-        if play.script_source_identity(profile).as_deref() != Some(identity.as_str()) {
-            return Some("different script");
+        if run_identity != identity {
+            return Err("different script");
         }
         let status = play.script_native_status(profile);
         if let Some(status) = status.as_deref() {
             if play.script_native_run(profile) != Some(status.run)
                 || !matches!(target.selection, script::ScriptSel::Compiled(id) if id == status.card)
             {
-                return Some("different script");
+                return Err("different script");
             }
             if status
                 .pending_settings
                 .is_none_or(|pending| pending <= status.active_settings)
             {
-                return Some("settings no longer pending");
+                return Err("settings no longer pending");
             }
         }
         if !self.sync.restart_target_is_current(
@@ -453,9 +481,9 @@ impl Scripts {
             status.as_deref().map(|status| status.active_settings),
             status.as_deref().and_then(|status| status.pending_settings),
         ) {
-            return Some("settings no longer pending");
+            return Err("settings no longer pending");
         }
-        None
+        Ok((run_identity, generation))
     }
 
     fn show(&mut self, text: impl Into<String>) {
