@@ -3864,6 +3864,8 @@ fn s2b_admission_per_bot_layouts() {
     // COMBAT-SESSION: SlotScript +48 B, all in the snapshot fingerprint's
     // `api_combat` page identity (32) and retained terminal token (16), the
     // same pair Gather keeps; the live seat itself stays boxed and absent.
+    // TICK-INTEGRATION: SlotScript +8 B for TickBudget's packed scene-entry
+    // latch; the shared native/compat fence adds no further budget storage.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -3876,7 +3878,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2944, 4072, 512, 264)
+        (2944, 4080, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
