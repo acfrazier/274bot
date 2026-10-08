@@ -140,7 +140,7 @@ ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
         .expect("JiveKQ stays listed for the Beta 1 witness");
     assert_eq!(
         jive.unloadable.as_deref(),
-        Some("dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9")
+        Some("dim: JiveKQ is unavailable: four-player qualification incomplete")
     );
 }
 

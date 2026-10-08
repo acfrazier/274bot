@@ -767,9 +767,7 @@ pub(super) fn catalog_unloadable(
         if name == "JiveKQ" {
             // The broker, the fixture and the script_jive_kq_four witness
             // stay for Beta 1; the live harness Starts it past this dim.
-            return Some(
-                "dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9".into(),
-            );
+            return Some("dim: JiveKQ is unavailable: four-player qualification incomplete".into());
         }
         if name == "AIOQuester" {
             return Some("dim: AIOQuester is replaced by the native Quester card".into());

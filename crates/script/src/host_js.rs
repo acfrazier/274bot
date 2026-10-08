@@ -1,6 +1,6 @@
 //! Generated Host JS types (`host-js/index.d.ts`) from our verb tables.
 //! Snapshot fields, [`crate::shim::InteractReq`] ops, and nav
-//! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is 0.2.5.
+//! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is planned for a later release.
 
 use crate::gatherer::settings::schema;
 use crate::gatherer::status::{FieldKind, KEYS};
@@ -52,7 +52,7 @@ pub fn render_host_js_dts() -> String {
     let mut out = String::from(
         "// Generated from host verb tables — do not edit by hand.\n\
          // Regen: cargo test -p script --test host_js regen_host_js -- --ignored\n\
-         // NativeTick Load is 0.2.5. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
+         // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
          // Not a clone of rs2b0t-api.\n\n",
     );
 

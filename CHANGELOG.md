@@ -1,9 +1,9 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.1.9` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [Unreleased] — 0.2.0 Beta 1 (in development)
+## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
 
@@ -32,8 +32,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   `nav-pack`. The bundled pack is rebuilt for you.
 - **Local engines.** The bot no longer guesses where a local game engine is.
   Give it with `--engine`, the `ENGINE_DIR` environment variable, or the
-  profile's `engine_dir` in `servers.json`; without one, a local profile stops
-  with a message saying how to set it. Public (rs2b2t) profiles need nothing.
+  profile's `login_key.engine_dir` in `servers.json`; without one, a local
+  profile stops with a message saying how to set it. Public (rs2b2t)
+  profiles need nothing.
 - **Graphics.** On Windows the panel tries Vulkan first and falls back to
   Direct3D 12. On every platform the window now prefers the power-saving GPU.
   `WGPU_BACKEND` and `WGPU_POWER_PREF` override this (see FIRST-START);
@@ -80,8 +81,9 @@ guides.
   unblock it. A quest that stops making progress warns first, then stops
   with the step it was on.
 - Per-account choices (for example the Family Crest gauntlet reward) stay
-  with each account. Each quest can also allow teleports, the Wilderness or
-  danger zones for its own walks when the global switches are off.
+  with each account. The Quester's own settings can allow teleports, the
+  Wilderness or danger zones for its walks when the global switches are off,
+  and a guide can let a single walk cross the danger zones it needs.
 - Custom quest guides can be loaded from a folder (Nav config), without
   rebuilding. A guide that replaces a built-in one overrides it, new ones
   appear as drafts, and a guide with a problem names the file, step and
@@ -151,15 +153,15 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   freezing, and its Log In button (or Enter) logs that bot back in. While a
   login is waiting (for example the "already logged in" wait) the screen
   keeps animating and says what it is waiting for.
-- The memory mode (low/high) now takes effect in the live game view at once
-  from both the panel and the TUI (the TUI settings gain a memory row).
-  Server-side tabs and sound only change at the next login; while the two
-  differ the panel and TUI say so and offer **Relog now**, which logs out and
-  back in through the normal login queue (with a warning if a script is
-  running). If the connection drops, the next Log in keeps the memory mode
-  already in use, and the notice says so instead of promising that login will
-  apply a queued change. A change you make after logging out yourself still
-  applies on the next Log in.
+- Switching the memory mode (low/high) in the panel or the TUI (the TUI
+  settings gain a memory row) queues the whole mode for the next login; the
+  game view, tabs and sound stay as they are until then. While a logged-in
+  bot has a different mode queued, the panel and TUI say so and offer
+  **Relog now**, which logs out and back in through the normal login queue
+  (with a warning if a script is running). If the connection drops, the next
+  Log in keeps the memory mode already in use, and the notice says so instead
+  of promising that login will apply a queued change. A change you make after
+  logging out yourself still applies on the next Log in.
 - On local-engine profiles the panel's tutorial check no longer leaves a
   "Click to continue" box over the chat: it is clicked away once per box, and
   only while the box is showing, so chat options are never mis-clicked.
@@ -216,8 +218,8 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   refused routes that cross aggressive monsters. The refusal names the
   monsters in the way and says how to allow it. Set Danger routing to Always
   to cross danger zones on every walk; WalkTo in the panel and the TUI can
-  also allow it for a single walk, and each script can allow it for its own
-  walks in Script prefs.
+  also allow it for a single walk, and scripts that have the option (the
+  Quester and the Gatherer) can allow it in their own settings.
 - Bots approach stairs, ladders, large trees and other big objects (for
   example the Lumbridge Castle staircase) from a side they can actually use,
   instead of trying through a wall.
@@ -366,7 +368,7 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Scripts can use `Area` from the rs2b0t API (rectangular and circular
   areas with `contains` and `getRandomTile`), whether imported from
   `@rs2b0t/api` or from the geometry module. It used to stop the script with
-  "not implemented".
+  a `not impl:` error.
 - Load scripts can start, watch and stop the Gatherer, and read quest
   progress (which quests exist, their current stage and whether they're
   done). A bundled example gathers and then checks progress.
@@ -415,9 +417,9 @@ that aren't here yet. Where we know the target, it's noted.
 - Guides ship for 25 of the game's 69 quests. The other 44 don't have one
   yet: guides for them are planned for 0.2.0.1. Haunted Mine can't be run on
   this server and stays listed as unavailable.
-- The guides are untested drafts. Most have been run at least part of the
-  way, and a few all the way through, but any of them may stop partway. When
-  that happens, the panel shows the step it was on.
+- Apart from the five drafts, the guides are still beta. Most have been run
+  at least part of the way, and a few all the way through, but any of them
+  may stop partway. When that happens, the panel shows the step it was on.
 - A quest that's waiting or stopped can look idle in the Status card: the
   reason is shown in the script section, not in Status yet.
 
@@ -454,13 +456,17 @@ that aren't here yet. Where we know the target, it's noted.
 
 **Scripts**
 
-- Some rs2b0t script API members still stop the script with "not
-  implemented", among them `Game.castOnNpc`, `Shop.buyById`,
+- Some rs2b0t script API members still stop the script with a `not impl:`
+  error, among them `Game.castOnNpc`, `Shop.buyById`,
   `ChatDialog.makeOne`, `Traversal.remaining`/`requestRepath`,
   `EntityQuery.inside`/`nearestPreferLocal`, script events
   (`events.on`/`off`, `registerScript`), the `InvItem` class and task-tree
   classes, and several gathering, fishing and banking data helpers. Closing
   these, checked against rs2b0t's own tests, is planned for 0.2.0.1 and 0.2.1.
+- In Load scripts, `api.gather.run`'s `allowTeleports`, `allowWilderness`
+  and `allowDangerZones` options are accepted but not applied yet: the
+  Gatherer's walks follow the global Nav config settings. Planned for
+  0.2.0.1.
 - Script errors don't yet tell "not possible right now" apart from "not
   implemented".
 - Equipping an item while the bank is open isn't handled reliably; close

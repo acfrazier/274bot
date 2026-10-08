@@ -1,6 +1,6 @@
 // Generated from host verb tables — do not edit by hand.
 // Regen: cargo test -p script --test host_js regen_host_js -- --ignored
-// NativeTick Load is 0.2.5. JS API v2 is NativeApi (explicit export const apiVersion = 2).
+// NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).
 // Not a clone of rs2b0t-api.
 
 /** Readonly raw i32 flags. at requires a finite integer index in [0, length). Negative and non-integers are undefined. */
