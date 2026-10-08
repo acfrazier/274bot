@@ -9,6 +9,21 @@ use script::isolate_fb::{
 };
 use script::{LoadIsolate, LoadShape};
 
+fn spawn_ready(source: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
+    let iso = LoadIsolate::spawn(source, shape, siblings).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match iso.poll_ready() {
+            script::Ready::Ready => return iso,
+            script::Ready::Failed(error) => panic!("isolate setup failed: {error}"),
+            script::Ready::Pending if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            script::Ready::Pending => panic!("isolate setup did not finish"),
+        }
+    }
+}
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(input));
 }
@@ -142,7 +157,7 @@ export default class T extends LoopingBot {
 }
 
 fn spawn_listeners() -> LoadIsolate {
-    LoadIsolate::spawn(listener_src().to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    spawn_ready(listener_src().to_string(), LoadShape::CompatClass, vec![])
 }
 
 fn examplebot_source() -> String {
@@ -163,10 +178,10 @@ fn probe_alive(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
 }
 
 fn probe_i64(iso: &LoadIsolate, expr: &str) -> i64 {
-    iso.probe(expr)
-        .unwrap_or(serde_json::Value::Null)
+    let value = probe_alive(iso, expr);
+    value
         .as_i64()
-        .unwrap_or(0)
+        .unwrap_or_else(|| panic!("non-numeric probe for {expr}: {value:?}"))
 }
 
 #[test]
@@ -180,8 +195,12 @@ fn seed_then_bury_fires_callbacks_after_tick() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0, "seed must not fire");
-    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    assert_eq!(
+        probe_i64(&iso, "globalThis.__buried||0"),
+        0,
+        "seed must not fire"
+    );
+    assert_eq!(probe_i64(&iso, "globalThis.__xp||0"), 0);
 
     let stats1 = [prayer(224)];
     snap.inv = &[];
@@ -190,28 +209,28 @@ fn seed_then_bury_fires_callbacks_after_tick() {
     post_snapshot_input(&iso, &snap);
     let _ = iso.probe("1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "snapshot must not execute callbacks"
     );
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 25);
-    assert_eq!(probe_i64(&iso, "__xp||0"), 112);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 25);
+    assert_eq!(probe_i64(&iso, "globalThis.__xp||0"), 112);
     assert_eq!(iso.probe("__xpName").unwrap().as_str(), Some("prayer"));
     assert_eq!(probe_i64(&iso, "__xpSkill"), 5);
     let order = iso.probe("__order").unwrap();
     let rows = order.as_array().expect("order list");
     assert_eq!(rows[0].as_str(), Some("xp"));
     assert!(rows.iter().skip(1).all(|v| v.as_str() == Some("inv")));
-    assert_eq!(probe_i64(&iso, "__level||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__level||0"), 0);
     iso.join();
 }
 
 /// Frozen producers emit `tick` with `{ tick }` (`producers.ts:58`).
 #[test]
 fn tick_event_carries_its_tick_number() {
-    let iso = LoadIsolate::spawn(
+    let iso = spawn_ready(
         r#"
 export default class T extends LoopingBot {
     constructor() {
@@ -225,8 +244,7 @@ export default class T extends LoopingBot {
         .into(),
         LoadShape::CompatClass,
         vec![],
-    )
-    .unwrap();
+    );
     let mut snap = base_snapshot();
     for tick in [1, 2] {
         snap.tick = tick;
@@ -245,7 +263,7 @@ export default class T extends LoopingBot {
 fn unchanged_examplebot_counts_delta_from_seeded_xp() {
     let js = examplebot_source();
     let shape = script::load::detect_shape(&js);
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
+    let iso = spawn_ready(js, shape, vec![]);
     let bones: Vec<_> = (0..25).map(bone).collect();
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
@@ -287,7 +305,7 @@ fn sparse_omit_does_not_fire_inventory() {
     iso.post_snapshot(delta);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
     iso.join();
 }
 
@@ -305,13 +323,13 @@ fn identical_inv_does_not_refire() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     snap.tick = 3;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(3);
     let _ = iso.probe("1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         1,
         "identical repost must not refire"
     );
@@ -332,7 +350,7 @@ fn valid_empty_fires_one_slot() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     assert_eq!(iso.probe("__lastName").unwrap(), serde_json::Value::Null);
     iso.join();
 }
@@ -349,7 +367,7 @@ export default class T extends LoopingBot {
     loop() {}
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let bones = [bone(0)];
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
@@ -365,7 +383,7 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__xp2||0"), 112);
+    assert_eq!(probe_i64(&iso, "globalThis.__xp2||0"), 112);
     assert_eq!(iso.probe("__inv").unwrap(), serde_json::Value::Bool(true));
     iso.on_game_tick(3);
     let _ = iso.probe("1");
@@ -388,22 +406,22 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let bones = [bone(0)];
     let mut snap = base_snapshot();
     snap.inv = &bones;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__loops||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__loops||0"), 1);
     snap.inv = &[];
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     assert_eq!(
-        probe_i64(&iso, "__loops||0"),
+        probe_i64(&iso, "globalThis.__loops||0"),
         1,
         "the parked loop is not re-entered while its listener fires"
     );
@@ -425,7 +443,7 @@ export default class T extends LoopingBot {
     loop() {}
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let bones = [bone(0)];
     let mut snap = base_snapshot();
     snap.inv = &bones;
@@ -438,7 +456,7 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     let interacts = iso.drain_interacts();
     assert!(
         interacts.is_empty(),
@@ -462,17 +480,21 @@ fn pause_freezes_callbacks_and_resume_delivers_net() {
     post_snapshot_input(&iso, &snap);
     let _ = iso.probe("1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "paused snapshot is silent"
     );
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0, "paused tick is skipped");
+    assert_eq!(
+        probe_i64(&iso, "globalThis.__buried||0"),
+        0,
+        "paused tick is skipped"
+    );
     iso.resume();
     iso.on_game_tick(3);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     iso.join();
 }
 
@@ -495,8 +517,8 @@ fn peer_isolates_do_not_share_baselines() {
     a.on_game_tick(2);
     let _ = a.probe("1");
     let _ = b.probe("1");
-    assert_eq!(probe_i64(&a, "__buried||0"), 1);
-    assert_eq!(probe_i64(&b, "__buried||0"), 0);
+    assert_eq!(probe_i64(&a, "globalThis.__buried||0"), 1);
+    assert_eq!(probe_i64(&b, "globalThis.__buried||0"), 0);
     a.join();
     b.join();
 }
@@ -512,7 +534,7 @@ export default class T extends LoopingBot {
     loop() {}
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let bones = [bone(0)];
     let mut snap = base_snapshot();
     snap.inv = &bones;
@@ -554,7 +576,7 @@ fn explicit_slots_are_not_packed() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 2);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 2);
     assert_eq!(probe_i64(&iso, "__lastSlot"), 5);
     iso.join();
 }
@@ -570,7 +592,7 @@ export default class T extends LoopingBot {
     loop() { globalThis.__alive = (globalThis.__alive || 0) + 1; }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
     snap.stats = &stats0;
@@ -631,7 +653,7 @@ export default class T extends LoopingBot {
     loop() { globalThis.__alive = (globalThis.__alive||0)+1; }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
     snap.stats = &stats0;
@@ -678,12 +700,12 @@ fn reset_session_drops_pending_and_reseeds() {
     iso.reset_session_work();
     iso.on_game_tick(2);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(3);
     let _ = iso.probe("1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "post-reset snapshot seeds"
     );
@@ -693,13 +715,13 @@ fn reset_session_drops_pending_and_reseeds() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(4);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
     snap.inv = &[];
     snap.tick = 5;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(5);
     let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 1);
     iso.join();
 }
 
@@ -721,7 +743,7 @@ fn multi_snapshot_without_tick_delivers_net() {
     iso.on_game_tick(3);
     let _ = probe_alive(&iso, "1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "intermediate bury must not backlog across snapshots"
     );
@@ -750,7 +772,7 @@ fn logout_before_tick_does_not_replay_bury() {
     iso.on_game_tick(4);
     let _ = probe_alive(&iso, "1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "pre-logout bury must not replay after reseed"
     );
@@ -781,16 +803,16 @@ fn sparse_offline_omit_ingame_does_not_fire() {
     iso.post_snapshot(sparse);
     iso.on_game_tick(3);
     let _ = probe_alive(&iso, "1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
-    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__xp||0"), 0);
     snap.ingame = true;
     snap.tick = 4;
     let (online, _) = encode_snapshot_delta(None, &snap, false);
     iso.post_snapshot(online);
     iso.on_game_tick(4);
     let _ = probe_alive(&iso, "1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
-    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__xp||0"), 0);
     iso.join();
 }
 
@@ -818,8 +840,8 @@ fn pause_reconnect_does_not_fabricate_history() {
     iso.resume();
     iso.on_game_tick(4);
     let _ = probe_alive(&iso, "1");
-    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
-    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "globalThis.__xp||0"), 0);
     iso.join();
 }
 
@@ -844,7 +866,7 @@ fn pause_size0_then_ready_does_not_fabricate() {
     iso.on_game_tick(4);
     let _ = probe_alive(&iso, "1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "size0→ready during pause must seed"
     );
@@ -881,7 +903,7 @@ fn pause_invalid_then_valid_does_not_fabricate() {
     iso.on_game_tick(4);
     let _ = probe_alive(&iso, "1");
     assert_eq!(
-        probe_i64(&iso, "__buried||0"),
+        probe_i64(&iso, "globalThis.__buried||0"),
         0,
         "invalid→valid during pause must seed"
     );
@@ -905,7 +927,7 @@ export default class T extends LoopingBot {
     loop() { globalThis.__loop = (globalThis.__loop || 0) + 1; }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let bones = [bone(0)];
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
@@ -954,7 +976,7 @@ export default class T extends LoopingBot {
     loop() { globalThis.__alive = (globalThis.__alive || 0) + 1; }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     let stats0 = [prayer(112)];
     let mut snap = base_snapshot();
     snap.stats = &stats0;
@@ -987,4 +1009,24 @@ export default class T extends LoopingBot {
         "runaway under hold must use the existing interrupt, got {logs:?}"
     );
     iso.join();
+}
+
+#[test]
+fn numeric_probe_failure_is_not_reported_as_zero() {
+    let iso = spawn_ready(
+        "export function tick() {}".to_string(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        probe_i64(
+            &iso,
+            "(() => { throw new Error('probe-negative-control'); })()",
+        )
+    }));
+    iso.join();
+    assert!(
+        result.is_err(),
+        "a failed probe must never become numeric zero"
+    );
 }
