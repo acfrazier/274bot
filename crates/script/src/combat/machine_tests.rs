@@ -3596,46 +3596,41 @@ fn ranged_readiness_fixture(style_echo: bool) -> (Scene, CombatRequest, i32) {
 fn assert_readiness_aborts_after_eight(
     scene: &Scene,
     request: CombatRequest,
-    readiness: PrepReadiness,
+    expected_reason: &str,
 ) {
     let mut harness = Harness::new(scene, request);
-    for tick in 1..PREP_READINESS_TICKS {
+    for tick in 1_u64..8 {
         assert!(
-            matches!(
-                harness.poll(&scene.snapshot, u64::from(tick)),
-                Poll::Pending
-            ),
+            matches!(harness.poll(&scene.snapshot, tick), Poll::Pending),
             "readiness must remain pending through observed tick {tick}"
         );
         assert_eq!(harness.machine.end, None);
         harness.drain(None);
     }
-    let report = harness.ready(scene, u64::from(PREP_READINESS_TICKS));
-    assert_eq!(
-        report.end,
-        CombatEnd::Aborted(AbortReason::PrepReadiness(readiness))
-    );
-    assert_eq!(report.ticks, PREP_READINESS_TICKS);
+    let report = harness.ready(scene, 8);
+    let summary = crate::api_combat::CombatSummary::from(&report);
+    assert_eq!(summary.reason.as_deref(), Some(expected_reason));
+    assert_eq!(report.ticks, 8);
 }
 
 #[test]
 fn ranged_combat_root_missing_aborts_after_eight_observed_ticks() {
     let (scene, request, _) = ranged_readiness_fixture(false);
-    assert_readiness_aborts_after_eight(&scene, request, PrepReadiness::CombatRootMissing);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-missing");
 }
 
 #[test]
 fn ranged_combat_root_wrong_aborts_after_eight_observed_ticks() {
     let (mut scene, request, _) = ranged_readiness_fixture(false);
     scene.combat_tab(5855);
-    assert_readiness_aborts_after_eight(&scene, request, PrepReadiness::CombatRootWrong);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-wrong");
 }
 
 #[test]
 fn ranged_style_echo_missing_aborts_after_eight_observed_ticks() {
     let (mut scene, request, root) = ranged_readiness_fixture(false);
     scene.combat_tab(root);
-    assert_readiness_aborts_after_eight(&scene, request, PrepReadiness::StyleEchoMissing);
+    assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:style-echo-missing");
 }
 
 #[test]
@@ -3676,10 +3671,13 @@ fn ranged_readiness_bound_ignores_same_tick_repolls() {
         assert_eq!(harness.machine.end, None);
         harness.drain(None);
     }
+    let report = harness.ready(&scene, 8);
+    let summary = crate::api_combat::CombatSummary::from(&report);
     assert_eq!(
-        harness.ready(&scene, 8).end,
-        CombatEnd::Aborted(AbortReason::PrepReadiness(PrepReadiness::CombatRootMissing))
+        summary.reason.as_deref(),
+        Some("prep-readiness:combat-root-missing")
     );
+    assert_eq!(report.ticks, 8);
 }
 
 #[test]
