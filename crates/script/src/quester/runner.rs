@@ -4561,6 +4561,233 @@ mod tests {
         assert!(!script.parked);
     }
 
+    #[test]
+    fn scene_entry_defers_fresh_step_selection() {
+        use super::super::families::tests::with_tick_snapshots;
+        use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
+        use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let sequence = &mut document.roles[0].sequences[0];
+        sequence.order = SequenceOrder::Ordered;
+        sequence.steps = [("retaliate-off", false), ("retaliate-on", true)]
+            .into_iter()
+            .map(|(id, retaliate)| StepDocument {
+                id: FactKey::new(id),
+                kind: "setting".into(),
+                version: 1,
+                args: serde_json::json!({ "retaliate": retaliate }),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: PredicateDocument::All(vec![]),
+            })
+            .collect();
+        let (mut script, mut before) = status_fixture(document);
+        before.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 0,
+        }]);
+        let mut after = GameSnapshot::new();
+        after.seed_ingame(2);
+        after.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        after.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 1,
+        }]);
+
+        let mut ledger = None;
+        with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
+            script.tick(tick).unwrap();
+            let authority = tick.cx.ledger.as_ref().unwrap().outbox[0].authority();
+            let evidence = tick.cx.evidence();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
+            #[cfg(feature = "load")]
+            {
+                tick.frame.snapshot = Some(after);
+            }
+            script.tick(tick).unwrap();
+            assert!(script.settling);
+            script.tick(tick).unwrap();
+            assert!(!script.settling);
+            assert_eq!(script.cursor, 1);
+            assert!(script.step.is_none());
+        });
+
+        let scene_snapshot = |origin| {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_quest_statuses(
+                vec![QuestStatusView {
+                    name: "Cook's Assistant".into(),
+                    component_id: 42,
+                    colour: 0xf80000,
+                }],
+                true,
+            );
+            snapshot.seed_varps(vec![VarpView {
+                index: crate::combat::OPTION_NODEF,
+                value: 1,
+            }]);
+            snapshot.seed_local_player(super::super::families::tests::local_player(
+                api::WorldTile {
+                    x: 3200,
+                    z: 3280,
+                    level: 0,
+                },
+            ));
+            snapshot.seed_world(api::snapshot::WorldStateView {
+                map_base_x: origin,
+                map_base_z: 3280,
+                ..Default::default()
+            });
+            snapshot
+        };
+        let scene_before = scene_snapshot(3200);
+        let entered = scene_snapshot(3208);
+        with_tick_snapshots(&after, &entered, &mut ledger, 2, |tick, entered| {
+            tick.cx.budget.observe_frame(1, Some(&scene_before));
+            tick.cx.budget.observe_frame(2, Some(entered));
+            assert!(tick.cx.entered_scene());
+            tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
+            #[cfg(feature = "load")]
+            {
+                tick.frame.snapshot = Some(entered);
+            }
+
+            script.tick(tick).unwrap();
+            assert!(
+                !script
+                    .begun
+                    .iter()
+                    .any(|step| step.as_ref() == "retaliate-on"),
+                "fresh step selection must wait through scene entry"
+            );
+            assert!(
+                script.step.is_none(),
+                "fresh step selection must wait through scene entry"
+            );
+            assert_eq!(script.cursor, 1);
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
+    }
+
+    #[test]
+    fn budget_exhausted_root_begin_retries_without_failing_the_step() {
+        use super::super::families::tests::{with_tick, with_tick_snapshots};
+        use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
+        use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let sequence = &mut document.roles[0].sequences[0];
+        sequence.order = SequenceOrder::Ordered;
+        sequence.steps = [("retaliate-off", false), ("retaliate-on", true)]
+            .into_iter()
+            .map(|(id, retaliate)| StepDocument {
+                id: FactKey::new(id),
+                kind: "setting".into(),
+                version: 1,
+                args: serde_json::json!({ "retaliate": retaliate }),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: PredicateDocument::All(vec![]),
+            })
+            .collect();
+        let (mut script, mut before) = status_fixture(document);
+        before.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 0,
+        }]);
+        let mut after = GameSnapshot::new();
+        after.seed_ingame(2);
+        after.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        after.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 1,
+        }]);
+
+        let mut ledger = None;
+        with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
+            script.tick(tick).unwrap();
+            let authority = tick.cx.ledger.as_ref().unwrap().outbox[0].authority();
+            let evidence = tick.cx.evidence();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
+            #[cfg(feature = "load")]
+            {
+                tick.frame.snapshot = Some(after);
+            }
+            script.tick(tick).unwrap();
+            assert!(script.settling);
+            script.tick(tick).unwrap();
+            assert!(!script.settling);
+            assert_eq!(script.cursor, 1);
+            assert!(script.step.is_none());
+        });
+
+        with_tick(&after, &mut ledger, 2, |tick| {
+            for _ in 0..32 {
+                assert!(tick.cx.budget.transition());
+            }
+            assert!(!tick.cx.budget.transition());
+            script.tick(tick).unwrap();
+
+            assert!(
+                script
+                    .begun
+                    .iter()
+                    .any(|step| step.as_ref() == "retaliate-on"),
+                "the second root step must reach its begin attempt"
+            );
+            assert!(script.step.is_none());
+            assert_eq!(script.cursor, 1);
+            assert_eq!(script.attempts, 0);
+            assert_eq!(script.fail_streak, 0);
+            assert!(script.last_error.is_none());
+        });
+
+        with_tick(&after, &mut ledger, 3, |tick| {
+            script.tick(tick).unwrap();
+            assert!(
+                script.step.is_some(),
+                "a fresh transition budget must retry the same root step"
+            );
+            assert_eq!(script.attempts, 0);
+        });
+    }
+
     pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());

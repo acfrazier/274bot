@@ -297,25 +297,33 @@ pub(crate) struct TickBudget {
     scene: SceneFence,
 }
 
+const SCENE_KEY_BITS: u32 = 25;
+const SCENE_KEY_MASK: u32 = (1 << SCENE_KEY_BITS) - 1;
+const SCENE_SEEN_SHIFT: u32 = SCENE_KEY_BITS;
+const SCENE_SEEN_MASK: u32 = 0b11 << SCENE_SEEN_SHIFT;
+const SCENE_ENTERED_BIT: u32 = 1 << 27;
+
 /// What the last observed frame showed of the player's scene.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
 enum Seen {
     /// The slot has observed no frame: a run that starts in a scene has not
     /// just entered it.
     #[default]
-    Nothing,
+    Nothing = 0,
     /// Out of game, or the scene was not built.
-    Outside,
-    /// In the scene `SceneFence::scene`.
-    Scene,
+    Outside = 1,
+    /// In a particular observed scene key.
+    Scene = 2,
 }
 
 /// The engine tracks the zones around the player per level inside the build
 /// area (`BuildArea.ts:31-55`): a level change or a rebuilt build area (a
 /// new origin) makes every zone around the player newly tracked, and
 /// `NetworkPlayer.ts:294-315` then resets each one and resends its loc
-/// changes. Packed into 32 bits: the origin's zone x and z (11 bits each,
-/// above a known-origin bit) and the level (2 bits).
+/// changes. The scene key uses 25 bits: a known-origin bit, origin zone x and
+/// z (11 bits each), and the level (2 bits). Its spare high bits hold the
+/// shared scene-entry latch.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SceneKey(u32);
 
@@ -338,19 +346,29 @@ impl SceneKey {
         });
         Self((origin << 2) | level)
     }
+
+    fn seen(self) -> Seen {
+        match (self.0 & SCENE_SEEN_MASK) >> SCENE_SEEN_SHIFT {
+            0 => Seen::Nothing,
+            1 => Seen::Outside,
+            2 => Seen::Scene,
+            _ => unreachable!("SceneFence only stores the three Seen states"),
+        }
+    }
+
+    fn scene(self) -> Self {
+        Self(self.0 & SCENE_KEY_MASK)
+    }
 }
 
-/// Shared native/compat latch: evidence wakes cannot clear scene entry.
+/// Shared native/compat latch packed into SceneKey's spare high bits, so
+/// evidence wakes cannot clear scene entry without growing TickBudget.
 #[derive(Default)]
-pub(crate) struct SceneFence {
-    scene: SceneKey,
-    seen: Seen,
-    entered_scene: bool,
-}
+pub(crate) struct SceneFence(SceneKey);
 
 impl SceneFence {
     pub(crate) fn next_tick(&mut self) {
-        self.entered_scene = false;
+        self.0 .0 &= !SCENE_ENTERED_BIT;
     }
 
     pub(crate) fn observe(&mut self, scene: Option<SceneKey>) {
@@ -358,15 +376,18 @@ impl SceneFence {
             Some(scene) => (Seen::Scene, scene),
             None => (Seen::Outside, SceneKey::default()),
         };
-        if self.seen != Seen::Nothing && (self.seen, self.scene) != (seen, scene) {
-            self.entered_scene = true;
+        let previous_seen = self.0.seen();
+        let previous_scene = self.0.scene();
+        let mut entered = self.0 .0 & SCENE_ENTERED_BIT;
+        if previous_seen != Seen::Nothing && (previous_seen, previous_scene) != (seen, scene) {
+            entered = SCENE_ENTERED_BIT;
         }
-        self.seen = seen;
-        self.scene = scene;
+        self.0 =
+            SceneKey((scene.0 & SCENE_KEY_MASK) | ((seen as u32) << SCENE_SEEN_SHIFT) | entered);
     }
 
     pub(crate) fn entered_scene(&self) -> bool {
-        self.entered_scene
+        self.0 .0 & SCENE_ENTERED_BIT != 0
     }
 }
 
@@ -699,6 +720,11 @@ mod tests {
         budget.observe(8);
         assert!(budget.batch(), "the next observed tick starts uncharged");
         assert_eq!(budget.events, 5);
+    }
+    #[test]
+    fn scene_fence_uses_four_bytes_and_tick_budget_stays_compact() {
+        assert_eq!(std::mem::size_of::<SceneFence>(), 4);
+        assert_eq!(std::mem::size_of::<TickBudget>(), 24);
     }
 
     fn scene_frame(level: i32, x: i32, z: i32, origin: (i32, i32)) -> api::snapshot::GameSnapshot {
