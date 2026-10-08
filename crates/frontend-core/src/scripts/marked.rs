@@ -6,7 +6,7 @@ use std::path::Path;
 
 use vault::ScriptAssignment;
 
-use super::{arm_flags, wall_member, LogTo, Outcome, QueuedStart, Scripts};
+use super::{arm_flags, wall_member, LogTo, Outcome, QueuedStart, Scripts, StartKind};
 use crate::session::OperatorSession;
 
 impl Scripts {
@@ -39,6 +39,30 @@ impl Scripts {
         self.pending_browse.remove(profile);
     }
 
+    /// Queue `sel` behind the old run without changing the profile's
+    /// assignment. Admission checks that the saved assignment still matches.
+    pub(crate) fn queue_pending_restart_settings<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        sel: script::ScriptSel,
+    ) -> Result<(), String> {
+        if core.play().is_none() {
+            return Err("no play".into());
+        }
+        if self.admit.contains(profile) {
+            return Err("start already queued".into());
+        }
+        self.enqueue_restart(
+            core,
+            profile,
+            sel.clone(),
+            Some(sel),
+            true,
+            StartKind::RestartSettings,
+        )
+    }
+
     /// Queue `sel` to start on `profile` through the paced Start permit, in
     /// the running tally. When the slot's script is still stopping (the
     /// caller asked it to stop) the Start waits until the slot is idle.
@@ -55,20 +79,38 @@ impl Scripts {
         if self.admit.contains(profile) {
             return Ok(());
         }
+        self.enqueue_restart(core, profile, sel, None, stopping, StartKind::Start)
+    }
+
+    fn enqueue_restart<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        sel: script::ScriptSel,
+        assigned: Option<script::ScriptSel>,
+        stopping: bool,
+        kind: StartKind,
+    ) -> Result<(), String> {
+        if core.play().is_none() {
+            return Err("no play".into());
+        }
         let (had_arm, latched) = arm_flags(core, profile);
         let entry = QueuedStart {
             profile: profile.to_string(),
             sel,
-            assigned: None,
+            assigned,
             latched,
             had_arm,
+            kind,
         };
         if stopping {
             self.admit.hold_until_stopped(entry);
         } else {
             self.admit.enqueue(entry);
         }
-        self.tally_record(profile, Outcome::Queued, LogTo::None);
+        if kind != StartKind::RestartSettings {
+            self.tally_record(profile, Outcome::Queued, LogTo::None);
+        }
         Ok(())
     }
 

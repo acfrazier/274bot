@@ -274,6 +274,13 @@ impl Confirm {
             ConfirmKind::RestartSettings(_) => "[Restart y]",
         }
     }
+
+    fn no(&self) -> &'static str {
+        match self.kind {
+            ConfirmKind::RestartSettings(_) => "[Later n]",
+            _ => "[Cancel n]",
+        }
+    }
 }
 
 fn is_text(key: &KeyEvent) -> bool {
@@ -640,7 +647,7 @@ impl TuiApp {
         }
         let y = inner.y + inner.height - 1;
         let yes = confirm.yes();
-        let no = "[Cancel n]";
+        let no = confirm.no();
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let (end, _) = buf.set_stringn(inner.x, y, yes, usize::from(inner.width), bold);
         self.regions

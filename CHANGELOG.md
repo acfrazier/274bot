@@ -7,7 +7,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Scripts
 
-- When saved settings need a script restart, the panel and TUI offer to restart only the affected profiles or leave their current scripts running and apply the settings on a later Start.
+- Saved settings that need a restart show a badge (`[restart]` in the panel,
+  `!` in the TUI) and offer Restart or Later. Restart acts only on listed
+  bots still running the same assigned script with the pending settings;
+  stopped, logged-out, reassigned or different-script bots are skipped and
+  named in the status line. Later leaves runs active and suppresses the
+  prompt until settings change again.
+
 ### Panel
 
 - Turning MultiBox on before unlocking the vault no longer leaves the bot

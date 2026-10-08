@@ -204,18 +204,6 @@ pub fn assign_and_restart_marked<Io>(
     assign_and_restart_names(&names, &gone, core, scripts, card, catalog_root);
 }
 
-/// Restart exactly these profiles through the same Assign & restart path
-/// used for marked profiles.
-pub fn assign_and_restart_profiles<Io>(
-    profiles: &[String],
-    core: &mut OperatorSession<Io>,
-    scripts: &mut Scripts,
-    card: &script::ScriptSel,
-    catalog_root: Option<&Path>,
-) {
-    assign_and_restart_names(profiles, &[], core, scripts, card, catalog_root);
-}
-
 fn assign_and_restart_names<Io>(
     names: &[String],
     gone: &[String],

@@ -2490,6 +2490,200 @@ fn sync_gatherer_skill(f: &mut Fixture, skill: &str) {
     f.scripts.poll(&mut f.core);
 }
 
+fn single_gatherer_restart_prompt(test: &str) -> Fixture {
+    let mut f = native_fixture(test, &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    f.scripts
+        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Fishing"))
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    f.start_running("alice");
+    f.scripts
+        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Mining"))
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert!(f.scripts.pending_restart_prompt().is_some());
+    f
+}
+
+fn wait_core_state(f: &mut Fixture, name: &str, want: script::RunState) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f.state(name) != want && Instant::now() < deadline {
+        f.core.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(f.state(name), want, "{name}");
+}
+
+#[test]
+fn restart_prompt_skips_stopped_profile_at_click() {
+    let mut f = single_gatherer_restart_prompt("restart-click-stopped");
+    let starts_before = start_accepted(&f, "alice");
+    f.core.play().unwrap().script_stop("alice");
+    wait_core_state(&mut f, "alice", script::RunState::Idle);
+
+    f.scripts
+        .restart_pending_settings(&mut f.core, None)
+        .unwrap();
+
+    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(start_accepted(&f, "alice"), starts_before);
+    assert!(f.scripts.pending_restart_prompt().is_none());
+    assert!(matches!(
+        f.scripts.take_notice(),
+        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+    ));
+}
+
+#[test]
+fn restart_prompt_skips_logout_latch_at_click() {
+    let mut f = single_gatherer_restart_prompt("restart-click-logout");
+    let starts_before = start_accepted(&f, "alice");
+    f.core.logout("alice");
+
+    f.scripts
+        .restart_pending_settings(&mut f.core, None)
+        .unwrap();
+
+    assert_eq!(start_accepted(&f, "alice"), starts_before);
+    assert!(f.scripts.pending_restart_prompt().is_none());
+    assert!(matches!(
+        f.scripts.take_notice(),
+        Some(Notice::Show(message)) if message.starts_with("Skipped alice:")
+    ));
+}
+
+#[test]
+fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
+    let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
+    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    let run = f.generation("alice");
+    let starts_before = start_accepted(&f, "alice");
+    assert!(f.scripts.persist_assignment(
+        &mut f.core,
+        "alice",
+        script::compiled_assignment(script::CompiledId("Sherlock")),
+    ));
+    f.core.flush_writes();
+
+    f.scripts
+        .restart_pending_settings(&mut f.core, None)
+        .unwrap();
+
+    assert_eq!(f.state("alice"), script::RunState::Running);
+    assert_eq!(f.generation("alice"), run);
+    assert_eq!(start_accepted(&f, "alice"), starts_before);
+    assert_eq!(
+        super::sel_from_assignment(&Scripts::assignment(&f.core, "alice").unwrap()),
+        Some(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+    );
+    assert!(!f.scripts.restart_required_for("alice", &selection));
+    assert!(matches!(
+        f.scripts.take_notice(),
+        Some(Notice::Show(message)) if message == "Skipped alice: reassigned"
+    ));
+}
+
+#[test]
+fn restart_badge_clears_after_stop() {
+    let mut f = single_gatherer_restart_prompt("restart-badge-stop");
+    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    assert!(f.scripts.pending_restart_prompt().is_some());
+    assert!(f.scripts.restart_required_for("alice", &selection));
+    f.core.play().unwrap().script_stop("alice");
+    wait_core_state(&mut f, "alice", script::RunState::Idle);
+
+    f.scripts.poll(&mut f.core);
+
+    assert!(!f.scripts.has_restart_badge("alice"));
+    assert!(!f.scripts.restart_required_for("alice", &selection));
+    assert!(f.scripts.pending_restart_prompt().is_none());
+}
+
+#[test]
+fn restart_badge_clears_after_logout() {
+    let mut f = single_gatherer_restart_prompt("restart-badge-logout");
+    f.core.logout("alice");
+
+    f.scripts.poll(&mut f.core);
+
+    assert!(!f.scripts.has_restart_badge("alice"));
+    assert!(f.scripts.pending_restart_prompt().is_none());
+}
+
+#[test]
+fn restart_badge_clears_after_assignment_changes() {
+    let mut f = single_gatherer_restart_prompt("restart-badge-reassigned");
+    assert!(f.scripts.persist_assignment(
+        &mut f.core,
+        "alice",
+        script::compiled_assignment(script::CompiledId("Sherlock")),
+    ));
+    f.core.flush_writes();
+
+    f.scripts.poll(&mut f.core);
+
+    assert!(!f.scripts.has_restart_badge("alice"));
+    assert!(f.scripts.pending_restart_prompt().is_none());
+}
+
+#[test]
+fn gatherer_sync_prompts_merge_and_later_suppresses_until_settings_change() {
+    let mut f = gatherer_fishing_fleet("gatherer-sync-merge-later");
+    sync_gatherer_skill(&mut f, "Mining");
+    sync_gatherer_skill(&mut f, "Woodcutting");
+
+    let prompt = f.scripts.pending_restart_prompt().unwrap();
+    assert_eq!(prompt.profiles().len(), 3);
+    assert_eq!(
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
+        vec!["alice", "bob", "carol"]
+    );
+    f.scripts.dismiss_restart_prompt();
+    f.scripts.poll(&mut f.core);
+    assert!(f.scripts.pending_restart_prompt().is_none());
+
+    sync_gatherer_skill(&mut f, "Mining");
+    assert_eq!(
+        f.scripts.pending_restart_prompt().unwrap().profiles().len(),
+        3
+    );
+}
+
+#[test]
+fn restarting_a_merged_prompt_twice_starts_each_profile_once() {
+    let mut f = gatherer_fishing_fleet("gatherer-sync-double-restart");
+    sync_gatherer_skill(&mut f, "Mining");
+    sync_gatherer_skill(&mut f, "Woodcutting");
+    let starts_before = ["alice", "bob", "carol"].map(|name| start_accepted(&f, name));
+
+    f.scripts
+        .restart_pending_settings(&mut f.core, None)
+        .unwrap();
+    assert!(f
+        .scripts
+        .restart_pending_settings(&mut f.core, None)
+        .is_err());
+    f.settle();
+
+    for (name, starts) in ["alice", "bob", "carol"].into_iter().zip(starts_before) {
+        f.wait_state(name, script::RunState::Running);
+        assert_eq!(start_accepted(&f, name), starts + 1, "{name}");
+        assert_eq!(
+            f.scripts
+                .compiled_bag(&f.core, name, script::CompiledId("Gatherer"))
+                .unwrap()["skill"],
+            "Woodcutting"
+        );
+    }
+}
+
 #[test]
 fn single_restart_required_setting_prompts_and_restarts_its_profile() {
     let mut f = native_fixture("gatherer-single-restart", &["alice"]);
@@ -2519,11 +2713,7 @@ fn single_restart_required_setting_prompts_and_restarts_its_profile() {
 
     let prompt = f.scripts.pending_restart_prompt().unwrap();
     assert_eq!(
-        prompt
-            .profiles()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
         vec!["alice"]
     );
     assert_eq!(
@@ -2531,7 +2721,6 @@ fn single_restart_required_setting_prompts_and_restarts_its_profile() {
         "Restart Gatherer on alice to apply the new settings?"
     );
     assert!(f.scripts.restart_required_for("alice", &selection));
-
     f.scripts
         .restart_pending_settings(&mut f.core, None)
         .unwrap();
@@ -2563,11 +2752,7 @@ fn gatherer_sync_restart_confirms_only_the_three_changed_profiles() {
     assert_eq!((report.saved, report.restart_required), (3, 3));
     let prompt = f.scripts.pending_restart_prompt().unwrap();
     assert_eq!(
-        prompt
-            .profiles()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
         vec!["alice", "bob", "carol"]
     );
     assert_eq!(
