@@ -1297,3 +1297,236 @@ pub fn within(here: WorldTile, dest: WorldTile, radius: i32) -> bool {
 pub fn duration_ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::HostEffect;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_snapshots};
+    use api::snapshot::{GameSnapshot, LocLayer, LocView, SnapshotView, WorldStateView};
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    fn seek_args() -> ReachArgs {
+        ReachArgs {
+            kind: ReachKind::Ground {
+                id: 1944,
+                obj: Arc::from("Egg"),
+            },
+            op: Arc::from("Take"),
+            anchor: None,
+            radius: 10,
+            wait_if_missing: true,
+            target_tile: None,
+            reachable_only: false,
+        }
+    }
+
+    fn wheel_args(wheel: WorldTile) -> ReachArgs {
+        ReachArgs {
+            kind: ReachKind::Loc {
+                id: Some(2644),
+                name: None,
+            },
+            op: Arc::from("Spin"),
+            anchor: Some(wheel),
+            radius: 10,
+            wait_if_missing: true,
+            target_tile: Some(wheel),
+            reachable_only: false,
+        }
+    }
+
+    fn loc(id: i32, name: &str, action: &str, tile: WorldTile, layer: LocLayer) -> LocView {
+        LocView {
+            id,
+            name: Some(name.into()),
+            actions: vec![Some(action.into())],
+            tile,
+            distance: 0,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    fn scene(origin: (i32, i32), player: WorldTile, locs: Vec<LocView>) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: origin.0,
+            map_base_z: origin.1,
+            ..Default::default()
+        });
+        snapshot.seed_local_player(local_player(player));
+        snapshot.seed_inventory(vec![], 28);
+        snapshot.seed_locs(locs);
+        snapshot
+    }
+
+    fn reach_in_phase(
+        args: ReachArgs,
+        phase: Phase,
+        clicked_loc: Option<(i32, WorldTile)>,
+    ) -> Reach {
+        Reach {
+            args,
+            phase,
+            attempts: 0,
+            chat_mark: 0,
+            deadline_ms: 0,
+            before_count: 0,
+            clicked_loc,
+            clicked: None,
+            avoid: Avoid::default(),
+            walk: None,
+            request_id: 0,
+            in_range_at_click: false,
+        }
+    }
+
+    #[test]
+    fn wait_door_does_not_walk_from_scene_entry_evidence() {
+        let door = tile(6, 5);
+        let wheel = tile(8, 5);
+        let prior = scene(
+            (3200, 3200),
+            tile(5, 5),
+            vec![
+                loc(1530, "Door", "Open", door, LocLayer::Wall),
+                loc(
+                    2644,
+                    "Spinning wheel",
+                    "Spin",
+                    wheel,
+                    LocLayer::GroundDecoration,
+                ),
+            ],
+        );
+        let entered = scene(
+            (3208, 3200),
+            tile(5, 5),
+            vec![loc(
+                2644,
+                "Spinning wheel",
+                "Spin",
+                wheel,
+                LocLayer::GroundDecoration,
+            )],
+        );
+        let mut ledger = None;
+        let (_owner, action_id) = with_tick(&prior, &mut ledger, 1, |tick| {
+            let owner = tick
+                .actions
+                .begin::<Reach>(seek_args(), &mut tick.cx)
+                .unwrap();
+            (owner, tick.cx.action_id)
+        });
+        let mut reach = reach_in_phase(
+            wheel_args(wheel),
+            Phase::WaitDoor { door },
+            Some((2644, wheel)),
+        );
+
+        with_tick_snapshots(&prior, &entered, &mut ledger, 2, |tick, entered| {
+            tick.cx.action_id = action_id;
+            tick.cx.budget.observe_frame(1, Some(&prior));
+            tick.cx.budget.observe_frame(2, Some(entered));
+            assert!(tick.cx.entered_scene());
+            tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
+            assert!(NativeMachine::poll(&mut reach, &mut tick.cx).is_pending());
+            assert!(
+                tick.cx.ledger.as_ref().unwrap().outbox.is_empty(),
+                "WaitDoor must not start a walk from prior-scene loc evidence"
+            );
+
+            tick.cx.budget.observe_frame(3, Some(entered));
+            assert!(!tick.cx.entered_scene());
+            assert!(NativeMachine::poll(&mut reach, &mut tick.cx).is_pending());
+            assert!(tick
+                .cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .any(|action| matches!(action.effect, HostEffect::Walk(_))));
+        });
+    }
+
+    #[test]
+    fn open_door_waits_until_after_scene_entry() {
+        let door = tile(6, 5);
+        let prior = scene(
+            (3200, 3200),
+            door,
+            vec![loc(1530, "Door", "Open", door, LocLayer::Wall)],
+        );
+        let entered = scene(
+            (3208, 3200),
+            door,
+            vec![loc(1530, "Door", "Open", door, LocLayer::Wall)],
+        );
+        let mut ledger = None;
+        let (_owner, action_id) = with_tick(&prior, &mut ledger, 1, |tick| {
+            let owner = tick
+                .actions
+                .begin::<Reach>(seek_args(), &mut tick.cx)
+                .unwrap();
+            (owner, tick.cx.action_id)
+        });
+        let mut reach = reach_in_phase(
+            wheel_args(door),
+            Phase::OpenDoor {
+                id: 1530,
+                tile: door,
+            },
+            None,
+        );
+
+        with_tick_snapshots(&prior, &entered, &mut ledger, 2, |tick, entered| {
+            tick.cx.action_id = action_id;
+            tick.cx.budget.observe_frame(1, Some(&prior));
+            tick.cx.budget.observe_frame(2, Some(entered));
+            assert!(tick.cx.entered_scene());
+            tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
+            assert!(NativeMachine::poll(&mut reach, &mut tick.cx).is_pending());
+            assert!(
+                tick.cx.ledger.as_ref().unwrap().outbox.is_empty(),
+                "OpenDoor must not click a door from the scene-entry frame"
+            );
+
+            tick.cx.budget.observe_frame(3, Some(entered));
+            assert!(!tick.cx.entered_scene());
+            assert!(NativeMachine::poll(&mut reach, &mut tick.cx).is_pending());
+            assert!(matches!(
+                &tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .unwrap()
+                    .effect,
+                HostEffect::Interaction(InteractReq::Loc { id: Some(1530), .. })
+            ));
+        });
+    }
+}

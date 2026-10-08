@@ -882,6 +882,62 @@ fn reach_cant_reach_retarget_waits_for_scene_entry_tick() {
 }
 
 #[test]
+fn reach_seek_waits_for_scene_entry_before_selecting_new_target() {
+    let mut initial = ready();
+    initial.seed_local_player(local_player(tile(3227, 3300)));
+    initial.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3280,
+        ..Default::default()
+    });
+
+    let mut entered = ready();
+    entered.seed_local_player(local_player(tile(3227, 3300)));
+    entered.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3208,
+        map_base_z: 3280,
+        ..Default::default()
+    });
+    entered.seed_ground_items(vec![ground()]);
+
+    let mut ledger = None;
+    let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<reach::Reach>(egg(true), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    with_tick_snapshots(&initial, &entered, &mut ledger, 2, |tick, entered| {
+        tick.cx.budget.observe_frame(1, Some(&initial));
+        tick.cx.budget.observe_frame(2, Some(entered));
+        assert!(tick.cx.entered_scene());
+        tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
+
+        for _ in 0..12 {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        }
+        assert!(
+            tick.cx.ledger.as_ref().unwrap().outbox.is_empty(),
+            "Seek must not click a target from the scene-entry frame"
+        );
+    });
+
+    assert!(with_tick(&entered, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Obj {
+            x: 3229,
+            z: 3302,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn same_tick_cant_reach_door_open_waits_for_next_tick() {
     let mut initial = ready();
     initial.seed_local_player(local_player(tile(5, 5)));

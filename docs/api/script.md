@@ -60,12 +60,15 @@ operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
 The typed action-machine facility drives real machines: `NativeActions::begin`
-and `poll` admit and advance each family's operations. Each observed tick grants
-one interaction-event allowance and a cap of 32 action transitions. A native or
-compiled machine can be polled again when evidence changes within the same
-observed tick; those polls consume new receipts and facts but do not advance tick
-windows or refresh either allowance. Tick-based quiet, stall and settle counters
-must distinguish observed ticks from polls. Poll-time admissions wrapped in
+and `poll` admit and advance each family's operations. Ordinary admission allows
+one interaction event per observed tick. Disposal may admit up to five interaction
+events per observed tick; batch admission consumes all five. Action transitions
+are capped at 32 per tick.
+A native or compiled machine can be polled again when evidence changes within
+the same observed tick; those polls consume new receipts and facts but do not
+advance tick windows or refresh either allowance.
+Tick-based quiet, stall and settle counters must distinguish observed ticks
+from polls. Poll-time admissions wrapped in
 `defer_budget` defer `ActionError::BudgetExhausted` to a later tick without
 counting a failed attempt, and callers commit request state only after admission.
 Not every begin is wrapped: a non-emitting begin can still exhaust the
@@ -367,9 +370,10 @@ TUI consume the same status fields.
 
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation builds the display-name rows consumed by
-Loadouts, while native loadout actions, readiness checks and provisioning
-preserve the authored aliases' exact item IDs and stackability even when items
-share a display name. Operator overrides remain ordinary display-name Loadouts rows.
+Loadouts. Ordinary native loadout actions, readiness checks and provisioning
+preserve authored aliases' exact item IDs and stackability even when names
+collide. Combat-kit worn and carried items still resolve by display name.
+Operator overrides remain ordinary display-name Loadouts rows.
 Certificate aliases in either header section are rejected before that conversion;
 the shared display name must not erase a certificate's distinct item identity.
 
