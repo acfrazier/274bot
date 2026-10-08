@@ -436,16 +436,17 @@ settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
 Start persists the per-profile script assignment. **Nav config** is live
-as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map,
-and Quest Paths groups): the durable walk permissions — teleports, wilderness
-and bank fetch (all default off) plus **Danger routing** (Never, When survivable
-(the default), Always; When survivable currently shows `When survivable (not
-available yet: acts as Never)` and admits routes as Never) — **Pause script on
+as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map
+groups): the durable walk permissions — teleports, wilderness
+and bank fetch (all default off) plus **Danger routing**, a full-width drop-down
+(Never, When survivable (the default), Always; When survivable shows the note
+`Not available yet: acts as Never.` under it and admits routes as Never) — **Pause script on
 manual movement** (default on; it also pauses the script behind a Gatherer or
 combat session), and debug paints / labels. A script allows danger zones for its
 own walks in its Script prefs Walk permissions; a single WalkTo walk is allowed
-with its own checkbox (below). WalkTo map holds **ask before baking terrain**;
-Quest Paths holds the Quester folder-paths loader (folder, reload). **General config** (under
+with its own checkbox (below). WalkTo map holds **ask before baking terrain**.
+The Quest Paths folder loader (folder, reload) sits under the Quester card's
+parameters in Script prefs and applies to every bot. **General config** (under
 WalkTo, above profile) is
 **slot** (capture), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**

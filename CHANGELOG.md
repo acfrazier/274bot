@@ -25,6 +25,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - The profile setting **auto-login on title** is now called **Log in
   automatically**, with a tooltip saying what it does. Saved profiles keep
   their value.
+- Nav config no longer scrolls sideways: the routing rows don't repeat
+  "Global — applies to every walk." on each line, and one note above them
+  says settings are global unless stated and that rs2b0t-compatible scripts
+  always allow wilderness and bank fetch. Danger routing is now a full-width
+  drop-down, with "When survivable"'s "not available yet" explanation on its
+  own line.
+- The Quest Paths folder, its load switch and Reload Paths moved from Nav
+  config to Script prefs, under the Quester card. They still apply to every
+  bot, and the heading says so.
+
+### TUI
+
+- Settings: the routing rows no longer repeat "· Global — applies to every
+  walk." on each line; one note above them says the same as the panel's.
+  The Quest Paths rows sit under a "Quester: Quest Paths (all bots)"
+  heading.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 

@@ -9,6 +9,10 @@ use std::sync::Arc;
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
 /// Shared explicit reload label used by panel and TUI.
 pub const RELOAD_PATHS_LABEL: &str = "Reload Paths";
+/// Heading for the Path-folder settings, which apply to every bot.
+pub const QUEST_PATHS_HEADING: &str = "Quest Paths (all bots)";
+/// The Quester settings heading that the Path-folder settings sit under.
+pub const QUESTER_HEADING: &str = "Quester";
 
 /// Persisted host-wide folder source for the Quester Path registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
