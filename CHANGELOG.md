@@ -11,18 +11,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   monkey-form guard in the fishing scripts refuses only while a greegree is
   worn, so the Gatherer now refuses to start in that case
   (`forbidden-state:monkey-form`) instead of hiding the method.
-- More gather sites: underground mines and caves are named from the nearest
-  label, far surface areas take the nearest bank within 64 tiles or else the
-  nearest label with its bearing and distance, and single fishing spots are
-  offered. Woodcutting and mining fragments still need three tiles. Places the
-  content names take that name (Mining Guild, Karamja Volcano, Zanaris), and a
-  site that needs a level or a worn item shows it in the label ("Mining Guild
-  (Mining 60)", "Zanaris (Dramen staff)"). The Zanaris entrance needs the
-  Dramen staff worn and a members world. 36 sites are new, and 289 are offered
-  on both server versions (311 and 308 in 0.2.0). Every site on offer has a
-  route from Lumbridge on the 289 nav pack, checked by a reachability test
-  against the real pack for a maxed account; a site without one is hidden
-  (see "Not in this release").
+- Gather sites: underground mines and caves and far-off areas get a place name
+  (for example Mining Guild, Karamja Volcano, Zanaris), and single fishing
+  spots are offered. A site that needs a level or a worn item shows it in its
+  label ("Mining Guild (Mining 60)", "Zanaris (Dramen staff)"). The Zanaris
+  entrance needs the Dramen staff worn and a members world. 36 sites are new
+  on both server versions. Sites the route finder can't reach yet are hidden
+  (see "Not in this release"), so the Gatherer now offers 289 sites on both
+  versions: 22 fewer than 0.2.0 on 289 (311) and 19 fewer on 274 (308). Every
+  site on offer has a route from Lumbridge on the 289 nav pack, checked by a
+  reachability test against the real pack for a maxed account.
 - Every 0.2.0 site keeps its id and region, hidden or not, and no id is
   reused, so saved Gatherer cards that name a site you can still pick keep
   working.
@@ -31,18 +29,44 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 **Gatherer**
 
-- Gathering sites in areas the route finder can't reach yet are hidden: 58 of
-  the sites 0.2.0 offered (55 on 274) and 32 new ones. They are Morytania,
-  including Canifis, Mort'ton, the Haunted Woods and the Temple; Tirannwn,
-  including the Elf Camp, Isafdar, Poison Waste, Tyras Camp, Arandar and the
-  Prifddinas outskirts; Crandor; Miscellania; Gu'Tanoth and the forest beyond
-  its ogre gates; the Fishing Platform; Ape Atoll and Crash Island; a few caves
-  (Brimhaven, Taverley, the Grand Tree mine, the Varrock sewers, the Digsite,
-  Glarial's Tomb); and a few enclosed spots such as the Wilderness agility
-  course, the Hemenster fishing contest and the Desert Mining Camp. A saved
-  Gatherer card that names one now refuses to start with an "unknown" site
-  error; pick another site. They return when the route finder learns those
-  entrances (planned for 0.2.1).
+- Gathering sites in areas the route finder can't reach yet are hidden: 90 on
+  289 (58 that 0.2.0 offered and 32 new) and 71 on 274 (55 that 0.2.0 offered
+  and 16 new). The areas are:
+  - Morytania: Canifis, Mort'ton, the Haunted Woods, the Temple, the River
+    Salve and the west bank of Mort Myre (Mort'ton east is 289 only).
+  - Tirannwn: the Elf Camp, Isafdar, Poison Waste, Tyras Camp, Arandar and the
+    Prifddinas outskirts.
+  - Islands and boat or glider trips: Crandor, the Fishing Platform, the
+    Lighthouse island, and on 289 only Miscellania, Ape Atoll and Crash
+    Island.
+  - Beyond gates and fences: Gu'Tanoth and the forest on the south side of its
+    ogre gates, the Castle Wars west bank, the stretch west of the Tree Gnome
+    Stronghold fence, the Wilderness agility course, the Demonic Ruins
+    charcoal trees, the Desert Mining Camp, the Hemenster fishing contest
+    enclosure, the Fremennik mining enclosure, the Waterfall ledge, West
+    Ardougne, and on 289 only Trollheim's north-west forest.
+  - Caves and underground areas: the Brimhaven Dungeon, the Taverley Dungeon,
+    the Grand Tree mine, the Varrock sewers, the Digsite caverns, Glarial's
+    Tomb, the Desert Mining Camp mine, a separate pocket of Zanaris and the
+    cave west of the Necromancer's cellar.
+
+  A saved Gatherer card that names one of these now refuses to start with an
+  "unknown" site error; pick another site. They return as the route finder
+  learns the entrances; that work is planned for 0.2.1. For a few enclosed
+  spots no way in has been found yet, so those may stay hidden.
+
+### Fixed during development
+
+Fixes to problems that appeared and were fixed during 0.2.0.1 development.
+They are listed here for completeness and are left out of the release notes.
+
+- Gatherer: the Bedabin Camp cave site was hidden by mistake as if it were a
+  separate cave; it is the Zanaris Cosmic Temple trees and is offered again
+  under its own id.
+- Gatherer: Zanaris sites no longer show Lost City as a separate requirement;
+  the entrance needs only the Dramen staff worn and a members world.
+- Gatherer: Crash Island is no longer described as part of the Ape Atoll
+  voyage (Waydar's glider flight, not Lumdo's voyage, goes there).
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
