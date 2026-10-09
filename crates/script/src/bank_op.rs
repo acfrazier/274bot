@@ -16,7 +16,7 @@
 
 use crate::bank::ops::{
     self, CloseBaseline, CloseScan, DepositRequest, LoadClick, NoteIntent, Progress, WithdrawGoal,
-    TRANSFER_BOUND,
+    TRANSFER_OBSERVED_TICK_LIMIT,
 };
 use crate::machine::{self, Begin, Cx, Family, Step};
 use crate::observed::{self, ItemRow, Lens, Scene};
@@ -613,7 +613,7 @@ pub(crate) struct CloseArgs {
 
 impl CloseArgs {
     /// The caller's `timeoutMs` is the wait bound (a negative or non-finite
-    /// one is already reached); omitted is [`ops::TRANSFER_BOUND`].
+    /// one is already reached); omitted is [`ops::CLOSE_BOUND`].
     fn deadline(&self) -> Duration {
         let explicit = match &self.timeout_ms {
             Value::Null => None,
@@ -675,6 +675,7 @@ pub(crate) enum BankWithdrawLoad {
         item_id: i32,
         used_before: i32,
         generation: u64,
+        started_tick: u64,
     },
     Fill(Awaiting),
 }
@@ -724,12 +725,13 @@ impl Family for BankWithdrawLoad {
             );
             match ops::load_click(row, free, &goal) {
                 Some(LoadClick::All(req)) => {
+                    let started_tick = scene.tick().unwrap_or_default();
                     cx.emit(req);
-                    cx.clock().arm(millis(TRANSFER_BOUND));
                     Begin::Run(Self::All {
                         item_id: row.id,
                         used_before: used,
                         generation: view.generation,
+                        started_tick,
                     })
                 }
                 Some(LoadClick::Fill(req)) if !view.count_dialog_open => {
@@ -744,13 +746,14 @@ impl Family for BankWithdrawLoad {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         let view = BankView::now();
-        let (item_id, used_before, generation) = match self {
+        let (item_id, used_before, generation, started_tick) = match self {
             Self::Fill(waiting) => return waiting.poll(&view, cx).map_or(Step::Wait, Step::Done),
             Self::All {
                 item_id,
                 used_before,
                 generation,
-            } => (*item_id, *used_before, *generation),
+                started_tick,
+            } => (*item_id, *used_before, *generation, *started_tick),
         };
         let same_session = view.open && view.generation == generation;
         let progress = observed::with(|scene| {
@@ -769,8 +772,19 @@ impl Family for BankWithdrawLoad {
         });
         match progress {
             Progress::Complete => Step::Done(true),
-            Progress::Incomplete if !cx.clock().bound_reached() => Step::Wait,
-            _ => Step::Done(false),
+            Progress::Incomplete => {
+                let expired = observed::with(|scene| {
+                    scene.tick().is_some_and(|tick| {
+                        tick.saturating_sub(started_tick) >= TRANSFER_OBSERVED_TICK_LIMIT
+                    })
+                });
+                if expired {
+                    Step::Done(false)
+                } else {
+                    Step::Wait
+                }
+            }
+            Progress::SessionGone | Progress::PackFull | Progress::OverTarget => Step::Done(false),
         }
     }
 }
@@ -1386,9 +1400,16 @@ mod tests {
         let Started::Running(handle) = start_load("Feather") else {
             panic!("expected a running load");
         };
-        let _ = drain();
-        assert_eq!(settled(handle), Take::Pending);
-        machine::tests::expire_deadlines();
+        assert_eq!(drain(), vec![all_click.clone()]);
+        for tick in 2..=8 {
+            post_bank(tick, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+            assert_eq!(
+                settled(handle),
+                Take::Pending,
+                "tick {tick} is within the eight-tick transfer bound"
+            );
+        }
+        post_bank(9, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
         assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(false))));
 
         // No All: free 3 is the ladder; one click of 1 is not the load.
@@ -1427,6 +1448,94 @@ mod tests {
             Started::Settled(Outcome::Done(json!(false)))
         );
         assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn load_all_remains_pending_after_a_thirty_second_gap_and_settles() {
+        let ops = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-All"];
+        let feathers = |count| placed("Feather", 314, count, &ops, 2, 601);
+        let all_click = InteractReq::InvButton {
+            id: 314,
+            slot: 2,
+            component: 601,
+            operation: 4,
+            bank_generation: 3,
+        };
+
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        let Started::Running(handle) = start_load("Feather") else {
+            panic!("expected a running load");
+        };
+        assert_eq!(drain(), vec![all_click]);
+        machine::age(handle, 30_000);
+        post_bank(2, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        assert_eq!(settled(handle), Take::Pending);
+        let mut after = pack(8);
+        after.push(held(314, 200));
+        post_bank(3, 3, SIDE_ROOT, vec![feathers(100)], Vec::new(), after);
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
+    }
+
+    #[test]
+    fn load_all_same_tick_snapshot_repoll_does_not_consume_transfer_ticks() {
+        let ops = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-All"];
+        let feathers = |count| placed("Feather", 314, count, &ops, 2, 601);
+        let all_click = InteractReq::InvButton {
+            id: 314,
+            slot: 2,
+            component: 601,
+            operation: 4,
+            bank_generation: 3,
+        };
+
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        let Started::Running(handle) = start_load("Feather") else {
+            panic!("expected a running load");
+        };
+        assert_eq!(drain(), vec![all_click]);
+        machine::age(handle, 30_000);
+        for sequence in 1..=3 {
+            observed::post(1, |_| {});
+            machine::snapshot_step(&mut NoJs, 1, sequence);
+            assert_eq!(
+                machine::take(handle),
+                Take::Pending,
+                "same-tick snapshot sequence {sequence}"
+            );
+        }
+        let mut after = pack(8);
+        after.push(held(314, 200));
+        post_bank(2, 3, SIDE_ROOT, vec![feathers(100)], Vec::new(), after);
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
+    }
+    #[test]
+    fn load_all_count_delta_on_eighth_tick_precedes_expiration() {
+        let ops = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-All"];
+        let feathers = |count| placed("Feather", 314, count, &ops, 2, 601);
+        let all_click = InteractReq::InvButton {
+            id: 314,
+            slot: 2,
+            component: 601,
+            operation: 4,
+            bank_generation: 3,
+        };
+
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        let Started::Running(handle) = start_load("Feather") else {
+            panic!("expected a running load");
+        };
+        assert_eq!(drain(), vec![all_click]);
+        for tick in 2..=8 {
+            post_bank(tick, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+            assert_eq!(settled(handle), Take::Pending, "tick {tick}");
+        }
+        let mut after = pack(8);
+        after.push(held(314, 200));
+        post_bank(9, 3, SIDE_ROOT, vec![feathers(100)], Vec::new(), after);
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
     }
 
     fn start_close(timeout_ms: Value) -> Started {

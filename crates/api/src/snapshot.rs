@@ -147,6 +147,12 @@ pub struct GameSnapshot {
     equipment_available: bool,
     bank: Vec<ItemView>,
     bank_side: Vec<ItemView>,
+    /// Latest received inventory packet revision for the inv-tab component.
+    #[serde(skip)]
+    inventory_packet_generation: Option<u64>,
+    /// Latest received inventory packet revision for the bank-side component.
+    #[serde(skip)]
+    bank_side_packet_generation: Option<u64>,
     /// The inv tab component's slot count (the m8aq `inventorySize`);
     /// 0 until the inv tab loads.
     inventory_size: i32,
@@ -318,6 +324,8 @@ impl Default for GameSnapshot {
             equipment_available: false,
             bank: Vec::new(),
             bank_side: Vec::new(),
+            inventory_packet_generation: None,
+            bank_side_packet_generation: None,
             inventory_size: 0,
             bank_component_id: -1,
             bank_size: 0,
@@ -948,6 +956,12 @@ impl GameSnapshot {
         self.inventory_size
     }
 
+    /// Latest received packet generation for the inv-tab component, if one
+    /// has been observed.
+    pub fn inventory_packet_generation(&self) -> Option<u64> {
+        self.inventory_packet_generation
+    }
+
     /// Worn-items views from the last equipment rebuild, in slot order.
     pub fn equipment(&self) -> &[ItemView] {
         &self.equipment
@@ -1025,6 +1039,12 @@ impl GameSnapshot {
     /// Bank-side (deposit) item views from the last bank-side rebuild.
     pub fn bank_side(&self) -> &[ItemView] {
         &self.bank_side
+    }
+
+    /// Latest received packet generation for the bank-side component, if one
+    /// has been observed.
+    pub fn bank_side_packet_generation(&self) -> Option<u64> {
+        self.bank_side_packet_generation
     }
 
     /// The trade state (offer/confirm open, the four containers, partner).

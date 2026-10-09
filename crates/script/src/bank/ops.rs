@@ -13,10 +13,11 @@ use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// One transfer's settle bound, and the close bound when the caller omits one.
-pub const TRANSFER_BOUND: Duration = Duration::from_secs(4);
-/// Frozen wait for the side backpack to post before an until-empty deposit
-/// treats it as empty.
+/// Bank transfers wait this many distinct fresh observed ticks before expiring.
+pub const TRANSFER_OBSERVED_TICK_LIMIT: u64 = 8;
+/// Default wall-clock bound for a bank close when the caller omits one.
+pub const CLOSE_BOUND: Duration = Duration::from_secs(4);
+/// Frozen wait for a usable side backpack before an until-empty deposit fails.
 pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 /// Frozen `for (let guard = 0; guard < 32; guard++)` deposit rounds.
 pub const MAX_DEPOSITS: u8 = 32;
@@ -148,6 +149,19 @@ pub fn count_id<R: BankRow>(rows: &[R], id: i32) -> i32 {
         .filter(|row| row.id() == id)
         .map(BankRow::count)
         .sum()
+}
+
+/// Whether `pack` still holds this positive item row. When both components
+/// expose a slot, identity includes the slot as well as the object id.
+pub fn pack_has_current_row<R: BankRow>(pack: &[R], id: i32, slot: Option<i32>) -> bool {
+    pack.iter().any(|main| {
+        main.count() > 0
+            && main.id() == id
+            && match (main.slot(), slot) {
+                (Some(main), Some(side)) => main == side,
+                _ => true,
+            }
+    })
 }
 
 /// Taken slots: every row with a positive count.
@@ -490,9 +504,9 @@ pub fn load_all_progress(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DepositKind {
-    /// Deposit every candidate; a settled empty side is success.
+    /// Deposit every candidate; an unavailable side view at its bound is an error.
     UntilEmpty,
-    /// The candidates must leave the pack; a posted side without them fails.
+    /// The candidates must leave the pack.
     Required,
 }
 
@@ -552,6 +566,18 @@ pub fn deposit_click<R: BankRow>(row: &R, req: DepositRequest<'_>) -> Option<Dep
     })
 }
 
+/// The exact posted label selected by `click`, if its row still appears in
+/// `side`. The label is borrowed so callers need not copy it for diagnostics.
+pub fn deposit_option<R: BankRow>(side: &[R], click: DepositClick) -> Option<&str> {
+    side.iter()
+        .find(|row| {
+            row.id() == click.id
+                && row.slot() == Some(click.slot)
+                && row.component_id() == Some(click.component)
+        })?
+        .op_label(click.operation)
+}
+
 /// The host re-resolves this exact row under `generation`; it never re-finds
 /// a row by name.
 pub fn deposit_req(click: DepositClick, generation: u64) -> InteractReq {
@@ -566,13 +592,14 @@ pub fn deposit_req(click: DepositClick, generation: u64) -> InteractReq {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DepositScan {
-    /// Not enough observation. UntilEmpty: the machine arms
-    /// [`DEPOSIT_VIEW_MS`] once the pack posted. Required: wait for the side.
+    /// The current main candidates have no usable matching side row yet.
     WaitView,
+    /// The until-empty view bound expired before a usable deposit view was available.
+    ViewExpired,
     Click(DepositClick),
     Done,
-    /// Required: the pack still holds a candidate and the posted side has
-    /// no clickable row for one.
+    /// Capacity release: a matching row exists, but no safe operation can be
+    /// selected for its stackability or posted actions.
     MissingRequired,
     /// The bank closed or another session opened: nothing settles.
     SessionGone,
@@ -586,45 +613,57 @@ pub fn side_observation<R: BankRow>(main_open: bool, side_root: i32, rows: &[R])
 }
 
 /// The next deposit step. `side` / `pack` `None` is not posted; `Some(&[])`
-/// is posted empty. `empty_wait_done` is the UntilEmpty not-ready bound and
-/// never turns a Required wait into success. Like [`withdraw_progress`],
-/// nothing clicks or completes outside the request's bank session.
+/// is posted. `view_wait_expired` expires only the UntilEmpty view wait;
+/// it never turns a deposit with current candidates into success. Like
+/// [`withdraw_progress`], nothing clicks or completes outside the request's
+/// bank session.
 pub fn deposit_next<R: BankRow>(
     spec: &DepositSpec<'_>,
     side: Option<&[R]>,
     pack: Option<&[R]>,
-    empty_wait_done: bool,
+    view_wait_expired: bool,
     same_session: bool,
 ) -> DepositScan {
     if !same_session {
         return DepositScan::SessionGone;
     }
+    let view_expired = spec.kind == DepositKind::UntilEmpty && view_wait_expired;
     let Some(pack) = pack else {
-        return DepositScan::WaitView;
+        return if view_expired {
+            DepositScan::ViewExpired
+        } else {
+            DepositScan::WaitView
+        };
     };
-    let clickable = |side: &[R]| {
-        side.iter()
-            .filter(|row| row.count() > 0 && spec.candidate(row.id()))
-            .find_map(|row| deposit_click(row, DepositRequest::Sweep))
+    let has_candidate = pack
+        .iter()
+        .any(|row| row.count() > 0 && spec.candidate(row.id()));
+    if !has_candidate {
+        return DepositScan::Done;
+    }
+    let Some(side) = side else {
+        return if view_expired {
+            DepositScan::ViewExpired
+        } else {
+            DepositScan::WaitView
+        };
     };
-    match spec.kind {
-        DepositKind::Required => {
-            if !pack
-                .iter()
-                .any(|row| row.count() > 0 && spec.candidate(row.id()))
-            {
-                return DepositScan::Done;
-            }
-            let Some(side) = side else {
-                return DepositScan::WaitView;
-            };
-            clickable(side).map_or(DepositScan::MissingRequired, DepositScan::Click)
-        }
-        DepositKind::UntilEmpty => match side {
-            None if empty_wait_done => DepositScan::Done,
-            None => DepositScan::WaitView,
-            Some(side) => clickable(side).map_or(DepositScan::Done, DepositScan::Click),
-        },
+    let click = side
+        .iter()
+        .filter(|row| row.count() > 0 && spec.candidate(row.id()))
+        .filter(|side_row| pack_has_current_row(pack, side_row.id(), side_row.slot()))
+        .find_map(|row| deposit_click(row, DepositRequest::Sweep));
+    match click {
+        Some(click) => DepositScan::Click(click),
+        None if view_expired => DepositScan::ViewExpired,
+        None => DepositScan::WaitView,
+    }
+}
+
+fn same_item_slot<R: BankRow>(main: &R, side: &R) -> bool {
+    match (main.slot(), side.slot()) {
+        (Some(main), Some(side)) => main == side,
+        _ => true,
     }
 }
 
@@ -646,11 +685,16 @@ pub fn deposit_capacity_next<R: BankRow>(
         return DepositScan::WaitView;
     };
     let mut candidate = false;
+    let mut matching_side_row = false;
     for item in pack
         .iter()
         .filter(|item| item.count() > 0 && !keep.contains(&item.id()))
     {
         candidate = true;
+        let has_side_row = side
+            .iter()
+            .any(|row| row.count() > 0 && row.id() == item.id() && same_item_slot(item, row));
+        matching_side_row |= has_side_row;
         let operation = match item.stackable() {
             Some(true) => "Deposit-All",
             Some(false) => "Deposit-1",
@@ -658,14 +702,16 @@ pub fn deposit_capacity_next<R: BankRow>(
         };
         if let Some(click) = side
             .iter()
-            .filter(|row| row.count() > 0 && row.id() == item.id())
+            .filter(|row| row.count() > 0 && row.id() == item.id() && same_item_slot(item, row))
             .find_map(|row| deposit_click(row, DepositRequest::Label(operation)))
         {
             return DepositScan::Click(click);
         }
     }
-    if candidate {
+    if candidate && matching_side_row {
         DepositScan::MissingRequired
+    } else if candidate {
+        DepositScan::WaitView
     } else {
         DepositScan::Done
     }
@@ -673,9 +719,9 @@ pub fn deposit_capacity_next<R: BankRow>(
 
 // --- close -----------------------------------------------------------------
 
-/// The caller's explicit bound, else [`TRANSFER_BOUND`].
+/// The caller's explicit bound, else [`CLOSE_BOUND`].
 pub fn close_deadline(timeout_ms: Option<u64>) -> Duration {
-    timeout_ms.map_or(TRANSFER_BOUND, Duration::from_millis)
+    timeout_ms.map_or(CLOSE_BOUND, Duration::from_millis)
 }
 
 /// The bank session and side root seen when the Close verb was sent.

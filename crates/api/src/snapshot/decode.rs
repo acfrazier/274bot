@@ -368,10 +368,14 @@ impl GameSnapshot {
             return false;
         }
         self.inventory.clear();
+        self.inventory_packet_generation = None;
         let Some(inv_id) = tab_inv_component(client, 3) else {
             self.inventory_size = 0;
             return true;
         };
+        self.inventory_packet_generation = client
+            .inventory_packet_state(inv_id)
+            .map(|state| state.generation);
         let Some(inv) = client.if_(inv_id as usize) else {
             self.inventory_size = 0;
             return true;
@@ -600,18 +604,25 @@ impl GameSnapshot {
         if !self.bank_side_gate.moved(client, self.inv_session_current) {
             return false;
         }
-        self.bank_side = if client.side_modal_id == -1 {
-            Vec::new()
+        self.bank_side_packet_generation = None;
+        if client.side_modal_id == -1 {
+            self.bank_side = Vec::new();
         } else {
             let root = client.side_modal_id;
-            find_inv_component(client, root, |com| {
+            let component = find_inv_component(client, root, |com| {
                 com.iop[0]
                     .as_deref()
                     .is_some_and(|s| s.to_ascii_lowercase().contains("deposit"))
-            })
-            .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
-            .unwrap_or_default()
-        };
+            });
+            self.bank_side_packet_generation = component.and_then(|com_id| {
+                client
+                    .inventory_packet_state(com_id)
+                    .map(|state| state.generation)
+            });
+            self.bank_side = component
+                .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
+                .unwrap_or_default();
+        }
         true
     }
 

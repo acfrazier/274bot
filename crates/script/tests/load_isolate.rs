@@ -213,6 +213,17 @@ fn side_row<'a>(
         ..item_row(id, name, count, ops, false, -1, SIDE_GRID)
     }
 }
+fn pack_row<'a>(
+    id: i32,
+    name: Option<&'a str>,
+    count: i32,
+    slot: i32,
+) -> script::isolate_fb::ItemRowInput<'a> {
+    script::isolate_fb::ItemRowInput {
+        slot,
+        ..item_row(id, name, count, &[], false, -1, 0)
+    }
+}
 
 /// The 289 deposit grid's ops.
 fn deposit_ops() -> Vec<String> {
@@ -5112,7 +5123,12 @@ export default class T extends LoopingBot {
     let bank_side = (0..27)
         .map(|slot| side_row(62, Some("Willow shortbow (u)"), 1, &ops, slot))
         .collect::<Vec<_>>();
+    let pack = (0..27)
+        .map(|slot| pack_row(62, Some("Willow shortbow (u)"), 1, slot))
+        .collect::<Vec<_>>();
     snap.bank_side = &bank_side;
+    snap.inv = &pack;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_with_side_root(&iso, &snap);
@@ -5122,6 +5138,37 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![deposit_all(62, 0, 0)],
         "one helper step must queue one deposit, not one request per duplicate row"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_deposit_skips_side_only_stale_row() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        Bank.depositInventory();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = deposit_ops();
+    let bank_side = [side_row(526, Some("Bones"), 1, &ops, 0)];
+    let mut snap = base_snapshot();
+    snap.inv = &[];
+    snap.inv_size = 28;
+    snap.bank_side = &bank_side;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_with_side_root(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a side row absent from the current pack cannot be clicked"
     );
     iso.join();
 }
@@ -5147,7 +5194,13 @@ export default class T extends LoopingBot {
         side_row(946, Some("Knife"), 1, &ops, 0),
         side_row(526, Some("Bones"), 1, &ops, 1),
     ];
+    let pack = [
+        pack_row(946, Some("Knife"), 1, 0),
+        pack_row(526, Some("Bones"), 1, 1),
+    ];
     snap.bank_side = &bank_side;
+    snap.inv = &pack;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_with_side_root(&iso, &snap);
@@ -5215,7 +5268,13 @@ export default class T extends LoopingBot {
         side_row(526, Some("Bones"), 1, &ops, 0),
         side_row(995, Some("Coins"), 25, &ops, 1),
     ];
+    let pack = [
+        pack_row(526, Some("Bones"), 1, 0),
+        pack_row(995, Some("Coins"), 25, 1),
+    ];
     snap.bank_side = &bank_side;
+    snap.inv = &pack;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_with_side_root(&iso, &snap);
@@ -5383,8 +5442,11 @@ export default class T extends LoopingBot {
             .unwrap();
     let ops = deposit_ops();
     let bank_side = [side_row(405, Some("Mystery box"), 1, &ops, 0)];
+    let pack = [pack_row(405, Some("Mystery box"), 1, 0)];
     let mut snap = base_snapshot();
     snap.bank_side = &bank_side;
+    snap.inv = &pack;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_with_side_root(&iso, &snap);
@@ -5963,7 +6025,10 @@ export default class T extends LoopingBot {
     });
     let ops = deposit_ops();
     let bank_side = [side_row(4242, None, 3, &ops, 0)];
+    let pack = [pack_row(4242, None, 3, 0)];
     snap.bank_side = &bank_side;
+    snap.inv = &pack;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_with_side_root(&iso, &snap);

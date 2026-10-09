@@ -1,4 +1,4 @@
-use super::ledger::{HostAction, HostEffect};
+use super::ledger::{BankDepositTrace, HostAction, HostEffect};
 use super::owner::Owner;
 use super::*;
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
@@ -98,6 +98,22 @@ impl ActionContext<'_> {
     /// their follow and terminal receipt; route, channel, mouse, run-policy
     /// and lifecycle requests are host-owned and never native interactions.
     pub fn emit(&mut self, request: InteractReq) -> Result<u64, ActionError> {
+        self.emit_with_bank_deposit(request, None)
+    }
+
+    pub(crate) fn emit_bank_deposit(
+        &mut self,
+        request: InteractReq,
+        trace: &Arc<BankDepositTrace>,
+    ) -> Result<u64, ActionError> {
+        self.emit_with_bank_deposit(request, Some(Arc::clone(trace)))
+    }
+
+    fn emit_with_bank_deposit(
+        &mut self,
+        request: InteractReq,
+        bank_deposit: Option<Arc<BankDepositTrace>>,
+    ) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if !native_interaction(&request) {
             return Err(not_an_interaction());
@@ -116,6 +132,7 @@ impl ActionContext<'_> {
             batch: 0,
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            bank_deposit,
         });
         Ok(request_id.get())
     }
@@ -156,6 +173,7 @@ impl ActionContext<'_> {
                 batch: first_id.get(),
                 effect: HostEffect::Interaction(request),
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+                bank_deposit: None,
             });
         }
         owner.set_latest_batch(first_id);
@@ -199,6 +217,7 @@ impl ActionContext<'_> {
             batch: 0,
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            bank_deposit: None,
         });
         Ok(request_id.get())
     }
@@ -220,6 +239,7 @@ impl ActionContext<'_> {
             batch: 0,
             effect: HostEffect::BankPick(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            bank_deposit: None,
         });
         Ok(request_id.get())
     }
@@ -274,6 +294,7 @@ impl ActionContext<'_> {
             batch: 0,
             effect: HostEffect::AssessWalk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            bank_deposit: None,
         });
         Ok(request_id.get())
     }
@@ -320,6 +341,7 @@ impl ActionContext<'_> {
             batch: 0,
             effect: HostEffect::Walk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            bank_deposit: None,
         });
         Ok(request_id.get())
     }
