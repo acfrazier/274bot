@@ -15706,6 +15706,35 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
 }
 
 #[test]
+fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
+    const SKILL_FISHING: i32 = 10;
+    let mut snap = GameSnapshot::new();
+    snap.seed_ingame(2);
+    snap.seed_stats(vec![api::snapshot::StatView {
+        index: SKILL_FISHING,
+        name: "fishing".into(),
+        base: 68,
+        effective: 68,
+        xp: 605_032,
+        used: true,
+    }]);
+    let from_empty_arm = super::script_runtime::route_world_state(&snap, None);
+    assert_eq!(
+        from_empty_arm.stats.get(&SKILL_FISHING).copied(),
+        Some(68),
+        "first native walk must not route on the fail-closed empty WorldState"
+    );
+    assert!(
+        !from_empty_arm.map_members,
+        "membership still comes from the arm, not GameSnapshot"
+    );
+    let armed = nav::WorldState::empty().with_map_members(true);
+    let merged = super::script_runtime::route_world_state(&snap, Some(&armed));
+    assert_eq!(merged.stats.get(&SKILL_FISHING).copied(), Some(68));
+    assert!(merged.map_members);
+}
+
+#[test]
 fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
     let ScriptWiring {
         scripts,

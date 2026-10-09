@@ -2505,6 +2505,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gatherer_waits_for_posted_stats_before_the_first_walk() {
+        use crate::quester::families::tests::with_tick;
+        let mut fixture = BaitFixture::new();
+        fixture.snapshot.seed_stats(Vec::new());
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut ledger = None;
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        assert!(
+            gatherer.failure.is_none(),
+            "unposted stats must wait, not walk-failed: {:?}",
+            gatherer.failure
+        );
+        assert!(
+            matches!(gatherer.active, Active::None),
+            "the first walk must not arm before stats are observed"
+        );
+        assert_eq!(gatherer.last_event.as_ref(), "started");
+    }
+
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
     /// bank showed this session fails in place with no trip and no action; a
     /// `Hint` or an unknown bank starts the trip.

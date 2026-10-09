@@ -3131,6 +3131,11 @@ impl GatherSlot {
             .map_or(0, |stat| stat.base.max(stat.effective))
     }
 
+    fn stats_posted(&self) -> bool {
+        let stats = self.snapshot.stats();
+        !stats.is_empty() && stats.iter().all(|stat| !stat.used || stat.base > 0)
+    }
+
     fn advance_prep(&mut self, client: &mut client::client::Client) -> Result<(), String> {
         match self.phase {
             Prep::WaitIngame => {
@@ -3229,6 +3234,7 @@ impl GatherSlot {
                     && (self.fixture_helper && self.case != LiveCase::OakRespawn
                         || self.case.bank_tool_only()
                         || self.item_in_inventory())
+                    && self.stats_posted()
                     && self.stat_level() >= self.requested_level
                 {
                     if self.fixture_helper {
@@ -6632,14 +6638,31 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         });
     }
     if case == LiveCase::FishGuildApproach {
-        let (end_tile, end_xp, end_tick, native_tick, baseline_xp) = {
+        let (end_tile, end_xp, end_tick, native_tick, baseline_xp, fishing, stats_ready, members) = {
             let slot = state.lock().map_err(|_| "live state poisoned")?;
+            let stats = slot.snapshot.stats();
+            let fishing = stats
+                .iter()
+                .find(|stat| stat.name.eq_ignore_ascii_case("fishing"));
+            let stats_ready =
+                !stats.is_empty() && stats.iter().all(|stat| !stat.used || stat.base > 0);
             (
                 slot.latest.as_ref().and_then(|latest| latest.tile),
                 slot.latest.as_ref().map(|latest| latest.xp).unwrap_or(0),
                 slot.latest.as_ref().map(|latest| latest.tick).unwrap_or(0),
                 slot.native_tick,
                 slot.baseline_xp(),
+                fishing.map(|stat| {
+                    json!({
+                        "index": stat.index,
+                        "base": stat.base,
+                        "effective": stat.effective,
+                        "xp": stat.xp,
+                        "used": stat.used,
+                    })
+                }),
+                stats_ready,
+                slot.snapshot.world().members,
             )
         };
         receipt["guild_approach"] = json!({
@@ -6654,6 +6677,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "site": "fishing.fishing_guild",
             "method": "fishing.rarefish.op3",
             "scene_seeds": fixture_plan.seed_locs.len(),
+            "final_fishing": fishing,
+            "final_stats_ready": stats_ready,
+            "final_world_members": members,
         });
     }
     receipt.as_object_mut().expect("receipt object").append(

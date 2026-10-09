@@ -10,7 +10,7 @@ use bank::{action_slot, all_slot, dispatch_observed_bank_op};
 mod script_nav;
 #[cfg(test)]
 pub(super) use script_nav::{
-    approach_tiles, resolve_route_exclusions, CarriedWalk, ScriptRouteRequest,
+    approach_tiles, resolve_route_exclusions, route_world_state, CarriedWalk, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome,
