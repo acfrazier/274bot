@@ -320,18 +320,6 @@ pub trait StepPlan: Send + Sync {
     fn with_goal(&self, _goal: StepGoal) -> Option<Arc<dyn StepPlan>> {
         None
     }
-    /// Collects this plan's authored conversation when it is the open chat
-    /// menu, for a progress read that finds the menu blocking it
-    /// (`Quester::drain_chat_page`): `talk` through its NPC and text answers
-    /// (`dialogue::owned_menu_answer`), `acquire` through its children whose
-    /// `skip_if` is not proven true. Every other family owns no menu.
-    fn owned_menus(
-        &self,
-        _cx: &PredicateContext<'_, '_>,
-        _step: &FactKey,
-        _out: &mut Vec<OwnedMenu>,
-    ) {
-    }
 }
 /// A step's compiled `skip_if` and `settle`, plus the authored settle
 /// summary, handed to the plan by [`StepPlan::with_goal`].
@@ -341,12 +329,13 @@ pub struct StepGoal {
     pub settle: Arc<dyn PredicatePlan>,
     pub summary: Arc<str>,
 }
-/// An open chat menu recognised as an authored step's own conversation: the
-/// step, the option its text answers pick, and those text-only answers.
-pub struct OwnedMenu {
-    pub step: FactKey,
-    pub answer: i32,
-    pub options: super::families::dialogue::DialogueOptions,
+/// The NPC conversation a live step holds right now, for the runner's
+/// conversation record (`quester::conversation`): the NPC its own Talk-to
+/// opened and the step's authored answers.
+pub struct StepConversation<'a> {
+    pub npc_type: i32,
+    pub npc_index: i32,
+    pub options: &'a super::families::dialogue::DialogueOptions,
 }
 #[derive(Debug, Clone)]
 pub enum StepTraceEvent {
@@ -411,6 +400,12 @@ pub trait StepRun: Send {
         None
     }
     fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
+        None
+    }
+    /// The conversation this step (or its current recipe child) holds with
+    /// the NPC its own Talk-to opened; `None` for every other family and
+    /// outside such a conversation.
+    fn conversation(&self) -> Option<StepConversation<'_>> {
         None
     }
 }

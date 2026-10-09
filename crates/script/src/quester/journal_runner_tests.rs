@@ -1,10 +1,11 @@
 use super::*;
 use crate::native::{
     ActionContext, ActionError, HostEffect, InteractionReceipt, NativeActions, NativeMachine,
-    NativeOutput, ScriptStatus,
+    NativeOutput, RetainedMemory, ScriptStatus,
 };
+use crate::quester::conversation::CarriedConversation;
 use crate::quester::families::tests::{
-    with_tick, with_tick_bank, with_tick_output, with_tick_output_bank,
+    with_tick, with_tick_bank, with_tick_output, with_tick_output_bank, with_tick_retained,
 };
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
 use api::selected::Truth;
@@ -2802,12 +2803,12 @@ const BEER_MENU: [&str; 3] = [
     "Heard any good gossip?",
 ];
 
-fn seed_coins_and_beer(snapshot: &mut GameSnapshot, coins: i32, beer: i32) {
+fn seed_items(snapshot: &mut GameSnapshot, items: &[(&str, i32)]) {
     use crate::quester::families::tests::def;
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    let rows = [("coins", coins), ("beer", beer)]
-        .into_iter()
+    let rows = items
+        .iter()
         .filter(|(_, count)| *count > 0)
         .enumerate()
         .map(|(slot, (alias, count))| ItemView {
@@ -2815,7 +2816,7 @@ fn seed_coins_and_beer(snapshot: &mut GameSnapshot, coins: i32, beer: i32) {
             container: ItemContainer::Inventory,
             action_family: ItemActionFamily::Held,
             slot: slot as i32,
-            count,
+            count: *count,
             actions: Vec::new(),
             component_id: 0,
         })
@@ -2823,103 +2824,379 @@ fn seed_coins_and_beer(snapshot: &mut GameSnapshot, coins: i32, beer: i32) {
     snapshot.seed_inventory(rows, 28);
 }
 
-/// The Vampire Slayer Path restarted inside `stake` / `buy-harlow-beer` at
-/// `vampire:2` (live receipt 089 `07-stopped-2.json`, `08-start-3.png`): a
-/// fresh runner with no progress, the quest row in progress, 200 coins, and a
-/// `multi3` menu offering `options` open while `speaker` stands adjacent,
-/// facing the player when `facing` (`~chatnpc` then `p_choice3`,
-/// `bartender.rs2:2-7`; `chat.rs2:323-331`).
-fn vampire_menu(options: &[&str], speaker: &str, facing: bool) -> (Quester, GameSnapshot) {
+fn seed_coins_and_beer(snapshot: &mut GameSnapshot, coins: i32, beer: i32) {
+    seed_items(snapshot, &[("coins", coins), ("beer", beer)]);
+}
+
+/// The 289 `multi2` and `multi4` choice roots (`p_choice2`/`p_choice4`,
+/// `interface_chat/scripts/chat.rs2:1-16`), as in the review's regressions.
+const MULTI2_ROOT: i32 = 2459;
+const MULTI4_ROOT: i32 = 2480;
+/// A `~chatnpc` page root and a `~chatplayer` page root; each continue
+/// component is two after its root.
+const NPC_PAGE_ROOT: i32 = 4882;
+const PLAYER_PAGE_ROOT: i32 = 968;
+/// The speaking NPC's index in every scene.
+const NPC_INDEX: usize = 304;
+
+/// A restart scene on one shipped Path: the quest row in progress, 200 coins,
+/// a known empty bank, the local player at `here`, and `npc` one tile north,
+/// facing the player while `facing` (`~chatnpc`'s `playerfaceclose`,
+/// `interface_chat/scripts/chat.rs2:323-331`).
+struct Scene {
+    path: Arc<super::super::compile::CompiledPath>,
+    data: Arc<api::game_data::SelectedGameData>,
+    quests: Arc<QuestCatalog>,
+    snapshot: GameSnapshot,
+    bank: api::bank_memory::BankMemory,
+    npc: &'static str,
+    here: api::snapshot::WorldTile,
+}
+
+fn scene(
+    json: &str,
+    quest: &str,
+    here: api::snapshot::WorldTile,
+    npc: &'static str,
+    facing: bool,
+) -> Scene {
     use crate::quester::families::tests::local_player;
-    use api::snapshot::{ActorKind, ActorTargetView, ChatOptionView, NpcView, WorldTile};
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-    let document: crate::quester::path::PathDocument =
-        serde_json::from_str(super::super::compile::VAMPIRE_JSON).unwrap();
+    let document: crate::quester::path::PathDocument = serde_json::from_str(json).unwrap();
     let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
-    let here = WorldTile {
-        x: 3277,
-        z: 3487,
-        level: 0,
-    };
-    let npc_tile = WorldTile { z: 3488, ..here };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_tile(here);
     snapshot.seed_local_player(local_player(here));
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
-            name: "Vampire Slayer".into(),
+            name: quests.quest(quest).unwrap().display.to_string(),
             component_id: 43,
             colour: 0xf8f800,
         }],
         true,
     );
     seed_coins_and_beer(&mut snapshot, 200, 0);
-    snapshot.seed_npcs(vec![NpcView {
-        index: 304,
-        r#type: Some(data.npc_by_config(speaker).unwrap().id as usize),
-        name: Some("Speaker".into()),
-        actions: vec![Some("Talk-to".into())],
-        tile: npc_tile,
-        distance: 1,
-        animation: -1,
-        animation_frame: 0,
-        pose_animation: -1,
-        orientation: 0,
-        target_orientation: 0,
-        overhead_text: None,
-        spot_animation: -1,
-        spot_animation_stamp: -1,
-        health: 0,
-        total_health: 0,
-        face_entity: if facing { 32768 } else { -1 },
-        target: facing.then_some(ActorTargetView {
-            kind: ActorKind::Player,
-            index: 0,
-        }),
-        moving: false,
-        running: false,
-        in_combat: false,
-        level: 0,
-        size: 1,
-        network: npc_tile,
-        x: 0,
-        z: 0,
-        yaw: 0,
-    }]);
-    snapshot.seed_chat_modal(
-        MULTI3_ROOT,
-        std::iter::once("Select an Option")
-            .chain(options.iter().copied())
-            .map(String::from)
-            .collect(),
-    );
-    snapshot.seed_chat_options(
-        options
-            .iter()
-            .zip(MULTI3_ROOT + 1..)
-            .map(|(text, component_id)| ChatOptionView {
-                component_id,
-                text: (*text).into(),
-            })
-            .collect(),
-        -1,
-    );
-    (
+    close_chat(&mut snapshot);
+    let mut scene = Scene {
+        path,
+        data,
+        quests,
+        snapshot,
+        bank: api::bank_memory::BankMemory::seeded(&[], api::bank_memory::Origin::Session),
+        npc,
+        here,
+    };
+    scene.facing(facing);
+    scene
+}
+
+impl Scene {
+    fn npc_type(&self) -> i32 {
+        self.data.npc_by_config(self.npc).unwrap().id
+    }
+
+    /// The NPC stays one tile north; `facing` is its face entity on the player.
+    fn facing(&mut self, facing: bool) {
+        use api::snapshot::{ActorKind, ActorTargetView, NpcView, WorldTile};
+        let tile = WorldTile {
+            z: self.here.z + 1,
+            ..self.here
+        };
+        let npc_type = self.npc_type();
+        self.snapshot.seed_npcs(vec![NpcView {
+            index: NPC_INDEX,
+            r#type: Some(npc_type as usize),
+            name: Some("Speaker".into()),
+            actions: vec![Some("Talk-to".into())],
+            tile,
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: if facing { 32768 } else { -1 },
+            target: facing.then_some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: tile,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+    }
+
+    /// `options` open as a `p_choiceN` menu on `root` (`chat.rs2:1-16`).
+    fn menu(&mut self, root: i32, options: &[&str]) {
+        use api::snapshot::ChatOptionView;
+        self.snapshot.seed_chat_modal(
+            root,
+            std::iter::once("Select an Option")
+                .chain(options.iter().copied())
+                .map(String::from)
+                .collect(),
+        );
+        self.snapshot.seed_chat_options(
+            options
+                .iter()
+                .zip(root + 1..)
+                .map(|(text, component_id)| ChatOptionView {
+                    component_id,
+                    text: (*text).into(),
+                })
+                .collect(),
+            -1,
+        );
+    }
+
+    /// A continue page on `root`.
+    fn page(&mut self, root: i32, texts: &[&str]) {
+        self.snapshot
+            .seed_chat_modal(root, texts.iter().copied().map(String::from).collect());
+        self.snapshot.seed_chat_options(vec![], root + 2);
+    }
+
+    /// A runner as a Start creates it: no progress, nothing begun.
+    fn runner(&self) -> Quester {
         Quester::new(
             RunKey {
                 slot: 1,
-                run: 3,
+                run: 1,
                 session: 1,
             },
-            path,
-            Arc::clone(&data),
-            quests,
+            Arc::clone(&self.path),
+            Arc::clone(&self.data),
+            Arc::clone(&self.quests),
             Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+    }
+
+    /// One runner tick as the slot runs it: the carried conversation lent to
+    /// the retained cell, the tick, then taken back (`poll_compiled_frame`).
+    fn drive(&self, script: &mut Quester, memory: &mut SlotMemory, ledger: &mut Ledger, tick: u64) {
+        memory.carried.lend(memory.cell.quester());
+        with_tick_retained(
+            &self.snapshot,
+            Some(&self.bank),
+            &mut memory.cell,
+            ledger,
+            tick,
+            |t| {
+                script.tick(t).unwrap();
+            },
+        );
+        memory.carried.reclaim(memory.cell.quester());
+    }
+
+    /// One host frame: the slot's conversation watch, then the runner tick
+    /// (`script_observe.rs`: `watch_held_conversation` before dispatch).
+    fn frame(&self, script: &mut Quester, memory: &mut SlotMemory, ledger: &mut Ledger, tick: u64) {
+        watch(memory, self, tick);
+        self.drive(script, memory, ledger, tick);
+    }
+}
+
+/// What the slot keeps for a Quester: its retained cell and the conversation
+/// an operator Stop carried (`SlotScript::retained`,
+/// `SlotScript::carried_conversation`).
+#[derive(Default)]
+struct SlotMemory {
+    cell: RetainedMemory,
+    carried: CarriedConversation,
+}
+
+impl SlotMemory {
+    /// The conversation record, carried or live.
+    fn held(&mut self) -> Option<&mut HeldConversation> {
+        match self.carried.get_mut() {
+            Some(held) => Some(held),
+            None => self.cell.quester().conversation.as_deref_mut(),
+        }
+    }
+
+    /// A logout, relog or world hop (`SlotScript::session_boundary`).
+    fn relog(&mut self) {
+        self.carried.clear();
+        self.cell.quester().conversation = None;
+    }
+}
+
+/// The slot's per-frame check of a carried conversation
+/// (`SlotScript::watch_held_conversation`); `false` once it is gone.
+fn watch(memory: &mut SlotMemory, scene: &Scene, tick: u64) -> bool {
+    memory.carried.watch(Some(&scene.snapshot), tick);
+    memory.carried.get_mut().is_some()
+}
+
+/// The slot's operator Stop: the conversation the live step recorded moves
+/// to the slot, and the retained cell is discarded (`SlotScript::stop_with_reason`).
+fn operator_stop(memory: &mut SlotMemory) {
+    memory.carried.stop(Some(memory.cell.quester()));
+    memory.cell = RetainedMemory::default();
+}
+
+fn answer_of(effect: &HostEffect) -> Option<i32> {
+    match effect {
+        HostEffect::Interaction(crate::shim::InteractReq::Answer { option }) => Some(*option),
+        _ => None,
+    }
+}
+
+/// A live run of `stage`'s `step` with the scene's NPC adjacent: its Talk-to,
+/// the NPC's first page `page`, the driver's Continue on it and that page
+/// latched, then an operator Stop. Returns the slot's retained memory after
+/// the Stop, which carries the step's own conversation.
+fn stop_mid_conversation(scene: &mut Scene, stage: &str, step: &str, page: &[&str]) -> SlotMemory {
+    let mut memory = SlotMemory::default();
+    let mut ledger = None;
+    let mut live = scene.runner();
+    let sequence = scene
+        .path
+        .sequences
+        .iter()
+        .position(|sequence| sequence.stage.0.as_ref() == stage)
+        .unwrap();
+    let index = scene.path.sequences[sequence]
+        .steps
+        .iter()
+        .position(|candidate| candidate.id.0.as_ref() == step)
+        .unwrap();
+    live.in_prelude = false;
+    live.seq_index = sequence;
+    live.step_index = index;
+    live.needs_read = false;
+    let plan = Arc::clone(&scene.path.sequences[sequence].steps[index].plan);
+    let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+    let choices = super::super::choices::QuestChoices::default();
+    live.step = Some(with_tick_retained(
+        &scene.snapshot,
+        Some(&scene.bank),
+        &mut memory.cell,
+        &mut ledger,
+        1,
+        |t| {
+            let required_after = t.cx.evidence();
+            plan.begin(&mut StepContext {
+                tick: t,
+                quests: &scene.quests,
+                progress: &[],
+                required_after,
+                banks: &banks,
+                choices: &choices,
+            })
+            .unwrap()
+        },
+    ));
+    let mut tick = 2;
+    while outbox_empty(&ledger) {
+        assert!(
+            tick < 30 && !live.parked,
+            "{step}: the live step talks to its NPC"
+        );
+        scene.frame(&mut live, &mut memory, &mut ledger, tick);
+        tick += 1;
+    }
+    assert!(
+        matches!(
+            ack(&mut ledger, tick - 1),
+            HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
         ),
-        snapshot,
+        "{step}: Talk-to first"
+    );
+    scene.page(NPC_PAGE_ROOT, page);
+    scene.frame(&mut live, &mut memory, &mut ledger, tick);
+    assert!(
+        is_continue(&ack(&mut ledger, tick)),
+        "{step}: the step continues its NPC's page"
+    );
+    // Latched until the content writes the next page.
+    scene.snapshot.seed_chat_options(vec![], -1);
+    scene.frame(&mut live, &mut memory, &mut ledger, tick + 1);
+    assert!(outbox_empty(&ledger));
+    let held = memory
+        .cell
+        .quester()
+        .conversation
+        .as_deref()
+        .expect("the live step's conversation is recorded");
+    assert!(!held.carried && held.menu.is_none());
+    assert_eq!(held.npc_index, NPC_INDEX as i32);
+    assert_eq!(held.page.root, NPC_PAGE_ROOT);
+    live.on_stop(StopReason::Operator);
+    operator_stop(&mut memory);
+    memory
+}
+
+/// A runner restarted on `memory` must leave the open menu alone: no
+/// action at all, and the read parks naming the page. Frames run without
+/// the slot's watch, so the runner's own check is what refuses the menu.
+fn assert_parks_without_clicking(scene: &Scene, memory: &mut SlotMemory, label: &str, page: &str) {
+    let mut script = scene.runner();
+    let mut ledger = None;
+    for tick in 30..90 {
+        scene.drive(&mut script, memory, &mut ledger, tick);
+        assert!(
+            outbox_empty(&ledger),
+            "{label}: tick {tick}: a menu the Path cannot prove it owns is never answered or covered"
+        );
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked, "{label}");
+    assert!(script.journal_drain.is_none(), "{label}");
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        format!("journal blocked by modal root {page}"),
+        "{label}"
+    );
+}
+
+fn vampire_scene() -> Scene {
+    scene(
+        super::super::compile::VAMPIRE_JSON,
+        "vampire",
+        api::snapshot::WorldTile {
+            x: 3277,
+            z: 3487,
+            level: 0,
+        },
+        "jollyboar_bartender",
+        true,
     )
+}
+
+/// `stake` / `buy-harlow-beer` at `vampire:2`, stopped right after the step
+/// continued the bartender's "Can I help you?" (`bartender.rs2:2`), with his
+/// beer choice (`bartender.rs2:7`) on the frame after the Stop: the state of
+/// live receipt 089 (`08-start-3.png`).
+fn vampire_stopped_at_beer_menu() -> (Scene, SlotMemory) {
+    let mut scene = vampire_scene();
+    let mut memory = stop_mid_conversation(
+        &mut scene,
+        "vampire:2",
+        "stake",
+        &["Bartender", "Can I help you?"],
+    );
+    scene.menu(MULTI3_ROOT, &BEER_MENU);
+    assert!(
+        watch(&mut memory, &scene, 20),
+        "the menu after the step's page"
+    );
+    (scene, memory)
 }
 
 fn vampire_journal(script: &Quester, snapshot: &mut GameSnapshot, body: &str) {
@@ -2945,54 +3222,49 @@ fn outbox_empty(ledger: &Ledger) -> bool {
         .is_none_or(|ledger| ledger.outbox.is_empty())
 }
 
-/// VAMPIRE-RESTART-0201: a Stop/Start inside `buy-harlow-beer` leaves the
+/// VAMPIRE-RESTART-0201: an operator Stop inside `buy-harlow-beer` leaves the
 /// bartender's choice pending. The journal row's `if_openmain` would close it
 /// and drop the suspended script (`quest_journal.rs2:55`, `Player.ts:1997-2020`),
-/// so the restarted read first answers the authored "I'll have a beer please."
-/// through the dialogue driver, follows the content's pages to the end
-/// (`bartender.rs2:11-18`), and only then clicks the journal row.
+/// so the restarted read first answers the stopped step's own "I'll have a
+/// beer please." through the dialogue driver, follows the content's pages to
+/// the end (`bartender.rs2:11-18`), and only then clicks the journal row.
 #[test]
 fn restart_inside_the_paths_own_choice_finishes_it_then_reads_the_journal() {
-    let (mut script, mut snapshot) = vampire_menu(&BEER_MENU, "jollyboar_bartender", true);
+    let (mut scene, mut memory) = vampire_stopped_at_beer_menu();
+    let mut script = scene.runner();
     let mut ledger = None;
-    drive(&mut script, &snapshot, &mut ledger, 1);
-    assert!(
-        matches!(
-            ack(&mut ledger, 1),
-            HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 1 })
-        ),
-        "the restarted read answers the authored beer choice before any journal click"
+    scene.frame(&mut script, &mut memory, &mut ledger, 21);
+    assert_eq!(
+        answer_of(&ack(&mut ledger, 21)),
+        Some(1),
+        "the restarted read answers the stopped step's beer choice before any journal click"
     );
     assert!(!script.parked);
+    assert!(memory.held().is_none(), "the record answers once");
     // `bartender.rs2:11`: the player's line.
-    snapshot.seed_chat_modal(
-        968,
-        vec!["Player".into(), "I'll have a pint of beer please.".into()],
+    scene.page(
+        PLAYER_PAGE_ROOT,
+        &["Player", "I'll have a pint of beer please."],
     );
-    snapshot.seed_chat_options(vec![], 970);
-    drive(&mut script, &snapshot, &mut ledger, 2);
-    assert!(is_continue(&ack(&mut ledger, 2)));
+    scene.frame(&mut script, &mut memory, &mut ledger, 22);
+    assert!(is_continue(&ack(&mut ledger, 22)));
     // `bartender.rs2:12`: the price.
-    snapshot.seed_chat_modal(
-        4882,
-        vec![
-            "Bartender".into(),
-            "Ok, that'll be two coins please.".into(),
-        ],
+    scene.page(
+        NPC_PAGE_ROOT,
+        &["Bartender", "Ok, that'll be two coins please."],
     );
-    snapshot.seed_chat_options(vec![], 4884);
-    drive(&mut script, &snapshot, &mut ledger, 3);
-    assert!(is_continue(&ack(&mut ledger, 3)));
+    scene.frame(&mut script, &mut memory, &mut ledger, 23);
+    assert!(is_continue(&ack(&mut ledger, 23)));
     // `bartender.rs2:16-18`: two coins out, a beer in, and the script ends.
-    close_chat(&mut snapshot);
-    seed_coins_and_beer(&mut snapshot, 198, 1);
-    let mut tick = 4;
+    close_chat(&mut scene.snapshot);
+    seed_coins_and_beer(&mut scene.snapshot, 198, 1);
+    let mut tick = 24;
     while outbox_empty(&ledger) {
         assert!(
-            tick < 20 && !script.parked,
+            tick < 40 && !script.parked,
             "the read must resume once the chat closes"
         );
-        drive(&mut script, &snapshot, &mut ledger, tick);
+        scene.frame(&mut script, &mut memory, &mut ledger, tick);
         tick += 1;
     }
     let tick = tick - 1;
@@ -3005,61 +3277,335 @@ fn restart_inside_the_paths_own_choice_finishes_it_then_reads_the_journal() {
     );
     vampire_journal(
         &script,
-        &mut snapshot,
+        &mut scene.snapshot,
         "@str@I have spoken to Dr Harlow. He seemed terribly drunk, and",
     );
-    drive(&mut script, &snapshot, &mut ledger, tick + 1);
-    drive(&mut script, &snapshot, &mut ledger, tick + 2);
+    scene.frame(&mut script, &mut memory, &mut ledger, tick + 1);
+    scene.frame(&mut script, &mut memory, &mut ledger, tick + 2);
     assert!(matches!(
         ack(&mut ledger, tick + 2),
         HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
     ));
-    snapshot.seed_main_modal(-1, vec![]);
-    drive(&mut script, &snapshot, &mut ledger, tick + 3);
+    scene.snapshot.seed_main_modal(-1, vec![]);
+    scene.frame(&mut script, &mut memory, &mut ledger, tick + 3);
     assert_eq!(script.stage().unwrap().0.as_ref(), "vampire:2");
     assert!(!script.parked);
 }
 
-/// A menu the restarted read cannot prove is the Path's own stays
-/// fail-closed: no option is clicked and the read parks naming the page.
-/// The cases: text no allowed step authors, with its NPC facing the player;
-/// the authored beer text with no NPC proven to be speaking; and Morgan's
-/// start choice (authored only at `vampire:0`, which the in-progress colour
-/// excludes) with Morgan facing the player.
+/// Only the menu the stopped step's conversation reached, with its speaker
+/// still facing the player, on the same Path, and singled out by that step's
+/// text, is answered. Every other restart stays fail-closed: no action, and
+/// the read parks naming the page. A fresh Start with the bartender facing
+/// the player over his own menu is one of them: nothing is inferred from the
+/// scene.
 #[test]
 fn restart_with_a_menu_the_path_does_not_own_parks_without_clicking() {
-    let cases: [(&[&str], &str, bool); 3] = [
-        (
-            &["Can you sell me a hat?", "Never mind."],
-            "jollyboar_bartender",
-            true,
-        ),
-        (&BEER_MENU, "jollyboar_bartender", false),
-        (
-            &["Ok, I'm up for an adventure.", "I think I need a nap."],
-            "morgan",
-            true,
-        ),
-    ];
-    for (options, speaker, facing) in cases {
-        let (mut script, snapshot) = vampire_menu(options, speaker, facing);
-        let mut ledger = None;
-        for tick in 1..60 {
-            drive(&mut script, &snapshot, &mut ledger, tick);
-            assert!(
-                outbox_empty(&ledger),
-                "{options:?}: tick {tick}: an unproven menu is never answered or covered"
-            );
-            if script.parked {
-                break;
+    let page = "2469 (Select an Option)";
+    let mut scene = vampire_scene();
+    scene.menu(MULTI3_ROOT, &BEER_MENU);
+    assert_parks_without_clicking(
+        &scene,
+        &mut SlotMemory::default(),
+        "a fresh Start with nothing recorded",
+        page,
+    );
+
+    let (mut scene, mut memory) = vampire_stopped_at_beer_menu();
+    scene.facing(false);
+    assert_parks_without_clicking(
+        &scene,
+        &mut memory,
+        "the step's NPC no longer facing the player",
+        page,
+    );
+
+    let (scene, mut memory) = vampire_stopped_at_beer_menu();
+    memory.held().unwrap().digest[0] ^= 1;
+    assert_parks_without_clicking(&scene, &mut memory, "another Path compile", page);
+
+    let (mut scene, mut memory) = vampire_stopped_at_beer_menu();
+    scene.menu(
+        MULTI3_ROOT,
+        &[
+            "Can you sell me a hat?",
+            "Never mind.",
+            "Heard any good gossip?",
+        ],
+    );
+    assert_parks_without_clicking(
+        &scene,
+        &mut memory,
+        "a menu other than the pinned one",
+        page,
+    );
+
+    let mut scene = vampire_scene();
+    let mut memory = stop_mid_conversation(
+        &mut scene,
+        "vampire:2",
+        "stake",
+        &["Bartender", "Can I help you?"],
+    );
+    scene.menu(
+        MULTI3_ROOT,
+        &[
+            "I'll have a beer please.",
+            "I'll have a beer please.",
+            "Heard any good gossip?",
+        ],
+    );
+    assert!(watch(&mut memory, &scene, 20));
+    assert_parks_without_clicking(
+        &scene,
+        &mut memory,
+        "the step's answer matching two options",
+        page,
+    );
+}
+
+/// A logout, relog or world hop ends the session's conversation
+/// (`SlotScript::session_boundary` clears both the slot's carried record and
+/// the cell's); the next Start then leaves the same menu alone.
+#[test]
+fn a_conversation_record_a_relog_cleared_never_answers() {
+    let (scene, mut memory) = vampire_stopped_at_beer_menu();
+    memory.relog();
+    assert_parks_without_clicking(&scene, &mut memory, "relog", "2469 (Select an Option)");
+}
+
+/// Captain Tobias's `p_choice2` (`area_port_sarim/scripts/sailors.rs2:12-17`).
+const SAIL_MENU: [&str; 2] = ["Yes please.", "No, thank you."];
+/// The held Bervirius scroll's `p_choice2`, opened after a message with no NPC
+/// speaker (`quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:862-865`).
+const SCROLL_MENU: [&str; 2] = ["Yes please.", "No thanks."];
+
+/// Port Sarim with Captain Tobias adjacent and still facing the player after
+/// a conversation (`Npc.ts:896-905` keeps `playerfaceclose` within one tile),
+/// 200 coins and the held Bervirius scroll. Pirate's Treasure's
+/// `hunt-smuggle-rum` / `rum-sail-to-karamja` authors Tobias and "Yes please."
+/// (`paths/289/hunt.json:358-378`).
+fn sailor_scene() -> Scene {
+    let mut scene = scene(
+        super::super::compile::HUNT_JSON,
+        "hunt",
+        api::snapshot::WorldTile {
+            x: 3028,
+            z: 3215,
+            level: 0,
+        },
+        "captain_tobias",
+        true,
+    );
+    seed_items(
+        &mut scene.snapshot,
+        &[("coins", 200), ("zqberviriusscroll", 1)],
+    );
+    scene
+}
+
+/// REVIEW-VAMPIRE-RESTART-0201 R1: the scroll's menu beside a stale-facing
+/// Tobias is not the Path's conversation; a fresh Start never answers it.
+#[test]
+fn a_foreign_item_menu_beside_a_stale_facing_sailor_is_never_answered() {
+    let mut scene = sailor_scene();
+    scene.menu(MULTI2_ROOT, &SCROLL_MENU);
+    assert_parks_without_clicking(
+        &scene,
+        &mut SlotMemory::default(),
+        "the scroll's menu beside Tobias",
+        "2459 (Select an Option)",
+    );
+}
+
+/// R1 with a record of Tobias's own conversation, stopped after its step
+/// continued "The trip will cost you 30 coins." (`sailors.rs2:13`): the frames
+/// that end that conversation (his menu, the operator's own "No, thank you.",
+/// the scroll's message) drop the record before the scroll's menu opens; and
+/// a record pinned on his menu does not answer the scroll's menu that
+/// replaced it, even when no frame between them was watched.
+#[test]
+fn a_carried_sailor_conversation_never_answers_the_scroll_menu_after_it() {
+    let carried = |scene: &Scene| {
+        let texts = [
+            "Captain Tobias".to_owned(),
+            "The trip will cost you 30 coins.".to_owned(),
+        ];
+        let mut memory = SlotMemory::default();
+        memory.cell.quester().conversation = Some(Box::new(HeldConversation {
+            path: scene.path.id.clone(),
+            digest: scene.path.digest,
+            step: FactKey::new("hunt-smuggle-rum"),
+            child: Some(FactKey::new("rum-sail-to-karamja")),
+            npc_type: scene.npc_type(),
+            npc_index: NPC_INDEX as i32,
+            options: DialogueOptions {
+                prefer: Arc::from([Arc::from("Yes please.")]),
+                strict: true,
+                chat_only: true,
+                ..DialogueOptions::default()
+            },
+            page: ChatPage::observe(NPC_PAGE_ROOT, -1, &texts, &[], 10).unwrap(),
+            menu: None,
+            carried: false,
+        }));
+        operator_stop(&mut memory);
+        memory
+    };
+    let page = "2459 (Select an Option)";
+
+    let mut scene = sailor_scene();
+    let mut memory = carried(&scene);
+    scene.page(
+        NPC_PAGE_ROOT,
+        &["Captain Tobias", "The trip will cost you 30 coins."],
+    );
+    assert!(watch(&mut memory, &scene, 20), "the step's own page");
+    scene.menu(MULTI2_ROOT, &SAIL_MENU);
+    assert!(watch(&mut memory, &scene, 21), "his menu, pinned");
+    scene.page(PLAYER_PAGE_ROOT, &["Player", "No, thank you."]);
+    assert!(
+        !watch(&mut memory, &scene, 22),
+        "the operator's own answer ends it"
+    );
+    scene.page(
+        519,
+        &["This looks like part of a scroll about someone called Bervirius. Would you like to read it?"],
+    );
+    assert!(!watch(&mut memory, &scene, 23));
+    scene.menu(MULTI2_ROOT, &SCROLL_MENU);
+    assert!(memory.held().is_none());
+    assert_parks_without_clicking(&scene, &mut memory, "after the watch dropped it", page);
+
+    let mut scene = sailor_scene();
+    let mut memory = carried(&scene);
+    scene.menu(MULTI2_ROOT, &SAIL_MENU);
+    assert!(watch(&mut memory, &scene, 21), "his menu, pinned");
+    scene.menu(MULTI2_ROOT, &SCROLL_MENU);
+    assert_parks_without_clicking(&scene, &mut memory, "pinned on his own menu", page);
+}
+
+/// Aggie's first `p_choice4` (`area_draynor/scripts/aggie.rs2:7`).
+const AGGIE_MENU: [&str; 4] = [
+    "What could you make for me?",
+    "Cool, do you turn people into frogs?",
+    "You mad old witch, you can't help me.",
+    "Can you make dyes for me please?",
+];
+/// Her dye `p_choice4` (`aggie.rs2:72`): red, yellow, blue.
+const DYE_MENU: [&str; 4] = [
+    "What do you need to make red dye?",
+    "What do you need to make yellow dye?",
+    "What do you need to make blue dye?",
+    "No thanks, I am happy the colour I am.",
+];
+
+fn aggie_scene() -> Scene {
+    scene(
+        super::super::compile::GOBLIN_DIPLOMACY_JSON,
+        "gobdip",
+        api::snapshot::WorldTile {
+            x: 3086,
+            z: 3258,
+            level: 0,
+        },
+        "aggie",
+        true,
+    )
+}
+
+/// A restarted runner over Aggie's real pages from her first menu
+/// (`aggie.rs2:1-8,20-23,71-84`): each click is acknowledged and the page the
+/// content writes next is shown. Returns the first-menu answer, the dye-menu
+/// answer, and whether the runner parked.
+fn aggie_restart(scene: &mut Scene, memory: &mut SlotMemory) -> (Option<i32>, Option<i32>, bool) {
+    scene.menu(MULTI4_ROOT, &AGGIE_MENU);
+    let mut script = scene.runner();
+    let mut ledger = None;
+    let mut first = None;
+    let mut page = 0;
+    for tick in 30..90 {
+        scene.frame(&mut script, memory, &mut ledger, tick);
+        if !outbox_empty(&ledger) {
+            let effect = ack(&mut ledger, tick);
+            match (page, answer_of(&effect)) {
+                (0, Some(4)) => {
+                    first = Some(4);
+                    scene.page(
+                        PLAYER_PAGE_ROOT,
+                        &["Player", "Can you make dyes for me please?"],
+                    );
+                    page = 1;
+                }
+                (0, Some(option)) => return (Some(option), None, script.parked),
+                (1, None) if is_continue(&effect) => {
+                    scene.page(
+                        NPC_PAGE_ROOT,
+                        &[
+                            "Aggie",
+                            "What sort of dye would you like? Red, yellow or blue?",
+                        ],
+                    );
+                    page = 2;
+                }
+                (2, None) if is_continue(&effect) => {
+                    scene.menu(MULTI4_ROOT, &DYE_MENU);
+                    page = 3;
+                }
+                (3, Some(option)) => return (first, Some(option), script.parked),
+                _ => panic!("tick {tick}: an unexpected action on Aggie's page {page}"),
             }
         }
-        assert!(script.parked, "{options:?}");
-        assert!(script.journal_drain.is_none(), "{options:?}");
-        assert_eq!(
-            script.blocked_failure().message.as_ref(),
-            "journal blocked by modal root 2469 (Select an Option)",
-            "{options:?}"
-        );
+        if script.parked {
+            break;
+        }
     }
+    (first, None, script.parked)
+}
+
+/// REVIEW-VAMPIRE-RESTART-0201 R2: Goblin Diplomacy's red, yellow and blue
+/// Aggie steps share "Can you make dyes for me please?" and then author
+/// different colours (`paths/289/gobdip.json:165-236`). With the earlier dyes
+/// consumed by the orange hand-in (`quest_gobdip.rs2:29-36`) the stage-2 red
+/// and yellow steps look eligible again during the blue stage, and red spends
+/// berries and coins on an unwanted dye (`aggie.rs2:104-115`). A restart must
+/// answer blue or leave the menu alone, never red; with nothing recorded it
+/// leaves it alone.
+#[test]
+fn a_blue_dye_restart_without_a_record_never_answers_red() {
+    let mut scene = aggie_scene();
+    let (first, dye, parked) = aggie_restart(&mut scene, &mut SlotMemory::default());
+    assert_ne!(
+        dye,
+        Some(1),
+        "restart of a blue-dye step adopted the earlier red-dye policy"
+    );
+    assert!(
+        dye == Some(3) || (parked && first.is_none()),
+        "blue, or park without a click: first {first:?}, dye {dye:?}, parked {parked}"
+    );
+}
+
+/// R2 with the record of the stopped step, `acquire-blue-dye` /
+/// `aggie-blue-dye` at `gobdip:3`: the restart answers with that step's own
+/// policy, the shared first choice and then blue.
+#[test]
+fn a_blue_dye_restart_answers_with_the_stopped_steps_own_policy() {
+    let mut scene = aggie_scene();
+    let mut memory = stop_mid_conversation(
+        &mut scene,
+        "gobdip:3",
+        "acquire-blue-dye",
+        &["Aggie", "What can I help you with?"],
+    );
+    assert_eq!(
+        memory
+            .held()
+            .and_then(|held| held.child.as_ref())
+            .map(|child| child.0.as_ref()),
+        Some("aggie-blue-dye")
+    );
+    let (first, dye, parked) = aggie_restart(&mut scene, &mut memory);
+    assert_eq!(first, Some(4));
+    assert_eq!(dye, Some(3), "the stopped step's own blue answer");
+    assert!(!parked);
 }

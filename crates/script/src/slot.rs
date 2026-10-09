@@ -156,6 +156,10 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
+    /// A Quester conversation an operator Stop carried; checked on every
+    /// frame ([`Self::watch_held_conversation`]) and lent to the retained
+    /// cell for each compiled tick.
+    carried_conversation: crate::quester::conversation::CarriedConversation,
     native_runtime: crate::native::ledger::Runtime,
     quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
     pair_evidence: Option<api::quest_progress::EvidenceStamp>,
@@ -284,6 +288,7 @@ impl SlotScript {
             #[cfg(feature = "load")]
             api: None,
             retained: None,
+            carried_conversation: Default::default(),
             native_runtime: Default::default(),
             quest_pairs: None,
             pair_evidence: None,
@@ -944,6 +949,27 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.teardown_api(reason);
         self.native_runtime.revoke();
+        // Operator Stop discards retained memory; the Quester's own
+        // conversation it interrupted moves to the slot first, which the
+        // next Start may finish (`quester::conversation`). Removal carries
+        // nothing. A cell a preparing Start's factory holds has no live step.
+        match reason {
+            StopReason::Operator => {
+                let mut cell = self
+                    .retained
+                    .as_ref()
+                    .and_then(|cell| match cell.try_lock() {
+                        Ok(cell) => Some(cell),
+                        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                            Some(poisoned.into_inner())
+                        }
+                        Err(std::sync::TryLockError::WouldBlock) => None,
+                    });
+                self.carried_conversation
+                    .stop(cell.as_deref_mut().map(RetainedMemory::quester));
+            }
+            _ => self.carried_conversation.clear(),
+        }
         self.retained = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -1049,6 +1075,19 @@ impl SlotScript {
     fn session_boundary(&mut self, reconnect: bool) -> bool {
         self.native_runtime.revoke();
         self.native_runtime.clock.observe(Instant::now(), false);
+        // No conversation survives into another login. A cell a preparing
+        // Start's factory holds is skipped: its runner's first tick drops a
+        // record no live step holds.
+        self.carried_conversation.clear();
+        if let Some(cell) = self.retained.as_ref() {
+            match cell.try_lock() {
+                Ok(mut cell) => cell.quester().conversation = None,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    poisoned.into_inner().quester().conversation = None;
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+        }
         self.on_is_up(false);
         // The same run continues in a new session: evidence, owners and
         // receipts stamped before the boundary cannot meet a fence after it.
@@ -2153,6 +2192,20 @@ impl SlotScript {
             .map_or((0, false), LoadIsolate::execution_sequence)
     }
 
+    /// Every observed frame, whatever the run state, before any script tick:
+    /// a Quester conversation carried by an operator Stop stays only while
+    /// the chat shows the page its step last saw or the one menu after it
+    /// ([`crate::quester::conversation::HeldConversation::observe`]). Any
+    /// other frame drops it, so the next Start cannot answer a menu the Path
+    /// did not open.
+    pub fn watch_held_conversation(
+        &mut self,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+        tick: u64,
+    ) {
+        self.carried_conversation.watch(snapshot, tick);
+    }
+
     /// Poll evidence-ready machines at the latest observed tick. This does
     /// not dispatch a JS game tick, advance real-tick waits or renew the native
     /// event budget. Held runs remain frozen.
@@ -2239,12 +2292,17 @@ impl SlotScript {
                     tick: ctx.tick,
                     sequence: ctx.tick,
                 });
-                run.tick(
+                // The runner reads a carried conversation from the cell, and
+                // one it neither answers nor replaces comes back to the watch.
+                self.carried_conversation.lend(retained.quester());
+                let flow = run.tick(
                     ctx,
                     &mut retained,
                     &mut self.native_runtime,
                     self.quest_pairs.as_deref(),
-                )
+                );
+                self.carried_conversation.reclaim(retained.quester());
+                flow
             }
         };
         if result.is_ok() {

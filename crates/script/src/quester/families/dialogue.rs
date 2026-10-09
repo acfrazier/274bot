@@ -168,6 +168,34 @@ impl DialogueOptions {
             )
         }
     }
+
+    /// The one option these answers pick on a menu from its text alone, for
+    /// a menu this driver did not open: every line rule whose line is on the
+    /// page and every preference that matches an option must match exactly
+    /// one option, and the same one. The fixed `choose` index and the
+    /// last-option fallback never count.
+    fn unique_text_answer(
+        &self,
+        texts: &[String],
+        options: &[api::snapshot::ChatOptionView],
+    ) -> Option<i32> {
+        let rules = self
+            .line_rules
+            .iter()
+            .filter(|rule| texts.iter().any(|text| text_matches(text, &rule.when_line)))
+            .map(|rule| &rule.choose);
+        let mut picked = None;
+        for fragment in rules.chain(self.prefer.iter()) {
+            match matching_option(options, fragment, true) {
+                Ok(None) => {}
+                Ok(Some(index)) if picked.is_none_or(|picked| picked == index) => {
+                    picked = Some(index);
+                }
+                Ok(Some(_)) | Err(()) => return None,
+            }
+        }
+        picked.map(|index| (index + 1) as i32)
+    }
 }
 
 #[derive(Clone)]
@@ -551,6 +579,29 @@ impl Dialogue {
             DialogueTarget::Npc { id, .. } => Some(*id),
             DialogueTarget::Continuation => None,
         }
+    }
+
+    /// The NPC index this driver's own Talk-to opened a conversation with,
+    /// while it is mid-conversation on the chat surface: a page that Talk-to
+    /// opened has been seen or answered, and the driver is driving it or
+    /// waiting on its next page. `None` before the Talk-to's page, for an
+    /// adopted page (no Talk-to), on a Main document, in the closing gap and
+    /// after the end.
+    pub(crate) fn conversation_npc(&self) -> Option<i32> {
+        let driving = matches!(
+            self.phase,
+            Phase::Drive
+                | Phase::WaitContinueAck
+                | Phase::WaitContinueTick
+                | Phase::WaitChoiceAck
+                | Phase::WaitChoiceTicks
+        );
+        (self.npc_index >= 0
+            && self.npc_id().is_some()
+            && self.surface == Surface::Chat
+            && driving
+            && (self.chat_page_owned || self.chat_advanced))
+            .then_some(self.npc_index)
     }
     fn chat_transition_acknowledgement(&self, cx: &ActionContext<'_>) -> ChatTransitionAck {
         let Some(request_id) = self.chat_advance_request_id else {
@@ -1021,23 +1072,11 @@ pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
 }
 
-/// The option `options` answers on the open chat menu when the menu is
-/// `npc_type`'s own conversation, or `None`. The speaker is proven by the
-/// content, not guessed: `~chatnpc` puts the speaking NPC in `playerfaceclose`
-/// toward the player before its page (`interface_chat/scripts/chat.rs2:323-331`,
-/// `NpcOps.ts:206-241`); the NPC faces its target on every turn (`Npc.ts:189`,
-/// `PathingEntity.ts:514-532`) and keeps that mode only within one tile of
-/// the player (`Npc.ts:896-905`). So a choice that follows its page
-/// (`p_choiceN` after `~chatnpc`, e.g. the Jolly Boar bartender's
-/// `bartender.rs2:2-7`) has its NPC adjacent and facing the local player.
-/// The answer comes from the page text alone ([`DialogueOptions::select`]
-/// over [`DialogueOptions::by_text_only`]); a Main modal, a continue page or
-/// a menu the text does not single out is `None`.
-pub(crate) fn owned_menu_answer(
-    cx: &ActionContext<'_>,
-    npc_type: i32,
-    options: &DialogueOptions,
-) -> Option<i32> {
+/// The option a held conversation's step answers on the open chat menu
+/// (`quester::conversation`), or `None`: a Main modal, a continue page, or a
+/// menu its text answers do not single out
+/// ([`DialogueOptions::unique_text_answer`]).
+pub(crate) fn held_menu_answer(cx: &ActionContext<'_>, options: &DialogueOptions) -> Option<i32> {
     let obs = observe(cx)?;
     if !obs.open || obs.r#continue || obs.options.is_empty() {
         return None;
@@ -1045,20 +1084,7 @@ pub(crate) fn owned_menu_answer(
     if observe_main(cx, None)?.open() {
         return None;
     }
-    let player = cx.snapshot().local_player()?.value.player.index;
-    let facing = Some(api::snapshot::ActorTargetView {
-        kind: api::snapshot::ActorKind::Player,
-        index: player,
-    });
-    let speaker = cx.snapshot().npcs()?.value.iter().any(|npc| {
-        npc.r#type == Some(npc_type as usize)
-            && npc.target == facing
-            && npc.distance <= npc.size.max(1)
-    });
-    if !speaker {
-        return None;
-    }
-    options.by_text_only().select(&obs)
+    options.unique_text_answer(obs.texts, obs.options)
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {

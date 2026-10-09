@@ -73,13 +73,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Quester
 
-- Restarting a quest that was stopped mid-conversation no longer stops at
-  the open dialogue with "journal blocked by modal root … (Select an
-  Option)". When the open choice belongs to one of the quest's own steps (for
-  example the bartender's "I'll have a beer please." in Vampire Slayer), the
-  Quester picks that answer, finishes the conversation, and then reads the
-  quest journal. A dialogue it can't match to the quest is still left alone
-  and reported, never clicked.
+- Restarting a quest that you stopped in the middle of one of its own
+  conversations now finishes that conversation before carrying on, instead
+  of stopping at the open choice (for example the bartender's beer in
+  Vampire Slayer). Conversations the quest didn't start, or that changed
+  after you stopped it, are still left alone, and so is any conversation
+  after you log out, relog or change world.
 
 ### Combat
 

@@ -641,6 +641,10 @@ pub(crate) fn script_observe_cached_with_channels(
                 || last.withdraw_load_result_seq != slot.withdraw_load_result().0
                 || last.bank_op_result_seq != slot.bank_op_result().0
         });
+        // Every frame, Running or not and before any tick: a Quester
+        // conversation an operator Stop carried stays only while this chat
+        // is still the page its step left (`quester::conversation`).
+        slot.watch_held_conversation(snapshot, tick);
         // Evidence wakes use the latest observed PLAYER_INFO tick. They poll
         // compiled/API/compat machines, never dispatch another JS game tick.
         // Held runs remain frozen, and frames before the first tick cannot

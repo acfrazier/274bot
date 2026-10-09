@@ -49,6 +49,29 @@ pub(crate) fn with_tick_snapshots<R>(
         |native, later, _| f(native, later),
     )
 }
+/// One tick whose slot retained memory is `retained`, so a test can carry it
+/// across ticks and runner instances as the slot does.
+pub(crate) fn with_tick_retained<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    retained: &mut RetainedMemory,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_memory(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        snapshot,
+        retained,
+        |native, _, _| f(native),
+    )
+}
 pub(crate) fn with_tick_output<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
@@ -185,6 +208,33 @@ fn with_tick_output_reach<R>(
     next_snapshot: &GameSnapshot,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
+    with_tick_memory(
+        snapshot,
+        reach,
+        world_members,
+        ledger,
+        tick,
+        output,
+        bank,
+        next_snapshot,
+        &mut RetainedMemory::default(),
+        f,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn with_tick_memory<R>(
+    snapshot: &GameSnapshot,
+    reach: Option<&api::query::ReachQueryView>,
+    world_members: Truth,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    bank: Option<&api::bank_memory::BankMemory>,
+    next_snapshot: &GameSnapshot,
+    retained: &mut RetainedMemory,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
+) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let pin = data.selected_pin().unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
@@ -196,7 +246,6 @@ fn with_tick_output_reach<R>(
         tick,
         sequence: tick,
     };
-    let mut retained = RetainedMemory::default();
     let mut budget = ledger::TickBudget::default();
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
@@ -210,7 +259,7 @@ fn with_tick_output_reach<R>(
                 .with_reach(reach)
                 .with_world_members(world_members)
                 .with_bank_memory(bank),
-            retained: &mut retained,
+            retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
             wall_now: Instant::now(),

@@ -3,6 +3,7 @@ use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
     StepOutcome, StepRun, StepTraceEvent,
 };
+use super::conversation::{ChatPage, HeldConversation};
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
@@ -1610,14 +1611,14 @@ impl Quester {
     /// - a Chat continue (a zone trigger's player chat, the tail of a finished
     ///   step's conversation): Chat continue clicks only (a menu fails strict;
     ///   a Main scroll, book or modal the page opens ends the drain untouched);
-    /// - a menu that is this Path's own conversation ([`Self::owned_menu`]),
-    ///   left open by a Stop/Start or any other restart inside a talk step:
-    ///   its step's text answers ([`DialogueOptions::by_text_only`]) finish
-    ///   the choice. The journal row's script opens the journal with
-    ///   `if_openmain` (`player/scripts/quest_journal.rs2:55`), and the engine
-    ///   closes the chat modal and drops the suspended `p_choice` script when
-    ///   a main modal opens (`Player.ts:1997-2020`), so the read cannot come
-    ///   first without abandoning the content's own conversation.
+    /// - a menu this Path's own step was answering when an operator Stop
+    ///   interrupted its conversation ([`Self::held_menu`]): that step's
+    ///   text answers ([`DialogueOptions::by_text_only`]) finish the choice.
+    ///   The journal row's script opens the journal with `if_openmain`
+    ///   (`player/scripts/quest_journal.rs2:55`), and the engine closes the
+    ///   chat modal and drops the suspended `p_choice` script when a main
+    ///   modal opens (`Player.ts:1997-2020`), so the read cannot come first
+    ///   without abandoning the content's own conversation.
     ///
     /// Any other menu is not drainable. A read spends at most
     /// `JOURNAL_CONTINUE_DRAINS` drains within `JOURNAL_DRAIN_WINDOW`; a page
@@ -1643,8 +1644,8 @@ impl Quester {
         let (options, owned) = if continue_open {
             (DialogueOptions::chat_continue_only(), None)
         } else {
-            let menu = self.owned_menu(tick)?;
-            (menu.options, Some((menu.step, menu.answer)))
+            let (step, options, answer) = self.held_menu(tick)?;
+            (options, Some((step, answer)))
         };
         if self.journal_drains >= JOURNAL_CONTINUE_DRAINS {
             self.park_on_reopening_continue(
@@ -1661,15 +1662,19 @@ impl Quester {
             Ok(handle) => {
                 let page = chat_page_label(tick);
                 match owned {
-                    Some((step, answer)) => self.trace.record(
-                        tick.output,
-                        api::hostlog::Level::Info,
-                        format_args!(
-                            "quester {}: journal read first finishes step {}'s own choice \
-                             (option {answer}, {page})",
-                            self.path.id.0, step.0
-                        ),
-                    ),
+                    Some((step, answer)) => {
+                        // Answered once: the record is spent.
+                        tick.cx.retained().quester().conversation = None;
+                        self.trace.record(
+                            tick.output,
+                            api::hostlog::Level::Info,
+                            format_args!(
+                                "quester {}: journal read first finishes step {}'s own choice \
+                                 (option {answer}, {page})",
+                                self.path.id.0, step.0
+                            ),
+                        )
+                    }
                     None => self.trace.record(
                         tick.output,
                         api::hostlog::Level::Info,
@@ -1697,57 +1702,112 @@ impl Quester {
         }
     }
 
-    /// The open chat menu as this Path's own conversation, before progress
-    /// is known. Candidates are the prelude and the sequences the progress
-    /// allows: with a known stage, its sequence and the next; with none (a
-    /// restart drops progress), every in-progress stage, since this read runs
-    /// only on the in-progress colour. A step whose `skip_if` is proven true
-    /// would not run, so it owns no menu. Each candidate recognises the menu
-    /// through the dialogue family ([`super::compile::StepPlan::owned_menus`]);
-    /// candidates that answer differently leave it unrecognised.
-    fn owned_menu(&self, tick: &NativeTick<'_>) -> Option<super::compile::OwnedMenu> {
-        let pred = PredicateContext {
-            cx: &tick.cx,
-            pairs: tick.pairs,
-            quests: &self.quests,
-            progress: self.progress_slice(),
-            required_after: tick.cx.evidence(),
-            chat_since: super::families::reach::last_chat_seq(&tick.cx),
-            outcome: None,
-        };
-        let known = self
-            .progress
-            .as_ref()
-            .and_then(|progress| match &progress.stage {
-                Knowledge::Known(stage) => sequence_for_stage(&self.path, &stage.0),
-                Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
-            });
-        let allowed = |(index, sequence): &(usize, &super::compile::CompiledSequence)| match known {
-            Some(current) => *index == current || *index == current + 1,
-            None => {
-                sequence.stage != self.path.colour_not_started
-                    && sequence.stage != self.path.colour_complete
-            }
-        };
-        let steps = self.path.prelude.iter().chain(
-            self.path
-                .sequences
-                .iter()
-                .enumerate()
-                .filter(allowed)
-                .flat_map(|(_, sequence)| sequence.steps.iter()),
-        );
-        let mut menus = Vec::new();
-        for step in steps {
-            if step.skip_if.evaluate(&pred) != Truth::True {
-                step.plan.owned_menus(&pred, &step.id, &mut menus);
-            }
+    /// The open chat menu as the conversation an operator Stop interrupted
+    /// inside this Path's own step (`quester::conversation`): the talking
+    /// step, its text answers and the option they pick. Only when all hold:
+    /// - the record was carried by an operator Stop for this Path and digest,
+    ///   and the slot's frame watch kept it, so the chat has shown nothing
+    ///   but that step's last page and then this one menu;
+    /// - the open menu is that pinned menu (root and option rows);
+    /// - the NPC that step talked to (index and type) is still adjacent and
+    ///   facing the local player, as `~chatnpc` leaves its speaker
+    ///   (`interface_chat/scripts/chat.rs2:323-331`, `Npc.ts:896-905`);
+    /// - that step's text answers single out one option
+    ///   ([`super::families::dialogue::held_menu_answer`]).
+    ///
+    /// Nothing is inferred from the scene or from other steps; anything else
+    /// leaves the menu untouched.
+    fn held_menu(&self, tick: &mut NativeTick<'_>) -> Option<(FactKey, DialogueOptions, i32)> {
+        let snapshot = tick.cx.snapshot();
+        let page = snapshot.chat_modal().and_then(|chat| {
+            ChatPage::observe(
+                chat.value.root,
+                chat.value.continue_component_id,
+                chat.value.texts,
+                chat.value.options,
+                tick.cx.evidence().tick,
+            )
+        })?;
+        let player = snapshot.local_player()?.value.player.index;
+        let npcs = snapshot.npcs()?.value;
+        let held = tick.cx.retained().quester().conversation.as_deref()?;
+        if !held.carried
+            || held.path != self.path.id
+            || held.digest != self.path.digest
+            || !held.menu.is_some_and(|menu| page.menu && page.same(&menu))
+        {
+            return None;
         }
-        let answer = menus.first()?.answer;
-        menus
-            .iter()
-            .all(|menu| menu.answer == answer)
-            .then(|| menus.swap_remove(0))
+        let facing = Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: player,
+        });
+        let speaking = npcs.iter().any(|npc| {
+            i32::try_from(npc.index).is_ok_and(|index| index == held.npc_index)
+                && npc.r#type == usize::try_from(held.npc_type).ok()
+                && npc.target == facing
+                && npc.distance <= npc.size.max(1)
+        });
+        if !speaking {
+            return None;
+        }
+        let step = held.child.as_ref().unwrap_or(&held.step).clone();
+        let options = held.options.clone();
+        let answer = super::families::dialogue::held_menu_answer(&tick.cx, &options)?;
+        Some((step, options, answer))
+    }
+
+    /// Keeps the conversation record (`quester::conversation`) in step with
+    /// this tick: the live step's NPC conversation is recorded with the page
+    /// it saw, so an operator Stop can carry it. A record no live step holds
+    /// is dropped unless a Stop carried it for this Path.
+    fn sync_conversation(&self, tick: &mut NativeTick<'_>) {
+        let live = self.step.as_ref().and_then(|run| {
+            Some((
+                run.conversation()?,
+                run.child_step_id(),
+                &self.current_step()?.id,
+            ))
+        });
+        let page = tick.cx.snapshot().chat_modal().and_then(|chat| {
+            ChatPage::observe(
+                chat.value.root,
+                chat.value.continue_component_id,
+                chat.value.texts,
+                chat.value.options,
+                tick.cx.evidence().tick,
+            )
+        });
+        let record = &mut tick.cx.retained().quester().conversation;
+        let Some((conversation, child, step)) = live else {
+            if record.as_ref().is_some_and(|held| {
+                !held.carried || held.path != self.path.id || held.digest != self.path.digest
+            }) {
+                *record = None;
+            }
+            return;
+        };
+        if let Some(held) = record
+            .as_mut()
+            .filter(|held| !held.carried && held.holds(step, child, conversation.npc_index))
+        {
+            held.saw(page);
+            return;
+        }
+        *record = page.map(|page| {
+            Box::new(HeldConversation {
+                path: self.path.id.clone(),
+                digest: self.path.digest,
+                step: step.clone(),
+                child: child.cloned(),
+                npc_type: conversation.npc_type,
+                npc_index: conversation.npc_index,
+                options: conversation.options.by_text_only(),
+                page,
+                menu: page.menu.then_some(page),
+                carried: false,
+            })
+        });
     }
 
     /// Polls the continue drain. `true` while it runs or after it parked the
@@ -3001,19 +3061,9 @@ impl Quester {
         self.publish(tick.output);
         Ok(ScriptFlow::Continue)
     }
-}
 
-impl Script for Quester {
-    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
-        let declaration = self.path.partner.as_ref()?;
-        Some(super::pair::PairBinding {
-            path: &self.path.id,
-            protocol: &declaration.protocol,
-            digest: &self.path.digest,
-            role: self.path.role.as_ref()?,
-        })
-    }
-    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+    /// One script tick; [`Script::tick`] then syncs the conversation record.
+    fn tick_frame(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
             self.trace = RunTrace::default();
@@ -3159,6 +3209,23 @@ impl Script for Quester {
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         self.advance(tick, 0)
+    }
+}
+
+impl Script for Quester {
+    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
+        let declaration = self.path.partner.as_ref()?;
+        Some(super::pair::PairBinding {
+            path: &self.path.id,
+            protocol: &declaration.protocol,
+            digest: &self.path.digest,
+            role: self.path.role.as_ref()?,
+        })
+    }
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let flow = self.tick_frame(tick);
+        self.sync_conversation(tick);
+        flow
     }
 
     fn interrupt(&mut self, event: Interrupt) {

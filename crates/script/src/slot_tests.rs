@@ -704,6 +704,75 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     assert!(crate::isolate_fb::Snapshot::from_bytes(&first).is_ok());
 }
 
+/// VAMPIRE-RESTART-0201: an operator Stop moves only the Quester conversation
+/// it interrupted to the slot (the retained cell is discarded), the frame
+/// watch drops it at the first page that is neither its step's last page nor
+/// the one menu after it, and a relog or a removal carries nothing.
+#[test]
+fn operator_stop_carries_only_the_quester_conversation_it_interrupted() {
+    use crate::quester::conversation::{ChatPage, HeldConversation};
+    let texts = ["Bartender".to_owned(), "Can I help you?".to_owned()];
+    let live = |slot: &mut SlotScript| {
+        slot.start_test_script(Box::new(Noop), None).unwrap();
+        let mut memory = slot.retained.as_ref().unwrap().lock().unwrap();
+        memory.quester().deaths = 2;
+        memory.quester().conversation = Some(Box::new(HeldConversation {
+            path: api::selected::FactKey::new("vampire"),
+            digest: [0; 32],
+            step: api::selected::FactKey::new("stake"),
+            child: Some(api::selected::FactKey::new("buy-harlow-beer")),
+            npc_type: 1,
+            npc_index: 304,
+            options: Default::default(),
+            page: ChatPage::observe(4882, 4884, &texts, &[], 1).unwrap(),
+            menu: None,
+            carried: false,
+        }));
+    };
+    let carried = |slot: &mut SlotScript| {
+        slot.carried_conversation
+            .get_mut()
+            .is_some_and(|held| held.carried)
+    };
+
+    let mut slot = SlotScript::new();
+    live(&mut slot);
+    slot.stop();
+    assert!(carried(&mut slot), "operator Stop carries the conversation");
+    assert!(slot.retained.is_none(), "and discards the cell");
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, texts.to_vec());
+    snapshot.seed_chat_options(vec![], -1);
+    slot.watch_held_conversation(Some(&snapshot), 2);
+    assert!(carried(&mut slot), "the step's own page, latched");
+    snapshot.seed_chat_modal(968, vec!["Player".into(), "No thank you.".into()]);
+    snapshot.seed_chat_options(vec![], 970);
+    slot.watch_held_conversation(Some(&snapshot), 3);
+    assert!(!carried(&mut slot), "another page ends it");
+
+    let mut slot = SlotScript::new();
+    live(&mut slot);
+    slot.stop();
+    slot.reset_session_work();
+    assert!(!carried(&mut slot), "a relog ends it");
+
+    let mut slot = SlotScript::new();
+    live(&mut slot);
+    slot.stop_removed();
+    assert!(!carried(&mut slot), "a removal carries nothing");
+    assert!(slot.retained.is_none());
+
+    // A preparing Start's factory holds the cell: Stop never waits on it.
+    let mut slot = SlotScript::new();
+    live(&mut slot);
+    let cell = Arc::clone(slot.retained.as_ref().unwrap());
+    let held = cell.lock().unwrap();
+    slot.stop();
+    drop(held);
+    assert!(!carried(&mut slot), "nothing to carry from a busy cell");
+}
+
 /// F14 M12: a post the wedged isolate refused never reached it, so the
 /// delta base must not advance: the next encode is a keyframe.
 #[cfg(feature = "load")]
