@@ -1626,21 +1626,101 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
 
 /** One published row of the selected core's `gather_sites` slice. Rows carry no source field. */
 export type GatherSiteKeyWire = { key: string; count: number };
+/** A walk requirement the Gatherer already enforces. The label names it; no gate reads it. */
+export type GatherSiteRequirement = { kind: 'skill'; skill: SkillName; level: number } | { kind: 'quest'; name: string } | { kind: 'worn'; item: number; name: string };
 export type GatherSiteWire = {
     id: string;
     skill: SkillName;
     label: string;
     region: RegionWire;
     keys: GatherSiteKeyWire[];
+    requires: GatherSiteRequirement[];
 };
 
-/** Per-skill generator report, recorded on the manifest and pinned by verify. */
-export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number };
+/** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
+export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number; renamed: number; required: number; override_dropped: number };
 export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
 export type GatherSitesResult = { rows: GatherSiteWire[]; report: GatherSiteReport };
 
 /** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
 export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
+
+/**
+ * A content-named override of one published site. `id` is the published id and
+ * never changes. `cite` names the content that names or gates the place.
+ * `optional` marks a site only some revisions publish; any other unmatched id
+ * throws. A `name` row renames the label and shows `requires` after the name;
+ * a `drop` row removes the row.
+ */
+export type SiteOverride = { id: string; cite: string; optional?: true } & (
+    | { action: 'name'; name: string; requires: GatherSiteRequirement[] }
+    | { action: 'drop'; reason: string }
+);
+
+const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-93 (zanarisdoor: inv_total(worn, dramen_staff) > 0 & map_members); quest_zanaris.rs2:29-31 (the Dramen tree yields a branch only from %zanaris >= spoken_shamus)';
+const ZANARIS_REQUIRES: GatherSiteRequirement[] = [
+    { kind: 'quest', name: 'Lost City' },
+    { kind: 'worn', item: 772, name: 'Dramen staff' },
+];
+const APE_ATOLL_CITE = 'quests/quest_mm/scripts/quest_mm.rs2:1102-1108 (mm_greegree_zone), 1157-1161 (inv_totalcat worn mm_greegree)';
+const APE_ATOLL_REASON = 'reachable only inside the Ape Atoll greegree zone (monkey form); no mainland route in the pack';
+const DESERT_CITE = 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:425, 465-468 (wearing_slave_robes)';
+const PACK_GAP_REASON = 'unreachable on the 289 pack';
+const PACK_GAP_CITE = 'crates/script/tests/gather_sites_reach.rs (no route from Lumbridge on the 289 nav pack with every requirement removed)';
+
+/** Content-named sites. Only labels change; `drop` removes a row; ids never change. */
+export const SITE_OVERRIDES: readonly SiteOverride[] = [
+    { id: 'mining.park.underground.se', action: 'name', name: 'Mining Guild', requires: [{ kind: 'skill', skill: 'mining', level: 60 }], cite: 'areas/area_falador/scripts/mining_guild.rs2:1-2 (`stat(mining) < 60` guards the guild ladder)' },
+    { id: 'mining.agility_arena.underground.e', action: 'name', name: 'Karamja Volcano', requires: [], cite: 'areas/area_karamja/scripts/misc_locs.rs2:1-2 (volcano_entrance; "Karamja - Volcano rocks")' },
+    { id: 'woodcutting.lumbridge_swamp.underground', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.wizards_tower.underground.ne', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.al_kharid.underground.w', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.lumbridge_swamp.underground.sw', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.bedabin_camp.underground.n', action: 'drop', reason: 'no entrance from the camp in the pack and no tile reachable from Lumbridge', cite: 'areas/area_desert/scripts/bedabin_nomad.rs2:7 ("This is the camp of the Bedabin")' },
+    { id: 'mining.desert_mining_camp.underground', action: 'drop', reason: 'entrance needs slave robes worn; no nav edge yet', cite: DESERT_CITE },
+    { id: 'mining.desert_mining_camp.underground.n', action: 'drop', reason: 'entrance needs slave robes worn; no nav edge yet', cite: DESERT_CITE },
+    { id: 'fishing.kharazi_jungle.s', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'fishing.kharazi_jungle.sw', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.s', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.s.2', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.sw', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.sw.2', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.sw.3', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    { id: 'woodcutting.kharazi_jungle.sw.4', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
+    // The reachability guard (crates/script/tests/gather_sites_reach.rs) found no route from Lumbridge on the 289 nav pack, with every requirement removed, to these rows. They are dropped with the place the content names where it names one.
+    { id: 'woodcutting.toll_gate.underground.sw', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; ${ZANARIS_CITE}` },
+    { id: 'woodcutting.varrock.underground.nw', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; areas/area_varrock/scripts/bartender.rs2:23 ("the Varrock sewers")` },
+    { id: 'woodcutting.palace.underground.ne', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; areas/area_varrock/scripts/bartender.rs2:23 ("the Varrock sewers")` },
+    { id: 'mining.rellekka.nw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_viking/scripts/viking_sailor.rs2:14,40 (the Rellekka ferry to Miscellania needs viking_complete; the pack has no ferry edge)` },
+    { id: 'woodcutting.baxtorian_falls.underground.se', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_waterfall/scripts/hadley.rs2:13 (the Baxtorian Waterfall)` },
+    { id: 'mining.dig_site.underground', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_itexam/scripts/arcaeological_expert.rs2:8-9 (the digsite)` },
+    { id: 'mining.exam_centre.underground', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_itexam/scripts/arcaeological_expert.rs2:8-9 (the digsite)` },
+    { id: 'woodcutting.isafdar.e', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:28 (no human may enter Tirannwn without documentation)` },
+    { id: 'woodcutting.isafdar.se', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:28 (no human may enter Tirannwn without documentation)` },
+    { id: 'woodcutting.troll_stronghold.nw.2', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_troll/scripts/quest_troll.rs2:366 (Troll Stronghold)` },
+    { id: 'fishing.brimhaven.underground.sw', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'fishing.dark_wizards_tower.underground.nw', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.castle_wars.s', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.castle_wars.sw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'mining.grand_tree.underground', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'mining.grand_tree.underground.2', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'mining.necromancer.underground.n', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.kharazi_jungle.s.3', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.kharazi_jungle.s.4', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.rellekka.n', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.rellekka.n.2', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.rellekka.nw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+];
+
+/** A label's name with any `(n)` ordinal and bearing stripped. */
+function siteHeadName(label: string): string {
+    return (label.split(' · ')[0] ?? '').replace(/ \(\d+\)$/, '').replace(/ (?:NE|NW|SE|SW|N|E|S|W)\d+$/, '');
+}
+
+/** The short requirement note a label shows: `Mining 60`, a quest name, or a worn item name. */
+function requirementText(req: GatherSiteRequirement): string {
+    return req.kind === 'skill' ? `${req.skill.charAt(0).toUpperCase()}${req.skill.slice(1)} ${req.level}` : req.name;
+}
 
 const SITE_GAP = 12;
 const SITE_SPRAWL_EXTENT = 48;
@@ -1808,9 +1888,9 @@ function siteBoxOf(tiles: SiteTile[]): SiteBox {
  * from the family, the `gather_resources` rows (a site's keys are exactly the
  * picker values), the content label and fishing-NPC inputs, and the bank
  * catalog. The family wire is untouched: movement boxes are reused, never
- * re-derived.
+ * re-derived. Overrides then name, require or drop published rows by id.
  */
-export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[]): GatherSitesResult {
+export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], overrides: readonly SiteOverride[] = SITE_OVERRIDES): GatherSitesResult {
     const keyMeta = new Map<string, { skill: SkillName; label: string }>();
     for (const row of resources) {
         if (keyMeta.has(row.key)) throw new Error(`gather_sites: duplicate resource key ${row.key}`);
@@ -1927,12 +2007,11 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
         }
     }
-    const rows: GatherSiteWire[] = [];
-    const report: GatherSiteReport = {
-        woodcutting: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
-        mining: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
-        fishing: { sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0 },
-    };
+    let rows: GatherSiteWire[] = [];
+    const zeroSkill = (): GatherSiteSkillReport => ({ sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
+    const report: GatherSiteReport = { woodcutting: zeroSkill(), mining: zeroSkill(), fishing: zeroSkill() };
+    // Fragment sites (`extra`) by id, so the published count follows the rows that survive overrides.
+    const extraIds = new Set<string>();
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
         const members = new Map<string, SiteTile>();
         for (const [key, tiles] of perKey) {
@@ -2125,14 +2204,68 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             group.forEach((draft, index) => {
                 const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
                 const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
+                if (draft.extra) extraIds.add(id);
                 rows.push({
                     id, skill, label,
                     region: { min_x: draft.minX, min_z: draft.minZ, max_x: draft.maxX, max_z: draft.maxZ, level: draft.level },
                     keys: draft.keys,
+                    requires: [],
                 });
             });
         }
-        report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox, extra: drafts.filter((draft) => draft.extra).length };
+        Object.assign(report[skill], { direct, dropped, outside_box: outsideBox });
+    }
+    // Overrides name, require or drop published rows by id. Ids are fixed by now, so a drop never renumbers a neighbour.
+    const overridden = new Set<string>();
+    const droppedIds = new Set<string>();
+    const renames: { row: GatherSiteWire; name: string; requires: GatherSiteRequirement[] }[] = [];
+    for (const override of overrides) {
+        const row = rows.find((candidate) => candidate.id === override.id);
+        if (row === undefined) {
+            if (override.optional === true) continue;
+            throw new Error(`gather_sites: override ${override.id} names no published site (${override.cite})`);
+        }
+        if (overridden.has(override.id)) throw new Error(`gather_sites: ${override.id} has two overrides`);
+        overridden.add(override.id);
+        if (override.action === 'drop') droppedIds.add(override.id);
+        else renames.push({ row, name: override.name, requires: override.requires });
+    }
+    // Same-named overrides in one skill take `(n)` from the second on, as duplicate labels do; no unmatched site may already carry the name.
+    const groups = new Map<string, typeof renames>();
+    for (const entry of renames) {
+        const key = `${entry.row.skill}\u0000${entry.name}`;
+        const group = groups.get(key);
+        if (group === undefined) groups.set(key, [entry]);
+        else group.push(entry);
+    }
+    for (const group of groups.values()) {
+        group.sort((a, b) => compareCodepoint(a.row.id, b.row.id));
+        const first = group[0];
+        if (first === undefined) continue;
+        for (const row of rows) {
+            if (row.skill === first.row.skill && !overridden.has(row.id) && siteHeadName(row.label) === first.name) {
+                throw new Error(`gather_sites: ${row.id} already carries the override name ${first.name}`);
+            }
+        }
+        group.forEach((entry, index) => {
+            const ordinal = index === 0 ? '' : ` (${index + 1})`;
+            const reqs = entry.requires.map(requirementText).join(', ');
+            const contents = entry.row.label.slice(entry.row.label.indexOf(' · ') + ' · '.length);
+            entry.row.label = `${entry.name}${reqs === '' ? '' : ` (${reqs})`}${ordinal} · ${contents}`;
+            entry.row.requires = entry.requires;
+        });
+    }
+    const droppedRows = rows.filter((row) => droppedIds.has(row.id));
+    rows = rows.filter((row) => !droppedIds.has(row.id));
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const published = rows.filter((row) => row.skill === skill);
+        Object.assign(report[skill], {
+            sites: published.length,
+            extra: published.filter((row) => extraIds.has(row.id)).length,
+            renamed: renames.filter((entry) => entry.row.skill === skill).length,
+            required: published.filter((row) => row.requires.length > 0).length,
+            override_dropped: droppedRows.filter((row) => row.skill === skill).length,
+        });
     }
     // Sort by place names so plain names precede their bearing siblings.
     rows.sort((a, b) => {
