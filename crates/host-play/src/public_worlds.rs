@@ -38,6 +38,12 @@ impl Default for PublicWorlds {
                     port: 443,
                     node_id: 11,
                 },
+                PublicWorld {
+                    number: 3,
+                    host: "w3.rs2b2t.com".into(),
+                    port: 443,
+                    node_id: 12,
+                },
             ],
         }
     }
@@ -282,9 +288,24 @@ mod tests {
         let path = dir.join("worlds.json");
         let _ = std::fs::remove_file(&path);
         let defaults = PublicWorlds::load(&path).unwrap();
-        assert_eq!(defaults.worlds.len(), 2);
-        assert_eq!(PublicWorlds::load(&path).unwrap().worlds[1].node_id, 11);
-        std::fs::write(&path, r#"{"schema_version":1,"worlds":[{"number":1,"host":"bad/path","port":443,"node_id":10}]}"#).unwrap();
+        for (number, host, node_id) in [
+            (1, "w1.rs2b2t.com", 10),
+            (2, "w2.rs2b2t.com", 11),
+            (3, "w3.rs2b2t.com", 12),
+        ] {
+            let world = defaults.by_number(number).unwrap();
+            assert_eq!(
+                (world.host.as_str(), world.port, world.node_id),
+                (host, 443, node_id)
+            );
+        }
+        let loaded = PublicWorlds::load(&path).unwrap();
+        assert_eq!(loaded.by_number(3), defaults.by_number(3));
+        std::fs::write(
+            &path,
+            r#"{"schema_version":1,"worlds":[{"number":1,"host":"bad/path","port":443,"node_id":10}]}"#,
+        )
+        .unwrap();
         assert!(PublicWorlds::load(&path)
             .unwrap_err()
             .contains(path.to_str().unwrap()));
@@ -294,18 +315,40 @@ mod tests {
     #[test]
     fn full_round_rotates_and_pinned_waits() {
         let worlds = PublicWorlds::default();
-        let mut auto = WorldRound::new(&worlds, None, Some(2)).unwrap();
-        assert_eq!(auto.index, 1);
-        assert_eq!(auto.on_login_error(7, 2), WorldErrorStep::SwitchNow);
-        assert_eq!(auto.index, 0);
-        assert_eq!(auto.on_login_error(7, 2), WorldErrorStep::SwitchAfterWait);
-        assert_eq!(auto.index, 1);
+        let mut auto = WorldRound::new(&worlds, None, None).unwrap();
+        let mut visited = vec![worlds.worlds[auto.index].number];
+        for (number, step) in [
+            (2, WorldErrorStep::SwitchNow),
+            (3, WorldErrorStep::SwitchNow),
+            (1, WorldErrorStep::SwitchAfterWait),
+        ] {
+            assert_eq!(auto.on_login_error(7, worlds.worlds.len()), step);
+            let current = worlds.worlds[auto.index].number;
+            assert_eq!(current, number);
+            visited.push(current);
+        }
+        assert_eq!(visited, vec![1, 2, 3, 1]);
+
         let mut pinned = WorldRound::new(&worlds, Some(2), None).unwrap();
-        assert_eq!(pinned.on_login_error(7, 2), WorldErrorStep::Stay);
-        assert_eq!(pinned.index, 1);
-        assert_eq!(auto.on_login_error(7, 2), WorldErrorStep::SwitchNow);
-        assert_eq!(auto.on_login_error(6, 2), WorldErrorStep::Stay);
-        assert_eq!(auto.on_login_error(7, 2), WorldErrorStep::SwitchNow);
+        assert_eq!(
+            pinned.on_login_error(7, worlds.worlds.len()),
+            WorldErrorStep::Stay
+        );
+        assert_eq!(worlds.worlds[pinned.index].number, 2);
+        assert_eq!(
+            auto.on_login_error(7, worlds.worlds.len()),
+            WorldErrorStep::SwitchNow
+        );
+        assert_eq!(worlds.worlds[auto.index].number, 2);
+        assert_eq!(
+            auto.on_login_error(6, worlds.worlds.len()),
+            WorldErrorStep::Stay
+        );
+        assert_eq!(
+            auto.on_login_error(7, worlds.worlds.len()),
+            WorldErrorStep::SwitchNow
+        );
+        assert_eq!(worlds.worlds[auto.index].number, 3);
     }
     #[test]
     fn wrong_key_refetches_once_and_failure_uses_baked_key() {

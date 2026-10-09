@@ -47,6 +47,19 @@ impl LaunchWorld {
     }
 }
 
+impl From<PublicWorld> for LaunchWorld {
+    fn from(world: PublicWorld) -> Self {
+        Self {
+            number: world.number,
+            asset_host: world.host.clone(),
+            asset_port: world.port,
+            host: world.host,
+            port: world.port,
+            node_id: world.node_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LoginKey {
@@ -106,14 +119,7 @@ impl Servers {
         let rs2b2t = PublicWorlds::default()
             .worlds
             .into_iter()
-            .map(|world| LaunchWorld {
-                number: world.number,
-                asset_host: world.host.clone(),
-                asset_port: world.port,
-                host: world.host,
-                port: world.port,
-                node_id: world.node_id,
-            })
+            .map(LaunchWorld::from)
             .collect();
         let local = |number, revision, game_port, asset_port, vault: &str| LaunchProfile {
             name: format!("local-{revision}"),
@@ -152,12 +158,23 @@ impl Servers {
     }
 
     pub fn load(bot_dir: &Path) -> Result<Self, String> {
-        Self::load_with_before_publish(bot_dir, || {})
+        Self::load_with_before_publish_and_warning(bot_dir, || {}, |warning| eprintln!("{warning}"))
     }
 
+    #[cfg(test)]
     fn load_with_before_publish(
         bot_dir: &Path,
         before_publish: impl FnOnce(),
+    ) -> Result<Self, String> {
+        Self::load_with_before_publish_and_warning(bot_dir, before_publish, |warning| {
+            eprintln!("{warning}")
+        })
+    }
+
+    fn load_with_before_publish_and_warning(
+        bot_dir: &Path,
+        before_publish: impl FnOnce(),
+        mut warning: impl FnMut(String),
     ) -> Result<Self, String> {
         let path = bot_dir.join("servers.json");
         let bytes = match std::fs::read(&path) {
@@ -178,18 +195,7 @@ impl Servers {
                         .iter_mut()
                         .find(|profile| profile.name == "rs2b2t")
                         .expect("rs2b2t builtin");
-                    profile.worlds = worlds
-                        .worlds
-                        .into_iter()
-                        .map(|world| LaunchWorld {
-                            number: world.number,
-                            asset_host: world.host.clone(),
-                            asset_port: world.port,
-                            host: world.host,
-                            port: world.port,
-                            node_id: world.node_id,
-                        })
-                        .collect();
+                    profile.worlds = worlds.worlds.into_iter().map(LaunchWorld::from).collect();
                     eprintln!(
                         "host-play: imported {} into {}; servers.json is now authoritative",
                         worlds_path.display(),
@@ -209,11 +215,128 @@ impl Servers {
             }
             Err(error) => return Err(format!("servers {}: {error}", path.display())),
         };
-        let servers: Self = serde_json::from_slice(&bytes)
+        let mut servers: Self = serde_json::from_slice(&bytes)
             .map_err(|error| format!("servers {}: {error}", path.display()))?;
         servers
             .validate()
             .map_err(|error| format!("servers {}: {error}", path.display()))?;
+
+        let backup_path = bot_dir.join("servers.json.pre-0.2.0.1");
+        match std::fs::symlink_metadata(&backup_path) {
+            Ok(_) => return Ok(servers),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                warning(format!(
+                    "host-play: warning: could not inspect {} while upgrading {}; keeping the existing roster: {error}",
+                    backup_path.display(),
+                    path.display()
+                ));
+                return Ok(servers);
+            }
+        }
+
+        let Some(profile_index) = servers.servers.iter().position(|profile| {
+            profile.name.eq_ignore_ascii_case("rs2b2t")
+                && is_previous_rs2b2t_roster(&profile.worlds)
+        }) else {
+            return Ok(servers);
+        };
+
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                warning(format!(
+                    "host-play: warning: skipping the World 3 upgrade for symlinked {}; keeping the existing roster",
+                    path.display()
+                ));
+                return Ok(servers);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warning(format!(
+                    "host-play: warning: could not inspect {} while upgrading; keeping the existing roster: {error}",
+                    path.display()
+                ));
+                return Ok(servers);
+            }
+        }
+
+        let original_world_count = servers.servers[profile_index].worlds.len();
+        let world_three = PublicWorlds::default()
+            .worlds
+            .into_iter()
+            .find(|world| world.number == 3)
+            .expect("World 3 builtin");
+        servers.servers[profile_index]
+            .worlds
+            .push(world_three.into());
+        if let Err(error) = servers.validate() {
+            servers.servers[profile_index]
+                .worlds
+                .truncate(original_world_count);
+            warning(format!(
+                "host-play: warning: could not validate the World 3 upgrade for {}; keeping the existing roster: {error}",
+                path.display()
+            ));
+            return Ok(servers);
+        }
+
+        let json = serde_json::to_vec_pretty(&servers).expect("serializable servers");
+        let temporary_file = match create_temporary_server_file(&path, &json) {
+            Ok(temporary_file) => temporary_file,
+            Err(error) => {
+                servers.servers[profile_index]
+                    .worlds
+                    .truncate(original_world_count);
+                warning(format!(
+                    "host-play: warning: could not write the World 3 upgrade for {}; keeping the existing roster: {error}",
+                    path.display()
+                ));
+                return Ok(servers);
+            }
+        };
+
+        match create_new_server_file(&backup_path, &bytes, || {}) {
+            Ok(true) => {}
+            Ok(false) => {
+                servers.servers[profile_index]
+                    .worlds
+                    .truncate(original_world_count);
+                return Ok(servers);
+            }
+            Err(error) => {
+                servers.servers[profile_index]
+                    .worlds
+                    .truncate(original_world_count);
+                warning(format!(
+                    "host-play: warning: could not back up {}; keeping the existing roster: {error}",
+                    path.display()
+                ));
+                return Ok(servers);
+            }
+        }
+
+        if let Err(error) = temporary_file.publish(&path) {
+            servers.servers[profile_index]
+                .worlds
+                .truncate(original_world_count);
+            let backup_cleanup_error = match std::fs::remove_file(&backup_path) {
+                Ok(()) => None,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => Some(error),
+            };
+            if let Some(cleanup_error) = backup_cleanup_error {
+                warning(format!(
+                    "host-play: warning: could not publish the World 3 upgrade for {}; keeping the existing roster: {error}; could not remove backup marker {}: {cleanup_error}",
+                    path.display(),
+                    backup_path.display()
+                ));
+            } else {
+                warning(format!(
+                    "host-play: warning: could not publish the World 3 upgrade for {}; keeping the existing roster: {error}",
+                    path.display()
+                ));
+            }
+        }
         Ok(servers)
     }
 
@@ -291,6 +414,37 @@ impl Servers {
     }
 }
 
+fn is_previous_rs2b2t_roster(worlds: &[LaunchWorld]) -> bool {
+    let [world_one, world_two] = worlds else {
+        return false;
+    };
+    matches_previous_world(world_one, 1, "w1.rs2b2t.com", 10)
+        && matches_previous_world(world_two, 2, "w2.rs2b2t.com", 11)
+}
+
+fn matches_previous_world(world: &LaunchWorld, number: u16, host: &str, node_id: i32) -> bool {
+    world.number == number
+        && world.host == host
+        && world.port == 443
+        && world.node_id == node_id
+        && world.asset_host == host
+        && world.asset_port == 443
+}
+
+struct TemporaryServerFile(PathBuf);
+
+impl TemporaryServerFile {
+    fn publish(self, path: &Path) -> std::io::Result<()> {
+        std::fs::rename(&self.0, path)
+    }
+}
+
+impl Drop for TemporaryServerFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn create_new_server_file(
     path: &Path,
     contents: &[u8],
@@ -321,20 +475,16 @@ fn create_new_server_file(
             Err(error) => return Err(error),
         }
     };
+    let temporary_file = TemporaryServerFile(temp_path);
 
     let write_result = temp_file.write_all(contents);
     drop(temp_file);
-    if let Err(error) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(error);
-    }
+    write_result?;
 
     before_publish();
     // The complete sibling is linked into place atomically; unlike rename,
     // hard_link fails if another initializer or operator already created path.
-    let publish_result = std::fs::hard_link(&temp_path, path);
-    let _ = std::fs::remove_file(&temp_path);
-    match publish_result {
+    match std::fs::hard_link(&temporary_file.0, path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         // Filesystems without hard links (FAT/exFAT, some shares) keep the
@@ -344,13 +494,66 @@ fn create_new_server_file(
     }
 }
 
+fn create_temporary_server_file(
+    path: &Path,
+    contents: &[u8],
+) -> std::io::Result<TemporaryServerFile> {
+    static NEXT_TEMP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    let permissions = std::fs::metadata(path)?.permissions();
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().expect("servers.json has a file name");
+    let (temp_path, mut temp_file) = loop {
+        let sequence = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_path = parent.join(format!(
+            ".{}.upgrade.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            sequence
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => break (temp_path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    let temporary_file = TemporaryServerFile(temp_path);
+
+    let write_result = (|| {
+        temp_file.write_all(contents)?;
+        temp_file.sync_all()?;
+        temp_file.set_permissions(permissions)?;
+        temp_file.sync_all()
+    })();
+    drop(temp_file);
+    write_result?;
+    Ok(temporary_file)
+}
+
 fn create_new_in_place(path: &Path, contents: &[u8]) -> std::io::Result<bool> {
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
     {
-        Ok(mut file) => file.write_all(contents).map(|()| true),
+        Ok(mut file) => {
+            let write_result = file.write_all(contents);
+            drop(file);
+            match write_result {
+                Ok(()) => Ok(true),
+                Err(error) => {
+                    let _ = std::fs::remove_file(path);
+                    Err(error)
+                }
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error),
     }
@@ -476,5 +679,227 @@ mod tests {
             operator_file,
             "initialization must not replace or rewrite an existing file"
         );
+    }
+
+    fn legacy_builtin_servers() -> Servers {
+        let mut servers = Servers::builtins();
+        servers
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "rs2b2t")
+            .unwrap()
+            .worlds
+            .truncate(2);
+        servers
+    }
+
+    #[test]
+    fn fresh_home_gets_all_three_rs2b2t_worlds() {
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        let loaded = Servers::load(&bot_dir).unwrap();
+        let profile = loaded.resolve("rs2b2t").unwrap();
+        for (number, host, node_id) in [
+            (1, "w1.rs2b2t.com", 10),
+            (2, "w2.rs2b2t.com", 11),
+            (3, "w3.rs2b2t.com", 12),
+        ] {
+            let world = profile
+                .worlds
+                .iter()
+                .find(|world| world.number == number)
+                .unwrap();
+            assert_eq!(
+                (
+                    world.host.as_str(),
+                    world.port,
+                    world.node_id,
+                    world.asset_host.as_str(),
+                    world.asset_port
+                ),
+                (host, 443, node_id, host, 443)
+            );
+        }
+        assert_eq!(loaded, Servers::builtins());
+        assert!(!bot_dir.join("servers.json.pre-0.2.0.1").exists());
+    }
+
+    #[test]
+    fn legacy_builtin_roster_is_extended_once_with_original_backup() {
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        std::fs::create_dir_all(&bot_dir).unwrap();
+        let path = bot_dir.join("servers.json");
+        let backup_path = bot_dir.join("servers.json.pre-0.2.0.1");
+        let old_servers = legacy_builtin_servers();
+        let other_profiles = old_servers.servers[1..].to_vec();
+        let original = serde_json::to_vec_pretty(&old_servers).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        let upgraded = Servers::load(&bot_dir).unwrap();
+        let expected_worlds = Servers::builtins().resolve("rs2b2t").unwrap().worlds;
+        assert_eq!(upgraded.resolve("rs2b2t").unwrap().worlds, expected_worlds);
+        assert_eq!(upgraded.servers[1..], other_profiles);
+        assert_eq!(std::fs::read(&backup_path).unwrap(), original);
+        let upgraded_bytes = std::fs::read(&path).unwrap();
+        assert_ne!(upgraded_bytes, original);
+
+        let loaded_again = Servers::load(&bot_dir).unwrap();
+        assert_eq!(loaded_again, upgraded);
+        assert_eq!(std::fs::read(&path).unwrap(), upgraded_bytes);
+        assert_eq!(std::fs::read(&backup_path).unwrap(), original);
+        let mut edited = serde_json::from_slice::<Servers>(&upgraded_bytes).unwrap();
+        edited
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "rs2b2t")
+            .unwrap()
+            .worlds
+            .retain(|world| world.number != 3);
+        edited.validate().unwrap();
+        let mut removed_world_bytes = serde_json::to_vec_pretty(&edited).unwrap();
+        removed_world_bytes.push(b'\n');
+        std::fs::write(&path, &removed_world_bytes).unwrap();
+
+        let loaded_after_removal = Servers::load(&bot_dir).unwrap();
+        assert_eq!(loaded_after_removal, edited);
+        assert_eq!(
+            loaded_after_removal.resolve("rs2b2t").unwrap().worlds.len(),
+            2
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), removed_world_bytes);
+        assert_ne!(std::fs::read(&backup_path).unwrap(), removed_world_bytes);
+    }
+
+    #[test]
+    fn migration_write_failure_warns_and_keeps_legacy_roster() {
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        std::fs::create_dir_all(&bot_dir).unwrap();
+        let path = bot_dir.join("servers.json");
+        let backup_path = bot_dir.join("servers.json.pre-0.2.0.1");
+        let legacy = legacy_builtin_servers();
+        let original = serde_json::to_vec_pretty(&legacy).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        let original_permissions = std::fs::metadata(&bot_dir).unwrap().permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_readonly(true);
+        std::fs::set_permissions(&bot_dir, read_only_permissions).unwrap();
+
+        let mut warnings = Vec::new();
+        let loaded = Servers::load_with_before_publish_and_warning(
+            &bot_dir,
+            || {},
+            |warning| warnings.push(warning),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bot_dir, original_permissions).unwrap();
+
+        assert_eq!(loaded, legacy);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(!backup_path.exists());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("warning:"));
+        assert!(warnings[0].contains("keeping the existing roster"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_legacy_servers_file_is_not_replaced() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        std::fs::create_dir_all(&bot_dir).unwrap();
+        let target = root.0.join("servers.json.target");
+        let path = bot_dir.join("servers.json");
+        let backup_path = bot_dir.join("servers.json.pre-0.2.0.1");
+        let legacy = legacy_builtin_servers();
+        let original = serde_json::to_vec_pretty(&legacy).unwrap();
+        std::fs::write(&target, &original).unwrap();
+        symlink(&target, &path).unwrap();
+
+        let mut warnings = Vec::new();
+        let loaded = Servers::load_with_before_publish_and_warning(
+            &bot_dir,
+            || {},
+            |warning| warnings.push(warning),
+        )
+        .unwrap();
+
+        assert_eq!(loaded, legacy);
+        assert!(std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), original);
+        assert!(!backup_path.exists());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("symlinked"));
+    }
+
+    #[test]
+    fn failed_atomic_publish_removes_temporary_file() {
+        let root = TempRoot::new();
+        let path = root.0.join("servers.json");
+        std::fs::create_dir(&path).unwrap();
+
+        let temporary_file = create_temporary_server_file(&path, b"replacement").unwrap();
+        assert!(temporary_file.publish(&path).is_err());
+        let remaining = std::fs::read_dir(&root.0)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].file_name(), "servers.json");
+    }
+    #[test]
+    fn customized_legacy_rosters_are_left_byte_for_byte_untouched() {
+        let root = TempRoot::new();
+        for case in ["reordered", "removed", "custom-host"] {
+            let bot_dir = root.0.join(case);
+            std::fs::create_dir_all(&bot_dir).unwrap();
+            let path = bot_dir.join("servers.json");
+            let backup_path = bot_dir.join("servers.json.pre-0.2.0.1");
+            let mut customized = legacy_builtin_servers();
+            let profile = customized
+                .servers
+                .iter_mut()
+                .find(|profile| profile.name == "rs2b2t")
+                .unwrap();
+            match case {
+                "reordered" => profile.worlds.swap(0, 1),
+                "removed" => {
+                    profile.worlds.remove(1);
+                }
+                "custom-host" => profile.worlds[0].host = "custom.example".into(),
+                _ => unreachable!(),
+            }
+            customized.validate().unwrap();
+            let original = serde_json::to_vec_pretty(&customized).unwrap();
+            std::fs::write(&path, &original).unwrap();
+
+            let loaded = Servers::load(&bot_dir).unwrap();
+            assert_eq!(loaded, customized, "{case}");
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{case}");
+            assert!(!backup_path.exists(), "{case}");
+        }
+    }
+
+    #[test]
+    fn invalid_servers_file_is_not_backed_up_or_rewritten() {
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        std::fs::create_dir_all(&bot_dir).unwrap();
+        let path = bot_dir.join("servers.json");
+        let mut invalid = legacy_builtin_servers();
+        invalid.servers[0].worlds[0].port = 0;
+        let original = serde_json::to_vec_pretty(&invalid).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        assert!(Servers::load(&bot_dir).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(!bot_dir.join("servers.json.pre-0.2.0.1").exists());
     }
 }
