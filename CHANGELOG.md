@@ -85,8 +85,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - Starting a fishing Gatherer from outside the fishing area (such as
   Ardougne for the Fishing Guild) no longer fails straight away with
-  "walk failed". The first walk now uses a stand it can actually arrive
-  at, the same way a return from the bank already did.
+  "walk failed". The first walk now uses the nearest stand it can
+  actually arrive at, the same way a return from the bank already did.
 - Bank trips no longer fail with "bank transfer did not settle" after the
   first or last item goes in. The bot sometimes clicked an item a second time
   because the bank's inventory panel still showed it for a moment after it
