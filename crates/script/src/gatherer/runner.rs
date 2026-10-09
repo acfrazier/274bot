@@ -1438,6 +1438,16 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat,
                 fishing: &mut self.scratch.fishing,
+                collision: {
+                    #[cfg(feature = "load")]
+                    {
+                        tick.frame.compiled.collision
+                    }
+                    #[cfg(not(feature = "load"))]
+                    {
+                        None
+                    }
+                },
             },
         );
         self.zone_gated = selected.zone_gated;
@@ -1456,6 +1466,18 @@ impl Gatherer {
             }
             None if self.hazard_escape.is_some() => self.escape_hazard(tick),
             None => match selected.outcome {
+                Selection::NoStand => {
+                    let place = self
+                        .prepared
+                        .site()
+                        .map(|site| site.label.as_str())
+                        .filter(|label| !label.is_empty())
+                        .unwrap_or("the fishing area");
+                    self.fail(
+                        "resource-unavailable",
+                        format!("no usable observation stand at {place}"),
+                    );
+                }
                 Selection::Absent { absent } => {
                     self.absent = absent;
                     self.fail(

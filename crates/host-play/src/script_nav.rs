@@ -252,6 +252,22 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
     }
 }
 
+/// Gating facts for a native walk.
+///
+/// Reuse the arm's observe-time [`WorldState`] when it exists (Starting and
+/// Running frames already built it from this snapshot, including profile
+/// membership). Rebuild from the snapshot only when the arm is `None` — a
+/// Starting-frame walk if observe did not pass facts, or a test that arms
+/// with `state: None`. That rebuild is what lets posted skills open a
+/// skill-gated door (Fishing Guild 68) instead of routing on the fail-closed
+/// empty state.
+pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<WorldState>) -> WorldState {
+    match armed {
+        Some(state) => state,
+        None => WorldState::from_snapshot(snapshot),
+    }
+}
+
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
     api::host_log!(
         api::hostlog::Category::NavTrace,
@@ -472,6 +488,7 @@ impl ScriptWalkArm {
                 return;
             }
         }
+        self.state = Some(route_world_state(snapshot, self.state.take()));
         if let (Some(provider), Some(family)) = (request.evidence, world.graph.quest_family) {
             self.state
                 .get_or_insert_with(Default::default)
@@ -651,6 +668,7 @@ impl ScriptWalkArm {
             );
             return false;
         }
+        self.state = Some(route_world_state(snapshot, self.state.take()));
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();

@@ -79,6 +79,16 @@ pub(super) fn project_slot_frame_host_move_owned(
     crate::script_runtime::script_movement_owned(script_state) || nav_owned
 }
 
+/// Starting frames can dispatch the first native walk before the outer
+/// pump's Running flag flips; those walks still need snapshot stats
+/// (Fishing Guild door is Fishing 68).
+pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunState>) -> bool {
+    matches!(
+        script_state,
+        Some(script::RunState::Starting | script::RunState::Running)
+    )
+}
+
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
 pub(super) fn take_slot_frame_input(
@@ -1493,6 +1503,7 @@ fn spawn_slot_thread(
                             );
                             let script_state = script_frame_state(&slot_scripts, name);
                             let running = script_state == Some(script::RunState::Running);
+                            let nav_facts = script_state_builds_nav_facts(script_state);
                             let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
                                 bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
                                 bot.route.is_some() || bot.bank_fetch.is_some(),
@@ -1572,7 +1583,7 @@ fn spawn_slot_thread(
                             let nav_state = nav_world_state_for_observe(
                                 here,
                                 &nav_snapshot,
-                                running,
+                                nav_facts,
                                 nav_armed,
                                 map_members,
                             );
@@ -1727,7 +1738,7 @@ fn spawn_slot_thread(
                                         false,
                                         false,
                                         nav_world_state_for_observe(
-                                            here, &nav_snapshot, running, true, map_members,
+                                            here, &nav_snapshot, nav_facts, true, map_members,
                                         ),
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);

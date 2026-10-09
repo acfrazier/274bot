@@ -152,19 +152,29 @@ impl FishingPlacementSurvey {
         }
     }
 
-    fn next_stand(&self, bounds: SceneRegionInput, here: WorldTile) -> Option<WorldTile> {
+    fn unobserved(&self, index: usize) -> bool {
+        if index < u64::BITS as usize {
+            self.covered & (1 << index) == 0
+        } else {
+            self.covered_more
+                .get(index / u64::BITS as usize - 1)
+                .is_none_or(|word| word & (1 << (index % u64::BITS as usize)) == 0)
+        }
+    }
+
+    fn unobserved_cells(
+        &self,
+        bounds: SceneRegionInput,
+    ) -> impl Iterator<Item = SceneRegionInput> + '_ {
         observation_cells(bounds)
             .enumerate()
-            .filter(|(index, _)| {
-                if *index < u64::BITS as usize {
-                    self.covered & (1 << index) == 0
-                } else {
-                    self.covered_more
-                        .get(index / u64::BITS as usize - 1)
-                        .is_none_or(|word| word & (1 << (index % u64::BITS as usize)) == 0)
-                }
-            })
-            .map(|(_, cell)| observation_stand(cell, here))
+            .filter(|(index, _)| self.unobserved(*index))
+            .map(|(_, cell)| cell)
+    }
+
+    fn next_stand(&self, bounds: SceneRegionInput, here: WorldTile) -> Option<WorldTile> {
+        self.unobserved_cells(bounds)
+            .map(|cell| observation_stand(cell, here))
             .min_by_key(|stand| distance(here, *stand))
     }
 }
@@ -203,8 +213,15 @@ pub struct TargetPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Selection {
     Target(PlacementClass),
-    Exhausted { wait_until: u64, absent: u16 },
-    Absent { absent: u16 },
+    Exhausted {
+        wait_until: u64,
+        absent: u16,
+    },
+    Absent {
+        absent: u16,
+    },
+    /// Unobserved fishing cells remain, but none have a radius-one Area goal.
+    NoStand,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +310,9 @@ pub struct SelectionObservation<'a> {
     pub now: u64,
     pub skill_stat: i32,
     pub fishing: &'a mut FishingSurvey,
+    /// Packed collision used to keep Area r=1 observation stands off tiles
+    /// with no legal goals. `None` skips the filter (unit fixtures without a pack).
+    pub collision: Option<&'a nav::collision::WorldCollision>,
 }
 
 pub struct ReturnObservation<'a> {
@@ -500,6 +520,7 @@ fn select_with_access(
         now,
         skill_stat,
         fishing,
+        collision,
     } = observation;
     let preference = settings.target_preference_kind();
     let region = area.region();
@@ -507,6 +528,7 @@ fn select_with_access(
     let mut zone_gated: u16 = 0;
     let mut wait_until = now;
     let mut non_absent = false;
+    let mut blocked_stand = false;
     let mut best_live = None;
 
     for &method_index in method_indices {
@@ -664,17 +686,35 @@ fn select_with_access(
                 let bounds = movement_bounds(spot).expect("eligible fishing movement");
                 let mut stand = spot.origin;
                 if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
+                    // Quest gather keeps only Live targets and discards any
+                    // computed observation stand. Do not scan collision for a
+                    // stand that will not be chosen.
+                    if quest_snapshot.is_some() {
+                        continue;
+                    }
                     let survey = fishing.placement(method_index, spot.id.0);
                     survey.observe(bounds, world, here, now);
-                    if let Some(next) = survey.next_stand(bounds, here) {
-                        if survey.approaches >= MAX_FISHING_APPROACHES {
-                            // Budget exhaustion is not proof of absence. Let
-                            // existing exhaustion handling bound an unseen spot.
-                            class = PlacementClass::Avoided;
-                        } else {
-                            class = PlacementClass::Unloaded;
-                        }
+                    if survey.approaches >= MAX_FISHING_APPROACHES {
+                        // Budget exhaustion is not proof of absence. Bound the
+                        // unseen spot without another rectangle search.
+                        class = PlacementClass::Avoided;
+                    } else if let Some(next) = survey
+                        .unobserved_cells(bounds)
+                        .filter_map(|cell| {
+                            let clamp = observation_stand(cell, here);
+                            legal_fishing_return_stand(cell, here, clamp, area, collision)
+                                .map(|stand| (stand, clamp))
+                        })
+                        .min_by_key(|(stand, clamp)| {
+                            (distance(*clamp, *stand), distance(here, *stand))
+                        })
+                        .map(|(stand, _)| stand)
+                    {
+                        class = PlacementClass::Unloaded;
                         stand = next;
+                    } else if survey.next_stand(bounds, here).is_some() {
+                        blocked_stand = true;
+                        continue;
                     } else {
                         class = PlacementClass::Absent;
                     }
@@ -794,6 +834,13 @@ fn select_with_access(
                 class,
             }),
             outcome: Selection::Target(class),
+            zone_gated,
+        };
+    }
+    if blocked_stand && !non_absent {
+        return SelectionResult {
+            target: None,
+            outcome: Selection::NoStand,
             zone_gated,
         };
     }
@@ -918,7 +965,7 @@ fn fishing_return_stand(
     // replaced by the nearest observation-safe stand Walk can arrive at.
     observation_cells(movement_bounds(spot)?)
         .filter_map(|cell| {
-            legal_fishing_return_stand(cell, spot.origin, area, observation.collision)
+            legal_fishing_return_stand(cell, spot.origin, spot.origin, area, observation.collision)
         })
         .min_by_key(|stand| {
             (
@@ -936,9 +983,15 @@ fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: W
     })
 }
 
+/// Preferred observation stand for one cell, then a legal Area-arrival
+/// stand in that cell's observation rectangle ranked by `rank_by` (ties by
+/// `origin`). Shared by the initial unloaded approach (`rank_by` = the
+/// player-clamped stand) and the bank-return path (`rank_by` = the spot
+/// origin, matching prior return ranking).
 fn legal_fishing_return_stand(
     cell: SceneRegionInput,
     origin: WorldTile,
+    rank_by: WorldTile,
     area: WorkArea,
     collision: Option<&nav::collision::WorldCollision>,
 ) -> Option<WorldTile> {
@@ -953,6 +1006,8 @@ fn legal_fishing_return_stand(
     if min_x > max_x || min_z > max_z {
         return None;
     }
+    #[cfg(test)]
+    FISHING_STAND_SEARCHES.with(|count| count.set(count.get().saturating_add(1)));
     let mut best = None;
     for x in min_x..=max_x {
         for z in min_z..=max_z {
@@ -964,13 +1019,22 @@ fn legal_fishing_return_stand(
             if !has_area_arrival(collision, stand) {
                 continue;
             }
-            let key = (i64::from(!area.contains(stand)), distance(origin, stand));
+            let key = (
+                i64::from(!area.contains(stand)),
+                distance(rank_by, stand),
+                distance(origin, stand),
+            );
             if best.as_ref().is_none_or(|(_, current)| key < *current) {
                 best = Some((stand, key));
             }
         }
     }
     best.map(|(stand, _)| stand)
+}
+
+#[cfg(test)]
+thread_local! {
+    static FISHING_STAND_SEARCHES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 fn consider_candidate<'a>(
@@ -1525,6 +1589,130 @@ mod tests {
         })
     }
 
+    const FISHING_GUILD: SceneRegionInput = SceneRegionInput {
+        min_x: 2599,
+        min_z: 3410,
+        max_x: 2612,
+        max_z: 3426,
+        level: 0,
+    };
+    const ARDOUGNE_START: WorldTile = WorldTile {
+        x: 2661,
+        z: 3306,
+        level: 0,
+    };
+    const BLOCKED_GUILD_CLAMP: WorldTile = WorldTile {
+        x: 2613,
+        z: 3412,
+        level: 0,
+    };
+    const REFERENCE_NAV_PACK: &str =
+        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
+
+    fn real_nav_world() -> &'static nav::world::NavWorld {
+        static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
+            let pack = std::env::var_os("NAV_PACK")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(REFERENCE_NAV_PACK));
+            nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+                panic!("load real 289 nav pack {}: {error}", pack.display())
+            })
+        });
+        &WORLD
+    }
+
+    fn fishing_guild_spot(
+        catalog: &GatherCatalog,
+    ) -> (&GatherMethod, usize, &api::gather_methods::GatherSpot) {
+        for method in catalog
+            .methods()
+            .iter()
+            .filter(|method| method.skill == GatherSkill::Fishing)
+        {
+            for spot in complete_spots(method).unwrap_or(&[]) {
+                if !known_resource_target(method, spot.entity)
+                    || catalog.access(method, spot).ok() != Some(Truth::True)
+                {
+                    continue;
+                }
+                if movement_bounds(spot)
+                    .is_some_and(|bounds| regions_intersect(bounds, FISHING_GUILD))
+                {
+                    return (method, method_index(catalog, method), spot);
+                }
+            }
+        }
+        panic!("289 catalog must include a Fishing Guild NPC movement");
+    }
+
+    fn guild_work_area() -> WorkArea {
+        WorkArea {
+            mode: super::super::area::AreaMode::Site,
+            anchor: WorldTile {
+                x: 2605,
+                z: 3418,
+                level: 0,
+            },
+            radius: 12,
+        }
+    }
+
+    fn guild_fishing_settings(method: &GatherMethod, area: WorkArea) -> GathererSettings {
+        GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            location: "Site".into(),
+            site: "fishing.fishing_guild".into(),
+            radius: area.radius,
+            ..GathererSettings::default()
+        }
+    }
+
+    fn take_fishing_stand_searches() -> u32 {
+        super::FISHING_STAND_SEARCHES.with(|count| count.replace(0))
+    }
+
+    fn select_unloaded_fishing(
+        catalog: &GatherCatalog,
+        method: &GatherMethod,
+        index: usize,
+        area: WorkArea,
+        here: WorldTile,
+        collision: Option<&nav::collision::WorldCollision>,
+    ) -> SelectionResult {
+        select(
+            catalog,
+            &[index],
+            &guild_fishing_settings(method, area),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
+                collision,
+                world: &scene_around(here),
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 68,
+            },
+        )
+    }
+
+    fn area_goals(collision: &nav::collision::WorldCollision, stand: WorldTile) -> Vec<WorldTile> {
+        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+        (-radius..=radius)
+            .flat_map(move |dx| {
+                (-radius..=radius).map(move |dz| WorldTile {
+                    x: stand.x + dx,
+                    z: stand.z + dz,
+                    level: stand.level,
+                })
+            })
+            .filter(|tile| collision.standable(*tile))
+            .collect()
+    }
+
     #[test]
     fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
         let catalog = real_catalog();
@@ -2024,6 +2212,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &observed_npcs,
@@ -2067,6 +2256,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &moved_npc,
@@ -2099,6 +2289,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &observed_hazard,
@@ -2528,6 +2719,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &[],
@@ -2563,6 +2755,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &visible,
@@ -2628,6 +2821,7 @@ mod tests {
                     &[AvoidedTile::EMPTY; MAX_AVOID],
                     SelectionObservation {
                         fishing: &mut survey,
+                        collision: None,
                         world: &world,
                         locs: &[],
                         npcs: visible,
@@ -2716,6 +2910,7 @@ mod tests {
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 SelectionObservation {
                     fishing: &mut survey,
+                    collision: None,
                     world: &world,
                     locs: &[],
                     npcs: &[],
@@ -2789,6 +2984,7 @@ mod tests {
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 SelectionObservation {
                     fishing: &mut survey,
+                    collision: None,
                     world: &world,
                     locs: &[],
                     npcs: &[],
@@ -2861,6 +3057,509 @@ mod tests {
             assert!(checked > 0, "content coverage must include NPC {id}");
             eprintln!("checked {checked} radius-one-safe content envelopes for NPC {id}");
         }
+    }
+
+    #[test]
+    fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
+        let catalog = real_catalog();
+        let (method, index, spot) = fishing_guild_spot(&catalog);
+        let bounds = movement_bounds(spot).expect("guild movement");
+        let cell = observation_cells(bounds)
+            .next()
+            .expect("guild observation cell");
+        let clamped = observation_stand(cell, ARDOUGNE_START);
+        assert_eq!(
+            clamped, BLOCKED_GUILD_CLAMP,
+            "Ardougne still clamps onto the blocked south-east observation corner"
+        );
+        let world = real_nav_world();
+        assert!(
+            !area_arrival_ok(&world.collision, clamped),
+            "{clamped:?} must stay an empty Area r=1 goal on the reference pack"
+        );
+        let area = guild_work_area();
+        assert!(fishing_spot_eligible(spot, area));
+        let selected = select_unloaded_fishing(
+            &catalog,
+            method,
+            index,
+            area,
+            ARDOUGNE_START,
+            Some(&world.collision),
+        );
+        let target = selected
+            .target
+            .expect("Fishing Guild must supply an observation stand from Ardougne");
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_ne!(
+            target.plan.tile, BLOCKED_GUILD_CLAMP,
+            "initial approach must not walk the blocked clamp"
+        );
+        let neighbor = WorldTile {
+            x: 2612,
+            z: 3412,
+            level: 0,
+        };
+        assert!(
+            area_arrival_ok(&world.collision, neighbor),
+            "{neighbor:?} must stay a legal Area r=1 stand one tile from the clamp"
+        );
+        assert_eq!(
+            target.plan.tile, neighbor,
+            "initial approach must pick the legal stand nearest the blocked clamp, not the player-tied west-edge scan winner"
+        );
+        assert_eq!(
+            distance(clamped, target.plan.tile),
+            1,
+            "selected stand {:?} is not nearest the clamp {clamped:?}",
+            target.plan.tile
+        );
+        assert!(
+            area_arrival_ok(&world.collision, target.plan.tile),
+            "selected stand {:?} must have a radius-one Area goal",
+            target.plan.tile
+        );
+        let goals = area_goals(&world.collision, target.plan.tile);
+        assert!(
+            !goals.is_empty(),
+            "Area r=1 around {:?} must list standable goals",
+            target.plan.tile
+        );
+        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        state.stats = (0..=20).map(|skill| (skill, 99)).collect();
+        let routed = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            ARDOUGNE_START,
+            &goals,
+            nav::router::FindOptions::default(),
+            &state,
+        );
+        let route = routed.route().unwrap_or_else(|error| {
+            panic!(
+                "Ardougne to {:?} Area goals must route: {error:?}",
+                target.plan.tile
+            )
+        });
+        eprintln!(
+            "Fishing Guild Ardougne stand {:?} routed to {:?}",
+            target.plan.tile, route.dest
+        );
+    }
+
+    #[test]
+    fn fishing_approach_keeps_a_legal_clamped_stand() {
+        let catalog = real_catalog();
+        let (method, index, spot) = fishing_guild_spot(&catalog);
+        let bounds = movement_bounds(spot).expect("guild movement");
+        let cell = observation_cells(bounds)
+            .next()
+            .expect("guild observation cell");
+        let world = real_nav_world();
+        let area = guild_work_area();
+        let mut legal_here = None;
+        let mid_x = (cell.min_x + cell.max_x) / 2;
+        let mid_z = (cell.min_z + cell.max_z) / 2;
+        for here in [
+            WorldTile {
+                x: mid_x,
+                z: cell.max_z + OBSERVATION_RADIUS + 8,
+                level: 0,
+            },
+            WorldTile {
+                x: cell.min_x - OBSERVATION_RADIUS - 8,
+                z: mid_z,
+                level: 0,
+            },
+            WorldTile {
+                x: mid_x,
+                z: cell.min_z - OBSERVATION_RADIUS - 8,
+                level: 0,
+            },
+            WorldTile {
+                x: cell.max_x + OBSERVATION_RADIUS + 8,
+                z: mid_z,
+                level: 0,
+            },
+        ] {
+            let clamped = observation_stand(cell, here);
+            if area_arrival_ok(&world.collision, clamped) {
+                legal_here = Some((here, clamped));
+                break;
+            }
+        }
+        let (here, clamped) = legal_here.expect(
+            "at least one side of the Fishing Guild observation rectangle must clamp onto a legal stand",
+        );
+        let selected =
+            select_unloaded_fishing(&catalog, method, index, area, here, Some(&world.collision));
+        let target = selected
+            .target
+            .expect("a legal clamp must remain an unloaded observation stand");
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(
+            target.plan.tile, clamped,
+            "already-legal clamps must keep the player-nearest observation stand"
+        );
+    }
+
+    #[test]
+    fn fishing_approach_fails_when_observation_rectangle_has_no_arrival() {
+        let catalog = real_catalog();
+        let method = catalog
+            .method("fishing.saltfish.op3")
+            .expect("Draynor bait");
+        let index = method_index(&catalog, method);
+        let spot = complete_spots(method)
+            .unwrap()
+            .iter()
+            .find(|spot| {
+                known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+                    && movement_bounds(spot).is_some_and(|bounds| {
+                        bounds.max_x - bounds.min_x <= 8 && bounds.max_z - bounds.min_z <= 8
+                    })
+            })
+            .expect("a compact saltfish envelope");
+        let bounds = movement_bounds(spot).unwrap();
+        let here = WorldTile {
+            x: bounds.max_x + 40,
+            z: bounds.min_z - 40,
+            level: bounds.level,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: spot.origin,
+            radius: 1,
+        };
+        let mut blocked = Vec::new();
+        for eligible in complete_spots(method).unwrap().iter().filter(|candidate| {
+            fishing_spot_eligible(candidate, area)
+                && known_resource_target(method, candidate.entity)
+        }) {
+            let Some(eligible_bounds) = movement_bounds(eligible) else {
+                continue;
+            };
+            for cell in observation_cells(eligible_bounds) {
+                let pad = OBSERVATION_RADIUS + i32::from(RESOURCE_APPROACH_RADIUS);
+                let min_x = cell.max_x - pad;
+                let max_x = cell.min_x + pad;
+                let min_z = cell.max_z - pad;
+                let max_z = cell.min_z + pad;
+                for x in min_x..=max_x {
+                    for z in min_z..=max_z {
+                        blocked.push(WorldTile {
+                            x,
+                            z,
+                            level: cell.level,
+                        });
+                    }
+                }
+            }
+        }
+        let collision = synthetic_collision(
+            fishing_cover(method, area)
+                .into_iter()
+                .chain([here, spot.origin]),
+            blocked,
+        );
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            location: "Custom".into(),
+            custom_tile: Some(spot.origin),
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let selected = select(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
+                collision: Some(&collision),
+                world: &scene_around(here),
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 10,
+            },
+        );
+        assert!(selected.target.is_none());
+        assert_eq!(selected.outcome, Selection::NoStand);
+    }
+
+    #[test]
+    fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
+        use api::obj_names::ItemDefView;
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::RunKey;
+        use api::snapshot::{
+            GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView, StatView,
+        };
+
+        let catalog = real_catalog();
+        let (method, index, _spot) = fishing_guild_spot(&catalog);
+        let world = real_nav_world();
+        let area = guild_work_area();
+        let settings = guild_fishing_settings(method, area);
+        let select_now = |fishing: &mut FishingSurvey, now: u64| {
+            select(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                SelectionObservation {
+                    fishing,
+                    collision: Some(&world.collision),
+                    world: &scene_around(ARDOUGNE_START),
+                    locs: &[],
+                    npcs: &[],
+                    here: ARDOUGNE_START,
+                    now,
+                    skill_stat: 68,
+                },
+            )
+        };
+        let mut survey = FishingSurvey::default();
+        take_fishing_stand_searches();
+        let mut chosen = 0u32;
+        for now in 1..=u64::from(MAX_FISHING_APPROACHES)
+            .saturating_mul(8)
+            .saturating_add(2)
+        {
+            if select_now(&mut survey, now).target.is_none() {
+                break;
+            }
+            chosen = chosen.saturating_add(1);
+        }
+        assert!(
+            chosen > 0,
+            "Ardougne Guild approach must choose a stand before waiting"
+        );
+        let approach_searches = take_fishing_stand_searches();
+        assert!(
+            approach_searches > 0,
+            "choosing a blocked-clamp stand must run the rectangle search"
+        );
+
+        for now in 1..=8 {
+            assert!(
+                select_now(&mut survey, 100 + now).target.is_none(),
+                "exhausted approaches must not choose another stand on waiting tick {now}"
+            );
+        }
+        let waiting_searches = take_fishing_stand_searches();
+        eprintln!(
+            "fishing stand searches: {approach_searches} while choosing {chosen} stands, {waiting_searches} across 8 waiting ticks"
+        );
+        assert_eq!(
+            waiting_searches, 0,
+            "waiting ticks must not repeat the rectangle search; a per-tick search would fail this"
+        );
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: ARDOUGNE_START.x.saturating_sub(52),
+            map_base_z: ARDOUGNE_START.z.saturating_sub(52),
+            level: ARDOUGNE_START.level,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            effective: 68,
+            base: 68,
+            xp: 0,
+            used: true,
+        }]);
+        let tool_id = known_rows(&method.tools)
+            .first()
+            .map(|tool| tool.item)
+            .expect("guild fishing method has a tool");
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: ItemDefView {
+                    id: tool_id,
+                    name: Some("tool".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: -1,
+            }],
+            28,
+        );
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_npcs(vec![]);
+        snapshot.seed_locs(vec![]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            ARDOUGNE_START,
+        ));
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert_eq!(
+            super::super::supply::method_ready(view, method, true),
+            Ok(true),
+            "quest snapshot must be ready so the unloaded pass is reachable"
+        );
+        take_fishing_stand_searches();
+        let mut quest_survey = FishingSurvey::default();
+        for now in 1..=8 {
+            let selected = select_for_quest(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                SelectionObservation {
+                    fishing: &mut quest_survey,
+                    collision: Some(&world.collision),
+                    world: &scene_around(ARDOUGNE_START),
+                    locs: &[],
+                    npcs: &[],
+                    here: ARDOUGNE_START,
+                    now,
+                    skill_stat: 68,
+                },
+                view,
+            );
+            assert!(
+                selected
+                    .target
+                    .as_ref()
+                    .is_none_or(|target| target.class != PlacementClass::Unloaded),
+                "quest gather must not keep an unloaded stand on waiting tick {now}"
+            );
+        }
+        let quest_searches = take_fishing_stand_searches();
+        eprintln!("quest gather rectangle searches across 8 waiting ticks: {quest_searches}");
+        assert_eq!(
+            quest_searches, 0,
+            "quest gather must not compute a discarded observation stand"
+        );
+    }
+
+    #[test]
+    fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
+        let catalog = real_catalog();
+        let world = real_nav_world();
+        let mut seen = std::collections::HashSet::new();
+        let mut previously_blocked = Vec::new();
+        let mut checked = 0usize;
+        for method in catalog
+            .methods()
+            .iter()
+            .filter(|method| method.skill == GatherSkill::Fishing)
+        {
+            for spot in complete_spots(method).unwrap_or(&[]) {
+                if !known_resource_target(method, spot.entity)
+                    || catalog.access(method, spot).ok() != Some(Truth::True)
+                {
+                    continue;
+                }
+                let Some(bounds) = movement_bounds(spot) else {
+                    continue;
+                };
+                let EntityId::Npc(npc) = spot.entity else {
+                    continue;
+                };
+                let key = (
+                    npc,
+                    bounds.min_x,
+                    bounds.min_z,
+                    bounds.max_x,
+                    bounds.max_z,
+                    bounds.level,
+                );
+                if !seen.insert(key) {
+                    continue;
+                }
+                let area = WorkArea {
+                    mode: super::super::area::AreaMode::Custom,
+                    anchor: spot.origin,
+                    radius: 64,
+                };
+                for cell in observation_cells(bounds) {
+                    let min_x = cell.max_x - OBSERVATION_RADIUS;
+                    let max_x = cell.min_x + OBSERVATION_RADIUS;
+                    let min_z = cell.max_z - OBSERVATION_RADIUS;
+                    let max_z = cell.min_z + OBSERVATION_RADIUS;
+                    if min_x > max_x || min_z > max_z {
+                        continue;
+                    }
+                    let mid_x = (min_x + max_x) / 2;
+                    let mid_z = (min_z + max_z) / 2;
+                    let samples = [
+                        ("east", max_x + 8, mid_z),
+                        ("west", min_x - 8, mid_z),
+                        ("north", mid_x, max_z + 8),
+                        ("south", mid_x, min_z - 8),
+                        ("se", max_x + 8, min_z - 8),
+                        ("sw", min_x - 8, min_z - 8),
+                        ("ne", max_x + 8, max_z + 8),
+                        ("nw", min_x - 8, max_z + 8),
+                    ];
+                    for (side, x, z) in samples {
+                        let here = WorldTile {
+                            x,
+                            z,
+                            level: bounds.level,
+                        };
+                        let clamped = observation_stand(cell, here);
+                        let old_ok = area_arrival_ok(&world.collision, clamped);
+                        let legal = legal_fishing_return_stand(
+                            cell,
+                            here,
+                            clamped,
+                            area,
+                            Some(&world.collision),
+                        );
+                        let stand = legal.unwrap_or(clamped);
+                        let new_ok = area_arrival_ok(&world.collision, stand);
+                        checked += 1;
+                        if !old_ok {
+                            previously_blocked.push(format!(
+                                "{:?} {} {} start=({},{}) clamp={:?} legal={:?} legal_ok={new_ok}",
+                                spot.entity, method.id.0, side, here.x, here.z, clamped, legal
+                            ));
+                        }
+                        assert!(
+                            new_ok,
+                            "initial stand {:?} for {:?} {} from ({},{}) must have Area r=1 arrival",
+                            stand, spot.entity, side, here.x, here.z
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "289 fishing NPC movements must be sampled");
+        eprintln!(
+            "fishing initial stands: {checked} samples, {} previously blocked clamps:\n{}",
+            previously_blocked.len(),
+            previously_blocked.join("\n")
+        );
     }
 
     #[test]
@@ -2979,6 +3678,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &lower_live,
                 npcs: &[],
@@ -3002,6 +3702,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &[],
                 npcs: &[],
@@ -3059,6 +3760,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
+                collision: None,
                 world: &world,
                 locs: &locs,
                 npcs: &[],
