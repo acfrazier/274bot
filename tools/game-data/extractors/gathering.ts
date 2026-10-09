@@ -6,7 +6,7 @@ import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, s
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
-export const GATHERING_SCHEMA = 2;
+export const GATHERING_SCHEMA = 3;
 
 /** Engine `PlayerStat` order (`src/engine/entity/PlayerStat.ts`): a protocol constant, not gathering data. */
 const SKILL = { attack: 0, woodcutting: 8, fishing: 10, mining: 14 } as const;
@@ -39,6 +39,8 @@ export type MethodWire = {
     requirements: Know<RequirementWire[]>;
     /** `known` means the placement rows of this method's resource targets are complete. */
     spots: Know<null>;
+    /** States that refuse the method at runtime (checked against worn items), not gaps: the method stays selectable. */
+    forbidden_states: string[];
     sources: Ref[];
 };
 export type RegionWire = { min_x: number; min_z: number; max_x: number; max_z: number; level: number };
@@ -679,6 +681,7 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
             consumes: labels.size === 0 ? unknown('no-mining-handler', group.map((row) => spanRef(row.span))) : partial([], consumeGaps),
             requirements: Number.isNaN(level) ? unknown('rock-level-missing', group.map((row) => spanRef(row.span))) : partial([{ id: `${id}.level`, source: spanRef(line(MINE_DBROW, levelData!.line)), kind: 'skill', skill: SKILL.mining, level }], requirementGaps),
             spots: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : known(null),
+            forbidden_states: [],
             sources: group.map((row) => spanRef(row.span)),
         });
     }
@@ -839,6 +842,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
             consumes: empty ? unknown(why.code, why.sources) : 'code' in model ? unknown(model.code, model.sources) : partial([], model.deletes ? [gap('inventory-effect', blockSpan(uniqueBlock(ctx, 'label', 'get_logs')!))] : []),
             requirements: empty ? unknown(why.code, why.sources) : partial(requirements, requirementGaps),
             spots: empty ? unknown(why.code, why.sources) : known(null),
+            forbidden_states: [],
             sources,
         });
     }
@@ -880,6 +884,7 @@ type Closure = {
     direct: { item: string; k: number }[];
     usesRoll: 'fish_roll' | 'fish_roll_loc' | null;
     requirementGaps: Gap[];
+    forbiddenStates: string[];
     effectGaps: Gap[];
     gates: { zone: Zone; sources: Span[] }[];
     visited: number;
@@ -933,7 +938,7 @@ function checkEquipmentShape(ctx: Ctx): Gap | null {
 
 /** Follow one method's handler blocks (labels, re-dispatch, recognised procs) and collect proven facts and gaps. */
 function fishingClosure(ctx: Ctx, start: Rs2Block, redispatch: (slot: number) => Rs2Block | null): Closure {
-    const closure: Closure = { levels: [], tools: new Set(), held: new Set(), rolls: [], direct: [], usesRoll: null, requirementGaps: [], effectGaps: [], gates: [], visited: 0 };
+    const closure: Closure = { levels: [], tools: new Set(), held: new Set(), rolls: [], direct: [], usesRoll: null, requirementGaps: [], forbiddenStates: [], effectGaps: [], gates: [], visited: 0 };
     const seen = new Set<string>();
     const queue: Rs2Block[] = [start];
     const enqueue = (block: Rs2Block | null) => {
@@ -966,7 +971,7 @@ function fishingClosure(ctx: Ctx, start: Rs2Block, redispatch: (slot: number) =>
         else if ((match = EQUIP_FALSE.exec(cond))) closure.tools.add(match[1]);
         else if ((match = HELD_LT1.exec(cond))) closure.held.add(match[1]);
         else if ((match = CHECK_PROC_FALSE.exec(cond)) && match[1] !== 'mm_wearing_greegree') enqueue(uniqueBlock(ctx, 'proc', match[1]));
-        else if (cond === '~mm_wearing_greegree = true') closure.requirementGaps.push(gap('monkey-form-forbidden', span));
+        else if (cond === '~mm_wearing_greegree = true') closure.forbiddenStates.push('monkey-form');
         else if (IGNORED_GUARD.some((pattern) => pattern.test(cond))) return false;
         else closure.requirementGaps.push(gap(cond.includes('%') ? 'varp-gate' : 'custom-guard', span));
         return false;
@@ -1145,6 +1150,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
         consumes: known([{ item: worm, count: 1 }]),
         requirements: partial([{ id: `${HEMENSTER_CARP_METHOD}.level`, source: spanRef(levelSpan), kind: 'skill', skill: SKILL.fishing, level }], [questGate]),
         spots: known(null),
+        forbidden_states: [],
         sources: provenance,
     };
 }
@@ -1262,6 +1268,7 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
                 consumes: partial(bait ? [{ item: ctx.entities.id('obj', bait, `${id} bait`), count: 1 }] : [], effectGaps),
                 requirements: partial(reqs, requirementGaps),
                 spots: known(null),
+                forbidden_states: [...new Set(closure.forbiddenStates)].sort(),
                 sources: [spanRef(header.span)],
             });
         }
@@ -1424,6 +1431,7 @@ export type GatherResourceWire = {
     level: number;
     selectable: boolean;
     gap: string | null;
+    forbidden_states: string[];
 };
 
 /** A target row the slice admits on: it carries a respawn fact (`Known`, even `null` for never-depleting spots). */
@@ -1559,6 +1567,7 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
                 level,
                 selectable,
                 gap,
+                forbidden_states: [...method.forbidden_states],
             });
         }
     }
@@ -1589,6 +1598,7 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
             level: Math.min(...methods.map(gatherMethodLevel)),
             selectable: gaps.every((reason) => reason === null),
             gap,
+            forbidden_states: [...new Set(methods.flatMap((method) => method.forbidden_states))].sort(),
         });
     }
 
@@ -1616,27 +1626,160 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
 
 /** One published row of the selected core's `gather_sites` slice. Rows carry no source field. */
 export type GatherSiteKeyWire = { key: string; count: number };
+/** A walk requirement the Gatherer already enforces. The label names it; no gate reads it. */
+export type GatherSiteRequirement = { kind: 'skill'; skill: SkillName; level: number } | { kind: 'quest'; name: string } | { kind: 'worn'; item: number; name: string };
 export type GatherSiteWire = {
     id: string;
     skill: SkillName;
     label: string;
     region: RegionWire;
     keys: GatherSiteKeyWire[];
+    requires: GatherSiteRequirement[];
 };
 
-/** Per-skill generator report, recorded on the manifest and pinned by verify. */
-export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number };
+/** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
+export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number; renamed: number; required: number; override_dropped: number };
 export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
-export type GatherSitesResult = { rows: GatherSiteWire[]; report: GatherSiteReport };
+/** `rows` are published; `hidden` are the rows a `drop` override removed (the reachability guard keeps each one unreachable). */
+export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[]; report: GatherSiteReport };
 
 /** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
 export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
+
+/**
+ * A content-named override of one published site. `id` is the published id and
+ * never changes (saved Gatherer cards store it; a hidden id is retired, never
+ * reused). `cite` is `path:lines` references into the engine content that say
+ * what the override claims (rs2 / enum / loc paths are relative to `scripts/`,
+ * `maps/` paths to the content root). `optional` marks a site only some
+ * revisions publish; any other unmatched id throws. A `name` row renames the
+ * label and shows `requires` after the name. A `drop` row hides the site until
+ * the route finder learns the entrance named in `reason`; `place` is what the
+ * content calls the place, which the nearest-label name did not always say.
+ * The reachability guard keeps every hidden site unreachable on the open graph.
+ */
+export type SiteOverride = { id: string; cite: string; optional?: true } & (
+    | { action: 'name'; name: string; requires: GatherSiteRequirement[] }
+    | { action: 'drop'; place: string; reason: string }
+);
+
+const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-106 (zanarisdoor: the entrance needs the Dramen staff worn and a members world)';
+const ZANARIS_REQUIRES: GatherSiteRequirement[] = [{ kind: 'worn', item: 772, name: 'Dramen staff' }];
+const TIRANNWN_CITE = 'quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:1-33; quests/quest_upass/scripts/quest_upass.rs2:80-103,574-630; quests/quest_regicide/scripts/quest_regicide.rs2:25-29';
+const WATCHTOWER_CITE = 'quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:271-284,427-447; quests/quest_itwatchtower/scripts/ogre_guard.rs2:44-80';
+const HOLY_BARRIER_CITE = 'areas/area_mausoleum/scripts/holy_barrier.rs2:1-20';
+const VIKING_FERRY_CITE = 'quests/quest_viking/scripts/viking_sailor.rs2:14-40';
+
+/** Hidden ids that only 289 publishes; the table serves both revisions. */
+const ONLY_289 = new Set([
+    'fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw',
+    'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2', 'woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4',
+    'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4',
+    'mining.rellekka.nw', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw',
+    'woodcutting.castle_wars.sw', 'woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2',
+    'woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2',
+]);
+
+/** Drop rows for `ids`: one place, one missing entrance, one citation. */
+function hide(place: string, reason: string, cite: string, ids: readonly string[]): SiteOverride[] {
+    return ids.map((id): SiteOverride => ({ id, action: 'drop', place, reason, cite, ...(ONLY_289.has(id) ? { optional: true as const } : {}) }));
+}
+
+/**
+ * Content-named sites. A `name` row changes only the label; a `drop` row
+ * hides a site the route finder cannot reach yet. Ids never change.
+ */
+export const SITE_OVERRIDES: readonly SiteOverride[] = [
+    { id: 'mining.park.underground.se', action: 'name', name: 'Mining Guild', requires: [{ kind: 'skill', skill: 'mining', level: 60 }], cite: 'areas/area_falador/scripts/mining_guild.rs2:1-16 (the guild ladder refuses Mining below 60 and moves into the mine)' },
+    { id: 'mining.agility_arena.underground.e', action: 'name', name: 'Karamja Volcano', requires: [], cite: 'areas/area_karamja/scripts/misc_locs.rs2:1-14 (the volcano entrance and the cave movement)' },
+    // The Zanaris map: the entrance needs the Dramen staff worn and members (the handler also queues Lost City's completion on first entry, so the quest is not a separate condition). Bedabin Camp's cave is the Cosmic Temple trees (cosmictemple_ruined at 3175,9496).
+    { id: 'woodcutting.al_kharid.underground.w', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.bedabin_camp.underground.n', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: `${ZANARIS_CITE}; maps/m49_148.jm2:6731 (cosmictemple_ruined, loc 2458, at 3175,9496)` },
+    { id: 'woodcutting.lumbridge_swamp.underground', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.lumbridge_swamp.underground.sw', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.wizards_tower.underground.ne', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+
+    // ---- Hidden: the route finder has no way in yet. Each reason names the entrance it lacks and keeps two kinds of statement apart:
+    // "content:" is what the cited engine lines show (an access rule or a placement); "nav:" is an observation about the 289 nav pack
+    // (a missing transport, or a pocket the guard test cannot reach), which the cited content does not itself prove.
+    // Tirannwn: the Arandar pass and the Underground Pass.
+    ...hide('Tirannwn', 'content: entered through the Arandar gate, the Underground Pass or the Regicide voyage-temple exit teleport; nav: the pack has no Arandar gate crossing', TIRANNWN_CITE, [
+        'woodcutting.arandar.2', 'mining.arandar.sw', 'fishing.elf_camp', 'woodcutting.elf_camp', 'woodcutting.elf_camp.e', 'woodcutting.elf_camp.se',
+        'woodcutting.isafdar', 'mining.isafdar.se', 'woodcutting.poison_waste.n', 'woodcutting.poison_waste.ne',
+        'woodcutting.prifddinas', 'woodcutting.prifddinas.se', 'fishing.prifddinas.se', 'woodcutting.tyras_camp',
+        'woodcutting.isafdar.e', 'woodcutting.isafdar.se',
+    ]),
+    ...hide('Arandar (south)', 'content: the Tirannwn gate and pass (as above), and the Regicide trap crossing (31-55) and the dense-wood tracks (483-490) in the forest; nav: the pack has no Arandar gate crossing', `${TIRANNWN_CITE}; quests/quest_regicide/scripts/quest_regicide.rs2:31-55,483-490`, ['woodcutting.arandar', 'woodcutting.arandar.se']),
+    ...hide('Elf Camp (north coast)', 'content: Tirannwn is entered through the Arandar gate or the Underground Pass; nav: the pack has no Arandar gate crossing', TIRANNWN_CITE, ['woodcutting.elf_camp.2', 'fishing.elf_camp.nw', 'fishing.elf_camp.w']),
+    ...hide('Arandar north and Prifddinas outskirts', 'content: the Prifddinas city guard refuses passage (prif_city_guard.rs2:1-13) and the city gates are placed at m35_52.jm2:4916-4917; nav: no route on the 289 pack (guard test) and no player entrance found', 'quests/quest_regicide/scripts/prif_city_guard.rs2:1-13; maps/m35_52.jm2:4916-4917', [
+        'woodcutting.arandar.3', 'woodcutting.arandar.n', 'woodcutting.arandar.nw', 'woodcutting.prifddinas.ne',
+    ]),
+    // Morytania: the regional entrance is the Paterdomus holy barrier. The Mort Myre gates are a separate swamp crossing the pack already has.
+    ...hide('Morytania (Canifis, Mort\'ton, Haunted Woods, Temple)', 'content: the way into Morytania is the Paterdomus holy barrier, which passes only at Priest in Peril\'s barrier-access stage (holy_barrier.rs2:1-9); nav: the pack has no transport for that barrier, so the region has no route. The pack does have Mort Myre gate edges (content: the gates refuse a Nature Spirit not-started player, quest_druidspirit.rs2:1-11), but they cross the swamp, not the Morytania border', `${HOLY_BARRIER_CITE}; quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-11`, [
+        'woodcutting.canifis', 'fishing.canifis.sw', 'woodcutting.haunted_woods', 'woodcutting.haunted_woods.2', 'woodcutting.haunted_woods.e',
+        'woodcutting.mort_ton', 'fishing.mort_ton.w', 'woodcutting.river_salve.ne', 'fishing.river_salve.se', 'woodcutting.temple',
+    ]),
+    ...hide('Mort\'ton east (Barrows side)', 'nav: no route on the 289 pack (guard test) and no player entrance found for this pocket east of Mort\'ton; content: the cited lines are the regional Paterdomus holy barrier into Morytania, not this pocket', HOLY_BARRIER_CITE, ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2']),
+    ...hide('Temple (north of the railing)', 'nav: no route on the 289 pack (guard test) and no player entrance found; content: an ornate railing is placed at the pocket\'s boundary (m53_54.jm2:4563)', 'maps/m53_54.jm2:4563', ['woodcutting.temple.n']),
+    ...hide('Mort Myre (west bank)', 'nav: no route on the 289 pack (guard test) and no player entrance found for this tree on the west bank of the Mort Myre swamp; content: the cited Mort Myre gate handler (quest_druidspirit.rs2:1-11) is context only and does not locate the bank', 'quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-11', ['woodcutting.exam_centre.e']),
+    // Islands, boats and one-off crossings.
+    ...hide('Crandor', 'content: reached by the Dragon Slayer voyage, then the Crandor rock and the secret wall (crandor.rs2:3-27 shows the rock and rope teleports and the secret-wall branch, not the voyage itself); nav: none is a transport on the pack', 'quests/quest_dragon/scripts/crandor.rs2:3-27', [
+        'mining.agility_arena.ne', 'mining.dark_wizards_tower.sw', 'mining.fishing_platform.e', 'mining.fishing_platform.se',
+    ]),
+    ...hide('Fishing Platform', 'content: Holgart\'s boat from Witchaven telejumps to the platform; nav: the pack has no boat transport', 'areas/area_ardougne_east/scripts/holgart_ardougne.rs2:91-106', ['fishing.fishing_platform']),
+    ...hide('Miscellania', 'content: the Fremennik ferry sails to Miscellania after the Fremennik Trials; nav: the pack has no ferry transport', VIKING_FERRY_CITE, [
+        'mining.rellekka.nw', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw',
+    ]),
+    ...hide('Ape Atoll', 'content: Lumdo\'s voyage teleports to the island; nav: that voyage is not a transport on the pack, so the island has no route', 'quests/quest_mm/scripts/mm_lumdo.rs2:17-27', [
+        'fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2',
+        'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4',
+    ]),
+    ...hide('Crash Island', 'content: Waydar\'s glider flight lands on the island; nav: that flight is not a transport on the pack, so the island has no route', 'quests/quest_mm/scripts/mm_waydar.rs2:112-116', ['woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4']),
+    ...hide('Gu\'Tanoth (outside the ogre gates)', 'content: the Gu\'Tanoth ogre gates are guarded and open through dialogue and door changes; nav: the pack has no gate crossing', WATCHTOWER_CITE, ['woodcutting.gu_tanoth.nw', 'woodcutting.gu_tanoth.sw', 'woodcutting.gu_tanoth.w']),
+    ...hide('Gu\'Tanoth (south side)', 'content: the guarded Gu\'Tanoth ogre gates and their entry teleport (this forest lies on the south side of the gates); nav: the pack has no gate crossing', WATCHTOWER_CITE, ['woodcutting.castle_wars.s', 'woodcutting.castle_wars.sw']),
+    ...hide('Castle Wars (west bank)', 'content: the stepping stones are an exact-movement handler (castlewars_steping_stone.rs2:1-6) placed at the cited map rows; nav: the pack has no transport for them', 'minigames/game_castlewars/scripts/castlewars_steping_stone.rs2:1-6; maps/m37_48.jm2:7107,7153-7155,7191', ['woodcutting.castle_wars.nw']),
+    ...hide('Lighthouse island', 'content: the broken Lighthouse bridge needs both repair bits or an agility crossing; nav: the pack has no bridge transport', 'quests/quest_horror/scripts/quest_horror.rs2:63-108; maps/m40_56.jm2:4098-4112,4882,4889', ['woodcutting.barbarian_outpost.ne']),
+    // Gates, courses and enclosures.
+    ...hide('West of the Tree Gnome Stronghold fence', 'nav: no route on the 289 pack (guard test) and no player entrance found outside the stronghold fence; content: gnomefence locs are placed along it (the cited map rows)', 'maps/m36_53.jm2:4350-4351; maps/m36_54.jm2:4164-4171', [
+        'woodcutting.gnome_ball_field.sw', 'woodcutting.gnome_ball_field.w', 'woodcutting.gnome_ball_field.w.2',
+    ]),
+    ...hide('Wilderness agility course', 'content: the course entry needs Agility 52 and its ridge movements are forced; nav: not a transport on the pack', 'skill_agility/scripts/wilderness_course.rs2:1-46', ['woodcutting.agility_training_area.4']),
+    ...hide('Demonic Ruins (fenced charcoal pocket)', 'nav: no route on the 289 pack (guard test) and no player entrance found; content: railing locs are placed around the pocket (m51_60.jm2:6075,6111)', 'maps/m51_60.jm2:6075,6111', ['woodcutting.demonic_ruins.ne']),
+    ...hide('Desert Mining Camp', 'content: the camp gate needs the metal key and the mercenary search; nav: not a transport on the pack', 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:68-132', ['mining.desert_mining_camp']),
+    ...hide('Desert Mining Camp (underground)', 'content: the entrance needs the slave shirt, robe and boots worn; nav: the pack has no edge for it', 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:425,465-468', ['mining.desert_mining_camp.underground', 'mining.desert_mining_camp.underground.n']),
+    ...hide('Hemenster fishing contest enclosure', 'content: the contest gates need the fishing pass and Morris\'s dialogue; nav: not a transport on the pack', 'quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:22-68; maps/m41_53.jm2:5083-5084', ['fishing.hemenster.w']),
+    ...hide('Waterfall ledge (plane 1)', 'content: one tree on the ledge by the Waterfall barrel, reached by rope, ledge and barrel movements; nav: none is a transport on the pack', 'maps/m39_54.jm2:6416; quests/quest_waterfall/scripts/quest_waterfall.rs2:154-184,213-242,254-262,291-297', ['woodcutting.grand_tree.e']),
+    ...hide('Fremennik mining enclosure', 'content: a fenced mine whose gates change and teleport a player who completed the quest; nav: not a transport on the pack', 'maps/m41_57.jm2:8858,8924; quests/quest_viking/scripts/quest_viking.rs2:1-23', ['mining.rellekka.ne']),
+    ...hide('Trollheim (north-west forest)', 'content: reached by the Troll Stronghold climb and shortcut movements; nav: the pack has no such transport', 'quests/quest_troll/scripts/quest_troll.rs2:1-43,108-137', ['woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2']),
+    ...hide('West Ardougne', 'nav: no route on the 289 pack (guard test); content: the doors beside the tree are ordinary loc 1530 doors (the cited map rows) and no quest gate was found', 'maps/m39_52.jm2:4472,4666', ['woodcutting.west_ardougne.nw']),
+    // Dungeons and caves.
+    ...hide('Varrock sewers', 'content: the entrance is the manhole east of the palace (Open, then Climb down); nav: the pack gives no route through it', 'areas/area_varrock/scripts/bartender.rs2:23-25; general_use/configs/manholes.loc:1-13', ['woodcutting.varrock.underground.nw', 'woodcutting.palace.underground.ne']),
+    ...hide('Zanaris (walled pocket)', 'nav: no route on the 289 pack (guard test): a pocket of the Zanaris map with no walkable link from the Cosmic Temple, and no player entrance found; content: the cited shed entrance needs the staff worn and a members world and lands in the main map, not in this pocket', ZANARIS_CITE, ['woodcutting.toll_gate.underground.sw']),
+    ...hide('Glarial\'s Tomb', 'content: entered through the tombstone with Glarial\'s pebble and nothing weapon-like or armoured carried; nav: not a transport on the pack', 'quests/quest_waterfall/scripts/quest_waterfall.rs2:44-122; maps/m39_153.jm2:1383', ['woodcutting.baxtorian_falls.underground.se']),
+    ...hide('Digsite cavern (before the blockage is removed)', 'content: reached by the digsite winch (rope, Agility 10); nav: not a transport on the pack', 'quests/quest_itexam/scripts/area_digsite.rs2:611-632,673-685', ['mining.dig_site.underground']),
+    ...hide('Digsite cavern (after the blockage is removed)', 'content: reached by the digsite winch (rope, Agility 10); nav: not a transport on the pack', 'quests/quest_itexam/scripts/area_digsite.rs2:611-632,673-685', ['mining.exam_centre.underground']),
+    ...hide('Brimhaven Dungeon (lava eels)', 'content: entered by paying Saniboch, then vine crossings; nav: none is a transport on the pack', 'areas/area_karamja/scripts/karam_dungeon.rs2:7-13,62-92; skill_fishing/scripts/fishing_spots/lavafish_loc.rs2:1-43', ['fishing.brimhaven.underground.sw']),
+    ...hide('Taverley Dungeon', 'content: moving fishing spots in the dungeon, with a dusty-key door (jail_doors.rs2); nav: the pack has no route in to them', 'skill_fishing/configs/fishing_movement.enum:328-337; areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35; maps/m45_153.jm2:6707', ['fishing.dark_wizards_tower.underground.nw']),
+    ...hide('Grand Tree mine', 'content: the lower trapdoor at 2463,3497 opens after the quest and teleports down; nav: the pack has the mine ladder out, not the trapdoor in', 'quests/quest_grandtree/scripts/quest_grandtree.rs2:1-11; maps/m38_54.jm2:6055', ['mining.grand_tree.underground', 'mining.grand_tree.underground.2']),
+    ...hide('Cave west of the Necromancer\'s cellar', 'nav: no route on the 289 pack (guard test) and no player entrance found for this walled cave; content: the nearby cellar ladder at 2696,9682 is placed outside it', 'maps/m42_151.jm2:4778 (ladder_from_cellar)', ['mining.necromancer.underground.n']),
+];
+
+/** A label's name with any `(n)` ordinal and bearing stripped. */
+function siteHeadName(label: string): string {
+    return (label.split(' · ')[0] ?? '').replace(/ \(\d+\)$/, '').replace(/ (?:NE|NW|SE|SW|N|E|S|W)\d+$/, '');
+}
+
+/** The short requirement note a label shows: `Mining 60`, a quest name, or a worn item name. */
+function requirementText(req: GatherSiteRequirement): string {
+    return req.kind === 'skill' ? `${req.skill.charAt(0).toUpperCase()}${req.skill.slice(1)} ${req.level}` : req.name;
+}
 
 const SITE_GAP = 12;
 const SITE_SPRAWL_EXTENT = 48;
 const SITE_NEAR = 16;
 const SITE_CAP = 64;
 const SITE_SURFACE_Z = 6400;
+const SITE_SPECIAL_Z = 4160;
 const SITE_LABELS = 'maps/labels.txt';
 const SITE_PLACEMENT_FILE = /^maps\/m(\d+)_(\d+)\.jm2$/;
 
@@ -1726,6 +1869,8 @@ function humanizeStem(stem: string, spelling: ReadonlyMap<string, string>): stri
 const siteExtent = (box: SiteBox) => Math.max(box.maxX - box.minX, box.maxZ - box.minZ);
 const siteEdgeDist = (place: SitePlace, box: SiteBox) => Math.max(0, box.minX - place.x, place.x - box.maxX, box.minZ - place.z, place.z - box.maxZ);
 const siteInBox = (tile: SiteTile, box: RegionWire) => tile.level === box.level && tile.x >= box.min_x && tile.x <= box.max_x && tile.z >= box.min_z && tile.z <= box.max_z;
+/** The box a site is named by: an underground box projected onto the surface map (`z - SITE_SURFACE_Z`). */
+const siteNamingBox = (box: SiteBox): SiteBox => (box.minZ >= SITE_SURFACE_Z ? { minX: box.minX, minZ: box.minZ - SITE_SURFACE_Z, maxX: box.maxX, maxZ: box.maxZ - SITE_SURFACE_Z } : box);
 
 /** 8-way bearing from a place point to a box centre. */
 function siteBearing(place: SitePlace, centre: { x: number; z: number }): string {
@@ -1795,9 +1940,9 @@ function siteBoxOf(tiles: SiteTile[]): SiteBox {
  * from the family, the `gather_resources` rows (a site's keys are exactly the
  * picker values), the content label and fishing-NPC inputs, and the bank
  * catalog. The family wire is untouched: movement boxes are reused, never
- * re-derived.
+ * re-derived. Overrides then name, require or drop published rows by id.
  */
-export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[]): GatherSitesResult {
+export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], overrides: readonly SiteOverride[] = SITE_OVERRIDES): GatherSitesResult {
     const keyMeta = new Map<string, { skill: SkillName; label: string }>();
     for (const row of resources) {
         if (keyMeta.has(row.key)) throw new Error(`gather_sites: duplicate resource key ${row.key}`);
@@ -1833,6 +1978,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         movementBox.set(movement.npc, movement.region);
     }
     const { places, spelling } = readSitePlaces(content, banks);
+    const labelPlaces = places.filter((place) => place.src.startsWith('label:'));
     const { enumOf, suffixes } = readFishingEnums(content);
     const directCache = new Map<number, DirectName | null>();
     const directNameOf = (npc: number): DirectName | null => {
@@ -1900,7 +2046,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 throw new Error(`gather_sites: malformed placement row ${row}`);
             }
             const tile = { x: mx * 64 + lx, z: mz * 64 + lz, level: plane };
-            if (tile.z >= SITE_SURFACE_Z) continue;
             for (const entry of entityKeys.get(ent) ?? []) {
                 let tiles = perKey.get(entry.key);
                 if (tiles === undefined) {
@@ -1914,12 +2059,11 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
         }
     }
-    const rows: GatherSiteWire[] = [];
-    const report: GatherSiteReport = {
-        woodcutting: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
-        mining: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
-        fishing: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
-    };
+    let rows: GatherSiteWire[] = [];
+    const zeroSkill = (): GatherSiteSkillReport => ({ sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
+    const report: GatherSiteReport = { woodcutting: zeroSkill(), mining: zeroSkill(), fishing: zeroSkill() };
+    // Fragment sites (`extra`) by id, so the published count follows the rows that survive overrides.
+    const extraIds = new Set<string>();
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
         const members = new Map<string, SiteTile>();
         for (const [key, tiles] of perKey) {
@@ -1934,8 +2078,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 }
             }
         }
-        type Draft = { d: number; label: string; idbase: string; minX: number; minZ: number; maxX: number; maxZ: number; level: number; n: number; keys: GatherSiteKeyWire[] };
+        type Draft = { d: number; extra: boolean; label: string; idbase: string; minX: number; minZ: number; maxX: number; maxZ: number; level: number; n: number; keys: GatherSiteKeyWire[] };
         const drafts: Draft[] = [];
+        // Far, underground and sprawl-fragment sites need `minTiles` tiles: a fishing spot is one tile, a tree or rock fragment three.
+        const minTiles = skill === 'fishing' ? 1 : 3;
         let dropped = 0;
         let direct = 0;
         let outsideBox = 0;
@@ -1953,6 +2099,26 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             for (const place of places) {
                 if (place.level !== tile.level) continue;
                 const d = Math.max(Math.abs(tile.x - place.x), Math.abs(tile.z - place.z));
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        // The nearest labels.txt label at any distance and on any level (labels carry no level). Far clusters and underground projections take it.
+        const nearestLabel = (box: SiteBox): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of labelPlaces) {
+                const d = siteEdgeDist(place, box);
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        // The nearest bank within SITE_CAP of a far surface box, on any floor (banks carry a level; far areas ignore it, as labels do).
+        const nearestBank = (box: SiteBox): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of places) {
+                if (!place.src.startsWith('bank:')) continue;
+                const d = siteEdgeDist(place, box);
+                if (d > SITE_CAP) continue;
                 if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
             }
             return best;
@@ -1981,14 +2147,18 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (names.size > 1) throw new Error(`gather_sites: ambiguous direct names in one site: ${[...names.keys()].join(' / ')}`);
             return names.size === 1 ? [...names.values()][0]! : null;
         };
-        const draftOf = (comp: SiteTile[], place: SitePlace, d: number, named: DirectName | null): Draft => {
+        // A site's label and id base come from its place, or from its direct name. An underground site (box at z >= SITE_SURFACE_Z) is named from its surface projection: `<place> (underground)`, id base `<skill>.<place slug>.underground`. A far surface area (`area`) is named `<place> area` with no bearing.
+        const draftOf = (comp: SiteTile[], place: SitePlace, named: DirectName | null, extra: boolean, area = false): Draft => {
             const box = siteBoxOf(comp);
-            const centre = { x: Math.round((box.minX + box.maxX) / 2), z: Math.round((box.minZ + box.maxZ) / 2) };
+            const naming = siteNamingBox(box);
+            const underground = box.minZ >= SITE_SURFACE_Z;
+            const d = siteEdgeDist(place, naming);
+            const centre = { x: Math.round((naming.minX + naming.maxX) / 2), z: Math.round((naming.minZ + naming.maxZ) / 2) };
             const counts = new Map<string, number>();
             for (const tile of comp) for (const key of tile.keys) counts.set(key, (counts.get(key) ?? 0) + 1);
             const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || compareCodepoint(a[0], b[0]));
-            const name = named === null ? place.display : named.name;
-            const bearing = named === null && d > SITE_NEAR ? siteBearing(place, centre) : '';
+            const name = named !== null ? named.name : underground ? `${place.display} (underground)` : area ? `${place.display} area` : place.display;
+            const bearing = named === null && !area && d > SITE_NEAR ? siteBearing(place, centre) : '';
             const br = bearing === '' ? '' : `${bearing}${d}`;
             let contents: string;
             if (skill === 'fishing') {
@@ -1999,31 +2169,61 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 const parts = ordered.map(([key, count]) => `${keyMeta.get(key)?.label ?? key} ${count}`);
                 contents = parts.slice(0, 3).join(', ') + (parts.length > 3 ? ` +${parts.length - 3}` : '');
             }
+            const stem = underground ? `${siteSlug(place.display)}.underground` : siteSlug(name);
             return {
-                d: named === null ? d : 0, label: `${name}${br === '' ? '' : ` ${br}`} · ${contents}`,
-                idbase: `${skill}.${siteSlug(name)}${bearing === '' ? '' : `.${bearing.toLowerCase()}`}`,
+                d: named === null ? d : 0, extra, label: `${name}${br === '' ? '' : ` ${br}`} · ${contents}`,
+                idbase: `${skill}.${stem}${bearing === '' ? '' : `.${bearing.toLowerCase()}`}`,
                 minX: box.minX, minZ: box.minZ, maxX: box.maxX, maxZ: box.maxZ, level: comp[0]!.level, n: comp.length,
                 keys: ordered.map(([key, count]) => ({ key, count })),
             };
         };
-        for (const comp of clusterTiles([...members.values()], SITE_GAP)) {
+        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the 4160-6400 special-area band are counted, not offered.
+        const farSite = (comp: SiteTile[]) => {
+            const box = siteBoxOf(comp);
+            if (box.maxZ >= SITE_SPECIAL_Z || comp.length < minTiles) {
+                dropped += comp.length;
+                return;
+            }
+            const bank = nearestBank(box);
+            if (bank !== null) {
+                drafts.push(draftOf(comp, bank.place, null, true, true));
+                return;
+            }
+            const near = nearestLabel(box);
+            if (near === null) dropped += comp.length;
+            else drafts.push(draftOf(comp, near.place, null, true));
+        };
+        // Underground clusters take the nearest label to their surface projection, at any distance.
+        const undergroundSite = (comp: SiteTile[]) => {
+            const near = nearestLabel(siteNamingBox(siteBoxOf(comp)));
+            if (comp.length < minTiles || near === null) dropped += comp.length;
+            else drafts.push(draftOf(comp, near.place, null, true));
+        };
+        const surface: SiteTile[] = [];
+        const underground: SiteTile[] = [];
+        for (const tile of members.values()) {
+            if (tile.z < SITE_SURFACE_Z) surface.push(tile);
+            else underground.push(tile);
+        }
+        for (const comp of clusterTiles(surface, SITE_GAP)) {
             const box = siteBoxOf(comp);
             if (siteExtent(box) <= SITE_SPRAWL_EXTENT) {
                 const near = nearestBox(box, comp[0]!.level);
                 if (near === null || near.d > SITE_CAP) {
-                    dropped += comp.length;
+                    farSite(comp);
                     continue;
                 }
                 const named = directOf(comp);
                 if (named !== null) direct += 1;
-                drafts.push(draftOf(comp, near.place, near.d, named));
+                drafts.push(draftOf(comp, near.place, named, false));
                 continue;
             }
             const cells = new Map<string, { place: SitePlace; pts: SiteTile[] }>();
+            const far: SiteTile[] = [];
             for (const tile of comp) {
                 const near = nearestPoint(tile);
                 if (near === null || near.d > SITE_CAP) {
-                    dropped += 1;
+                    far.push(tile);
                     continue;
                 }
                 const cell = cells.get(near.place.src);
@@ -2032,14 +2232,19 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             for (const { place, pts } of cells.values()) {
                 for (const part of clusterTiles(pts, SITE_GAP)) {
-                    if (part.length < 3) {
+                    if (part.length < minTiles) {
                         dropped += part.length;
                         continue;
                     }
-                    drafts.push(draftOf(part, place, siteEdgeDist(place, siteBoxOf(part)), null));
+                    // Only fishing admits a fragment under 3 tiles (rule 3): it is new, so it sorts after every 0.2.0 id.
+                    drafts.push(draftOf(part, place, null, part.length < 3));
                 }
             }
+            const reachable = far.filter((tile) => tile.z < SITE_SPECIAL_Z);
+            dropped += far.length - reachable.length;
+            for (const part of clusterTiles(reachable, SITE_GAP)) farSite(part);
         }
+        for (const comp of clusterTiles(underground, SITE_GAP)) undergroundSite(comp);
         const byBase = new Map<string, Draft[]>();
         for (const draft of drafts) {
             const group = byBase.get(draft.idbase);
@@ -2047,18 +2252,72 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             else group.push(draft);
         }
         for (const group of byBase.values()) {
-            group.sort((a, b) => a.d - b.d || b.n - a.n || a.minX - b.minX || a.minZ - b.minZ);
+            group.sort((a, b) => Number(a.extra) - Number(b.extra) || a.d - b.d || b.n - a.n || a.minX - b.minX || a.minZ - b.minZ);
             group.forEach((draft, index) => {
                 const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
                 const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
+                if (draft.extra) extraIds.add(id);
                 rows.push({
                     id, skill, label,
                     region: { min_x: draft.minX, min_z: draft.minZ, max_x: draft.maxX, max_z: draft.maxZ, level: draft.level },
                     keys: draft.keys,
+                    requires: [],
                 });
             });
         }
-        report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox };
+        Object.assign(report[skill], { direct, dropped, outside_box: outsideBox });
+    }
+    // Overrides name, require or drop published rows by id. Ids are fixed by now, so a drop never renumbers a neighbour.
+    const overridden = new Set<string>();
+    const droppedIds = new Set<string>();
+    const renames: { row: GatherSiteWire; name: string; requires: GatherSiteRequirement[] }[] = [];
+    for (const override of overrides) {
+        const row = rows.find((candidate) => candidate.id === override.id);
+        if (row === undefined) {
+            if (override.optional === true) continue;
+            throw new Error(`gather_sites: override ${override.id} names no published site (${override.cite})`);
+        }
+        if (overridden.has(override.id)) throw new Error(`gather_sites: ${override.id} has two overrides`);
+        overridden.add(override.id);
+        if (override.action === 'drop') droppedIds.add(override.id);
+        else renames.push({ row, name: override.name, requires: override.requires });
+    }
+    // Same-named overrides in one skill take `(n)` from the second on, as duplicate labels do; no unmatched site may already carry the name.
+    const groups = new Map<string, typeof renames>();
+    for (const entry of renames) {
+        const key = `${entry.row.skill}\u0000${entry.name}`;
+        const group = groups.get(key);
+        if (group === undefined) groups.set(key, [entry]);
+        else group.push(entry);
+    }
+    for (const group of groups.values()) {
+        group.sort((a, b) => compareCodepoint(a.row.id, b.row.id));
+        const first = group[0];
+        if (first === undefined) continue;
+        for (const row of rows) {
+            if (row.skill === first.row.skill && !overridden.has(row.id) && siteHeadName(row.label) === first.name) {
+                throw new Error(`gather_sites: ${row.id} already carries the override name ${first.name}`);
+            }
+        }
+        group.forEach((entry, index) => {
+            const ordinal = index === 0 ? '' : ` (${index + 1})`;
+            const reqs = entry.requires.map(requirementText).join(', ');
+            const contents = entry.row.label.slice(entry.row.label.indexOf(' · ') + ' · '.length);
+            entry.row.label = `${entry.name}${reqs === '' ? '' : ` (${reqs})`}${ordinal} · ${contents}`;
+            entry.row.requires = entry.requires;
+        });
+    }
+    const droppedRows = rows.filter((row) => droppedIds.has(row.id));
+    rows = rows.filter((row) => !droppedIds.has(row.id));
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const published = rows.filter((row) => row.skill === skill);
+        Object.assign(report[skill], {
+            sites: published.length,
+            extra: published.filter((row) => extraIds.has(row.id)).length,
+            renamed: renames.filter((entry) => entry.row.skill === skill).length,
+            required: published.filter((row) => row.requires.length > 0).length,
+            override_dropped: droppedRows.filter((row) => row.skill === skill).length,
+        });
     }
     // Sort by place names so plain names precede their bearing siblings.
     rows.sort((a, b) => {
@@ -2076,8 +2335,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
     }
     for (const row of rows) {
-        if (/\d{4}/.test(row.label)) throw new Error(`gather_sites: ${row.id} label leaks a number: ${row.label}`);
-        if (row.region.min_z >= SITE_SURFACE_Z || row.region.max_z >= SITE_SURFACE_Z) throw new Error(`gather_sites: ${row.id} is not a surface site`);
+        // Far sites take a bearing and distance after the name (`Far Place NE3110`), and counts follow ` · `. Only the name must be free of 4-digit runs (raw coordinates).
+        const head = row.label.split(' · ')[0]!.replace(/ (?:NE|NW|SE|SW|N|E|S|W)\d+$/, '');
+        if (/\d{4}/.test(head)) throw new Error(`gather_sites: ${row.id} label leaks a number: ${row.label}`);
+        if (row.region.min_z < SITE_SURFACE_Z && row.region.max_z >= SITE_SURFACE_Z) throw new Error(`gather_sites: ${row.id} spans the surface and underground`);
         if (row.region.min_x > row.region.max_x || row.region.min_z > row.region.max_z) throw new Error(`gather_sites: ${row.id} has an inverted region`);
         if (row.keys.length === 0) throw new Error(`gather_sites: ${row.id} offers no keys`);
         for (const entry of row.keys) {
@@ -2085,5 +2346,28 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (keyMeta.get(entry.key)?.skill !== row.skill) throw new Error(`gather_sites: ${row.id} offers ${entry.key}, not a ${row.skill} key`);
         }
     }
-    return { rows, report };
+    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)), report };
+}
+
+/**
+ * The hidden sites' regions per revision, committed beside the 0.2.0 snapshot
+ * for the reachability guard (`crates/script/tests/gather_sites_reach.rs`):
+ * id -> `[min_x, min_z, max_x, max_z, level]`.
+ */
+export const HIDDEN_SITES_FILE = 'tools/game-data/gather-sites-hidden.json';
+export type HiddenSitesRecord = Record<string, number[]>;
+export function hiddenSitesRecord(hidden: readonly GatherSiteWire[]): HiddenSitesRecord {
+    const record: HiddenSitesRecord = {};
+    for (const row of [...hidden].sort((a, b) => compareCodepoint(a.id, b.id))) {
+        record[row.id] = [row.region.min_x, row.region.min_z, row.region.max_x, row.region.max_z, row.region.level];
+    }
+    return record;
+}
+/** The file's bytes: revisions ascending, one inline row per id in codepoint order. */
+export function hiddenSitesBytes(byRevision: Record<string, HiddenSitesRecord>): string {
+    const blocks = Object.keys(byRevision).sort((a, b) => Number(a) - Number(b)).map((revision) => {
+        const rows = Object.entries(byRevision[revision]!).map(([id, region]) => `    ${JSON.stringify(id)}: [${region.join(',')}]`);
+        return `  ${JSON.stringify(revision)}: {\n${rows.join(',\n')}\n  }`;
+    });
+    return `{\n${blocks.join(',\n')}\n}\n`;
 }

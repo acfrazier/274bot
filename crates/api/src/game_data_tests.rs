@@ -149,11 +149,26 @@ fn minimal_json(tail: &str) -> String {
     )
 }
 
+/// A label's name, without the bearing and distance a far site adds (`Far Place NE3110`) and without its counts after ` · `.
+fn site_name(label: &str) -> &str {
+    let head = label.split(" · ").next().unwrap_or(label);
+    match head.rsplit_once(' ') {
+        Some((name, token)) if is_bearing_distance(token) => name,
+        _ => head,
+    }
+}
+
+fn is_bearing_distance(token: &str) -> bool {
+    let letters = token.trim_end_matches(|c: char| c.is_ascii_digit());
+    let digits = &token[letters.len()..];
+    !digits.is_empty() && matches!(letters, "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW")
+}
+
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [243, 33, 32]),
-        (ClientRevision::R289, [246, 33, 32]),
+        (ClientRevision::R274, [231, 33, 25]),
+        (ClientRevision::R289, [231, 33, 25]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();
@@ -163,12 +178,19 @@ fn named_sites_are_selected_core_rows_with_skill_key_closure() {
             for row in data.gather_sites_for(skill) {
                 assert!(ids.insert(row.id.as_str()));
                 assert!(labels.insert((row.skill.as_str(), row.label.as_str())));
-                assert!(row.region.min_z < 6400);
-                assert!(!row
-                    .label
-                    .as_bytes()
-                    .windows(4)
-                    .any(|window| window.iter().all(u8::is_ascii_digit)));
+                assert!(
+                    !(row.region.min_z < 6400 && row.region.max_z >= 6400),
+                    "{} spans the surface and underground",
+                    row.id
+                );
+                assert!(
+                    !site_name(&row.label)
+                        .as_bytes()
+                        .windows(4)
+                        .any(|window| window.iter().all(u8::is_ascii_digit)),
+                    "{}",
+                    row.label
+                );
                 assert!(!row.keys.is_empty());
                 for key in &row.keys {
                     assert!(key.count > 0);
@@ -262,6 +284,53 @@ fn named_site_wire_rejects_unknown_fields_and_legacy_core_defaults_empty() {
     let legacy =
         SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
     assert!(legacy.gather_sites().is_empty());
+}
+
+#[test]
+fn named_site_requirements_decode_and_reject_unknown_shapes() {
+    let row = serde_json::json!({
+        "id": "mining.fixture", "skill": "mining", "label": "Fixture (Mining 60) · Copper ore 1",
+        "region": {"min_x": 1, "min_z": 2, "max_x": 1, "max_z": 2, "level": 0},
+        "keys": [{"key": "copper", "count": 1}],
+        "requires": [
+            {"kind": "skill", "skill": "mining", "level": 60},
+            {"kind": "quest", "name": "Lost City"},
+            {"kind": "worn", "item": 772, "name": "Dramen staff"}
+        ]
+    });
+    let site = serde_json::from_value::<GatherSiteOption>(row.clone()).unwrap();
+    assert_eq!(
+        site.requires,
+        vec![
+            GatherSiteRequirement::Skill {
+                skill: "mining".into(),
+                level: 60
+            },
+            GatherSiteRequirement::Quest {
+                name: "Lost City".into()
+            },
+            GatherSiteRequirement::Worn {
+                item: 772,
+                name: "Dramen staff".into()
+            },
+        ]
+    );
+    let mut without = row.clone();
+    without.as_object_mut().unwrap().remove("requires");
+    assert!(serde_json::from_value::<GatherSiteOption>(without)
+        .unwrap()
+        .requires
+        .is_empty());
+    for changed in [
+        serde_json::json!([{"kind": "quest"}]),
+        serde_json::json!([{"kind": "quest", "name": "Lost City", "level": 3}]),
+        serde_json::json!([{"kind": "agility", "level": 60}]),
+        serde_json::json!([{"kind": "worn", "item": 772}]),
+    ] {
+        let mut bad = row.clone();
+        bad["requires"] = changed;
+        assert!(serde_json::from_value::<GatherSiteOption>(bad).is_err());
+    }
 }
 
 #[test]

@@ -1,11 +1,10 @@
 use super::super::select::PlacementClass;
 use super::*;
-use crate::quester::families::tests::with_tick;
+use crate::quester::families::tests::{def, with_tick};
 use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
-use api::snapshot::GameSnapshot;
-use api::snapshot::WorldTile;
+use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, WorldTile};
 
 fn fixture() -> (Gatherer, GameSnapshot) {
     let (config, mut snapshot) = FamilyPreparation::run(|families| {
@@ -310,4 +309,103 @@ fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
     };
     assert_eq!(request.arrival, ArrivalKind::Area);
     assert_eq!(request.loc_id, None);
+}
+
+fn worn(id: i32) -> ItemView {
+    ItemView {
+        def: def(id, "Worn"),
+        container: ItemContainer::Equipment,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: Vec::new(),
+        component_id: -1,
+    }
+}
+
+/// Starts the fixture's first target re-pointed at a method content refuses in
+/// monkey form. `worn` is the observed worn set, or `None` when unobserved.
+fn start_monkey_form_target(worn: Option<Vec<ItemView>>) -> Gatherer {
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let mut plan = gatherer
+        .target
+        .clone()
+        .expect("the fixture selects a target");
+    let catalog = Arc::clone(&gatherer.prepared.catalog);
+    plan.method_index = catalog
+        .methods()
+        .iter()
+        .position(|method| {
+            catalog
+                .forbidden_states(method)
+                .is_ok_and(|states| states.contains(&GatherForbiddenState::MonkeyForm))
+        })
+        .expect("289 content has a monkey-form method") as u16;
+    // The fixture frame already carries worn items; an unobserved set needs a
+    // frame that never posted its worn table.
+    let snapshot = match worn {
+        Some(rows) => {
+            let mut observed = snapshot;
+            observed.seed_equipment(rows);
+            observed
+        }
+        None => {
+            let mut bare = GameSnapshot::new();
+            bare.seed_ingame(2);
+            bare
+        }
+    };
+    gatherer.cancel_active();
+    gatherer.target = None;
+    gatherer.needs_validate = false;
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan,
+                class: PlacementClass::Unloaded,
+            },
+            tick,
+        );
+    });
+    gatherer
+}
+
+#[test]
+fn monkey_form_begin_refuses_a_worn_greegree() {
+    let gatherer = start_monkey_form_target(Some(vec![worn(4024)]));
+    assert_eq!(
+        gatherer
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_ref()),
+        Some("forbidden-state:monkey-form")
+    );
+    assert!(gatherer.target.is_none());
+}
+
+#[test]
+fn monkey_form_begin_allows_a_worn_amulet_of_glory() {
+    let gatherer = start_monkey_form_target(Some(vec![worn(1704)]));
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer.target.is_some());
+}
+
+#[test]
+fn monkey_form_begin_allows_an_empty_worn_set() {
+    let gatherer = start_monkey_form_target(Some(Vec::new()));
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer.target.is_some());
+}
+
+#[test]
+fn monkey_form_begin_waits_for_an_observed_worn_set() {
+    let gatherer = start_monkey_form_target(None);
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer.needs_validate);
+    assert!(gatherer.target.is_none());
 }

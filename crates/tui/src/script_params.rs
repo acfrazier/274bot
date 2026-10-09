@@ -1922,7 +1922,7 @@ mod tests {
             &loadouts,
             Some(data.as_ref()),
         );
-        assert_eq!(options.selectable().len(), 223);
+        assert_eq!(options.selectable().len(), 212);
         assert_eq!(
             options
                 .selectable()

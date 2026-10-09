@@ -1251,6 +1251,16 @@ where
         .map_err(serde::de::Error::custom)
 }
 
+/// A content state that refuses a gather method while it holds. Wire names
+/// are the extractor's `forbidden_states` strings.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum GatherForbiddenState {
+    /// The memberfish guard `~mm_wearing_greegree = true`: refused while the
+    /// player wears a greegree (`mm_greegree` category).
+    MonkeyForm,
+}
+
 /// One pinned row of the selected core's `gather_resources` slice, carried so
 /// the UI never decodes the gathering family. `key` is the selectable setting
 /// value: the resource key for woodcutting/mining or the stable grouped key
@@ -1274,6 +1284,9 @@ pub struct GatherResourceOption {
     pub selectable: bool,
     #[serde(default)]
     pub gap: Option<String>,
+    /// Content states that refuse this row's methods while they hold.
+    #[serde(default)]
+    pub forbidden_states: Vec<GatherForbiddenState>,
 }
 
 /// A build-time named gathering camp. Its box selects a resource anchor;
@@ -1286,6 +1299,22 @@ pub struct GatherSiteOption {
     pub label: String,
     pub region: crate::gather_methods::SceneRegionInput,
     pub keys: Vec<GatherSiteKey>,
+    /// Walk requirements the Gatherer already enforces through nav. The label
+    /// names them; no gate reads this list. Empty when nothing gates the site.
+    #[serde(default)]
+    pub requires: Vec<GatherSiteRequirement>,
+}
+
+/// One requirement a published gather site names. `kind` selects the variant.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GatherSiteRequirement {
+    /// A skill at or above `level` (`stat(skill) >= level`).
+    Skill { skill: String, level: u16 },
+    /// A quest that must be complete.
+    Quest { name: String },
+    /// An item that must be worn (`inv_total(worn, item) > 0`), named for the label.
+    Worn { item: i32, name: String },
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]

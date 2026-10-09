@@ -90,6 +90,53 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Bank transfers wait up to eight game ticks to complete instead of four
   seconds of real time, so a laggy server or a busy computer no longer makes a
   deposit or withdrawal give up early.
+- Raw shark (Harpoon) and the big-net catch are selectable again. The
+  monkey-form guard in the fishing scripts refuses only while a greegree is
+  worn, so the Gatherer now refuses to start in that case
+  (`forbidden-state:monkey-form`) instead of hiding the method.
+- Gather sites: underground mines and caves and far-off areas get a place name
+  (for example Mining Guild, Karamja Volcano, Zanaris), and single fishing
+  spots are offered. A site that needs a level or a worn item shows it in its
+  label ("Mining Guild (Mining 60)", "Zanaris (Dramen staff)"). The Zanaris
+  entrance needs the Dramen staff worn and a members world. 36 sites are new
+  on both server versions. Sites the route finder can't reach yet are hidden
+  (see "Not in this release"), so the Gatherer now offers 289 sites on both
+  versions: 22 fewer than 0.2.0 on 289 (311) and 19 fewer on 274 (308). Every
+  site on offer can be walked to on the 289 map by an account that meets its
+  requirements.
+- Every 0.2.0 site keeps its id and region, hidden or not, and no id is
+  reused, so saved Gatherer cards that name a site you can still pick keep
+  working.
+
+### Not in this release
+
+**Gatherer**
+
+- Gathering sites in areas the route finder can't reach yet are hidden: 90 on
+  289 (58 that 0.2.0 offered and 32 new) and 71 on 274 (55 that 0.2.0 offered
+  and 16 new). The areas are:
+  - Morytania: Canifis, Mort'ton, the Haunted Woods, the Temple, the River
+    Salve and the west bank of Mort Myre (Mort'ton east is 289 only).
+  - Tirannwn: the Elf Camp, Isafdar, Poison Waste, Tyras Camp, Arandar and the
+    Prifddinas outskirts.
+  - Islands and boat or glider trips: Crandor, the Fishing Platform, the
+    Lighthouse island, and on 289 only Miscellania, Ape Atoll and Crash
+    Island.
+  - Beyond gates and fences: Gu'Tanoth and the forest on the south side of its
+    ogre gates, the Castle Wars west bank, the stretch west of the Tree Gnome
+    Stronghold fence, the Wilderness agility course, the Demonic Ruins
+    charcoal trees, the Desert Mining Camp, the Hemenster fishing contest
+    enclosure, the Fremennik mining enclosure, the Waterfall ledge, West
+    Ardougne, and on 289 only Trollheim's north-west forest.
+  - Caves and underground areas: the Brimhaven Dungeon, the Taverley Dungeon,
+    the Grand Tree mine, the Varrock sewers, the Digsite caverns, Glarial's
+    Tomb, the Desert Mining Camp mine, a separate pocket of Zanaris and the
+    cave west of the Necromancer's cellar.
+
+  A saved Gatherer card that names one of these now refuses to start with an
+  "unknown" site error; pick another site. They return as the route finder
+  learns the entrances; that work is planned for 0.2.1. For a few enclosed
+  spots no way in has been found yet, so those may stay hidden.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
