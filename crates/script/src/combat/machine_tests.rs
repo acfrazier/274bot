@@ -353,6 +353,7 @@ impl Scene {
                 },
                 energy: 100,
                 weight: 0,
+                animation_update: None,
             },
             stats: (0..25)
                 .map(|index| StatView {
@@ -493,6 +494,15 @@ impl Scene {
             })
             .unwrap()
             .seq_id
+    }
+    fn animation_update(&mut self, sequence: i32) {
+        self.local.animation_update = Some(api::snapshot::AnimationUpdateView {
+            serial: self
+                .local
+                .animation_update
+                .map_or(1, |update| update.serial + 1),
+            sequence,
+        });
     }
 }
 fn attack(effect: Option<HostEffect>) {
@@ -3525,6 +3535,7 @@ fn case_31_ranged_animation_advances_cycle_but_projectile_does_not() {
     scene.equipment[1].count -= 1;
     scene.local.player.actor.animation = scene.ranged_seq();
     scene.local.player.actor.animation_frame = 0;
+    scene.animation_update(scene.ranged_seq());
     scene.refresh();
     scene.combat_tab(root);
     scene
@@ -3913,6 +3924,9 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     for tick in 3..203 {
         scene.local.player.actor.animation = sequence;
         scene.local.player.actor.animation_frame = ((tick - 3) % u64::from(rate)) as i32;
+        if (tick - 3) % u64::from(rate) == 0 {
+            scene.animation_update(sequence);
+        }
         scene.snapshot.seed_local_player(scene.local.clone());
         let cycle = i32::try_from(tick).unwrap() * 30;
         scene.snapshot.seed_hitmarks(HitmarksView {
@@ -4238,6 +4252,9 @@ fn ranged_swing_replay(
         };
         scene.local.player.actor.animation_frame = animation_frame;
         scene.local.player.actor.target = Some(animation_target);
+        if launch.is_some() && !idle_local {
+            scene.animation_update(sequence);
+        }
         scene.snapshot.seed_local_player(scene.local.clone());
         scene.snapshot.seed_players(scene.players.clone());
         if let Some((t1, t2)) = launch {
@@ -4308,6 +4325,225 @@ fn ranged_swings_follow_local_animation_onsets_only() {
     );
     assert_eq!(wrong_last, 0);
     assert_eq!(wrong_deadline, None);
+}
+
+fn ranged_receipt_fixture(config: &str) -> (Scene, Harness, i32) {
+    let mut scene = Scene::new("cow");
+    let mut weapon = scene.held(config, 3);
+    weapon.container = ItemContainer::Equipment;
+    weapon.count = 150;
+    let tab = scene
+        .tables
+        .weapon_style(weapon.def.id)
+        .unwrap()
+        .tab
+        .unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    scene.varps.push(VarpView {
+        index: scene.data.ranged_mode_varp().unwrap(),
+        value: i32::from(rapid.slot),
+    });
+    scene.equipment.push(weapon);
+    if config == "maple_shortbow" {
+        let mut arrows = scene.held("steel_arrow", 13);
+        arrows.container = ItemContainer::Equipment;
+        arrows.count = 150;
+        scene.equipment.push(arrows);
+    }
+    scene.refresh();
+    scene.combat_tab(root);
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.ranged_style = RangedMode::Rapid;
+    let harness = Harness::new(&scene, request);
+    (scene, harness, root)
+}
+
+fn ranged_receipt_replay(
+    config: &str,
+    sequence: i32,
+    samples: &[(u16, i32, bool)],
+) -> (u16, u16, u16) {
+    let (mut scene, mut harness, _) = ranged_receipt_fixture(config);
+    scene.install();
+    harness.machine.engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    for &(tick, animation_frame, launch) in samples {
+        scene.local.player.actor.animation = if animation_frame == 9 && sequence == 929 {
+            -1
+        } else {
+            sequence
+        };
+        scene.local.player.actor.animation_frame = animation_frame;
+        if launch {
+            scene.animation_update(sequence);
+        }
+        scene.snapshot.seed_local_player(scene.local.clone());
+        let evidence = harness.runtime.evidence.unwrap();
+        let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+        harness.machine.settle(&frame, tick);
+    }
+    (
+        harness.machine.counters.swings,
+        harness.machine.schedule.last_swing,
+        harness.machine.schedule.cycle.deadline,
+    )
+}
+
+#[test]
+fn ranged_receipt_r3_monotonic_and_expired_rendered_frames_count_every_instruction() {
+    // R3-mpxrom5wgy_0: actual frames[] and launch_timing.launches[].
+    let samples = [
+        (46, 0, true),
+        (47, 5, false),
+        (48, 9, true),
+        (49, 9, false),
+        (68, 0, true),
+        (69, 5, false),
+        (70, 7, true),
+        (71, 9, false),
+    ];
+    assert_eq!(
+        ranged_receipt_replay("bronze_dart", 929, &samples),
+        (4, 70, 72)
+    );
+}
+
+#[test]
+fn ranged_receipt_r3_equal_frames_across_launches_are_distinct() {
+    // The receipt samples both real launches at 100 and 102 as 929/frame 0.
+    assert_eq!(
+        ranged_receipt_replay("bronze_dart", 929, &[(100, 0, true), (102, 0, true)]),
+        (2, 102, 104)
+    );
+}
+
+#[test]
+fn ranged_receipt_r1_rapid_monotonic_frame_launch_refreshes_three_tick_clock() {
+    // R1-mpjpregwxy_0: launch211 samples 426/frame9 after tick210 frame5.
+    assert_eq!(
+        ranged_receipt_replay(
+            "maple_shortbow",
+            426,
+            &[
+                (208, 0, true),
+                (209, 4, false),
+                (210, 5, false),
+                (211, 9, true)
+            ]
+        ),
+        (2, 211, 214)
+    );
+}
+
+#[test]
+fn ranged_receipt_r3_fresh_launch_does_not_retry_the_installed_target() {
+    let (mut scene, mut harness, root) = ranged_receipt_fixture("bronze_dart");
+    attack(harness.pending(&scene, 44));
+    scene.install();
+    scene.refresh();
+    scene.combat_tab(root);
+    assert!(harness.pending(&scene, 45).is_none());
+    // First attack44, launches46/48, redundant attack49 in the real receipt.
+    for (tick, animation, frame, launch) in [
+        (46, 929, 0, true),
+        (47, 929, 5, false),
+        (48, -1, 9, true),
+        (49, -1, 9, false),
+    ] {
+        scene.local.player.actor.animation = animation;
+        scene.local.player.actor.animation_frame = frame;
+        if launch {
+            scene.animation_update(929);
+        }
+        scene.refresh();
+        scene.combat_tab(root);
+        assert!(
+            harness.pending(&scene, tick).is_none(),
+            "fresh installed target must not be re-attacked at {tick}"
+        );
+    }
+    assert_eq!(harness.machine.counters.swings, 2);
+    assert_eq!(harness.machine.schedule.last_swing, 48);
+}
+
+#[test]
+fn ranged_instruction_validation_consumes_rejected_updates_and_handles_serial_wrap() {
+    let (mut scene, _, _) = ranged_receipt_fixture("bronze_dart");
+    scene.install();
+    let engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    let mut seen = None;
+    let observe = |scene: &Scene, seen: &mut Option<u32>| {
+        super::super::style::ranged::onset(&scene.local, engaged, &scene.tables, seen)
+    };
+    // Another same-tile shooter cannot create a local server instruction.
+    let mut remote = scene.local.player.clone();
+    remote.index = 2;
+    remote.actor.animation = 929;
+    scene.players.push(remote);
+    assert!(!observe(&scene, &mut seen));
+    let non_ranged = scene
+        .data
+        .style_seqs()
+        .iter()
+        .find(|row| {
+            scene
+                .tables
+                .style_seq(row.seq_id)
+                .is_some_and(|mask| !mask.contains(super::super::tables::StyleMask::RANGED))
+        })
+        .unwrap()
+        .seq_id;
+    scene.animation_update(non_ranged);
+    assert!(!observe(&scene, &mut seen), "selected non-ranged sequence");
+    scene.local.player.actor.target.as_mut().unwrap().index = 8;
+    scene.animation_update(929);
+    assert!(!observe(&scene, &mut seen), "another target");
+    scene.local.player.actor.target.as_mut().unwrap().index = 7;
+    assert!(
+        !observe(&scene, &mut seen),
+        "rejected instruction cannot rebound"
+    );
+    for serial in [u32::MAX, 0] {
+        scene.local.animation_update = Some(api::snapshot::AnimationUpdateView {
+            serial,
+            sequence: 929,
+        });
+        assert!(observe(&scene, &mut seen));
+        scene.local.player.actor.animation_frame = 0;
+        assert!(
+            !observe(&scene, &mut seen),
+            "render rewind is not another shot"
+        );
+    }
+    scene.animation_update(-1);
+    assert!(!observe(&scene, &mut seen));
+}
+
+#[test]
+fn ranged_begin_does_not_count_a_previous_fights_instruction() {
+    let (mut scene, _, _) = ranged_receipt_fixture("bronze_dart");
+    scene.install();
+    scene.animation_update(929);
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    let evidence = harness.runtime.evidence.unwrap();
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    harness.machine.settle(&frame, 1);
+    assert_eq!(harness.machine.counters.swings, 0);
 }
 
 #[path = "magic_machine_tests.rs"]

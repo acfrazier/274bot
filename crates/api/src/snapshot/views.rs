@@ -178,6 +178,15 @@ pub struct PlayerView {
     pub weapon: Option<i32>,
 }
 
+/// The most recent server animation instruction, independent of rendered frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AnimationUpdateView {
+    /// Local-player reception serial; repeated instructions with the same ID differ.
+    pub serial: u32,
+    /// Sequence ID in the server instruction, including `-1` for cancellation.
+    pub sequence: i32,
+}
+
 /// The local player: a `PlayerView` at `self_slot` plus the run/weight
 /// stats. `distance` is always 0.
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +194,9 @@ pub struct LocalPlayerView {
     pub player: PlayerView,
     pub energy: i32,
     pub weight: i32,
+    /// Most recent local PLAYER_INFO animation instruction, if one was received.
+    /// Rendering and remote actors cannot change this observation.
+    pub animation_update: Option<AnimationUpdateView>,
 }
 
 /// One live projectile copied from the client's projectile list.

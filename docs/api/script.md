@@ -467,10 +467,13 @@ Path combat supports `"tactic.style": "ranged"` and
 `tactic.ranged_style` defaults to `"rapid"`. `melee_mode` is only valid with
 melee combat and is rejected when the tactic style is ranged.
 
-A ranged swing is counted when the local player's own ranged attack animation
-starts (one of the RANGED sequences: bow, crossbow, thrown weapon), including a
-restart of the same animation for the next shot. The animation and the projectile
-are sent on the attack tick, so the weapon-rate clock runs from that tick.
+A ranged swing is counted from each new server animation instruction for the
+local player (one of the selected RANGED sequences: bow, crossbow, thrown
+weapon), including repeated instructions with the same sequence ID. A reception
+serial and the instructed sequence survive rendered-frame advancement and expiry,
+so rapid shots are not lost when successive snapshots show equal or increasing
+frames. The animation instruction and projectile are sent on the attack tick;
+that instruction refreshes both the swing count and the weapon-rate clock.
 Projectiles are not used for counting, so another player standing on the same
 tile, idle or shooting, neither hides the bot's shots nor adds swings of its own.
 The post-kill sweep attempts

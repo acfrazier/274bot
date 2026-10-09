@@ -2009,6 +2009,7 @@ mod tests {
             },
             energy: 100,
             weight: 0,
+            animation_update: None,
         });
         snapshot
     }

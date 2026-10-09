@@ -174,6 +174,9 @@ They are listed here for completeness and are left out of the release notes.
 - Scripts: `depositAllExcept` could bank an item it was told to keep when
   the bank's inventory panel opened before it showed your items. Kept items
   now stay in your inventory however the panel fills in.
+- Combat: in rapid ranged fights the bot's attack count could fall behind the
+  shots it actually fired, and it then clicked Attack again on the monster it
+  was already shooting. Every shot is counted again.
 - Gatherer: the Bedabin Camp cave site was hidden by mistake as if it were a
   separate cave; it is the Zanaris Cosmic Temple trees and is offered again
   under its own id.
