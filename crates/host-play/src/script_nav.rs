@@ -252,19 +252,20 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
     }
 }
 
-/// Gating facts for a native walk: the live snapshot at dispatch, plus
-/// profile membership and quest evidence captured on the arm.
+/// Gating facts for a native walk.
 ///
-/// Observe may pass `None` on the Starting frame (`nav_world_state_for_observe`
-/// only builds facts for Running / armed nav). Routing with the fail-closed
-/// empty state then refuses skill-gated doors (Fishing Guild 68) even when
-/// the snapshot already has the levels. Always read the snapshot here.
-pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<&WorldState>) -> WorldState {
-    let map_members = armed.is_some_and(|state| state.map_members);
-    let quest_evidence = armed.and_then(|state| state.quest_evidence.clone());
-    let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
-    state.quest_evidence = quest_evidence;
-    state
+/// Reuse the arm's observe-time [`WorldState`] when it exists (Starting and
+/// Running frames already built it from this snapshot, including profile
+/// membership). Rebuild from the snapshot only when the arm is `None` — a
+/// Starting-frame walk if observe did not pass facts, or a test that arms
+/// with `state: None`. That rebuild is what lets posted skills open a
+/// skill-gated door (Fishing Guild 68) instead of routing on the fail-closed
+/// empty state.
+pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<WorldState>) -> WorldState {
+    match armed {
+        Some(state) => state,
+        None => WorldState::from_snapshot(snapshot),
+    }
 }
 
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
@@ -487,6 +488,7 @@ impl ScriptWalkArm {
                 return;
             }
         }
+        self.state = Some(route_world_state(snapshot, self.state.take()));
         if let (Some(provider), Some(family)) = (request.evidence, world.graph.quest_family) {
             self.state
                 .get_or_insert_with(Default::default)
@@ -666,7 +668,7 @@ impl ScriptWalkArm {
             );
             return false;
         }
-        self.state = Some(route_world_state(snapshot, self.state.as_ref()));
+        self.state = Some(route_world_state(snapshot, self.state.take()));
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();

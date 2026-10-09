@@ -15706,6 +15706,51 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
 }
 
 #[test]
+fn starting_script_frame_builds_nav_facts() {
+    assert!(
+        crate::play_slots::script_state_builds_nav_facts(Some(script::RunState::Starting)),
+        "Starting frames dispatch the first native walk and need snapshot stats"
+    );
+    assert!(crate::play_slots::script_state_builds_nav_facts(Some(
+        script::RunState::Running
+    )));
+    for state in [
+        None,
+        Some(script::RunState::Idle),
+        Some(script::RunState::Paused),
+        Some(script::RunState::Stopping),
+        Some(script::RunState::Error),
+    ] {
+        assert!(
+            !crate::play_slots::script_state_builds_nav_facts(state),
+            "{state:?} must not build Starting-frame nav facts"
+        );
+    }
+    let c = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let here = Some((3200, 3200, 0));
+    let nav_facts =
+        crate::play_slots::script_state_builds_nav_facts(Some(script::RunState::Starting));
+    assert!(
+        nav_world_state_for_observe(here, &snap, nav_facts, false, true).is_some(),
+        "a Starting frame must build WorldState so the first walk sees posted skills"
+    );
+}
+
+#[test]
 fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
     const SKILL_FISHING: i32 = 10;
     let mut snap = GameSnapshot::new();
@@ -15726,12 +15771,15 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
     );
     assert!(
         !from_empty_arm.map_members,
-        "membership still comes from the arm, not GameSnapshot"
+        "membership is not inferred from GameSnapshot when the arm is missing"
     );
     let armed = nav::WorldState::empty().with_map_members(true);
-    let merged = super::script_runtime::route_world_state(&snap, Some(&armed));
-    assert_eq!(merged.stats.get(&SKILL_FISHING).copied(), Some(68));
-    assert!(merged.map_members);
+    let reused = super::script_runtime::route_world_state(&snap, Some(armed));
+    assert!(
+        !reused.stats.contains_key(&SKILL_FISHING),
+        "an existing arm is reused; the snapshot is not rebuilt"
+    );
+    assert!(reused.map_members);
 }
 
 #[test]
