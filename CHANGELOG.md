@@ -15,8 +15,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - More gather sites: underground mines and caves are named from the nearest
   label, far surface areas take the nearest bank within 64 tiles or else the
   nearest label with its bearing and distance, and single fishing spots are
-  offered. Woodcutting and mining fragments still need three tiles. Sites in
-  instanced and quest-only areas are not offered.
+  offered. Woodcutting and mining fragments still need three tiles. Places the
+  content names take that name (Mining Guild, Karamja Volcano, Zanaris), and a
+  site that needs a level or quest shows it in the label ("Mining Guild
+  (Mining 60)", "Zanaris (Lost City, Dramen staff)"). Each new site must have a
+  route from Lumbridge on the 289 nav pack, checked by a reachability test
+  against the real pack for a maxed account. Sites without one are not
+  offered: the Bedabin Camp and Desert Mining Camp caves, the Ape Atoll jungle,
+  Miscellania, and the other new clusters behind gates the pack has no edge
+  for (33 on 289). Sites that 0.2.0 already offered keep their ids, even where
+  the pack has no route yet (for example Canifis and the Elf Camp).
 - Every 0.2.0 site keeps its id and region, so saved Gatherer cards still work.
 
 ## [0.2.0] — 2026-10-08 — Beta 1

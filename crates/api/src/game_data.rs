@@ -1299,6 +1299,22 @@ pub struct GatherSiteOption {
     pub label: String,
     pub region: crate::gather_methods::SceneRegionInput,
     pub keys: Vec<GatherSiteKey>,
+    /// Walk requirements the Gatherer already enforces through nav. The label
+    /// names them; no gate reads this list. Empty when nothing gates the site.
+    #[serde(default)]
+    pub requires: Vec<GatherSiteRequirement>,
+}
+
+/// One requirement a published gather site names. `kind` selects the variant.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GatherSiteRequirement {
+    /// A skill at or above `level` (`stat(skill) >= level`).
+    Skill { skill: String, level: u16 },
+    /// A quest that must be complete.
+    Quest { name: String },
+    /// An item that must be worn (`inv_total(worn, item) > 0`), named for the label.
+    Worn { item: i32, name: String },
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]

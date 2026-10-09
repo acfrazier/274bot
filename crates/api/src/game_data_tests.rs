@@ -167,8 +167,8 @@ fn is_bearing_distance(token: &str) -> bool {
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [276, 48, 36]),
-        (ClientRevision::R289, [292, 49, 38]),
+        (ClientRevision::R274, [268, 41, 34]),
+        (ClientRevision::R289, [271, 41, 34]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();
@@ -284,6 +284,53 @@ fn named_site_wire_rejects_unknown_fields_and_legacy_core_defaults_empty() {
     let legacy =
         SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
     assert!(legacy.gather_sites().is_empty());
+}
+
+#[test]
+fn named_site_requirements_decode_and_reject_unknown_shapes() {
+    let row = serde_json::json!({
+        "id": "mining.fixture", "skill": "mining", "label": "Fixture (Mining 60) · Copper ore 1",
+        "region": {"min_x": 1, "min_z": 2, "max_x": 1, "max_z": 2, "level": 0},
+        "keys": [{"key": "copper", "count": 1}],
+        "requires": [
+            {"kind": "skill", "skill": "mining", "level": 60},
+            {"kind": "quest", "name": "Lost City"},
+            {"kind": "worn", "item": 772, "name": "Dramen staff"}
+        ]
+    });
+    let site = serde_json::from_value::<GatherSiteOption>(row.clone()).unwrap();
+    assert_eq!(
+        site.requires,
+        vec![
+            GatherSiteRequirement::Skill {
+                skill: "mining".into(),
+                level: 60
+            },
+            GatherSiteRequirement::Quest {
+                name: "Lost City".into()
+            },
+            GatherSiteRequirement::Worn {
+                item: 772,
+                name: "Dramen staff".into()
+            },
+        ]
+    );
+    let mut without = row.clone();
+    without.as_object_mut().unwrap().remove("requires");
+    assert!(serde_json::from_value::<GatherSiteOption>(without)
+        .unwrap()
+        .requires
+        .is_empty());
+    for changed in [
+        serde_json::json!([{"kind": "quest"}]),
+        serde_json::json!([{"kind": "quest", "name": "Lost City", "level": 3}]),
+        serde_json::json!([{"kind": "agility", "level": 60}]),
+        serde_json::json!([{"kind": "worn", "item": 772}]),
+    ] {
+        let mut bad = row.clone();
+        bad["requires"] = changed;
+        assert!(serde_json::from_value::<GatherSiteOption>(bad).is_err());
+    }
 }
 
 #[test]

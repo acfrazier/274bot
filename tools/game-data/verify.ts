@@ -7,7 +7,7 @@ import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertT
 import { parsePack, walkContentFiles } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
-import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, miningHazards, type GatherSiteWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, miningHazards, SITE_OVERRIDES, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
@@ -744,10 +744,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 292, direct: 0, dropped: 1205, outside_box: 0, extra: 46 }, mining: { sites: 49, direct: 0, dropped: 13, outside_box: 0, extra: 16 }, fishing: { sites: 38, direct: 20, dropped: 5, outside_box: 0, extra: 6 } }
-        : { woodcutting: { sites: 276, direct: 0, dropped: 1198, outside_box: 0, extra: 33 }, mining: { sites: 48, direct: 0, dropped: 13, outside_box: 0, extra: 15 }, fishing: { sites: 36, direct: 20, dropped: 5, outside_box: 0, extra: 4 } };
+        ? { woodcutting: { sites: 271, direct: 0, dropped: 1205, outside_box: 0, extra: 25, renamed: 4, required: 4, override_dropped: 21 }, mining: { sites: 41, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 8 }, fishing: { sites: 34, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 4 } }
+        : { woodcutting: { sites: 268, direct: 0, dropped: 1198, outside_box: 0, extra: 25, renamed: 4, required: 4, override_dropped: 8 }, mining: { sites: 41, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 7 }, fishing: { sites: 34, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 2 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 379 : 360, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 346 : 343, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -774,12 +774,21 @@ async function verifyRevision(revision: number) {
     assertSite('mining.al_kharid.w', 'Al Kharid W26 · Coal 7, Mithril ore 5, Adamantite ore 2', { min_x: 3233, min_z: 3157, max_x: 3243, max_z: 3167, level: 0 });
     assertSite('mining.river_lum', 'River Lum · Tin ore 8, Clay 3, Iron ore 3 +1', { min_x: 3172, min_z: 3365, max_x: 3183, max_z: 3377, level: 0 });
     assertSite('woodcutting.draynor', 'Draynor · Logs 25, Willow logs 5, Oak logs 4', { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
-    for (const gone of ['fishing.rimmington.sw', 'fishing.cooks_guild.w']) {
-        if (siteRows.some((row) => row.id === gone)) throw new Error(`${revision}: round-2 site ${gone} is not a row`);
+    // Each override renames the published id's label; the id and region are unchanged.
+    assertSite('mining.park.underground.se', 'Mining Guild (Mining 60) · Coal 45, Mithril ore 7, Iron ore 5 +4', { min_x: 3028, min_z: 9732, max_x: 3056, max_z: 9784, level: 0 });
+    assertSite('mining.agility_arena.underground.e', 'Karamja Volcano · Gold ore 4', { min_x: 2859, min_z: 9576, max_x: 2863, max_z: 9580, level: 0 });
+    // The four reachable Zanaris-map clusters take `(n)` in id order: al_kharid.underground.w is the bare name.
+    assertSite('woodcutting.al_kharid.underground.w', 'Zanaris (Lost City, Dramen staff) · Oak logs 3, Yew logs 3, Logs 2', { min_x: 3233, min_z: 9541, max_x: 3259, max_z: 9575, level: 0 });
+    assertSite('woodcutting.lumbridge_swamp.underground', 'Zanaris (Lost City, Dramen staff) (2) · Logs 27, Oak logs 3, Yew logs 1', { min_x: 3177, min_z: 9541, max_x: 3225, max_z: 9595, level: 0 });
+    assertSite('woodcutting.lumbridge_swamp.underground.sw', 'Zanaris (Lost City, Dramen staff) (3) · Logs 4', { min_x: 3152, min_z: 9545, max_x: 3158, max_z: 9550, level: 0 });
+    assertSite('woodcutting.wizards_tower.underground.ne', 'Zanaris (Lost City, Dramen staff) (4) · Logs 3', { min_x: 3141, min_z: 9564, max_x: 3145, max_z: 9571, level: 0 });
+    // Dropped rows: a stale round-2 id, the Bedabin and desert mining camp entrances, the Ape Atoll greegree zone, and every row the reachability guard found unreachable on the pack.
+    for (const gone of ['fishing.rimmington.sw', 'fishing.cooks_guild.w', ...SITE_OVERRIDES.filter((override) => override.action === 'drop').map((override) => override.id)]) {
+        if (siteRows.some((row) => row.id === gone)) throw new Error(`${revision}: dropped site ${gone} is still a row`);
     }
     // The published wire shape: exactly the TS GatherSiteWire fields, with region keys in writer order.
     for (const row of siteRows) {
-        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(['id', 'keys', 'label', 'region', 'skill']), `${revision} ${row.id} wire fields`);
+        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(['id', 'keys', 'label', 'region', 'requires', 'skill']), `${revision} ${row.id} wire fields`);
         assertEqual(JSON.stringify(Object.keys(row.region).sort()), JSON.stringify(['level', 'max_x', 'max_z', 'min_x', 'min_z']), `${revision} ${row.id} region fields`);
     }
     publishedSiteIds.set(revision, siteRows.map((row) => row.id));
@@ -816,9 +825,9 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 360, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 343, 'gather_sites shared ids across revisions');
     const extra289 = pinnedSites289.filter((id) => !pinnedSites274.includes(id));
-    assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw', 'mining.rellekka.nw', 'woodcutting.castle_wars.sw', 'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2', 'woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4', 'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4', 'woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw', 'woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2']), 'gather_sites 289-only rows');
+    assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw']), 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');
 }
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results, refused, cross_pin: crossPin };
