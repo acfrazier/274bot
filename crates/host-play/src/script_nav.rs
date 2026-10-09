@@ -252,6 +252,21 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
     }
 }
 
+/// Gating facts for a native walk: the live snapshot at dispatch, plus
+/// profile membership and quest evidence captured on the arm.
+///
+/// Observe may pass `None` on the Starting frame (`nav_world_state_for_observe`
+/// only builds facts for Running / armed nav). Routing with the fail-closed
+/// empty state then refuses skill-gated doors (Fishing Guild 68) even when
+/// the snapshot already has the levels. Always read the snapshot here.
+pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<&WorldState>) -> WorldState {
+    let map_members = armed.is_some_and(|state| state.map_members);
+    let quest_evidence = armed.and_then(|state| state.quest_evidence.clone());
+    let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    state.quest_evidence = quest_evidence;
+    state
+}
+
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
     api::host_log!(
         api::hostlog::Category::NavTrace,
@@ -651,6 +666,7 @@ impl ScriptWalkArm {
             );
             return false;
         }
+        self.state = Some(route_world_state(snapshot, self.state.as_ref()));
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();

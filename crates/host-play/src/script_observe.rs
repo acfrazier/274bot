@@ -2010,8 +2010,10 @@ pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::Interac
     out
 }
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
-/// Built only for a Running script (walk arm) or an armed nav bot (route /
-/// BankBudget session — interact dispatch may walk with gating facts).
+/// Built for a Starting or Running script (walk arm) or an armed nav bot
+/// (route / BankBudget session — interact dispatch may walk with gating
+/// facts). Starting is included because compiled cards can emit their first
+/// walk on that frame, before the outer pump's Running flag flips.
 pub(crate) fn nav_world_state_for_observe(
     here: Option<(i32, i32, i32)>,
     snapshot: &GameSnapshot,
