@@ -77,6 +77,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Ranged fights count every shot the bot fires. Before, a fight could report
   zero attacks, while arrows were used and Ranged XP rose, whenever another
   player stood on the bot's tile.
+- Quester combat kits now carry exactly the items the kit names. Before, an
+  item whose name is shared by other items, such as Coins, could resolve to
+  the wrong one, so the bot set off with the wrong item or without its coins.
 
 ### Gatherer
 
@@ -138,6 +141,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   "unknown" site error; pick another site. They return as the route finder
   learns the entrances; that work is planned for 0.2.1. For a few enclosed
   spots no way in has been found yet, so those may stay hidden.
+
+### Fixed during development
+
+Fixes to problems that appeared and were fixed during 0.2.0.1 development.
+They are listed here for completeness and are left out of the release notes.
+
+- Scripts: `depositAllExcept` could bank an item it was told to keep when
+  the bank's inventory panel opened before it showed your items. Kept items
+  now stay in your inventory however the panel fills in.
+- Gatherer: the Bedabin Camp cave site was hidden by mistake as if it were a
+  separate cave; it is the Zanaris Cosmic Temple trees and is offered again
+  under its own id.
+- Gatherer: Zanaris sites no longer show Lost City as a separate requirement;
+  the entrance needs only the Dramen staff worn and a members world.
+- Gatherer: Crash Island is no longer described as part of the Ape Atoll
+  voyage (Waydar's glider flight, not Lumdo's voyage, goes there).
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
