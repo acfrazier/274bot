@@ -1995,7 +1995,11 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
     for world in &bundled.worlds {
         let mut roster = bundled.clone();
         roster.worlds = vec![world.clone()];
-        assert!(resolve(&roster, None).map_members());
+        assert!(
+            resolve(&roster, None).map_members(),
+            "configured {} is a members host",
+            world.host
+        );
     }
     for host in ["w3.rs2b2t.com", "W42.RS2B2T.COM", "w001.rs2b2t.com"] {
         let mut roster = bundled.clone();

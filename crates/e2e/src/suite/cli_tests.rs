@@ -88,7 +88,12 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
     assert_eq!(public.resolved.profile_class, "remote");
     assert_eq!(public.resolved.login_key_source, "served");
     assert_eq!(public.resolved.login_key_sha256.len(), 64);
-    assert_eq!(public.resolved.worlds.len(), 2);
+    assert!(public.resolved.worlds.iter().any(|world| {
+        world.number == 3
+            && world.host == "w3.rs2b2t.com"
+            && world.port == 443
+            && world.node_id == 12
+    }));
     assert_eq!(public.resolved.worlds[0].asset_host, "w1.rs2b2t.com");
     assert_eq!(
         public.resolved.vault,
