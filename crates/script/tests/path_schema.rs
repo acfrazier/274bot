@@ -924,6 +924,7 @@ fn snapshot_at_level(x: i32, z: i32, level: i32) -> api::snapshot::GameSnapshot 
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_equipment(Vec::new());

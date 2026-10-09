@@ -155,6 +155,7 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
     snapshot.seed_stats(vec![StatView {
         index: 8,

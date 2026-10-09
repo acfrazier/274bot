@@ -492,6 +492,7 @@ fn replay_with_admission(
         },
         energy: 0,
         weight: 0,
+        animation_update: None,
     };
     let world = WorldStateView::default();
     let mut schedule = Schedule::default();

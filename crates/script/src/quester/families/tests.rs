@@ -348,6 +348,7 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     }
 }
 
@@ -686,6 +687,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
     wheel.tile = tile(3081, 3430);
@@ -3014,6 +3016,7 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
             },
             energy: 100,
             weight: 0,
+            animation_update: None,
         });
         let mut ledger = None;
         let plan = flour_acquire_plan();
@@ -5073,6 +5076,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
 }
 
