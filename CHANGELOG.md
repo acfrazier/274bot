@@ -20,6 +20,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   and `allowDangerZones` options now apply to the Gatherer session's own
   walks. Before, they were accepted but ignored, so those walks followed
   the Nav config settings. The script's other walks keep their own options.
+- rs2b0t-compatible deposits (`depositInventory`, `depositAllMatching`,
+  `depositAllExcept`) only deposit items you actually hold. If the bank's
+  inventory panel doesn't show a held item within about a second, they now
+  fail with "bank deposit view did not post" instead of reporting success
+  without depositing it.
 
 ### Panel
 
@@ -85,14 +90,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Bank transfers wait up to eight game ticks to complete instead of four
   seconds of real time, so a laggy server or a busy computer no longer makes a
   deposit or withdrawal give up early.
-
-### Scripts
-
-- rs2b0t-compatible deposits (`depositInventory`, `depositAllMatching`,
-  `depositAllExcept`) only deposit items you actually hold. If the bank's
-  inventory panel doesn't show a held item within about a second, they now
-  fail with "bank deposit view did not post" instead of reporting success
-  without depositing it.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 
