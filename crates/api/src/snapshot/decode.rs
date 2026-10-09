@@ -147,6 +147,12 @@ impl GameSnapshot {
             },
             energy: client.runenergy,
             weight: client.runweight,
+            animation_update: client
+                .local_animation_update()
+                .map(|update| AnimationUpdateView {
+                    serial: update.serial,
+                    sequence: update.sequence,
+                }),
         });
         self.players.clear();
         self.players.reserve(client.player_count as usize);

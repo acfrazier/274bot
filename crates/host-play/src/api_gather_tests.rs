@@ -160,6 +160,7 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapsh
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
     snapshot.seed_stats(vec![StatView {
         index: 8,

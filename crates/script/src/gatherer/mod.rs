@@ -224,6 +224,7 @@ pub(crate) fn test_full_pack_fixture(
         },
         energy: 100,
         weight: 0,
+        animation_update: None,
     });
     snapshot.seed_stats(vec![StatView {
         index: 8,

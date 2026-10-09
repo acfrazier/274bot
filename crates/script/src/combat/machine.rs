@@ -91,8 +91,7 @@ enum StyleState {
 
 struct RangedState {
     ammo_pick: i32,
-    anim_id: i32,
-    anim_frame: i32,
+    anim_update: Option<u32>,
     pickup_baseline: i32,
     sweep_attempts: u8,
     sweep_done: bool,
@@ -274,8 +273,11 @@ impl NativeMachine for Combat {
         let style_state = match request.style {
             Style::Ranged => StyleState::Ranged(Box::new(RangedState {
                 ammo_pick: -1,
-                anim_id: -1,
-                anim_frame: -1,
+                anim_update: cx
+                    .snapshot()
+                    .local_player()
+                    .and_then(|local| local.value.animation_update)
+                    .map(|update| update.serial),
                 pickup_baseline: 0,
                 sweep_attempts: 0,
                 sweep_done: false,
@@ -1512,11 +1514,10 @@ impl Combat {
         }
         let onset = match &mut self.style_state {
             StyleState::Ranged(state) => super::style::ranged::onset(
-                &frame.local.player.actor,
+                frame.local,
                 self.engaged,
                 &self.tables,
-                &mut state.anim_id,
-                &mut state.anim_frame,
+                &mut state.anim_update,
             ),
             StyleState::Melee(state) => super::style::melee::onset(
                 &frame.local.player.actor,
