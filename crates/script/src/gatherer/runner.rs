@@ -1,11 +1,14 @@
 use super::area::{AreaError, WorkArea};
 use super::card::Prepared;
 use super::drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
-use super::gather::{GatherEnd, GatherResult, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS};
+use super::gather::{
+    observe_target, GatherEnd, GatherResult, GatherRun, GatherRunArgs, TargetObservation,
+    DEFAULT_STALL_TICKS,
+};
 use super::oneop::{OneOp, OneOpArgs};
 use super::select::{
-    resource_return_target, select, AvoidedTile, FishingSurvey, ReturnObservation, SelectedTarget,
-    Selection, TargetPlan, RESOURCE_APPROACH_RADIUS,
+    resource_return_target, select, tile_loaded, AvoidedTile, FishingSurvey, PlacementClass,
+    ReturnObservation, SelectedTarget, Selection, TargetPlan, RESOURCE_APPROACH_RADIUS,
 };
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
@@ -261,6 +264,14 @@ impl Gatherer {
     }
 
     fn start_trip(&mut self) {
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "gather-approach clear reason=bank-trip target={:?}",
+            self.target
+                .as_ref()
+                .map(|target| (target.entity, target.tile)),
+        );
         self.target = None;
         self.wait_until = None;
         self.selected_bank = None;
@@ -534,6 +545,14 @@ impl Gatherer {
     }
 
     fn cancel_active(&mut self) {
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "gather-approach clear reason=cancel-active target={:?}",
+            self.target
+                .as_ref()
+                .map(|target| (target.entity, target.tile)),
+        );
         self.active = Active::None;
         self.target = None;
     }
@@ -905,6 +924,25 @@ impl Gatherer {
     }
 
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
+        if api::hostlog::debug_enabled() {
+            let loc = tick.cx.snapshot().locs().and_then(|locs| {
+                locs.value.iter().find(|loc| {
+                    selected.plan.entity == api::selected::EntityId::Loc(loc.id)
+                        && selected.plan.tile == loc.tile
+                })
+            });
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "gather-approach select tick={} id={:?} tile={:?} class={:?} footprint={:?} server={:?}",
+                tick.cx.evidence().tick,
+                selected.plan.entity,
+                selected.plan.tile,
+                selected.class,
+                loc.map(|loc| (loc.footprint_width, loc.footprint_length, loc.shape, loc.angle, loc.force_approach)),
+                tick.cx.snapshot().local_player().map(|player| player.value.player.network),
+            );
+        }
         let prepared = Arc::clone(&self.prepared);
         let Some(method) = prepared
             .catalog
@@ -1045,6 +1083,13 @@ impl Gatherer {
             self.wait_until = None;
         }
         let target = self.target.take();
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "gather-approach clear reason=gather-end end={:?} target={:?}",
+            result.end,
+            target.as_ref().map(|target| (target.entity, target.tile)),
+        );
         match result.end {
             GatherEnd::Full => {
                 self.set_event("inventory full");
@@ -1116,16 +1161,91 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
+        if api::hostlog::debug_enabled() {
+            let server = tick
+                .cx
+                .snapshot()
+                .local_player()
+                .map(|player| player.value.player.network);
+            #[cfg(feature = "load")]
+            let arrived_at = self.target.as_ref().and_then(|target| {
+                let api::selected::EntityId::Loc(id) = target.entity else {
+                    return None;
+                };
+                api::query::loc_approach::arrived_at(
+                    tick.frame.snapshot?,
+                    server?,
+                    target.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                    id,
+                )
+            });
+            #[cfg(not(feature = "load"))]
+            let arrived_at: Option<bool> = None;
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "gather-approach walk-end tick={} request={} end={:?} trip={:?} target={:?} server={server:?} arrived_at={arrived_at:?}",
+                tick.cx.evidence().tick,
+                result.request_id,
+                result.end,
+                self.trip,
+                self.target.as_ref().map(|target| (target.entity, target.tile)),
+            );
+        }
         if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
             self.finish_recovery_return(result, tick);
             return;
         }
         if result.end == WalkEnd::UserInput {
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "gather-approach clear reason=user-input target={:?}",
+                self.target
+                    .as_ref()
+                    .map(|target| (target.entity, target.tile)),
+            );
             self.target = None;
             self.fail("manual-movement", "cancelled by user input");
             return;
         }
+        if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
+            let snapshot = tick.cx.snapshot();
+            if let Some(target) = self.target.as_ref().filter(|target| {
+                matches!(target.entity, api::selected::EntityId::Loc(_))
+                    && snapshot
+                        .world()
+                        .is_some_and(|world| tile_loaded(target.tile, world.value))
+                    && matches!(
+                        observe_target(snapshot, &self.prepared.catalog, target),
+                        Some(TargetObservation::Gone | TargetObservation::Depleted)
+                    )
+            }) {
+                // A loaded resource can disappear while walking, including
+                // when another player depletes it. This is not failed reach
+                // to a still-present Loc; re-observe before choosing again.
+                api::host_log!(
+                    api::hostlog::Category::NavTrace,
+                    api::hostlog::Level::Debug,
+                    "gather-approach clear reason=route-target-gone target={:?}",
+                    (target.entity, target.tile),
+                );
+                self.target = None;
+                self.set_event("target gone during approach; observing resources");
+                return;
+            }
+        }
         if result.end != WalkEnd::Arrived {
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "gather-approach clear reason=walk-failed end={:?} target={:?}",
+                result.end,
+                self.target
+                    .as_ref()
+                    .map(|target| (target.entity, target.tile)),
+            );
             self.target = None;
             self.fail(
                 if self.trip == TripStep::Return {
@@ -1156,11 +1276,26 @@ impl Gatherer {
                 self.advance_trip(TripStep::Idle);
                 self.needs_validate = true;
             }
+            TripStep::Idle if self.target.is_some() => {
+                // Retain identity until begin_idle rechecks live resource and
+                // footprint evidence, after the normal admission boundaries.
+                self.hazard_escape = None;
+                self.set_event("arrived; observing selected resource");
+                return;
+            }
             _ => {}
         }
         self.hazard_escape = None;
-        // A walk receipt is not resource evidence: the target may have
-        // depleted while travelling. Select again from the arrival frame.
+        // Bank returns and hazard escapes establish an observation stand,
+        // not a selected resource identity.
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "gather-approach clear reason=arrived-reselect target={:?}",
+            self.target
+                .as_ref()
+                .map(|target| (target.entity, target.tile)),
+        );
         self.target = None;
         self.set_event("arrived; observing resources");
     }
@@ -1423,6 +1558,32 @@ impl Gatherer {
         let Some(npcs) = snapshot.npcs() else {
             return;
         };
+        if let Some(plan) = self.target.take() {
+            let observation = observe_target(snapshot, &self.prepared.catalog, &plan);
+            let enabled = self
+                .prepared
+                .methods
+                .contains(&usize::from(plan.method_index));
+            let selected = SelectedTarget {
+                plan,
+                class: PlacementClass::Live,
+            };
+            if enabled
+                && observation == Some(TargetObservation::Active)
+                && selected.approach(snapshot, tick.cx.evidence()).is_none()
+            {
+                self.wait_until = None;
+                self.absent = 0;
+                self.start_target(selected, tick);
+                return;
+            }
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "gather-approach clear reason=arrival-revalidation target={:?} observation={observation:?} enabled={enabled}",
+                (selected.plan.entity, selected.plan.tile),
+            );
+        }
         let skill_stat = self.skill_stat(snapshot.stats());
         let selected = select(
             &self.prepared.catalog,

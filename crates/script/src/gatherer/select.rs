@@ -1129,7 +1129,7 @@ fn region_loaded(region: SceneRegionInput, world: &WorldStateView) -> bool {
         && region.max_z < world.map_base_z.saturating_add(104)
 }
 
-fn tile_loaded(tile: WorldTile, world: &WorldStateView) -> bool {
+pub(super) fn tile_loaded(tile: WorldTile, world: &WorldStateView) -> bool {
     tile.level == world.level
         && tile.x >= world.map_base_x
         && tile.x < world.map_base_x.saturating_add(104)

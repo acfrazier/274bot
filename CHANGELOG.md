@@ -89,6 +89,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Gatherer
 
+- The Gatherer no longer stands between two trees without chopping after a
+  bank trip or a Maze random event; it goes back to work.
+- If a tree disappears or is chopped down while the Gatherer walks to it,
+  it picks another tree instead of stopping with "walk failed".
 - Starting a fishing Gatherer from outside the fishing area (such as
   Ardougne for the Fishing Guild) no longer fails straight away with
   "walk failed". The first walk now uses the nearest stand it can
