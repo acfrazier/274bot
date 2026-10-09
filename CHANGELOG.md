@@ -28,6 +28,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Panel
 
+- The panel no longer freezes when the WalkTo map's basemap or grid layers
+  are toggled while bots are running or walking.
 - Turning MultiBox on before unlocking the vault no longer leaves the bot
   that logs in at unlock off the rail: it joins the rail like any profile
   you pick, so selecting another profile keeps both on the rail and the
