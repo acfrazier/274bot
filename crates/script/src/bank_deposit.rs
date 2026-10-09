@@ -35,31 +35,34 @@ pub(crate) enum Matcher {
         common: bool,
     },
     /// `depositAllExcept(names)`: every row except the ids whose display
-    /// name is kept. The names resolve to ids once, on the first posted
-    /// side; a deposit only removes rows, so no kept id appears later.
-    Keep {
-        names: Vec<String>,
-        ids: Option<Vec<i32>>,
-    },
+    /// name is kept. The names resolve against every posted side, never once:
+    /// the side can post empty or stale before it shows the held rows, and a
+    /// list resolved from that panel would leave a kept item unprotected when
+    /// its row posts. A row is pressed only through its side row, so a kept
+    /// row that can be pressed has already resolved as kept. `ids` is the
+    /// last resolution, reused as the buffer.
+    Keep { names: Vec<String>, ids: Vec<i32> },
     /// Every row (`depositInventory`).
     All,
 }
 
 impl Matcher {
     fn keep(names: Vec<String>) -> Self {
-        Self::Keep { names, ids: None }
+        Self::Keep {
+            names,
+            ids: Vec::new(),
+        }
     }
 }
 
-/// Every id in `side` whose display name is one of `names`.
-fn kept_ids(side: &[ItemRow], names: &[String]) -> Vec<i32> {
-    let mut ids = Vec::new();
+/// Every id in `side` whose display name is one of `names`, into `ids`.
+fn resolve_kept(side: &[ItemRow], names: &[String], ids: &mut Vec<i32>) {
+    ids.clear();
     for id in names.iter().flat_map(|name| ops::ids_named(side, name)) {
         if !ids.contains(&id) {
             ids.push(id);
         }
     }
-    ids
 }
 
 #[derive(Clone, Copy)]
@@ -153,10 +156,11 @@ impl Deposit {
             let keep: &[i32] = match (&mut self.matcher, side) {
                 (Matcher::All, _) => &[],
                 (Matcher::Keep { names, ids }, Some(side)) => {
-                    ids.get_or_insert_with(|| kept_ids(side, names))
+                    resolve_kept(side, names, ids);
+                    ids.as_slice()
                 }
                 // Not posted yet: `deposit_next` waits before any click.
-                (Matcher::Keep { ids, .. }, None) => ids.as_deref().unwrap_or_default(),
+                (Matcher::Keep { ids, .. }, None) => ids.as_slice(),
                 (Matcher::Hook { .. }, _) => unreachable!("hook scan returned above"),
             };
             let spec = DepositSpec {
@@ -676,6 +680,51 @@ mod tests {
             machine::take(handle),
             Take::Settled(Outcome::Done(Value::Null))
         );
+    }
+
+    /// The side panel can post before it shows the held rows (empty, or a
+    /// stale list without the kept item). Kept names must not be resolved
+    /// once from that panel: when the real rows post, the kept item stays.
+    #[test]
+    fn kept_item_survives_a_side_that_posts_before_its_rows() {
+        for early_side in [Vec::new(), vec![side_row(Some("Tuna"), 359, 14, 1)]] {
+            machine::on_reset();
+            observed::on_reset();
+            let harpoon = side_row(Some("Harpoon"), 311, 1, 0);
+            let tuna = side_row(Some("Tuna"), 359, 14, 1);
+            let held = vec![harpoon.clone(), tuna.clone()];
+            post_views(1, held.clone(), early_side.clone());
+            let Started::Running(handle) = machine::start(
+                BankDeposit::NAME,
+                json!({"keep": ["Harpoon"]}),
+                Vec::new(),
+                0,
+            ) else {
+                panic!("expected a running deposit");
+            };
+            let first = step();
+            assert!(
+                !first.contains(&press(311, 0)),
+                "the kept harpoon is never pressed (early side {early_side:?})"
+            );
+            post_views(2, held.clone(), held.clone());
+            let presses = [first, step()].concat();
+            assert!(
+                !presses.contains(&press(311, 0)),
+                "the kept harpoon is never pressed once its row posts (early side {early_side:?})"
+            );
+            assert!(
+                presses.contains(&press(359, 1)),
+                "the tuna is deposited (early side {early_side:?})"
+            );
+            post_views(3, vec![harpoon.clone()], vec![harpoon]);
+            assert!(step().is_empty());
+            assert_eq!(
+                machine::take(handle),
+                Take::Settled(Outcome::Done(Value::Null)),
+                "only the kept harpoon remains, so the sweep is done"
+            );
+        }
     }
 
     /// `depositAllExcept(names)` resolves the kept names to every id that
