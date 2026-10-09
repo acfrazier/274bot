@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -992,6 +994,7 @@ pub(super) fn wait_for_transfer_response(
     arm: &SlotArm,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
+    countdown: &Cell<Option<u64>>,
     frames: &mut WaitFrames<'_>,
 ) -> Option<bool> {
     if error.code != 21 {
@@ -1000,6 +1003,7 @@ pub(super) fn wait_for_transfer_response(
     let delay = error.retry_after?;
     let mut remaining = delay.as_secs();
     loop {
+        countdown.set(Some(remaining));
         publish_transfer_countdown(statuses, name, remaining);
         if !arm.wait_for_transfer(Duration::from_secs(1), frames) {
             clear_startup_progress(statuses, name);

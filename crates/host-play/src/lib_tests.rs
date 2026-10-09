@@ -669,6 +669,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
                 &arm,
                 &statuses,
                 "alice",
+                &std::cell::Cell::new(None),
                 &mut no_frames(),
             )
         })
@@ -695,6 +696,59 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
     assert_eq!(waiter.join().unwrap(), Some(true));
     assert!(started.elapsed() >= Duration::from_millis(1_900));
     assert_eq!(*arm.world.lock(), Some(2));
+}
+
+#[test]
+fn response_21_updates_client_title_countdown() {
+    use std::cell::Cell;
+
+    let statuses = rows(&["alice"]);
+    let arm = SlotArm::new(7, true);
+    let error = LoginError {
+        code: 21,
+        mes1: "You have only just left another world".into(),
+        mes2: "Your profile will be transferred in: 1 seconds".into(),
+        retry_after: Some(Duration::from_secs(1)),
+    };
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    client.login_mes1 = error.mes1.clone();
+    client.login_mes2 = error.mes2.clone();
+    let countdown = Cell::new(None);
+    let mut title_updates = Vec::new();
+    {
+        let mut displayed = None;
+        let mut frames = || {
+            if let Some(remaining) = countdown.get() {
+                if super::play_slots::update_transfer_title(&mut client, remaining, &mut displayed)
+                {
+                    title_updates.push(client.login_mes2.clone());
+                }
+            }
+            Duration::MAX
+        };
+
+        assert_eq!(
+            wait_for_transfer_response(&error, &arm, &statuses, "alice", &countdown, &mut frames),
+            Some(true)
+        );
+    }
+    assert_eq!(
+        title_updates,
+        vec![
+            "Your profile will be transferred in: 1 seconds".to_string(),
+            "Your profile will be transferred in: 0 seconds".to_string(),
+        ]
+    );
+    assert_eq!(
+        client.login_mes2,
+        "Your profile will be transferred in: 0 seconds"
+    );
 }
 
 #[test]
