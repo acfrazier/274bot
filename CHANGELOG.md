@@ -112,6 +112,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   reused, so saved Gatherer cards that name a site you can still pick keep
   working.
 
+### Known issues
+
+Found while testing 0.2.0.1; both were already in 0.2.0, and fixes are
+planned for 0.2.0.2.
+
+- **Panel:** with MultiBox on, saving a new profile that has auto-login
+  enabled logs the bot in but doesn't add it to the wall, so it runs without
+  a tile. Click the new profile in the Profiles list to bring it onto the
+  wall; nothing is lost.
+- **Gatherer:** a bank trip keeps every copy of the tool in your inventory,
+  not just one, so a second harpoon (or axe, pickaxe or net) stays in your
+  inventory and takes a slot. Bank the extra by hand; the bot leaves it in
+  the bank.
+
 ### Not in this release
 
 **Gatherer**
