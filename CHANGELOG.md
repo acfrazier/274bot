@@ -102,8 +102,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   on both server versions. Sites the route finder can't reach yet are hidden
   (see "Not in this release"), so the Gatherer now offers 289 sites on both
   versions: 22 fewer than 0.2.0 on 289 (311) and 19 fewer on 274 (308). Every
-  site on offer can be walked to on the 289 map by an account that meets its
-  requirements.
+  site on offer has a walking route on the 289 map for an account with every
+  quest, item and level the way there asks for. The route finder still asks
+  for Lost City to be completed before it walks into Zanaris.
 - Every 0.2.0 site keeps its id and region, hidden or not, and no id is
   reused, so saved Gatherer cards that name a site you can still pick keep
   working.
