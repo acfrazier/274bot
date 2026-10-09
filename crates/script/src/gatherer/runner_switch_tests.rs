@@ -251,6 +251,253 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 }
 
+fn alternative_tree(gatherer: &Gatherer, approached: &TargetPlan) -> WorldTile {
+    let method = &gatherer.prepared.catalog.methods()[usize::from(approached.method_index)];
+    gatherer
+        .prepared
+        .catalog
+        .spots(method, &gatherer.area.unwrap().region())
+        .unwrap()
+        .filter(|spot| spot.entity == approached.entity && spot.origin != approached.tile)
+        .filter(|spot| {
+            spot.origin
+                .x
+                .abs_diff(approached.tile.x)
+                .max(spot.origin.z.abs_diff(approached.tile.z))
+                > 2
+        })
+        .min_by_key(|spot| {
+            spot.origin.x.abs_diff(approached.tile.x) + spot.origin.z.abs_diff(approached.tile.z)
+        })
+        .expect("the content-derived work area includes another tree")
+        .origin
+}
+
+fn assert_approached_tree_identity(depleted: bool) {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let approached = gatherer.target.clone().unwrap();
+    let method = &gatherer.prepared.catalog.methods()[usize::from(approached.method_index)];
+    let other = alternative_tree(&gatherer, &approached);
+    let mut approached_loc = snapshot.locs()[0].clone();
+    let mut other_loc = approached_loc.clone();
+    other_loc.tile = other;
+    if depleted {
+        approached_loc.id = known_rows(&method.targets)
+            .iter()
+            .find_map(|target| match (target.class, target.entity) {
+                (TargetClass::Depleted, EntityId::Loc(id)) => Some(id),
+                _ => None,
+            })
+            .expect("the method supplies a depleted form");
+    }
+    gatherer.cancel_active();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: approached.clone(),
+                class: PlacementClass::Unloaded,
+            },
+            tick,
+        );
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+
+    // The live server tile has reached the selected footprint while the
+    // rendered actor still makes the other tree nearest to fresh selection.
+    let server = WorldTile {
+        x: approached.tile.x + 1,
+        ..approached.tile
+    };
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = server;
+    player.player.actor.tile = other;
+    snapshot.seed_local_player(player);
+    snapshot.seed_locs(vec![approached_loc, other_loc]);
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        if !depleted {
+            let EntityId::Loc(id) = approached.entity else {
+                panic!("tree loc")
+            };
+            assert!(tick
+                .cx
+                .snapshot()
+                .walk_loc_arrived(server, approached.tile, 1, id));
+        }
+        gatherer.tick(tick).unwrap()
+    });
+    if depleted {
+        assert_eq!(gatherer.target.as_ref().unwrap().tile, other);
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+    } else {
+        assert_eq!(
+            gatherer.target.as_ref().unwrap().tile,
+            approached.tile,
+            "arrival must not discard the live approached tree for the newly nearest tree"
+        );
+        assert!(matches!(gatherer.active, Active::Gather(_)));
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 1, "exactly one gather interaction");
+        assert!(matches!(
+            outbox[0].effect,
+            crate::native::HostEffect::Interaction(_)
+        ));
+    }
+}
+
+#[test]
+fn arrived_live_tree_keeps_identity_when_nearest_tree_changes() {
+    assert_approached_tree_identity(false);
+}
+
+#[test]
+fn arrived_depleted_tree_reselects_the_live_alternative() {
+    assert_approached_tree_identity(true);
+}
+
+#[test]
+fn arrived_live_tree_is_not_clicked_after_leaving_its_footprint() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let approached = gatherer.target.clone().unwrap();
+    gatherer.cancel_active();
+    // Model the idle handoff after an arrival receipt, with newer server
+    // position evidence that no longer permits the selected Loc operation.
+    gatherer.target = Some(approached.clone());
+    let server = WorldTile {
+        x: approached.tile.x - 3,
+        ..approached.tile
+    };
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = server;
+    snapshot.seed_local_player(player);
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        let EntityId::Loc(id) = approached.entity else {
+            panic!("tree loc")
+        };
+        assert!(!tick
+            .cx
+            .snapshot()
+            .walk_loc_arrived(server, approached.tile, 1, id));
+        gatherer.begin_idle(tick, true);
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { !matches!(action.effect, crate::native::HostEffect::Interaction(_)) }));
+}
+
+fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: bool) {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let approached = gatherer.target.clone().unwrap();
+    let other = alternative_tree(&gatherer, &approached);
+    let mut approached_loc = snapshot.locs()[0].clone();
+    let mut other_loc = approached_loc.clone();
+    other_loc.tile = other;
+    if observation == TargetObservation::Depleted {
+        let method = &gatherer.prepared.catalog.methods()[usize::from(approached.method_index)];
+        approached_loc.id = known_rows(&method.targets)
+            .iter()
+            .find_map(|target| match (target.class, target.entity) {
+                (TargetClass::Depleted, EntityId::Loc(id)) => Some(id),
+                _ => None,
+            })
+            .expect("the method supplies a depleted form");
+    }
+    snapshot.seed_locs(if observation == TargetObservation::Gone {
+        vec![other_loc]
+    } else {
+        vec![approached_loc, other_loc]
+    });
+    if !loaded {
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: approached.tile.x + 104,
+            map_base_z: approached.tile.z,
+            ..Default::default()
+        });
+    }
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network.x = approached.tile.x - 3;
+    player.player.actor.tile = other;
+    snapshot.seed_local_player(player);
+    gatherer.cancel_active();
+    gatherer.target = Some(approached);
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.handle_walk(
+            WalkReceipt {
+                request_id: 7,
+                evidence: tick.cx.evidence(),
+                end: WalkEnd::RouteEnded,
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+            },
+            tick,
+        );
+        if observation == TargetObservation::Active || !loaded {
+            assert_eq!(
+                gatherer.failure.as_ref().unwrap().code.as_ref(),
+                "walk-failed",
+                "a still-present or unobserved tree must retain the routing failure"
+            );
+        } else {
+            assert!(
+                gatherer.failure.is_none(),
+                "normal target disappearance must not turn into a routing failure"
+            );
+            gatherer.begin_idle(tick, true);
+        }
+    });
+    if observation != TargetObservation::Active && loaded {
+        assert_eq!(gatherer.target.as_ref().unwrap().tile, other);
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+    }
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { !matches!(action.effect, crate::native::HostEffect::Interaction(_)) }));
+}
+
+#[test]
+fn route_ended_gone_tree_reselects_without_blocking() {
+    assert_route_ended_tree_reselection(TargetObservation::Gone, true);
+}
+
+#[test]
+fn route_ended_depleted_tree_reselects_without_blocking() {
+    assert_route_ended_tree_reselection(TargetObservation::Depleted, true);
+}
+
+#[test]
+fn route_ended_still_present_tree_keeps_the_routing_failure() {
+    assert_route_ended_tree_reselection(TargetObservation::Active, true);
+}
+
+#[test]
+fn route_ended_unloaded_tree_keeps_the_routing_failure() {
+    assert_route_ended_tree_reselection(TargetObservation::Gone, false);
+}
+
 #[test]
 fn unloaded_loc_approach_preserves_reach_and_loc_identity() {
     let (mut gatherer, snapshot) = fixture();
