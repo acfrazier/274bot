@@ -175,6 +175,13 @@ fn item_row<'a>(name: &'a str, id: i32, count: i32, slot: i32) -> ItemRowInput<'
         slot,
     }
 }
+fn pack_row<'a>(name: &'a str, id: i32, count: i32, slot: i32) -> ItemRowInput<'a> {
+    ItemRowInput {
+        ops: &[],
+        component_id: 0,
+        ..item_row(name, id, count, slot)
+    }
+}
 
 /// Deposit-All of side row `id` at `slot` in bank session `generation`.
 fn deposit_all(id: i32, slot: i32, generation: u64) -> InteractReq {
@@ -644,6 +651,10 @@ export default class T extends TaskBot {
         item_row("Uncut sapphire", 1623, 1, 0),
         item_row("Coins", 995, 25, 1),
     ];
+    let pack = [
+        pack_row("Uncut sapphire", 1623, 1, 0),
+        pack_row("Coins", 995, 25, 1),
+    ];
     let mut snap = base_snapshot();
     snap.here = Some(TileInput {
         x: 2724,
@@ -655,6 +666,7 @@ export default class T extends TaskBot {
     snap.bank_loaded = true;
     snap.bank_generation = 4;
     snap.bank_side = &side;
+    snap.inv = &pack;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![deposit_all(1623, 0, 4)]);
@@ -730,7 +742,9 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     snap.bank_loaded = true;
     snap.bank_generation = 9;
     let bones = [item_row("Bones", 526, 1, 0)];
+    let pack = [pack_row("Bones", 526, 1, 0)];
     snap.bank_side = &bones;
+    snap.inv = &pack;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
     assert!(
@@ -978,11 +992,13 @@ export default class T extends LoopingBot {
     );
 
     let side = [item_row("Coins", 995, 25, 0)];
+    let pack = [pack_row("Coins", 995, 25, 0)];
     snap.tick = 2;
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
     snap.bank_side = &side;
+    snap.inv = &pack;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
     assert_eq!(iso.drain_interacts(), vec![deposit_all(995, 0, 1)]);
@@ -1024,6 +1040,7 @@ export default class T extends TaskBot {
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
     let side = [item_row("Bones", 526, 1, 0), item_row("Coins", 995, 25, 1)];
+    let pack = [pack_row("Bones", 526, 1, 0), pack_row("Coins", 995, 25, 1)];
     let mut snap = base_snapshot();
     snap.here = Some(TileInput {
         x: 2724,
@@ -1035,6 +1052,7 @@ export default class T extends TaskBot {
     snap.bank_loaded = true;
     snap.bank_generation = 4;
     snap.bank_side = &side;
+    snap.inv = &pack;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 4)]);

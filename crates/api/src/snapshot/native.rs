@@ -234,6 +234,15 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Latest received packet generation for the inv-tab component while its
+    /// item table is available.
+    pub fn inventory_packet_generation(&self) -> Option<u64> {
+        let snapshot = self.snapshot?;
+        (snapshot.ingame() && snapshot.inventory_size() > 0)
+            .then(|| snapshot.inventory_packet_generation())
+            .flatten()
+    }
+
     pub fn bank(&self) -> Option<Observed<&[ItemView]>> {
         let snapshot = self.snapshot?;
         (snapshot.ingame() && snapshot.bank_loaded()).then(|| Observed {
@@ -265,6 +274,15 @@ impl<'a> SnapshotView<'a> {
             value: snapshot.bank_side(),
             stamp: self.stamp,
         })
+    }
+
+    /// Latest received packet generation for the bank-side component while
+    /// its root is raised.
+    pub fn bank_side_packet_generation(&self) -> Option<u64> {
+        let snapshot = self.ingame()?;
+        (snapshot.bank_component_id() >= 0 && snapshot.modals().side >= 0)
+            .then(|| snapshot.bank_side_packet_generation())
+            .flatten()
     }
 
     /// Current shop modal and its posted stock/player containers.

@@ -1010,10 +1010,11 @@ Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
 An unchanged page still fails after eight ticks rather than waiting indefinitely.
 
-The compiled Gatherer card schema is version 4. `disposition` defaults to
-`Bank`; `Power` drops selected gathering products, while `Bank` returns to the
-selected bank and deposits them. Bank mode also makes a trip when no inventory
-slot is free; Power mode can still take a supply-only trip. `bank` defaults to
+The compiled Gatherer card schema is version 4.
+`disposition` defaults to `Bank`; `Power` drops selected gathering products,
+while `Bank` returns to the selected bank and deposits every carried item
+except coins, the method's tools and configured supplies. It also makes a trip
+when no inventory slot is free; Power mode can still take a supply-only trip.
 `Nearest`. A named bank chosen by the user is required: always use that bank,
 and refuse if it is unavailable or unroutable instead of substituting another.
 `useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
@@ -1026,9 +1027,10 @@ Native counted withdrawals use the same session-fenced host amount-dialog
 continuation as compatibility scripts; dispatch alone never confirms a transfer.
 Named bank deposits press one content `Deposit All` operation on that exact
 bank-side row (id, slot and component), never a same-named noted or unnoted
-copy, rather than sending an operation for each occupied slot. Other item ids
-and configured keep items are untouched; observed inventory changes, not
-accepted dispatch alone, still settle the transfer.
+copy, rather than sending an operation for each occupied slot. Every other
+positive carried item, including incidental items, is a deposit target; coins,
+method tools and configured supplies stay untouched. Observed inventory
+changes, not accepted dispatch alone, still settle the transfer.
 
 Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
@@ -1037,8 +1039,8 @@ gathering; `supply-missing` means a required tool, bait, configured food or a
 complete reserve cast is unavailable. Coins never gate a trip. Available
 withdrawals, including the tool, settle before another unavailable supply is
 reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
-not a missing-supply or full-inventory label. Product deposits succeed only
-after inventory confirms that no unprotected gathering products remain.
+not a missing-supply or full-inventory label. Gatherer deposits succeed only
+after inventory confirms that no eligible deposit candidates remain.
 
 A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory
@@ -1632,15 +1634,18 @@ flight settles false (a deposit loop does nothing).
   bank-side row with the name, by id, slot and component, and answers whether
   it pressed. A row without the label presses nothing; it is never an All.
 - **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
-  each matching row's All op by id and wait up to 4 s for that id to leave
-  the pack. `depositAllExcept(names)` keeps every id whose display name is
-  kept, noted or not. A nameless row is still an item the matcher decides.
-  A posted empty side ends the loop at once; a side root still down is
-  waited on for 1.2 s.
+  each matching row's All op by id and wait up to eight fresh game updates for
+  that id to leave the pack. A side row is clicked only while its item remains
+  in the current pack. The loop ends when no matching pack items remain or a
+  click's eight-update bound expires; if a current pack candidate has no
+  matching posted side row, the loop waits up to 1.2 s and then fails rather
+  than reporting success with items still held. `depositAllExcept(names)`
+  keeps every id whose display name is kept, noted or not. A nameless row is
+  still an item the matcher decides.
 - **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
   true once more pack slots are used, the pack is full or that row emptied,
-  within 4 s; a row without All is withdrawn as `withdrawX` of the free
-  slots. A full pack is true with no press.
+  within eight fresh game updates; a row without All is withdrawn as
+  `withdrawX` of the free slots. A full pack is true with no press.
 - **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
   Close is true only when the bank is shut, its old side root is released
   and the bank session generation moved on, within `timeoutMs` (4 s when
