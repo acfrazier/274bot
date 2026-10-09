@@ -1718,6 +1718,48 @@ fn native_walk_failure_receipt_names_missing_route_supplies() {
     assert!(detail.contains("native walk route failed"), "{detail}");
 }
 
+fn native_walk_gated_on_fishing(fishing: i32) -> (bool, Option<Result<WalkEnd, ActionError>>) {
+    let mut world = toll_nav_world();
+    world.graph.edges[0].consumed_req.clear();
+    world.graph.edges[0].skill_req = vec![(10, 68)];
+    let mut rig = rig(Some(Arc::new(world)), false);
+    rig.snapshot.seed_stats(vec![api::snapshot::StatView {
+        index: 10,
+        name: "fishing".into(),
+        base: fishing,
+        effective: fishing,
+        xp: 0,
+        used: true,
+    }]);
+    // script_observe(..., state: None, Some(&snapshot), ...) — the Starting-frame arm.
+    rig.observe(1);
+    assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
+        .route_worker
+        .is_none()));
+    let routed = queued(&rig.navs).is_some();
+    rig.observe(2);
+    let end = rig.end();
+    eprintln!("native-walk fishing={fishing} routed={routed} end={end:?}");
+    (routed, end)
+}
+
+#[test]
+fn native_walk_routes_skill_gate_with_posted_level_and_no_arm_state() {
+    let (routed, end) = native_walk_gated_on_fishing(68);
+    assert!(
+        routed,
+        "posted Fishing 68 must route the gate with arm state None; end={end:?}"
+    );
+    assert_ne!(end, Some(Ok(WalkEnd::Failed)));
+}
+
+#[test]
+fn native_walk_refuses_skill_gate_below_level() {
+    let (routed, end) = native_walk_gated_on_fishing(67);
+    assert!(!routed, "Fishing 67 must not cross a Fishing-68 door");
+    assert_eq!(end, Some(Ok(WalkEnd::Failed)));
+}
+
 /// The host's own route arm, as the watchdog's recovery walk and legacy
 /// script walks use it: no native authority.
 fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
