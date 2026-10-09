@@ -18,9 +18,9 @@
       "families": {
         "gathering": {
           "path": "274/gathering.json",
-          "schema": 2,
-          "bytes": 1348424,
-          "sha256": "0c0e1389c8871e5f81678b656a83ff0731435a2c40afd8c246f920a7d1fb2f1e"
+          "schema": 3,
+          "bytes": 1349736,
+          "sha256": "9d46e240e98db31a65baf2e59d984693cfbd7002a6b253c2a9518a59200d8346"
         },
         "debug": {
           "path": "274/debug.json",
@@ -100,22 +100,34 @@
       },
       "gather_sites": {
         "woodcutting": {
-          "sites": 243,
+          "sites": 231,
           "direct": 0,
-          "dropped": 2287,
-          "outside_box": 0
+          "dropped": 1198,
+          "outside_box": 0,
+          "extra": 26,
+          "renamed": 5,
+          "required": 5,
+          "override_dropped": 45
         },
         "mining": {
           "sites": 33,
           "direct": 0,
-          "dropped": 9,
-          "outside_box": 0
+          "dropped": 13,
+          "outside_box": 0,
+          "extra": 8,
+          "renamed": 2,
+          "required": 1,
+          "override_dropped": 15
         },
         "fishing": {
-          "sites": 32,
+          "sites": 25,
           "direct": 20,
-          "dropped": 7,
-          "outside_box": 0
+          "dropped": 5,
+          "outside_box": 0,
+          "extra": 2,
+          "renamed": 0,
+          "required": 0,
+          "override_dropped": 11
         }
       },
       "equipment_names": {
@@ -195,8 +207,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5228743,
-      "sha256": "a9528009aa79529fe34bbc1df3d864ac11ad0de2f3b8719f76dd6bed517c6af9",
+      "bytes": 5231496,
+      "sha256": "0c090b2e6070a3b20b031bbcdcd2301aed256c737a1f6846d578bc218dc74939",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -8401,9 +8413,9 @@
       "families": {
         "gathering": {
           "path": "289/gathering.json",
-          "schema": 2,
-          "bytes": 1411473,
-          "sha256": "b055d338ad8d1264c29007daa112425bd5c2c150c6e01f449b9d67f332aeeb3d"
+          "schema": 3,
+          "bytes": 1411973,
+          "sha256": "b5c378c82ddf3c54614a0893a5b3e3522811a18d119daa9d3e77fe66a2b6e62c"
         },
         "debug": {
           "path": "289/debug.json",
@@ -8477,28 +8489,40 @@
         },
         "zones": 3,
         "knowledge": {
-          "partial": 21,
+          "partial": 19,
           "unknown": 6
         }
       },
       "gather_sites": {
         "woodcutting": {
-          "sites": 246,
+          "sites": 231,
           "direct": 0,
-          "dropped": 2537,
-          "outside_box": 0
+          "dropped": 1205,
+          "outside_box": 0,
+          "extra": 26,
+          "renamed": 5,
+          "required": 5,
+          "override_dropped": 61
         },
         "mining": {
           "sites": 33,
           "direct": 0,
-          "dropped": 16,
-          "outside_box": 0
+          "dropped": 13,
+          "outside_box": 0,
+          "extra": 8,
+          "renamed": 2,
+          "required": 1,
+          "override_dropped": 16
         },
         "fishing": {
-          "sites": 32,
+          "sites": 25,
           "direct": 20,
-          "dropped": 9,
-          "outside_box": 0
+          "dropped": 5,
+          "outside_box": 0,
+          "extra": 2,
+          "renamed": 0,
+          "required": 0,
+          "override_dropped": 13
         }
       },
       "equipment_names": {
@@ -8578,8 +8602,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5688210,
-      "sha256": "7c905ef48b24a78b95fb12ed010215013e6b10fc7a61df7dc706194eba74f507",
+      "bytes": 5689899,
+      "sha256": "82ad82b9fa93792afefe1f6c9cfeeb4677edfc5abee834f66d0a138326880d8d",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

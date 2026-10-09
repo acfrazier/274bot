@@ -1,6 +1,6 @@
 //! The typed gathering catalog over the checked 289/274 assets. Placement anchors below are rows of the pinned
 //! content maps (`maps/m38_50.jm2:5131` is `0 38 55: 2090`, i.e. plane 0, local 38/55 of map square 38,50).
-use api::game_data::for_revision;
+use api::game_data::{for_revision, GatherForbiddenState};
 use api::gather_methods::{
     first_gap, known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     SceneRegionInput, SpotId, TargetClass,
@@ -675,10 +675,12 @@ fn three_fishing_methods_declare_their_tool_bait_and_catches() {
         first_gap(&karambwan.requirements).map(|gap| &*gap.code),
         Some("varp-gate")
     );
+    // The greegree guard is a forbidden state, not a gap: the method stays selectable and the Gatherer refuses at begin.
     let members = catalog.method("fishing.memberfish.op3").unwrap();
+    assert!(first_gap(&members.requirements).is_none());
     assert_eq!(
-        first_gap(&members.requirements).map(|gap| &*gap.code),
-        Some("monkey-form-forbidden")
+        catalog.forbidden_states(members).unwrap(),
+        [GatherForbiddenState::MonkeyForm]
     );
 }
 

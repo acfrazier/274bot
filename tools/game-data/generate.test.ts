@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
-import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, isKnownGatherTarget, SITE_OVERRIDES, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
@@ -2733,6 +2733,7 @@ function readSiteBanks(): GatherSiteBank[] {
 }
 const siteBanksAll = readSiteBanks();
 const siteRowsByRevision = new Map<number, GatherSiteWire[]>();
+const hiddenByRevision = new Map<number, GatherSiteWire[]>();
 
 for (const { revision, root } of gatheringPins) {
     const family = extractGatheringFamily(root);
@@ -2831,9 +2832,9 @@ for (const { revision, root } of gatheringPins) {
     assert.deepEqual(fishing('fishing.rarefish.op3').products, ['raw_tuna@35', 'raw_swordfish@50']);
     assert.deepEqual(fishing('fishing.memberfish.op1').products.slice(-2), ['raw_cod@23', 'raw_bass@46']);
     assert.deepEqual(fishing('fishing.0_45_152_lavafish.op1').tools, ['oily_fishing_rod']);
-    const bigNet = view.method('fishing.memberfish.op1').requirements;
-    assert.equal(bigNet.state, revision === 289 ? 'partial' : 'known', `${revision} the 289 monkey-form gate is not modelled, so big-net requirements are partial there; 274 has no such gate`);
-    assert.equal(bigNet.state !== 'partial' || bigNet.gaps.every((each) => each.code === 'monkey-form-forbidden'), true);
+    const bigNet = view.method('fishing.memberfish.op1');
+    assert.equal(bigNet.requirements.state, 'known', `${revision} big-net requirements are known: the monkey-form gate is a forbidden state, not a gap`);
+    assert.deepEqual(bigNet.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} big-net forbidden states`);
     assert.equal(targetsOf(view.method('fishing.freshfish.op1'), 'hazard').map((target) => view.name('npc', target.id)).join(), 'macro_whirlpool_freshfish', `${revision} whirlpool spots are hazards, not fishing targets`);
     const method = view.method(hemensterCarpMethod);
     const target = targetsOf(method, 'resource')[0]!;
@@ -2971,11 +2972,9 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(karambwan.gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
     const bigNetRow = fishingRows.find((row) => row.aliases.includes('fishing.memberfish.op1'));
     assert.ok(bigNetRow, `${revision} the big-net alias resolves to a fishing group`);
-    assert.equal(
-        bigNetRow.gap,
-        revision === 289 ? 'monkey-form-forbidden' : null,
-        `${revision} the 289 monkey-form gate refuses big-net; 274 has no such gate`,
-    );
+    assert.equal(bigNetRow.gap, null, `${revision} big-net is admitted: a forbidden state never blocks selection`);
+    assert.equal(bigNetRow.selectable, true);
+    assert.deepEqual(bigNetRow.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} big-net forbidden states on the row`);
     // Named sites (§2.3 P-sites): rows, boxes, names and counts computed from
     // the content family, never the committed core. Item names are the shared
     // core input (the same map the generator passes); everything else derives.
@@ -2984,11 +2983,38 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, revision === 289 ? 311 : 308, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, 289, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
+    // Without the table the same rows keep their nearest-label names: the table is the only thing that renames or drops them.
+    if (revision === 289) {
+        const unnamed = gatherSites(facts, namedResourceRows, root, siteBanksAll, []);
+        assert.ok(unnamed.rows.find((row) => row.id === 'mining.park.underground.se')?.label.startsWith('Park (underground) SE23 · '), '289 unnamed guild keeps the nearest-label name');
+        const desert = unnamed.rows.find((row) => row.id === 'mining.desert_mining_camp.underground');
+        assert.equal(desert?.label, 'Desert Mining Camp (underground) · Rock 63, Copper ore 4, Tin ore 4', '289 unnamed desert camp keeps its nearest-label name');
+        assert.deepEqual(desert?.region, { min_x: 3284, min_z: 9412, max_x: 3306, max_z: 9453, level: 0 });
+    }
+    // Every override cites `path:lines` into the 289 content (the pack and the reviewed evidence are 289's; 274's content lacks some of these files): each file exists and each line range lies inside it. An optional row is checked only where its id is published.
+    const unfiltered = gatherSites(facts, namedResourceRows, root, siteBanksAll, []);
+    const publishedIds = new Set(unfiltered.rows.map((row) => row.id));
+    for (const override of SITE_OVERRIDES) {
+        if (override.optional === true && !publishedIds.has(override.id)) continue;
+        const refs = [...override.cite.matchAll(/([A-Za-z0-9_/]+\.(?:rs2|enum|loc|jm2)):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)/g)];
+        assert.ok(refs.length > 0, `${override.id} cites content as path:lines`);
+        if (override.action === 'drop') assert.ok(override.place !== '' && override.reason !== '', `${override.id} names its place and the entrance the route finder lacks`);
+        if (revision !== 289) continue;
+        for (const [, file, ranges] of refs) {
+            const full = path.join(root, file!.startsWith('maps/') ? '' : 'scripts', file!);
+            assert.ok(fs.existsSync(full), `${revision} override ${override.id} cites ${file}`);
+            const lines = fs.readFileSync(full, 'utf8').split('\n').length;
+            for (const range of ranges!.split(',')) {
+                const [from, to] = range.split('-').map(Number) as [number, number | undefined];
+                assert.ok(from >= 1 && (to ?? from) >= from && (to ?? from) <= lines, `${revision} override ${override.id} cites ${file}:${range} outside the file's ${lines} lines`);
+            }
+        }
+    }
     const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
     const site = (id: string): GatherSiteWire => {
         const found = siteById.get(id);
@@ -2997,7 +3023,8 @@ for (const { revision, root } of gatheringPins) {
     };
     const contestSitePicker = namedResourceRows.find((row) => row.methods.includes(hemensterCarpMethod));
     assert.ok(contestSitePicker);
-    const contestSites = siteResult.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
+    // The Hemenster contest site is hidden (no entrance in the pack), so the join is checked on the rows before the override table.
+    const contestSites = unfiltered.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
     assert.equal(contestSites.length, 1, 'the method site is joined to its selected NPC placement');
     assert.equal(contestSites[0]!.label, 'Hemenster W18 · Fish');
     assert.deepEqual(contestSites[0]!.region, { min_x: 2637, min_z: 3444, max_x: 2637, max_z: 3444, level: 0 });
@@ -3033,10 +3060,10 @@ for (const { revision, root } of gatheringPins) {
     assert.deepEqual(site('woodcutting.draynor').region, { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
     // Search witnesses: the rows the picker filters per selected key and query.
     const offering = (skill: string, key: string) => siteResult.rows.filter((row) => row.skill === skill && row.keys.some((entry) => entry.key === key));
-    assert.equal(offering('woodcutting', 'normal').length, revision === 289 ? 223 : 220, `${revision} normal-tree choices`);
-    assert.equal(offering('woodcutting', 'oak').length, 113, `${revision} oak choices`);
-    assert.equal(offering('woodcutting', 'willow').length, 47, `${revision} willow choices`);
-    assert.equal(offering('mining', 'coal').length, 16, `${revision} coal choices`);
+    assert.equal(offering('woodcutting', 'normal').length, 212, `${revision} normal-tree choices`);
+    assert.equal(offering('woodcutting', 'oak').length, 117, `${revision} oak choices`);
+    assert.equal(offering('woodcutting', 'willow').length, 50, `${revision} willow choices`);
+    assert.equal(offering('mining', 'coal').length, 17, `${revision} coal choices`);
     assert.deepEqual(
         offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
         ['woodcutting.draynor'],
@@ -3047,26 +3074,72 @@ for (const { revision, root } of gatheringPins) {
     const tunaSites = offering('fishing', tunaKey);
     assert.equal(tunaSites.length, 4, `${revision} tuna harpoon choices`);
     assert.deepEqual(tunaSites.map((row) => row.label.split(' · ')[0]).sort(), ['Catherby', 'Fishing Guild', 'Musa Point', 'Rellekka NW24'], `${revision} tuna harpoon names`);
-    // Real-row closure: every key is a same-skill picker value, labels carry no coordinates, sites are surface-only.
+    // Raw shark (Harpoon) and the big-net catch are selectable on both revisions: the monkey-form state is refused at begin, never hidden.
+    const sharkKey = namedResourceRows.find((row) => row.aliases.includes('fishing.memberfish.op3'))!;
+    assert.equal(sharkKey.selectable, true, `${revision} raw shark is selectable`);
+    assert.deepEqual(sharkKey.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} raw shark forbidden states`);
+    assert.equal(offering('fishing', sharkKey.key).length, 3, `${revision} shark (Harpoon) choices`);
+    // Hidden until the route finder learns their entrances: no row, whatever the label would have been.
+    for (const id of ['fishing.elf_camp.nw', 'fishing.elf_camp.w', 'woodcutting.canifis', 'woodcutting.tyras_camp']) assert.ok(!siteById.has(id), `${revision} ${id} is hidden`);
+    assert.ok(siteById.has('woodcutting.bedabin_camp.underground.n'), `${revision} the Cosmic Temple trees are published`);
+    // Real-row closure: every key is a same-skill picker value, labels carry no coordinates, and each region is wholly surface or wholly underground (the 4160-6400 special-area band is never offered).
     for (const row of siteResult.rows) {
         for (const entry of row.keys) {
             assert.ok(namedResourceRows.some((resource) => resource.skill === row.skill && resource.key === entry.key), `${revision} ${row.id} offers ${entry.key}, a ${row.skill} key`);
         }
-        assert.ok(!/\d{4}/.test(row.label) && row.region.min_z < 6400, `${revision} ${row.id} label and surface`);
+        assert.ok(!/\d{4}/.test(row.label) && (row.region.max_z < 4160 || row.region.min_z >= 6400), `${revision} ${row.id} label and region`);
     }
     siteRowsByRevision.set(revision, siteResult.rows);
+    hiddenByRevision.set(revision, siteResult.hidden);
 
 }
-// Both revisions share 308 base sites; 289 adds the three tree scraps.
+// Every 274 site is also a 289 site: the table hides the 3 289-only 0.2.0 rows (2 Mort'ton, 1 Troll Stronghold) along with the rest.
 {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 308, '308 shared site ids');
-    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only site rows');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 289, 'shared site ids');
+    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
-    assert.ok(rows289.some((row) => row.label.startsWith(`Mort'ton · `)), '289 keeps the Mortton camp');
-    assert.ok(rows289.some((row) => row.label.includes('Troll Stronghold')), '289 keeps the Troll Stronghold scraps');
+}
+// Real rows for the naming rules and the 0.2.0 id contract, checked on the regenerated data.
+{
+    const rows289 = siteRowsByRevision.get(289)!;
+    const at289 = (id: string) => {
+        const found = rows289.find((row) => row.id === id);
+        assert.ok(found, `289 site ${id} is published`);
+        return found!;
+    };
+    // Underground: the nearest labels.txt label to the surface projection, `<name> (underground)`, id `<skill>.<slug>.underground`.
+    // Dropped by the override table: the desert camp entrances need slave robes worn, so neither is a row on 289.
+    // The surface `mining.desert_mining_camp` is a 0.2.0 id and stays; only its two underground entrances are dropped.
+    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground' || row.id === 'mining.desert_mining_camp.underground.n'), '289 desert camp underground entrances are dropped');
+    // The Falador Mining Guild cluster (3042,9758) is named by the nearest-label rule (Park is 23 tiles from its projection, Falador 39); the override table renames it.
+    const guild = rows289.find((row) => row.skill === 'mining' && row.region.min_x <= 3042 && row.region.max_x >= 3042 && row.region.min_z <= 9758 && row.region.max_z >= 9758);
+    assert.equal(guild?.id, 'mining.park.underground.se', '3042,9758 is the Park underground cluster');
+    assert.ok(guild!.label.startsWith('Mining Guild (Mining 60) · '), 'the Mining Guild override shows its requirement');
+    // Far from every label, with no bank within 64 tiles: the nearest label at any distance, with bearing and distance.
+    assert.equal(at289('woodcutting.lumber_yard.n').label, 'Lumber Yard N65 · Logs 298, Charcoal 14');
+    assert.deepEqual(at289('woodcutting.lumber_yard.n').region, { min_x: 3303, min_z: 3572, max_x: 3337, max_z: 3660, level: 0 });
+    // Far from every label with a bank within 64 tiles: named `<bank> area`.
+    assert.equal(at289('woodcutting.edgeville_area').label, 'Edgeville area · Logs 71');
+    // Every 0.2.0 site id stays retired or published, never reused: a published one keeps its region, a hidden one is a drop override with the same region. Saved Gatherer cards store site ids.
+    const base: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, 'tools/game-data/gather-sites-0.2.0.json'), 'utf8'));
+    for (const revision of [274, 289]) {
+        const byId = new Map(siteRowsByRevision.get(revision)!.map((row) => [row.id, row]));
+        const hiddenById = new Map(hiddenByRevision.get(revision)!.map((row) => [row.id, row]));
+        const baseRows = Object.entries(base[String(revision)]!);
+        assert.equal(baseRows.length, revision === 289 ? 311 : 308, `${revision} 0.2.0 site count`);
+        for (const [id, region] of baseRows) {
+            const row = byId.get(id) ?? hiddenById.get(id);
+            assert.ok(row, `${revision} 0.2.0 site ${id} is published or hidden`);
+            assert.ok(!(byId.has(id) && hiddenById.has(id)), `${revision} ${id} is not both published and hidden`);
+            assert.deepEqual([row!.region.min_x, row!.region.min_z, row!.region.max_x, row!.region.max_z, row!.region.level], region, `${revision} 0.2.0 site ${id} keeps its region`);
+        }
+        // The hidden rows' regions are committed for the reachability guard.
+        const committed: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, HIDDEN_SITES_FILE), 'utf8'));
+        assert.deepEqual(committed[String(revision)], hiddenSitesRecord(hiddenByRevision.get(revision)!), `${revision} ${HIDDEN_SITES_FILE} matches the generator`);
+    }
 }
 
 // Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
@@ -3363,7 +3436,7 @@ function synMethod(
     resources: string[],
     products: MethodWire['products'],
     requirements: MethodWire['requirements'],
-    extras?: Partial<Pick<MethodWire, 'targets' | 'tools' | 'consumes' | 'spots'>>,
+    extras?: Partial<Pick<MethodWire, 'targets' | 'tools' | 'consumes' | 'spots' | 'forbidden_states'>>,
 ): MethodWire {
     const knownEmpty = { state: 'known' as const, value: [] };
     return {
@@ -3378,6 +3451,7 @@ function synMethod(
         requirements,
         spots: { state: 'known' as const, value: null },
         sources: [],
+        forbidden_states: [],
         ...extras,
     };
 }
@@ -3416,15 +3490,16 @@ const synJungle = synMethod('woodcutting.jungle', 'woodcutting', ['jungle'], syn
 assert.equal(gatherMethodGap(synJungle), 'no-resource-target', 'an unknown cell refuses with its gap code');
 const synKarambwan = synMethod('fishing.category_633.op1', 'fishing', ['tbwt_raw_karambwan'], synPartialGap('inventory-effect'), synPartialGap('varp-gate'));
 assert.equal(gatherMethodGap(synKarambwan), 'varp-gate', 'requirements block before products under the design cell order');
-const synBigNet = synMethod('fishing.memberfish.op1', 'fishing', ['raw_mackerel'], synKnownIds([{ item: 353, level: 16 }]), synPartialGap('monkey-form-forbidden'));
-assert.equal(gatherMethodGap(synBigNet), 'monkey-form-forbidden');
+const synBigNet = synMethod('fishing.memberfish.op1', 'fishing', ['raw_mackerel'], synKnownIds([{ item: 353, level: 16 }]), synKnownIds([]), { forbidden_states: ['monkey-form'] });
+assert.equal(gatherMethodGap(synBigNet), null, 'a forbidden state is never a gap: the row stays selectable and the Gatherer refuses at begin');
+assert.deepEqual(gatherResources(synFacts([synBigNet]), new Map()).map((row) => [row.selectable, row.forbidden_states]), [[true, ['monkey-form']]], 'forbidden states reach the row and keep it selectable');
 
 const synNames = new Map([[1521, 'Oak logs'], [335, 'Raw trout'], [331, 'Raw salmon']]);
 assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
-    { skill: 'woodcutting', method: 'woodcutting.oak', methods: ['woodcutting.oak'], aliases: [], key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, gap: null },
+    { skill: 'woodcutting', method: 'woodcutting.oak', methods: ['woodcutting.oak'], aliases: [], key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, forbidden_states: [], gap: null },
 ]);
 assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
-    { skill: 'woodcutting', method: 'woodcutting.jungle', methods: ['woodcutting.jungle'], aliases: [], key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, gap: 'no-resource-target' },
+    { skill: 'woodcutting', method: 'woodcutting.jungle', methods: ['woodcutting.jungle'], aliases: [], key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, forbidden_states: [], gap: 'no-resource-target' },
 ], 'a refused method keeps its row with a humanized fallback label');
 const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
 const synFreshAlias = synMethod('fishing.freshfish.op2', 'fishing', ['raw_salmon', 'raw_trout'], synKnownIds([{ item: 331, level: 30 }, { item: 335, level: 20 }]), synKnownIds([]));
@@ -3440,6 +3515,7 @@ assert.deepEqual(freshGroups, [
         label: 'Raw trout / Raw salmon — Mine (Unknown tool)',
         level: 20,
         selectable: true,
+        forbidden_states: [],
         gap: null,
     },
 ], 'fishing keys sort product ids, while members and legacy ids form one option');
@@ -3501,41 +3577,43 @@ const synPlacements = (file: string, rows: string[]): GatheringFacts['placements
 const synTestFish = (id: string, targets: TargetWire[], item = 9001): MethodWire =>
     synMethod(id, 'fishing', ['raw_test'], synKnownIds([{ item, level: 1 }]), synKnownIds([]), { targets: { state: 'known', value: targets } });
 const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
+// No overrides: the synthetic fixtures test the walk, not the shipped table.
+const noOverrides: readonly SiteOverride[] = [];
 
 // A geographic enum stem names the NPC camp inside its own movement box.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
-    assert.deepEqual(result.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Test Water · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }] }]);
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0 });
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
+    assert.deepEqual(result.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Test Water · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }], requires: [] }]);
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 // The resolution rule enumerates method targets: a missing, null or unknown movement box throws.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
     const method = synTestFish('fishing.test.op1', [synNpcTarget(5)]);
     const rows = gatherResources(synSiteFacts([method], ['npc 5 testspot'], [], []), synFishNames);
-    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]), rows, content, []), /no known movement box/, 'an entirely missing movement row throws');
-    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, { state: 'known', value: null })], []), rows, content, []), /no known movement box/, 'a null movement box throws');
-    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, synUnknownGap('movement-enum-missing'))], []), rows, content, []), /no known movement box/, 'an unknown movement box throws');
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]), rows, content, [], noOverrides), /no known movement box/, 'an entirely missing movement row throws');
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, { state: 'known', value: null })], []), rows, content, [], noOverrides), /no known movement box/, 'a null movement box throws');
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, synUnknownGap('movement-enum-missing'))], []), rows, content, [], noOverrides), /no known movement box/, 'an unknown movement box throws');
 }
 // Two stems humanising to one name throw, even before any placement is read.
 {
     const content = siteFixtureContent([`=Seers' Village,2714,3529,0`], '[spot_a]\nparam=fishing_movement_enum,fishing_movement_seers_village_enum\n[spot_b]\nparam=fishing_movement_enum,fishing_movement_seersvillage_enum');
     const methods = [synTestFish('fishing.a.op1', [synNpcTarget(5)]), synTestFish('fishing.b.op1', [synNpcTarget(6)], 9002)];
     const facts = synSiteFacts(methods, ['npc 5 spot_a', 'npc 6 spot_b'], [synMovement(5, synKnownBox(2700, 3520, 2730, 3540)), synMovement(6, synKnownBox(2700, 3520, 2730, 3540))], []);
-    assert.throws(() => gatherSites(facts, gatherResources(facts, synFishNames), content, []), /collide/, 'two stems humanising to one name throw');
+    assert.throws(() => gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides), /collide/, 'two stems humanising to one name throw');
 }
 // Two geographic names in one camp throw; one spawn outside its own box is counted, not named.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[pool_a]\nparam=fishing_movement_enum,fishing_movement_test_water_enum\n[pool_b]\nparam=fishing_movement_enum,fishing_movement_far_water_enum');
     const method = synTestFish('fishing.test.op1', [synNpcTarget(5), synNpcTarget(6)]);
     const clashing = synSiteFacts([method], ['npc 5 pool_a', 'npc 6 pool_b'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220)), synMovement(6, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0', '2 0 12 10 n6 0'])]);
-    assert.throws(() => gatherSites(clashing, gatherResources(clashing, synFishNames), content, []), /ambiguous/, 'two direct names in one site throw');
+    assert.throws(() => gatherSites(clashing, gatherResources(clashing, synFishNames), content, [], noOverrides), /ambiguous/, 'two direct names in one site throw');
     const outside = synSiteFacts([method], ['npc 5 pool_a', 'npc 6 pool_b'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220)), synMovement(6, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0', '2 0 12 10 n6 0'])]);
-    const outsideResult = gatherSites(outside, gatherResources(outside, synFishNames), content, []);
+    const outsideResult = gatherSites(outside, gatherResources(outside, synFishNames), content, [], noOverrides);
     assert.equal(outsideResult.rows[0]?.label, 'Test Water · Mine', 'a spawn outside its own box takes the one inside name');
-    assert.deepEqual(outsideResult.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 1 });
+    assert.deepEqual(outsideResult.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 1, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 
 // A loc camp never borrows a nearby NPC's enum, even a geographic one.
@@ -3543,36 +3621,48 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[other]\nparam=fishing_movement_enum,fishing_movement_other_enum');
     const method = synMethod('fishing.test.op1', 'fishing', ['raw_test'], synKnownIds([{ item: 9001, level: 1 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(2092)] } });
     const facts = synSiteFacts([method], [], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l2092 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a loc camp never borrows a nearby NPC name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 // A spawn outside its own box with no inside name behind it falls back to the place, still counted.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'an all-outside camp keeps its place name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 1 });
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 1, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
-// The 64-tile cap drops whichever source would name the site; the dungeon band is never a site.
+// A surface site more than 64 tiles from every bank and label is named by the nearest label at any distance, counted as extra.
 {
     const content = siteFixtureContent(['=Far Place,100,100,0'], '[unrelated]');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
-    assert.deepEqual(result.rows, [], 'a site with no place within 64 is dropped whichever source would name it');
-    assert.deepEqual(result.report.fishing, { sites: 0, direct: 0, dropped: 1, outside_box: 0 });
-    const deepContent = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
+    assert.equal(result.rows.length, 1, 'a surface site far from every label is still named');
+    assert.match(result.rows[0]!.label, /^Far Place [A-Z]+\d+ · /, 'the far site takes the nearest label with a bearing and distance');
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 1, renamed: 0, required: 0, override_dropped: 0 });
+}
+// A one-tile underground fragment is below the three-tile woodcutting minimum and is dropped, as on the surface.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
     const oak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(2092)] } });
     const deep = synSiteFacts([oak], [], [], [synPlacements('maps/m50_100.jm2', ['1 0 10 0 l2092 0'])]);
-    assert.deepEqual(gatherSites(deep, gatherResources(deep, new Map([[1521, 'Oak logs']])), deepContent, []).rows, [], 'the dungeon band is not a named site');
+    assert.deepEqual(gatherSites(deep, gatherResources(deep, new Map([[1521, 'Oak logs']])), content, [], noOverrides).rows, [], 'a one-tile underground fragment is dropped');
+}
+// A special-area cluster (4160 <= z < 6400) with no label within 64 tiles is counted, never offered.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 4480, 3220, 4500))], [synPlacements('maps/m50_70.jm2', ['1 0 10 10 n5 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
+    assert.deepEqual(result.rows, [], 'a special-area cluster with no label within 64 tiles is not offered');
+    assert.deepEqual(result.report.fishing, { sites: 0, direct: 0, dropped: 1, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 // Ordinals rank by distance, then count: the nearer part keeps the bare name.
 {
     const content = siteFixtureContent(['=P,0,0,0'], '[unrelated]');
     const oak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(7)] } });
     const facts = synSiteFacts([oak], [], [], [synPlacements('maps/m0_0.jm2', ['1 0 20 0 l7 0', '2 0 21 0 l7 0', '3 0 40 0 l7 0', '4 0 41 0 l7 0', '5 0 42 0 l7 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, [], noOverrides);
     assert.deepEqual(result.rows.map((row) => [row.id, row.label]), [['woodcutting.p.e', 'P E20 · Oak logs 2'], ['woodcutting.p.e.2', 'P E40 (2) · Oak logs 3']]);
 }
 
@@ -3593,7 +3683,7 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
         [],
         [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l7 0', '2 0 50 10 l8 0'])],
     );
-    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, [], noOverrides);
     assert.deepEqual(
         result.rows.map((row) => row.label),
         ['Test Water · Oak logs 1', 'Test Water E40 · Oak logs 1'],
@@ -3604,9 +3694,9 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[coalfish]\nparam=fishing_movement_enum,fishing_movement_coalfish_enum');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 coalfish'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
-    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 {
     const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-karamja-fixture-'));
@@ -3693,6 +3783,30 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
         /Luthas coin message\/grant disagree \(43\/44\)/,
         'the full-crate payout is the amount the content actually grants',
     );
+}
+
+// Overrides name, require or drop a published row by id: the id and region never change.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
+    const resources = gatherResources(facts, synFishNames);
+    const requires = [{ kind: 'skill' as const, skill: 'fishing' as const, level: 20 }];
+    const renamed = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Renamed Water', requires }]);
+    assert.deepEqual(renamed.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Renamed Water (Fishing 20) · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }], requires }]);
+    assert.deepEqual(renamed.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 1, required: 1, override_dropped: 0 });
+    const dropRow = { cite: 'fixture', action: 'drop', place: 'Fixture', reason: 'fixture' } as const;
+    const dropped = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }]);
+    assert.deepEqual(dropped.rows, [], 'a drop row removes the published site');
+    assert.deepEqual(dropped.hidden.map((row) => row.id), ['fishing.test_water'], 'a dropped site is listed as hidden with its region');
+    assert.deepEqual(dropped.report.fishing, { sites: 0, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 1 });
+    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', ...dropRow }]), /names no published site/, 'an unmatched non-optional override throws');
+    assert.equal(gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', optional: true, ...dropRow }]).rows.length, 1, 'an unmatched optional override is skipped');
+    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }, { id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Other', requires: [] }]), /has two overrides/, 'two overrides for one id throw');
+}
+// The shipped table lists each id once and cites content as path:lines.
+{
+    assert.equal(new Set(SITE_OVERRIDES.map((row) => row.id)).size, SITE_OVERRIDES.length, 'each override id is listed once');
+    for (const row of SITE_OVERRIDES) assert.match(row.cite, /\.(?:rs2|enum|loc|jm2):\d/, `${row.id} cites content lines`);
 }
 
 console.log('generate fixture passed');

@@ -6,6 +6,7 @@
 //! gaps and `Unknown` is an honest extraction gap: no query turns Unknown into an empty answer.
 
 use super::SceneRegionInput;
+use crate::game_data::GatherForbiddenState;
 use crate::selected::FactError;
 use crate::selected::{
     EntityId, FactKey, Gap, ItemAmount, Knowledge, Requirement, SelectedPin, SkillMinimum,
@@ -187,6 +188,7 @@ pub(super) struct Bucket {
 #[derive(Debug)]
 pub(super) struct MethodExtra {
     pub op: Option<(u8, Arc<str>)>,
+    pub forbidden: Box<[GatherForbiddenState]>,
     pub zones: Box<[u16]>,
     pub buckets: Box<[Bucket]>,
     /// `SpotId` of this method's first placement; ids are contiguous per method.
@@ -513,6 +515,15 @@ impl GatherCatalog {
             .op
             .as_ref()
             .map(|(slot, label)| (*slot, &**label)))
+    }
+
+    /// Content states that refuse the method while they hold.
+    pub fn forbidden_states(
+        &self,
+        method: &GatherMethod,
+    ) -> Result<&[GatherForbiddenState], FactError> {
+        let index = self.index_of(method)?;
+        Ok(&self.extras[index].forbidden)
     }
 
     /// Zone rules that apply to the method.

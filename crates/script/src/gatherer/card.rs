@@ -246,6 +246,8 @@ mod tests {
         for (site, message) in [
             ("", "Site location needs a named site"),
             ("gone", "unknown gone"),
+            // A site hidden from the published data (a 0.2.0 id the route finder cannot reach yet) refuses like an unknown one.
+            ("mining.arandar.sw", "unknown mining.arandar.sw"),
             ("fishing.catherby", "fishing.catherby is not a Mining site"),
             (
                 "mining.varrock_east.se",
