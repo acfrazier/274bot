@@ -430,6 +430,7 @@ impl ScriptWalkArm {
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
         evidence: api::quest_progress::EvidenceStamp,
+        session_permissions: Option<script::native::WalkPermissions>,
     ) {
         if !authority.live() {
             return;
@@ -481,8 +482,12 @@ impl ScriptWalkArm {
             ));
         }
         let from = WorldTile { x, z, level };
-        let (options, policy, enforce) =
-            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let (options, policy, enforce) = super::walk_permissions::native_admission(
+            &self.navs,
+            &self.name,
+            request.options,
+            session_permissions,
+        );
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
@@ -630,6 +635,7 @@ impl ScriptWalkArm {
         snapshot: &GameSnapshot,
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
+        session_permissions: Option<script::native::WalkPermissions>,
     ) -> bool {
         if !authority.live() {
             return false;
@@ -690,8 +696,12 @@ impl ScriptWalkArm {
         } else {
             None
         };
-        let (options, policy, enforce) =
-            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let (options, policy, enforce) = super::walk_permissions::native_admission(
+            &self.navs,
+            &self.name,
+            request.options,
+            session_permissions,
+        );
         let off_debt = self
             .navs
             .lock()

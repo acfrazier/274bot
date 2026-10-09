@@ -16,6 +16,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Each `api.questPaths` row now has a `draft` field: `true` for a Quest Path
   still marked as an untested draft, `false` for a released one, so a script
   can tell the two apart before it relies on a Path.
+- In Load scripts, `api.gather.run`'s `allowTeleports`, `allowWilderness`
+  and `allowDangerZones` options now apply to the Gatherer session's own
+  walks. Before, they were accepted but ignored, so those walks followed
+  the Nav config settings. The script's other walks keep their own options.
 
 ### Panel
 
@@ -529,10 +533,6 @@ that aren't here yet. Where we know the target, it's noted.
   (`events.on`/`off`, `registerScript`), the `InvItem` class and task-tree
   classes, and several gathering, fishing and banking data helpers. Closing
   these, checked against rs2b0t's own tests, is planned for 0.2.0.1 and 0.2.1.
-- In Load scripts, `api.gather.run`'s `allowTeleports`, `allowWilderness`
-  and `allowDangerZones` options are accepted but not applied yet: the
-  Gatherer's walks follow the global Nav config settings. Planned for
-  0.2.0.1.
 - Script errors don't yet tell "not possible right now" apart from "not
   implemented".
 - Equipping an item while the bank is open isn't handled reliably; close

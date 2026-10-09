@@ -837,7 +837,7 @@ impl SlotScript {
     pub fn native_run(&self) -> Option<RunKey> {
         self.compiled.as_ref().map(|run| run.run)
     }
-    /// Permissions frozen in this instance's effective committed revision.
+    /// Permissions frozen in this compiled instance's effective committed revision.
     /// Pending boundary/restart edits are not grants until the card applies them.
     pub fn native_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
         self.compiled

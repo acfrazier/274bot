@@ -220,10 +220,13 @@ pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mu
 }
 
 /// Resolve native search options and risk policy from one durable settings read.
+/// Running API Gather permissions are supplied by the slot-locked dispatcher,
+/// never copied into per-bot navigation state.
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
+    session_permissions: Option<script::native::WalkPermissions>,
 ) -> (FindOptions, RiskPolicy, bool) {
     let mut all = navs.lock().unwrap();
     let mut bot = all.get_mut(name);
@@ -233,6 +236,7 @@ pub(crate) fn native_admission(
     }
     let script = bot
         .and_then(|bot| bot.native_permissions)
+        .or(session_permissions)
         .unwrap_or_default();
     let policy = globals.risk_policy(script, walk);
     (
@@ -373,7 +377,8 @@ mod tests {
                 }),
             )
             .unwrap();
-            let (native, policy, _) = native_admission(&navs, "alice", WalkOptions::default());
+            let (native, policy, _) =
+                native_admission(&navs, "alice", WalkOptions::default(), None);
             assert_eq!(
                 policy,
                 if enabled {
@@ -624,12 +629,12 @@ mod held_gate_tests {
             ("bob".to_owned(), super::super::NavBot::default()),
         ])));
         assert!(!navs.lock().unwrap()["alice"].runtime_gate_logged);
-        native_admission(&navs, "alice", WalkOptions::default());
+        native_admission(&navs, "alice", WalkOptions::default(), None);
         assert!(navs.lock().unwrap()["alice"].runtime_gate_logged);
         assert!(!navs.lock().unwrap()["bob"].runtime_gate_logged);
         for _ in 0..3 {
             compiled_options(&navs, "alice", FindOptions::default());
-            native_admission(&navs, "alice", WalkOptions::default());
+            native_admission(&navs, "alice", WalkOptions::default(), None);
             let mut all = navs.lock().unwrap();
             log_runtime_net_gate(
                 "alice",

@@ -1433,6 +1433,60 @@ mod api_gather_seat {
     }
 
     #[test]
+    fn load_api_gather_walk_permissions_follow_its_live_card_settings() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(206, true);
+        assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
+
+        let mut settings = SettingsBag::new();
+        settings.insert("disposition".into(), serde_json::json!("Power"));
+        settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
+        settings.insert("allowTeleports".into(), serde_json::json!(true));
+        settings.insert("allowWilderness".into(), serde_json::json!(true));
+        settings.insert("allowDangerZones".into(), serde_json::json!(true));
+        slot.consume_api_control(&InteractReq::GatherRun {
+            request_id: 206,
+            settings: Arc::new(settings),
+        });
+        installed(&mut slot, &snapshot);
+
+        assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(
+            slot.api_gather_walk_permissions(),
+            Some(crate::native::WalkPermissions {
+                allow_teleports: true,
+                allow_wilderness: true,
+                allow_danger_zones: true,
+            })
+        );
+
+        stop(&mut slot, 206);
+        assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
+        slot.stop();
+    }
+
+    #[test]
+    fn load_api_gather_defaults_keep_walk_permissions_refused() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(207, true);
+        run(&mut slot, 207);
+        installed(&mut slot, &snapshot);
+
+        assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(
+            slot.api_gather_walk_permissions(),
+            Some(crate::native::WalkPermissions::default())
+        );
+
+        stop(&mut slot, 207);
+        assert_eq!(slot.native_walk_permissions(), None);
+        assert_eq!(slot.api_gather_walk_permissions(), None);
+        slot.stop();
+    }
+
+    #[test]
     fn stop_during_preparation_is_prompt_clears_retention_and_never_installs() {
         let snapshot = gatherer_snapshot();
         let mut slot = load_slot(201, true);
