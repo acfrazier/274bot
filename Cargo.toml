@@ -17,6 +17,13 @@ dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu-0.15.1" }
 [profile.dev.package.client]
 opt-level = 3
 
+# Route searches over the real pack dominate nav and real-pack tests. At
+# opt-level 0 the full `cargo test -p nav` took a median 334 s; at 3 it took
+# 30 s (release: 28 s). A nav edit then rebuilding `script` tests cost +4 s
+# (27 -> 31 s). Measured 2026-10-08, MEASURE-NAV-OPT.
+[profile.dev.package.nav]
+opt-level = 3
+
 # Debug info is most of `target/` and link work. Our crates keep file:line
 # for panics and backtraces; third-party crates carry none and are lightly
 # optimized (they rarely rebuild, and unoptimized wgpu/deno make debug runs
