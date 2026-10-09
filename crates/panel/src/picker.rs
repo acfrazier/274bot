@@ -22,9 +22,7 @@ use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use frontend_core::{
     MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
-use host_play::walk_map::{
-    select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
-};
+use host_play::walk_map::{ActionError, MapModel, RouteProjection, RouteSource, Selection};
 use nav::map::spatial::GameTile;
 use nav::paint::{bake_reach, flood_components};
 use nav::router::{Leg, Route};
@@ -1344,8 +1342,9 @@ fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option
     });
 }
 
-/// Remaining path tiles for the focused slot, borrowed through
-/// [`host_play::Play::with_map_route`]: driven live, then script, then manual WalkTo.
+/// Remaining path tiles for the focused slot. Delegate live > script > manual
+/// precedence and the script/manual lock order to `Play::with_map_route`.
+/// Release the scenario guard before looking up script or manual routes.
 /// Cached by `(source, route generation)`; `here` advances a monotonic start
 /// index using [`remaining_path_tiles`] leg semantics without flattening again.
 fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
@@ -1353,42 +1352,35 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
         update_route_cache(None, here);
         return;
     };
-    let travellers = session.travellers.lock().unwrap();
-    let manual_arc = travellers.get(&name).cloned();
-    drop(travellers);
-    let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
-    let scenario = session.scenario.lock().unwrap();
-    let live_route = scenario
-        .as_ref()
-        .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
-    let live = live_route.map(|route| RouteProjection::live(route, session.route_gen(), None));
-    if let Some(play) = session.core.play() {
-        play.with_map_route(&name, manual.as_deref(), live, |proj| {
-            update_route_cache(
-                proj.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
-                here,
-            );
-        });
-        return;
-    }
-    match select_route_source(
-        live.is_some(),
-        false,
-        manual.as_ref().is_some_and(|arm| arm.route.is_some()),
-    ) {
-        Some(RouteSource::Live) => update_route_cache(
-            live.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
+    let read = |proj: Option<RouteProjection<'_>>| {
+        update_route_cache(
+            proj.map(|proj| (proj.stamp.source, proj.stamp.generation, proj.route)),
             here,
-        ),
-        Some(RouteSource::Manual) => {
-            let route = manual.as_ref().and_then(|arm| {
-                arm.route
-                    .as_deref()
-                    .map(|route| (RouteSource::Manual, arm.route_generation, route))
-            });
-            update_route_cache(route, here);
+        );
+    };
+    {
+        let scenario = session.scenario.lock().unwrap();
+        let live_route = scenario
+            .as_ref()
+            .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
+        if let Some(route) = live_route {
+            let live = Some(RouteProjection::live(route, session.route_gen(), None));
+            if let Some(play) = session.core.play() {
+                play.with_map_route(&name, None, live, read);
+            } else {
+                read(live);
+            }
+            return;
         }
-        Some(RouteSource::Script) | None => update_route_cache(None, here),
+    }
+    #[cfg(test)]
+    tests::before_map_route();
+    let manual_arc = session.travellers.lock().unwrap().get(&name).cloned();
+    if let Some(play) = session.core.play() {
+        play.with_map_route(&name, manual_arc.as_deref(), None, read);
+    } else {
+        let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
+        read(manual.as_deref().and_then(RouteProjection::manual));
     }
 }
 

@@ -1125,7 +1125,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
             ..Default::default()
         },
     );
-    let mut manual = crate::WalkArm::default();
+    let manual = Mutex::new(crate::WalkArm::default());
     let read = |projection: Option<RouteProjection<'_>>| {
         projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.dest))
     };
@@ -1134,11 +1134,14 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
         Some((RouteSource::Script, 7, wt(3, 3, 0)))
     );
     assert_eq!(play.with_map_route("bob", Some(&manual), None, read), None);
-    manual.route = Some(Arc::new(nav::router::Route {
-        dest: wt(2, 3, 0),
-        ..route.clone()
-    }));
-    manual.route_generation = 8;
+    {
+        let mut manual = manual.lock().unwrap();
+        manual.route = Some(Arc::new(nav::router::Route {
+            dest: wt(2, 3, 0),
+            ..route.clone()
+        }));
+        manual.route_generation = 8;
+    }
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),
         Some((RouteSource::Script, 7, wt(3, 3, 0)))
@@ -1161,7 +1164,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
         play.with_map_route("alice", Some(&manual), None, read),
         Some((RouteSource::Manual, 8, wt(2, 3, 0)))
     );
-    manual.route = None;
+    manual.lock().unwrap().route = None;
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),
         None

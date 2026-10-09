@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use api::snapshot::WorldTile;
 use nav::router::Route;
 
@@ -86,29 +88,30 @@ impl Play {
     /// Shared paint precedence: driven live, then script, then manual WalkTo.
     /// Caller supplies live only for this exact focused slot/world, never
     /// another bot's route/session.
+    /// Lock-order contract: slot ticks take `navs` then `WalkArm` in
+    /// `NavBot::slot_escape`, so nothing may hold a `WalkArm` while taking
+    /// `navs`. Pass the manual mutex without a guard. A supplied live route
+    /// returns without locking either owner; otherwise the caller must release
+    /// its live/scenario guard before calling. The script read releases `navs`
+    /// before the manual fallback locks the arm. The reader must not re-enter
+    /// either owner while its route is borrowed.
     pub fn with_map_route<R>(
         &self,
         name: &str,
-        manual: Option<&WalkArm>,
+        manual: Option<&Mutex<WalkArm>>,
         live: Option<RouteProjection<'_>>,
         read: impl FnOnce(Option<RouteProjection<'_>>) -> R,
     ) -> R {
-        // A driven live route needs no script lock or manual projection.
-        let scripts = live.is_none().then(|| self.navs.lock().unwrap());
-        let script = scripts
-            .as_ref()
-            .and_then(|all| all.get(name))
-            .and_then(RouteProjection::script);
-        let source = select_route_source(
-            live.is_some(),
-            script.is_some(),
-            manual.is_some_and(|arm| arm.route.is_some()),
-        );
-        read(match source {
-            Some(RouteSource::Live) => live,
-            Some(RouteSource::Script) => script,
-            Some(RouteSource::Manual) => manual.and_then(RouteProjection::manual),
-            None => None,
-        })
+        if let Some(live) = live {
+            return read(Some(live));
+        }
+        {
+            let scripts = self.navs.lock().unwrap();
+            if let Some(script) = scripts.get(name).and_then(RouteProjection::script) {
+                return read(Some(script));
+            }
+        }
+        let manual = manual.map(|arm| arm.lock().unwrap());
+        read(manual.as_deref().and_then(RouteProjection::manual))
     }
 }
