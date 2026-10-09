@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
-import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, isKnownGatherTarget, SITE_OVERRIDES, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, isKnownGatherTarget, SITE_OVERRIDES, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
@@ -2733,6 +2733,7 @@ function readSiteBanks(): GatherSiteBank[] {
 }
 const siteBanksAll = readSiteBanks();
 const siteRowsByRevision = new Map<number, GatherSiteWire[]>();
+const hiddenByRevision = new Map<number, GatherSiteWire[]>();
 
 for (const { revision, root } of gatheringPins) {
     const family = extractGatheringFamily(root);
@@ -2982,10 +2983,10 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, revision === 289 ? 346 : 343, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, 289, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 271, direct: 0, dropped: 1205, outside_box: 0, extra: 25, renamed: 4, required: 4, override_dropped: 21 }, mining: { sites: 41, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 8 }, fishing: { sites: 34, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 4 } }
-        : { woodcutting: { sites: 268, direct: 0, dropped: 1198, outside_box: 0, extra: 25, renamed: 4, required: 4, override_dropped: 8 }, mining: { sites: 41, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 7 }, fishing: { sites: 34, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 2 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
     // Without the table the same rows keep their nearest-label names: the table is the only thing that renames or drops them.
     if (revision === 289) {
@@ -2995,13 +2996,24 @@ for (const { revision, root } of gatheringPins) {
         assert.equal(desert?.label, 'Desert Mining Camp (underground) · Rock 63, Copper ore 4, Tin ore 4', '289 unnamed desert camp keeps its nearest-label name');
         assert.deepEqual(desert?.region, { min_x: 3284, min_z: 9412, max_x: 3306, max_z: 9453, level: 0 });
     }
-    // Every cited content file exists under this revision's content root. An optional row is checked only where its id is published.
-    const publishedIds = new Set(gatherSites(facts, namedResourceRows, root, siteBanksAll, []).rows.map((row) => row.id));
+    // Every override cites `path:lines` into the 289 content (the pack and the reviewed evidence are 289's; 274's content lacks some of these files): each file exists and each line range lies inside it. An optional row is checked only where its id is published.
+    const unfiltered = gatherSites(facts, namedResourceRows, root, siteBanksAll, []);
+    const publishedIds = new Set(unfiltered.rows.map((row) => row.id));
     for (const override of SITE_OVERRIDES) {
         if (override.optional === true && !publishedIds.has(override.id)) continue;
-        const files = override.cite.match(/(?:areas|quests)\/[^\s:;()]+\.rs2/g) ?? [];
-        assert.ok(files.length > 0 || override.cite.startsWith('crates/script/tests/gather_sites_reach.rs'), `${override.id} cites a content file or the reachability guard`);
-        for (const file of files) assert.ok(fs.existsSync(path.join(root, 'scripts', file)), `${revision} override ${override.id} cites ${file}`);
+        const refs = [...override.cite.matchAll(/([A-Za-z0-9_/]+\.(?:rs2|enum|loc|jm2)):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)/g)];
+        assert.ok(refs.length > 0, `${override.id} cites content as path:lines`);
+        if (override.action === 'drop') assert.ok(override.place !== '' && override.reason !== '', `${override.id} names its place and the entrance the route finder lacks`);
+        if (revision !== 289) continue;
+        for (const [, file, ranges] of refs) {
+            const full = path.join(root, file!.startsWith('maps/') ? '' : 'scripts', file!);
+            assert.ok(fs.existsSync(full), `${revision} override ${override.id} cites ${file}`);
+            const lines = fs.readFileSync(full, 'utf8').split('\n').length;
+            for (const range of ranges!.split(',')) {
+                const [from, to] = range.split('-').map(Number) as [number, number | undefined];
+                assert.ok(from >= 1 && (to ?? from) >= from && (to ?? from) <= lines, `${revision} override ${override.id} cites ${file}:${range} outside the file's ${lines} lines`);
+            }
+        }
     }
     const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
     const site = (id: string): GatherSiteWire => {
@@ -3011,7 +3023,8 @@ for (const { revision, root } of gatheringPins) {
     };
     const contestSitePicker = namedResourceRows.find((row) => row.methods.includes(hemensterCarpMethod));
     assert.ok(contestSitePicker);
-    const contestSites = siteResult.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
+    // The Hemenster contest site is hidden (no entrance in the pack), so the join is checked on the rows before the override table.
+    const contestSites = unfiltered.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
     assert.equal(contestSites.length, 1, 'the method site is joined to its selected NPC placement');
     assert.equal(contestSites[0]!.label, 'Hemenster W18 · Fish');
     assert.deepEqual(contestSites[0]!.region, { min_x: 2637, min_z: 3444, max_x: 2637, max_z: 3444, level: 0 });
@@ -3047,10 +3060,10 @@ for (const { revision, root } of gatheringPins) {
     assert.deepEqual(site('woodcutting.draynor').region, { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
     // Search witnesses: the rows the picker filters per selected key and query.
     const offering = (skill: string, key: string) => siteResult.rows.filter((row) => row.skill === skill && row.keys.some((entry) => entry.key === key));
-    assert.equal(offering('woodcutting', 'normal').length, revision === 289 ? 247 : 244, `${revision} normal-tree choices`);
-    assert.equal(offering('woodcutting', 'oak').length, 118, `${revision} oak choices`);
+    assert.equal(offering('woodcutting', 'normal').length, 212, `${revision} normal-tree choices`);
+    assert.equal(offering('woodcutting', 'oak').length, 117, `${revision} oak choices`);
     assert.equal(offering('woodcutting', 'willow').length, 50, `${revision} willow choices`);
-    assert.equal(offering('mining', 'coal').length, 21, `${revision} coal choices`);
+    assert.equal(offering('mining', 'coal').length, 17, `${revision} coal choices`);
     assert.deepEqual(
         offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
         ['woodcutting.draynor'],
@@ -3065,11 +3078,10 @@ for (const { revision, root } of gatheringPins) {
     const sharkKey = namedResourceRows.find((row) => row.aliases.includes('fishing.memberfish.op3'))!;
     assert.equal(sharkKey.selectable, true, `${revision} raw shark is selectable`);
     assert.deepEqual(sharkKey.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} raw shark forbidden states`);
-    assert.equal(offering('fishing', sharkKey.key).length, 5, `${revision} shark (Harpoon) choices`);
-    if (revision === 289) {
-        assert.equal(site('fishing.elf_camp.nw').label, 'Elf Camp NW31 · Harpoon, Net');
-        assert.equal(site('fishing.elf_camp.w').label, 'Elf Camp W31 · Harpoon, Net');
-    }
+    assert.equal(offering('fishing', sharkKey.key).length, 3, `${revision} shark (Harpoon) choices`);
+    // Hidden until the route finder learns their entrances: no row, whatever the label would have been.
+    for (const id of ['fishing.elf_camp.nw', 'fishing.elf_camp.w', 'woodcutting.canifis', 'woodcutting.tyras_camp']) assert.ok(!siteById.has(id), `${revision} ${id} is hidden`);
+    assert.ok(siteById.has('woodcutting.bedabin_camp.underground.n'), `${revision} the Cosmic Temple trees are published`);
     // Real-row closure: every key is a same-skill picker value, labels carry no coordinates, and each region is wholly surface or wholly underground (the 4160-6400 special-area band is never offered).
     for (const row of siteResult.rows) {
         for (const entry of row.keys) {
@@ -3078,20 +3090,17 @@ for (const { revision, root } of gatheringPins) {
         assert.ok(!/\d{4}/.test(row.label) && (row.region.max_z < 4160 || row.region.min_z >= 6400), `${revision} ${row.id} label and region`);
     }
     siteRowsByRevision.set(revision, siteResult.rows);
+    hiddenByRevision.set(revision, siteResult.hidden);
 
 }
-// Every 274 site is also a 289 site; 289 adds the 3 0.2.0 rows listed below (2 Mort'ton, 1 Troll Stronghold). The table drops rows the pack cannot reach on both revisions (the 289-only new clusters leave only on 289).
+// Every 274 site is also a 289 site: the table hides the 3 289-only 0.2.0 rows (2 Mort'ton, 1 Troll Stronghold) along with the rest.
 {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 343, '343 shared site ids');
-    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [
-        'woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw',
-    ], '289-only site rows');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 289, 'shared site ids');
+    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
-    assert.ok(rows289.some((row) => row.label.startsWith(`Mort'ton · `)), '289 keeps the Mortton camp');
-    assert.ok(rows289.some((row) => row.label.includes('Troll Stronghold')), '289 keeps the Troll Stronghold scraps');
 }
 // Real rows for the naming rules and the 0.2.0 id contract, checked on the regenerated data.
 {
@@ -3114,17 +3123,22 @@ for (const { revision, root } of gatheringPins) {
     assert.deepEqual(at289('woodcutting.lumber_yard.n').region, { min_x: 3303, min_z: 3572, max_x: 3337, max_z: 3660, level: 0 });
     // Far from every label with a bank within 64 tiles: named `<bank> area`.
     assert.equal(at289('woodcutting.edgeville_area').label, 'Edgeville area · Logs 71');
-    // Every 0.2.0 site id stays published with the same region: saved Gatherer cards store site ids.
+    // Every 0.2.0 site id stays retired or published, never reused: a published one keeps its region, a hidden one is a drop override with the same region. Saved Gatherer cards store site ids.
     const base: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, 'tools/game-data/gather-sites-0.2.0.json'), 'utf8'));
     for (const revision of [274, 289]) {
         const byId = new Map(siteRowsByRevision.get(revision)!.map((row) => [row.id, row]));
+        const hiddenById = new Map(hiddenByRevision.get(revision)!.map((row) => [row.id, row]));
         const baseRows = Object.entries(base[String(revision)]!);
         assert.equal(baseRows.length, revision === 289 ? 311 : 308, `${revision} 0.2.0 site count`);
         for (const [id, region] of baseRows) {
-            const row = byId.get(id);
-            assert.ok(row, `${revision} 0.2.0 site ${id} is still published`);
+            const row = byId.get(id) ?? hiddenById.get(id);
+            assert.ok(row, `${revision} 0.2.0 site ${id} is published or hidden`);
+            assert.ok(!(byId.has(id) && hiddenById.has(id)), `${revision} ${id} is not both published and hidden`);
             assert.deepEqual([row!.region.min_x, row!.region.min_z, row!.region.max_x, row!.region.max_z, row!.region.level], region, `${revision} 0.2.0 site ${id} keeps its region`);
         }
+        // The hidden rows' regions are committed for the reachability guard.
+        const committed: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, HIDDEN_SITES_FILE), 'utf8'));
+        assert.deepEqual(committed[String(revision)], hiddenSitesRecord(hiddenByRevision.get(revision)!), `${revision} ${HIDDEN_SITES_FILE} matches the generator`);
     }
 }
 
@@ -3780,17 +3794,19 @@ const noOverrides: readonly SiteOverride[] = [];
     const renamed = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Renamed Water', requires }]);
     assert.deepEqual(renamed.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Renamed Water (Fishing 20) · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }], requires }]);
     assert.deepEqual(renamed.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 1, required: 1, override_dropped: 0 });
-    const dropped = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', cite: 'fixture', action: 'drop', reason: 'fixture' }]);
+    const dropRow = { cite: 'fixture', action: 'drop', place: 'Fixture', reason: 'fixture' } as const;
+    const dropped = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }]);
     assert.deepEqual(dropped.rows, [], 'a drop row removes the published site');
+    assert.deepEqual(dropped.hidden.map((row) => row.id), ['fishing.test_water'], 'a dropped site is listed as hidden with its region');
     assert.deepEqual(dropped.report.fishing, { sites: 0, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 1 });
-    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', cite: 'fixture', action: 'drop', reason: 'fixture' }]), /names no published site/, 'an unmatched non-optional override throws');
-    assert.equal(gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', optional: true, cite: 'fixture', action: 'drop', reason: 'fixture' }]).rows.length, 1, 'an unmatched optional override is skipped');
-    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', cite: 'fixture', action: 'drop', reason: 'fixture' }, { id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Other', requires: [] }]), /has two overrides/, 'two overrides for one id throw');
+    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', ...dropRow }]), /names no published site/, 'an unmatched non-optional override throws');
+    assert.equal(gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', optional: true, ...dropRow }]).rows.length, 1, 'an unmatched optional override is skipped');
+    assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }, { id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Other', requires: [] }]), /has two overrides/, 'two overrides for one id throw');
 }
-// The shipped table lists each id once and cites content paths.
+// The shipped table lists each id once and cites content as path:lines.
 {
     assert.equal(new Set(SITE_OVERRIDES.map((row) => row.id)).size, SITE_OVERRIDES.length, 'each override id is listed once');
-    for (const row of SITE_OVERRIDES) assert.match(row.cite, /^(areas|quests|crates\/script\/tests\/gather_sites_reach\.rs)/, `${row.id} cites its content or the reachability guard`);
+    for (const row of SITE_OVERRIDES) assert.match(row.cite, /\.(?:rs2|enum|loc|jm2):\d/, `${row.id} cites content lines`);
 }
 
 console.log('generate fixture passed');

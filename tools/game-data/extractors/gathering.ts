@@ -1640,76 +1640,126 @@ export type GatherSiteWire = {
 /** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
 export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number; renamed: number; required: number; override_dropped: number };
 export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
-export type GatherSitesResult = { rows: GatherSiteWire[]; report: GatherSiteReport };
+/** `rows` are published; `hidden` are the rows a `drop` override removed (the reachability guard keeps each one unreachable). */
+export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[]; report: GatherSiteReport };
 
 /** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
 export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
 
 /**
  * A content-named override of one published site. `id` is the published id and
- * never changes. `cite` names the content that names or gates the place.
- * `optional` marks a site only some revisions publish; any other unmatched id
- * throws. A `name` row renames the label and shows `requires` after the name;
- * a `drop` row removes the row.
+ * never changes (saved Gatherer cards store it; a hidden id is retired, never
+ * reused). `cite` is `path:lines` references into the engine content that say
+ * what the override claims (rs2 / enum / loc paths are relative to `scripts/`,
+ * `maps/` paths to the content root). `optional` marks a site only some
+ * revisions publish; any other unmatched id throws. A `name` row renames the
+ * label and shows `requires` after the name. A `drop` row hides the site until
+ * the route finder learns the entrance named in `reason`; `place` is what the
+ * content calls the place, which the nearest-label name did not always say.
+ * The reachability guard keeps every hidden site unreachable on the open graph.
  */
 export type SiteOverride = { id: string; cite: string; optional?: true } & (
     | { action: 'name'; name: string; requires: GatherSiteRequirement[] }
-    | { action: 'drop'; reason: string }
+    | { action: 'drop'; place: string; reason: string }
 );
 
-const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-93 (zanarisdoor: inv_total(worn, dramen_staff) > 0 & map_members); quest_zanaris.rs2:29-31 (the Dramen tree yields a branch only from %zanaris >= spoken_shamus)';
-const ZANARIS_REQUIRES: GatherSiteRequirement[] = [
-    { kind: 'quest', name: 'Lost City' },
-    { kind: 'worn', item: 772, name: 'Dramen staff' },
-];
-const APE_ATOLL_CITE = 'quests/quest_mm/scripts/quest_mm.rs2:1102-1108 (mm_greegree_zone), 1157-1161 (inv_totalcat worn mm_greegree)';
-const APE_ATOLL_REASON = 'reachable only inside the Ape Atoll greegree zone (monkey form); no mainland route in the pack';
-const DESERT_CITE = 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:425, 465-468 (wearing_slave_robes)';
-const PACK_GAP_REASON = 'unreachable on the 289 pack';
-const PACK_GAP_CITE = 'crates/script/tests/gather_sites_reach.rs (no route from Lumbridge on the 289 nav pack with every requirement removed)';
+const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-106 (zanarisdoor: the entrance needs the Dramen staff worn and a members world)';
+const ZANARIS_REQUIRES: GatherSiteRequirement[] = [{ kind: 'worn', item: 772, name: 'Dramen staff' }];
+const TIRANNWN_CITE = 'quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:1-33; quests/quest_upass/scripts/quest_upass.rs2:80-103,574-630; quests/quest_regicide/scripts/quest_regicide.rs2:25-29';
+const WATCHTOWER_CITE = 'quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:271-284,427-447; quests/quest_itwatchtower/scripts/ogre_guard.rs2:44-80';
+const HOLY_BARRIER_CITE = 'areas/area_mausoleum/scripts/holy_barrier.rs2:1-20';
+const VIKING_FERRY_CITE = 'quests/quest_viking/scripts/viking_sailor.rs2:14-40';
 
-/** Content-named sites. Only labels change; `drop` removes a row; ids never change. */
+/** Hidden ids that only 289 publishes; the table serves both revisions. */
+const ONLY_289 = new Set([
+    'fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw',
+    'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2', 'woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4',
+    'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4',
+    'mining.rellekka.nw', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw',
+    'woodcutting.castle_wars.sw', 'woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2',
+    'woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2',
+]);
+
+/** Drop rows for `ids`: one place, one missing entrance, one citation. */
+function hide(place: string, reason: string, cite: string, ids: readonly string[]): SiteOverride[] {
+    return ids.map((id): SiteOverride => ({ id, action: 'drop', place, reason, cite, ...(ONLY_289.has(id) ? { optional: true as const } : {}) }));
+}
+
+/**
+ * Content-named sites. A `name` row changes only the label; a `drop` row
+ * hides a site the route finder cannot reach yet. Ids never change.
+ */
 export const SITE_OVERRIDES: readonly SiteOverride[] = [
-    { id: 'mining.park.underground.se', action: 'name', name: 'Mining Guild', requires: [{ kind: 'skill', skill: 'mining', level: 60 }], cite: 'areas/area_falador/scripts/mining_guild.rs2:1-2 (`stat(mining) < 60` guards the guild ladder)' },
-    { id: 'mining.agility_arena.underground.e', action: 'name', name: 'Karamja Volcano', requires: [], cite: 'areas/area_karamja/scripts/misc_locs.rs2:1-2 (volcano_entrance; "Karamja - Volcano rocks")' },
-    { id: 'woodcutting.lumbridge_swamp.underground', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
-    { id: 'woodcutting.wizards_tower.underground.ne', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'mining.park.underground.se', action: 'name', name: 'Mining Guild', requires: [{ kind: 'skill', skill: 'mining', level: 60 }], cite: 'areas/area_falador/scripts/mining_guild.rs2:1-16 (the guild ladder refuses Mining below 60 and moves into the mine)' },
+    { id: 'mining.agility_arena.underground.e', action: 'name', name: 'Karamja Volcano', requires: [], cite: 'areas/area_karamja/scripts/misc_locs.rs2:1-14 (the volcano entrance and the cave movement)' },
+    // The Zanaris map: the entrance needs the Dramen staff worn and members (the handler also queues Lost City's completion on first entry, so the quest is not a separate condition). Bedabin Camp's cave is the Cosmic Temple trees (cosmictemple_ruined at 3175,9496).
     { id: 'woodcutting.al_kharid.underground.w', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+    { id: 'woodcutting.bedabin_camp.underground.n', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: `${ZANARIS_CITE}; maps/m49_148.jm2:6731 (cosmictemple_ruined, loc 2458, at 3175,9496)` },
+    { id: 'woodcutting.lumbridge_swamp.underground', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
     { id: 'woodcutting.lumbridge_swamp.underground.sw', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
-    { id: 'woodcutting.bedabin_camp.underground.n', action: 'drop', reason: 'no entrance from the camp in the pack and no tile reachable from Lumbridge', cite: 'areas/area_desert/scripts/bedabin_nomad.rs2:7 ("This is the camp of the Bedabin")' },
-    { id: 'mining.desert_mining_camp.underground', action: 'drop', reason: 'entrance needs slave robes worn; no nav edge yet', cite: DESERT_CITE },
-    { id: 'mining.desert_mining_camp.underground.n', action: 'drop', reason: 'entrance needs slave robes worn; no nav edge yet', cite: DESERT_CITE },
-    { id: 'fishing.kharazi_jungle.s', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'fishing.kharazi_jungle.sw', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.s', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.s.2', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.sw', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.sw.2', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.sw.3', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    { id: 'woodcutting.kharazi_jungle.sw.4', optional: true, action: 'drop', reason: APE_ATOLL_REASON, cite: APE_ATOLL_CITE },
-    // The reachability guard (crates/script/tests/gather_sites_reach.rs) found no route from Lumbridge on the 289 nav pack, with every requirement removed, to these rows. They are dropped with the place the content names where it names one.
-    { id: 'woodcutting.toll_gate.underground.sw', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; ${ZANARIS_CITE}` },
-    { id: 'woodcutting.varrock.underground.nw', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; areas/area_varrock/scripts/bartender.rs2:23 ("the Varrock sewers")` },
-    { id: 'woodcutting.palace.underground.ne', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; areas/area_varrock/scripts/bartender.rs2:23 ("the Varrock sewers")` },
-    { id: 'mining.rellekka.nw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_viking/scripts/viking_sailor.rs2:14,40 (the Rellekka ferry to Miscellania needs viking_complete; the pack has no ferry edge)` },
-    { id: 'woodcutting.baxtorian_falls.underground.se', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_waterfall/scripts/hadley.rs2:13 (the Baxtorian Waterfall)` },
-    { id: 'mining.dig_site.underground', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_itexam/scripts/arcaeological_expert.rs2:8-9 (the digsite)` },
-    { id: 'mining.exam_centre.underground', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_itexam/scripts/arcaeological_expert.rs2:8-9 (the digsite)` },
-    { id: 'woodcutting.isafdar.e', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:28 (no human may enter Tirannwn without documentation)` },
-    { id: 'woodcutting.isafdar.se', action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:28 (no human may enter Tirannwn without documentation)` },
-    { id: 'woodcutting.troll_stronghold.nw.2', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: `${PACK_GAP_CITE}; quests/quest_troll/scripts/quest_troll.rs2:366 (Troll Stronghold)` },
-    { id: 'fishing.brimhaven.underground.sw', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'fishing.dark_wizards_tower.underground.nw', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.castle_wars.s', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.castle_wars.sw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'mining.grand_tree.underground', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'mining.grand_tree.underground.2', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'mining.necromancer.underground.n', action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.kharazi_jungle.s.3', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.kharazi_jungle.s.4', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.rellekka.n', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.rellekka.n.2', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
-    { id: 'woodcutting.rellekka.nw', optional: true, action: 'drop', reason: PACK_GAP_REASON, cite: PACK_GAP_CITE },
+    { id: 'woodcutting.wizards_tower.underground.ne', action: 'name', name: 'Zanaris', requires: ZANARIS_REQUIRES, cite: ZANARIS_CITE },
+
+    // ---- Hidden: the route finder has no way in yet. Each reason names the entrance it lacks.
+    // Tirannwn: the Arandar pass and the Underground Pass.
+    ...hide('Tirannwn', 'entered by the Arandar pass or the Underground Pass; the pack has no Arandar gate crossing', TIRANNWN_CITE, [
+        'woodcutting.arandar.2', 'mining.arandar.sw', 'fishing.elf_camp', 'woodcutting.elf_camp', 'woodcutting.elf_camp.e', 'woodcutting.elf_camp.se',
+        'woodcutting.isafdar', 'mining.isafdar.se', 'woodcutting.poison_waste.n', 'woodcutting.poison_waste.ne',
+        'woodcutting.prifddinas', 'woodcutting.prifddinas.se', 'fishing.prifddinas.se', 'woodcutting.tyras_camp',
+        'woodcutting.isafdar.e', 'woodcutting.isafdar.se',
+    ]),
+    ...hide('Arandar (south)', 'Arandar pass entrance missing from the pack, and the pass adds trap and dense-forest movements', TIRANNWN_CITE, ['woodcutting.arandar', 'woodcutting.arandar.se']),
+    ...hide('Elf Camp (north coast)', 'Tirannwn entrance (the Arandar pass) missing from the pack', TIRANNWN_CITE, ['woodcutting.elf_camp.2', 'fishing.elf_camp.nw', 'fishing.elf_camp.w']),
+    ...hide('Arandar north and Prifddinas outskirts', 'no player entrance found: the Prifddinas city guard refuses passage, and the pack has no Arandar crossing', 'quests/quest_regicide/scripts/prif_city_guard.rs2:1-13; maps/m35_52.jm2:4916-4917', [
+        'woodcutting.arandar.3', 'woodcutting.arandar.n', 'woodcutting.arandar.nw', 'woodcutting.prifddinas.ne',
+    ]),
+    // Morytania: the Paterdomus holy barrier, then the Mort Myre gate.
+    ...hide('Morytania (Canifis, Mort\'ton, Haunted Woods, Temple)', 'entered through the Paterdomus holy barrier, then the Mort Myre gate; neither is a nav transport', `${HOLY_BARRIER_CITE}; quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-8`, [
+        'woodcutting.canifis', 'fishing.canifis.sw', 'woodcutting.haunted_woods', 'woodcutting.haunted_woods.2', 'woodcutting.haunted_woods.e',
+        'woodcutting.mort_ton', 'fishing.mort_ton.w', 'woodcutting.river_salve.ne', 'fishing.river_salve.se', 'woodcutting.temple',
+    ]),
+    ...hide('Mort\'ton east (Barrows side)', 'no player entrance found: beyond the Paterdomus holy barrier, in a pocket east of Mort\'ton', HOLY_BARRIER_CITE, ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2']),
+    ...hide('Temple (north of the railing)', 'no player entrance found: north of the temple\'s ornate railing', 'maps/m53_54.jm2:4563', ['woodcutting.temple.n']),
+    ...hide('Mort Myre (west bank)', 'no player entrance found: the west bank of the Mort Myre swamp', 'quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-8', ['woodcutting.exam_centre.e']),
+    // Islands, boats and one-off crossings.
+    ...hide('Crandor', 'reached by the Dragon Slayer voyage, later the Crandor rock and the secret wall; none is a nav transport', 'quests/quest_dragon/scripts/crandor.rs2:3-27', [
+        'mining.agility_arena.ne', 'mining.dark_wizards_tower.sw', 'mining.fishing_platform.e', 'mining.fishing_platform.se',
+    ]),
+    ...hide('Fishing Platform', 'reached by Holgart\'s boat from Witchaven; the pack has no boat transport', 'areas/area_ardougne_east/scripts/holgart_ardougne.rs2:91-106', ['fishing.fishing_platform']),
+    ...hide('Miscellania', 'reached by the Fremennik ferry after the Fremennik Trials; the pack has no ferry transport', VIKING_FERRY_CITE, [
+        'mining.rellekka.nw', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw',
+    ]),
+    ...hide('Ape Atoll', 'the island has no route on the pack: Lumdo\'s voyage is not a nav transport', 'quests/quest_mm/scripts/mm_lumdo.rs2:17-27', [
+        'fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2',
+        'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4',
+    ]),
+    ...hide('Crash Island', 'the island has no route on the pack: Waydar\'s glider flight is not a nav transport', 'quests/quest_mm/scripts/mm_waydar.rs2:112-116', ['woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4']),
+    ...hide('Gu\'Tanoth (outside the ogre gates)', 'behind the guarded Gu\'Tanoth ogre gates; the pack has no gate crossing', WATCHTOWER_CITE, ['woodcutting.gu_tanoth.nw', 'woodcutting.gu_tanoth.sw', 'woodcutting.gu_tanoth.w']),
+    ...hide('Gu\'Tanoth (south side)', 'forest on the south side of the guarded Gu\'Tanoth ogre gates; the pack has no gate crossing', WATCHTOWER_CITE, ['woodcutting.castle_wars.s', 'woodcutting.castle_wars.sw']),
+    ...hide('Castle Wars (west bank)', 'reached over the Castle Wars stepping stones, a movement the pack has no transport for', 'minigames/game_castlewars/scripts/castlewars_steping_stone.rs2:1-6; maps/m37_48.jm2:7107,7153-7155,7191', ['woodcutting.castle_wars.nw']),
+    ...hide('Lighthouse island', 'the broken Lighthouse bridge needs its repair bits or agility; the pack has no bridge transport', 'quests/quest_horror/scripts/quest_horror.rs2:63-108; maps/m40_56.jm2:4098-4112,4882,4889', ['woodcutting.barbarian_outpost.ne']),
+    // Gates, courses and enclosures.
+    ...hide('West of the Tree Gnome Stronghold fence', 'no player entrance found: outside the stronghold fence', 'maps/m36_53.jm2:4350-4351; maps/m36_54.jm2:4164-4171', [
+        'woodcutting.gnome_ball_field.sw', 'woodcutting.gnome_ball_field.w', 'woodcutting.gnome_ball_field.w.2',
+    ]),
+    ...hide('Wilderness agility course', 'the course gate needs Agility 52 and forced movements; not a nav transport', 'skill_agility/scripts/wilderness_course.rs2:1-46', ['woodcutting.agility_training_area.4']),
+    ...hide('Demonic Ruins (fenced charcoal pocket)', 'no player entrance found: fenced in by railings', 'maps/m51_60.jm2:6075,6111', ['woodcutting.demonic_ruins.ne']),
+    ...hide('Desert Mining Camp', 'the camp gate needs the metal key and the mercenary search; not a nav transport', 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:68-132', ['mining.desert_mining_camp']),
+    ...hide('Desert Mining Camp (underground)', 'the entrance needs the slave shirt, robe and boots worn; no nav edge', 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:425,465-468', ['mining.desert_mining_camp.underground', 'mining.desert_mining_camp.underground.n']),
+    ...hide('Hemenster fishing contest enclosure', 'the contest gates need the fishing pass and Morris\'s dialogue; not a nav transport', 'quests/quest_fishingcompo/scripts/quest_fishingcompo.rs2:22-68; maps/m41_53.jm2:5083-5084', ['fishing.hemenster.w']),
+    ...hide('Waterfall ledge (plane 1)', 'one tree on the ledge by the Waterfall barrel; the rope, ledge and barrel movements are not nav transports', 'maps/m39_54.jm2:6416; quests/quest_waterfall/scripts/quest_waterfall.rs2:154-184,213-242,254-262,291-297', ['woodcutting.grand_tree.e']),
+    ...hide('Fremennik mining enclosure', 'fenced mine; the completed-quest crossing (loc changes and a teleport) is not a nav transport', 'maps/m41_57.jm2:8858,8924; quests/quest_viking/scripts/quest_viking.rs2:1-23', ['mining.rellekka.ne']),
+    ...hide('Trollheim (north-west forest)', 'reached by the Troll Stronghold climb and shortcut movements; the pack has no such transport', 'quests/quest_troll/scripts/quest_troll.rs2:1-43,108-137', ['woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2']),
+    ...hide('West Ardougne', 'no route on the pack and no quest gate found: the doors beside the tree are ordinary', 'maps/m39_52.jm2:4472,4666', ['woodcutting.west_ardougne.nw']),
+    // Dungeons and caves.
+    ...hide('Varrock sewers', 'the entrance is the manhole east of the palace (Open, then Climb down); the pack gives no route through it', 'areas/area_varrock/scripts/bartender.rs2:23-25; general_use/configs/manholes.loc:1-13', ['woodcutting.varrock.underground.nw', 'woodcutting.palace.underground.ne']),
+    ...hide('Zanaris (walled pocket)', 'no player entrance found: a pocket of the Zanaris map with no walkable link from the Cosmic Temple', ZANARIS_CITE, ['woodcutting.toll_gate.underground.sw']),
+    ...hide('Glarial\'s Tomb', 'entered through the tombstone with Glarial\'s pebble and nothing weapon-like or armoured carried; not a nav transport', 'quests/quest_waterfall/scripts/quest_waterfall.rs2:44-122; maps/m39_153.jm2:1383', ['woodcutting.baxtorian_falls.underground.se']),
+    ...hide('Digsite cavern (before the blockage is removed)', 'reached by the digsite winch (rope, Agility 10); not a nav transport', 'quests/quest_itexam/scripts/area_digsite.rs2:611-632,673-685', ['mining.dig_site.underground']),
+    ...hide('Digsite cavern (after the blockage is removed)', 'reached by the digsite winch (rope, Agility 10); not a nav transport', 'quests/quest_itexam/scripts/area_digsite.rs2:611-632,673-685', ['mining.exam_centre.underground']),
+    ...hide('Brimhaven Dungeon (lava eels)', 'entered by paying Saniboch, then vine crossings; none is a nav transport', 'areas/area_karamja/scripts/karam_dungeon.rs2:7-13,62-92; skill_fishing/scripts/fishing_spots/lavafish_loc.rs2:1-43', ['fishing.brimhaven.underground.sw']),
+    ...hide('Taverley Dungeon', 'moving fishing spots beyond the dungeon\'s dusty-key door; the pack has no route in', 'skill_fishing/configs/fishing_movement.enum:328-337; areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35; maps/m45_153.jm2:6707', ['fishing.dark_wizards_tower.underground.nw']),
+    ...hide('Grand Tree mine', 'the lower trapdoor at 2463,3497 opens after the quest; the pack has the ladder out, not the trapdoor in', 'quests/quest_grandtree/scripts/quest_grandtree.rs2:1-11; maps/m38_54.jm2:6055', ['mining.grand_tree.underground', 'mining.grand_tree.underground.2']),
+    ...hide('Cave west of the Necromancer\'s cellar', 'no player entrance found: a walled cave; the nearby cellar ladder at 2696,9682 is outside it', 'maps/m42_151.jm2:4778 (ladder_from_cellar)', ['mining.necromancer.underground.n']),
 ];
 
 /** A label's name with any `(n)` ordinal and bearing stripped. */
@@ -2294,5 +2344,28 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (keyMeta.get(entry.key)?.skill !== row.skill) throw new Error(`gather_sites: ${row.id} offers ${entry.key}, not a ${row.skill} key`);
         }
     }
-    return { rows, report };
+    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)), report };
+}
+
+/**
+ * The hidden sites' regions per revision, committed beside the 0.2.0 snapshot
+ * for the reachability guard (`crates/script/tests/gather_sites_reach.rs`):
+ * id -> `[min_x, min_z, max_x, max_z, level]`.
+ */
+export const HIDDEN_SITES_FILE = 'tools/game-data/gather-sites-hidden.json';
+export type HiddenSitesRecord = Record<string, number[]>;
+export function hiddenSitesRecord(hidden: readonly GatherSiteWire[]): HiddenSitesRecord {
+    const record: HiddenSitesRecord = {};
+    for (const row of [...hidden].sort((a, b) => compareCodepoint(a.id, b.id))) {
+        record[row.id] = [row.region.min_x, row.region.min_z, row.region.max_x, row.region.max_z, row.region.level];
+    }
+    return record;
+}
+/** The file's bytes: revisions ascending, one inline row per id in codepoint order. */
+export function hiddenSitesBytes(byRevision: Record<string, HiddenSitesRecord>): string {
+    const blocks = Object.keys(byRevision).sort((a, b) => Number(a) - Number(b)).map((revision) => {
+        const rows = Object.entries(byRevision[revision]!).map(([id, region]) => `    ${JSON.stringify(id)}: [${region.join(',')}]`);
+        return `  ${JSON.stringify(revision)}: {\n${rows.join(',\n')}\n  }`;
+    });
+    return `{\n${blocks.join(',\n')}\n}\n`;
 }

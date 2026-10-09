@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
-import { extractGatheringFamily, gatherResources, gatherSites, miningHazards } from './extractors/gathering.ts';
+import { extractGatheringFamily, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits } from './extractors/combat.ts';
@@ -2943,6 +2943,7 @@ export function debugArtifactBytes(artifact: DebugArtifact): string {
     return `${JSON.stringify(artifact, null, 2)}\n`;
 }
 
+const hiddenSites = new Map<number, GatherSiteWire[]>();
 async function generate(spec: Revision) {
     const pinned = assertPinned(spec);
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
@@ -3077,6 +3078,7 @@ async function generate(spec: Revision) {
     for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
     const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
+    hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
     const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
     Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
@@ -3130,6 +3132,11 @@ async function main() {
     for (const result of results) merged.set(result.revision, result);
     const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: [...merged.values()].sort((a, b) => a.revision - b.revision) };
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    // The hidden sites' regions for the reachability guard; a one-revision run keeps the other revision's rows.
+    const hiddenPath = path.join(root, HIDDEN_SITES_FILE);
+    const hiddenFile: Record<string, HiddenSitesRecord> = fs.existsSync(hiddenPath) ? JSON.parse(fs.readFileSync(hiddenPath, 'utf8')) : {};
+    for (const [revision, hidden] of hiddenSites) hiddenFile[String(revision)] = hiddenSitesRecord(hidden);
+    fs.writeFileSync(hiddenPath, hiddenSitesBytes(hiddenFile));
     console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results, refused, cross_pin: results.length === 2 ? 'verified' : 'not checked: both revisions did not generate' }, null, 2));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });
