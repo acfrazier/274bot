@@ -1,10 +1,11 @@
-//! Reachability guard for the published gather sites. Every site must have a
+//! Reachability guard for the gather sites. Every published site must have a
 //! tile beside its resource spots that nav's real search reaches from
 //! Lumbridge for a maxed account: every skill at 99, members, every quest the
 //! pack's edges name complete, the varps and items those edges read, a large
 //! coin stack, and only the worn items the site itself declares. A site no
-//! such account reaches is not offered and must be dropped (or carry the
-//! requirement that explains it).
+//! such account reaches is not offered and must be hidden (a `drop` row in
+//! `SITE_OVERRIDES`, tools/game-data/extractors/gathering.ts) or carry the
+//! requirement that explains it.
 //!
 //! The account is built from the pack's own edges, so each edge's gate is met
 //! by construction: quest-complete gates read `WorldState::quests`, varp gates
@@ -22,19 +23,23 @@
 //! and each zone-restricted target would otherwise cost its own full flood.
 //!
 //! A second flood runs on the same pack with every requirement stripped (the
-//! open graph): what even that cannot reach is a gap in the pack, and no
-//! account reaches it. Two checks follow. A site the open graph reaches that
-//! the maxed account does not means the account setup here is wrong, or the
-//! site needs something it does not declare; that is judged first, on every
-//! 0.2.0 site, before any new site. A new site the open graph cannot reach is
-//! not offered. A 0.2.0 site the open graph cannot reach keeps its id (saved
-//! Gatherer cards store it) and is only listed.
+//! open graph), over the published sites and the hidden ones together. Three
+//! checks follow. A published site the open graph reaches that the maxed
+//! account does not means the account setup here is wrong, or the site needs
+//! something it does not declare. A published site the open graph cannot reach
+//! is a gap in the pack that no account crosses: hide it. A hidden site the
+//! open graph reaches means a later nav pack gained its entrance: restore it.
+//! The hidden sites' regions come from the generator
+//! (`tools/game-data/gather-sites-hidden.json`), so a hidden id stays checked
+//! after it leaves the published data. Every 0.2.0 id is published or hidden,
+//! never both and never reused.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use api::game_data::{self, GatherSiteOption, GatherSiteRequirement};
+use api::gather_methods::SceneRegionInput;
 use api::selected::ClientRevision;
 use api::WorldTile;
 use nav::router::{find_many_with, FindOptions, TargetError};
@@ -57,6 +62,8 @@ const MARGIN: i32 = 1;
 
 /// The sites published in 0.2.0 (id -> region), saved with the generator tests.
 const SITES_0_2_0: &str = include_str!("../../../tools/game-data/gather-sites-0.2.0.json");
+/// The hidden sites' regions per revision, written by the generator.
+const SITES_HIDDEN: &str = include_str!("../../../tools/game-data/gather-sites-hidden.json");
 
 /// The worn items a site declares it needs. Skill and quest requirements are
 /// already met by the maxed character.
@@ -152,17 +159,29 @@ fn open_world(pack: &std::path::Path) -> NavWorld {
     world
 }
 
-/// Ids of the `sites` with a standable tile beside their region that a search
-/// from `origins(world, state)` reaches. Panics when a search is undecided.
-fn reached<'a>(
-    world: &NavWorld,
-    state: &WorldState,
-    sites: &[&'a GatherSiteOption],
-) -> HashSet<&'a str> {
-    let mut targets = Vec::new();
+/// A region to reach: a published site, or a hidden one from the generator's list.
+struct Target<'a> {
+    id: &'a str,
+    region: SceneRegionInput,
+}
+
+impl<'a> From<&'a GatherSiteOption> for Target<'a> {
+    fn from(site: &'a GatherSiteOption) -> Self {
+        Target {
+            id: site.id.as_str(),
+            region: site.region,
+        }
+    }
+}
+
+/// Ids of the `targets` with a standable tile beside their region that a
+/// search from `origins(world, state)` reaches. Panics when a search is
+/// undecided.
+fn reached<'a>(world: &NavWorld, state: &WorldState, targets: &[Target<'a>]) -> HashSet<&'a str> {
+    let mut tiles = Vec::new();
     let mut owner = Vec::new();
-    for (index, site) in sites.iter().enumerate() {
-        let region = &site.region;
+    for (index, target) in targets.iter().enumerate() {
+        let region = &target.region;
         for x in (region.min_x - MARGIN)..=(region.max_x + MARGIN) {
             for z in (region.min_z - MARGIN)..=(region.max_z + MARGIN) {
                 let tile = WorldTile {
@@ -171,14 +190,14 @@ fn reached<'a>(
                     level: region.level,
                 };
                 if world.collision.standable(tile) {
-                    targets.push(tile);
+                    tiles.push(tile);
                     owner.push(index);
                 }
             }
         }
     }
     let mut reachable = HashSet::new();
-    if targets.is_empty() {
+    if tiles.is_empty() {
         return reachable;
     }
     // Teleports are the origins, so the flood itself walks and uses transports only.
@@ -191,7 +210,7 @@ fn reached<'a>(
             &world.collision,
             &world.graph,
             origin,
-            &targets,
+            &tiles,
             options,
             state,
         );
@@ -202,7 +221,7 @@ fn reached<'a>(
         for (result, &index) in routes.results().iter().zip(&owner) {
             match result {
                 Ok(_) => {
-                    reachable.insert(sites[index].id.as_str());
+                    reachable.insert(targets[index].id);
                 }
                 Err(TargetError::NoPath) => {}
                 Err(error) => {
@@ -214,38 +233,45 @@ fn reached<'a>(
     reachable
 }
 
+/// The regions of the sites the generator hides (id -> `[min_x, min_z, max_x,
+/// max_z, level]`), for the 289 revision.
+fn hidden_sites() -> Vec<(String, SceneRegionInput)> {
+    let mut by_revision: BTreeMap<String, BTreeMap<String, [i32; 5]>> =
+        serde_json::from_str(SITES_HIDDEN).expect("hidden site snapshot");
+    by_revision
+        .remove("289")
+        .expect("289 hidden sites")
+        .into_iter()
+        .map(|(id, [min_x, min_z, max_x, max_z, level])| {
+            (
+                id,
+                SceneRegionInput {
+                    min_x,
+                    min_z,
+                    max_x,
+                    max_z,
+                    level,
+                },
+            )
+        })
+        .collect()
+}
+
 #[test]
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
-fn every_published_gather_site_is_reachable_from_lumbridge() {
+fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
     let pack = real_nav_pack();
     let world = load_world(&pack);
     let started = Instant::now();
 
-    // The maxed account: one flood per distinct worn-requirement set.
-    let mut groups: BTreeMap<Vec<i32>, Vec<&GatherSiteOption>> = BTreeMap::new();
-    for site in selected.gather_sites() {
-        groups.entry(worn_for(site)).or_default().push(site);
-    }
-    let mut maxed: HashSet<&str> = HashSet::new();
-    for (worn, sites) in &groups {
-        let mut state = maxed_state(&world);
-        state.worn = worn.iter().copied().collect();
-        maxed.extend(reached(&world, &state, sites));
-    }
+    let published = selected.gather_sites();
+    let hidden = hidden_sites();
+    let line = |id: &str, label: &str, worn: &[i32], region: &SceneRegionInput| {
+        format!("{id} \"{label}\" worn {worn:?} region {region:?}")
+    };
 
-    // The open graph, every site at once.
-    let all: Vec<&GatherSiteOption> = selected.gather_sites().iter().collect();
-    let open = reached(&open_world(&pack), &WorldState::empty(), &all);
-    println!(
-        "gather_sites_reach: {} site(s), {} worn-requirement group(s), {} reached by the maxed account, {} by the open graph, {:.1}s",
-        all.len(),
-        groups.len(),
-        maxed.len(),
-        open.len(),
-        started.elapsed().as_secs_f64()
-    );
-
+    // A retired id is never reused: every 0.2.0 id is published or hidden, and never both.
     let old: HashSet<String> =
         serde_json::from_str::<BTreeMap<String, BTreeMap<String, serde_json::Value>>>(SITES_0_2_0)
             .expect("0.2.0 site snapshot")
@@ -253,70 +279,91 @@ fn every_published_gather_site_is_reachable_from_lumbridge() {
             .expect("289 snapshot")
             .into_keys()
             .collect();
-    let line = |site: &GatherSiteOption| {
-        format!(
-            "{} {} \"{}\" worn {:?} region {:?}",
-            site.skill,
-            site.id,
-            site.label,
-            worn_for(site),
-            site.region
-        )
-    };
+    let published_ids: HashSet<&str> = published.iter().map(|site| site.id.as_str()).collect();
+    let hidden_ids: HashSet<&str> = hidden.iter().map(|(id, _)| id.as_str()).collect();
+    let both: Vec<&&str> = published_ids.intersection(&hidden_ids).collect();
+    assert!(both.is_empty(), "ids both published and hidden: {both:?}");
     let missing: Vec<&String> = old
         .iter()
-        .filter(|id| !all.iter().any(|site| &site.id == *id))
+        .filter(|id| !published_ids.contains(id.as_str()) && !hidden_ids.contains(id.as_str()))
         .collect();
     assert!(
         missing.is_empty(),
-        "0.2.0 site ids missing from the published data: {missing:?}"
+        "0.2.0 site ids neither published nor hidden: {missing:?}"
+    );
+
+    // The maxed account: one flood per distinct worn-requirement set, published sites only.
+    let mut groups: BTreeMap<Vec<i32>, Vec<Target>> = BTreeMap::new();
+    for site in published {
+        groups
+            .entry(worn_for(site))
+            .or_default()
+            .push(Target::from(site));
+    }
+    let mut maxed: HashSet<&str> = HashSet::new();
+    for (worn, targets) in &groups {
+        let mut state = maxed_state(&world);
+        state.worn = worn.iter().copied().collect();
+        maxed.extend(reached(&world, &state, targets));
+    }
+
+    // The open graph, every published and hidden site at once.
+    let all: Vec<Target> = published
+        .iter()
+        .map(Target::from)
+        .chain(hidden.iter().map(|(id, region)| Target {
+            id: id.as_str(),
+            region: *region,
+        }))
+        .collect();
+    let open = reached(&open_world(&pack), &WorldState::empty(), &all);
+    println!(
+        "gather_sites_reach: {} published site(s), {} worn-requirement group(s), {} reached by the maxed account, {} reached by the open graph; {} hidden site(s), {} reached by the open graph; {:.1}s",
+        published.len(),
+        groups.len(),
+        maxed.len(),
+        published.iter().filter(|site| open.contains(site.id.as_str())).count(),
+        hidden.len(),
+        hidden.iter().filter(|(id, _)| open.contains(id.as_str())).count(),
+        started.elapsed().as_secs_f64()
     );
 
     // Account setup first: the open graph reaches it, so the maxed account must.
-    let mut blocked_old = Vec::new();
-    let mut blocked_new = Vec::new();
-    for site in all
+    let blocked: Vec<String> = published
         .iter()
         .filter(|site| open.contains(site.id.as_str()) && !maxed.contains(site.id.as_str()))
-    {
-        if old.contains(&site.id) {
-            blocked_old.push(line(site));
-        } else {
-            blocked_new.push(line(site));
-        }
-    }
+        .map(|site| line(&site.id, &site.label, &worn_for(site), &site.region))
+        .collect();
     assert!(
-        blocked_old.is_empty(),
-        "the account setup is wrong, not the sites: {} site(s) published in 0.2.0 are reachable with every requirement removed but not by the maxed account:\n{}",
-        blocked_old.len(),
-        blocked_old.join("\n")
-    );
-    assert!(
-        blocked_new.is_empty(),
-        "{} new gather site(s) are reachable with every requirement removed but not by the maxed account; add the requirement the walk enforces (SITE_OVERRIDES `requires`) or drop them:\n{}",
-        blocked_new.len(),
-        blocked_new.join("\n")
+        blocked.is_empty(),
+        "{} gather site(s) are reachable with every requirement removed but not by the maxed account; add the requirement the walk enforces (SITE_OVERRIDES `requires`) or hide the site:\n{}",
+        blocked.len(),
+        blocked.join("\n")
     );
 
-    let gaps: Vec<&GatherSiteOption> = all
+    // A published site no account reaches must be hidden.
+    let stranded: Vec<String> = published
         .iter()
-        .copied()
         .filter(|site| !open.contains(site.id.as_str()))
+        .map(|site| line(&site.id, &site.label, &worn_for(site), &site.region))
         .collect();
-    let (grandfathered, new): (Vec<_>, Vec<_>) =
-        gaps.into_iter().partition(|site| old.contains(&site.id));
-    println!(
-        "gather_sites_reach: {} site(s) published in 0.2.0 are unreachable on the pack for any account and keep their ids:\n{}",
-        grandfathered.len(),
-        grandfathered.iter().map(|site| line(site)).collect::<Vec<_>>().join("\n")
-    );
     assert!(
-        new.is_empty(),
-        "{} new gather site(s) are unreachable on the pack for any account; drop them:\n{}",
-        new.len(),
-        new.iter()
-            .map(|site| line(site))
-            .collect::<Vec<_>>()
-            .join("\n")
+        stranded.is_empty(),
+        "{} published gather site(s) are unreachable on the pack for any account; hide each with a SITE_OVERRIDES drop row (tools/game-data/extractors/gathering.ts) naming the entrance the route finder lacks:\n{}",
+        stranded.len(),
+        stranded.join("\n")
+    );
+
+    // A hidden site the pack now reaches must come back.
+    let restorable: Vec<String> = hidden
+        .iter()
+        .filter(|(id, _)| open.contains(id.as_str()))
+        .map(|(id, region)| format!("{id} region {region:?}"))
+        .collect();
+    assert!(
+        restorable.is_empty(),
+        "{} hidden gather site(s) are reachable on the pack now (it gained the entrance): restore each by removing its SITE_OVERRIDES drop row in tools/game-data/extractors/gathering.ts, then regenerate the game data:\n{}",
+        restorable.len(),
+        restorable.join("\n")
     );
 }
