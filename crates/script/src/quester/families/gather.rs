@@ -409,6 +409,16 @@ impl StepRun for Run {
                 now: cx.tick.cx.evidence().tick,
                 skill_stat: stat.index,
                 fishing: &mut self.fishing,
+                collision: {
+                    #[cfg(feature = "load")]
+                    {
+                        cx.tick.frame.compiled.collision
+                    }
+                    #[cfg(not(feature = "load"))]
+                    {
+                        None
+                    }
+                },
             },
             snapshot,
         );
