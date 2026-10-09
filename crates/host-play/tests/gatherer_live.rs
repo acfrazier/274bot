@@ -120,6 +120,11 @@ const CATHERBY_HARPOON_START: WorldTile = WorldTile {
     z: 3436,
     level: 0,
 };
+const ARDOUGNE_GUILD_START: WorldTile = WorldTile {
+    x: 2661,
+    z: 3306,
+    level: 0,
+};
 
 const OAK_RESPAWN_START: WorldTile = WorldTile {
     x: 3017,
@@ -267,6 +272,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
             (Self::Fishing, LiveCase::FishHarpoonBank) => "gatherer_fish_harpoon_bank",
             (Self::Fishing, LiveCase::FishHarpoonBankAuto) => "gatherer_fish_harpoon_bank_auto",
+            (Self::Fishing, LiveCase::FishGuildApproach) => "gatherer_fish_guild_ardougne",
             (Self::Woodcutting, LiveCase::CoinRunes) => "gatherer_coin_runes",
             (Self::Woodcutting, LiveCase::CoinRunesEmpty) => "gatherer_coin_runes_empty_stock",
             (Self::Woodcutting, LiveCase::PowerToBank) => "gatherer_power_to_bank_live",
@@ -347,7 +353,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => "harpoon",
-            (Self::Fishing, LiveCase::Site) => "harpoon",
+            (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => "harpoon",
             (Self::Mining, LiveCase::BankCost | LiveCase::Site) => "bronze_pickaxe",
             (Self::Mining, _) => "steel_pickaxe",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => "rune_axe",
@@ -360,7 +366,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => 311,
-            (Self::Fishing, LiveCase::Site) => 311,
+            (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => 311,
             (Self::Mining, LiveCase::BankCost | LiveCase::Site) => 1265,
             (Self::Mining, _) => 1269,
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => 1359,
@@ -373,6 +379,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::Site) => 30,
             (Self::Mining, LiveCase::Site) => 1,
             (Self::Fishing, LiveCase::Site) => 76,
+            (Self::Fishing, LiveCase::FishGuildApproach) => 68,
             (
                 Self::Woodcutting,
                 LiveCase::DeathReturn
@@ -436,6 +443,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => {
                 &[TUNA_ID, SWORDFISH_ID]
             }
+            (Self::Fishing, LiveCase::FishGuildApproach) => &[TUNA_ID, SWORDFISH_ID],
             (Self::Mining, _) => MINE_PRODUCTS,
             _ => &[LOG_ID],
         }
@@ -525,7 +533,7 @@ impl Cell {
             }
             (Self::Woodcutting, _) => Some("GATHERER_WC_LEVEL"),
             (Self::Mining, _) => Some("GATHERER_MINE_LEVEL"),
-            (Self::Fishing, LiveCase::FishHarpoonBankAuto) => None,
+            (Self::Fishing, LiveCase::FishHarpoonBankAuto | LiveCase::FishGuildApproach) => None,
             (Self::Fishing, _) => Some("GATHERER_FISH_LEVEL"),
         };
         env.and_then(|name| std::env::var(name).ok())
@@ -636,6 +644,7 @@ impl Cell {
                     LiveCase::FishBaitGate | LiveCase::FishBait => "fishing.freshfish.op1",
                     LiveCase::FishHarpoonBank => "fishing.rarefish.op3",
                     LiveCase::FishHarpoonBankAuto => "fishing.rarefish.op3",
+                    LiveCase::FishGuildApproach => "fishing.rarefish.op3",
                     LiveCase::Site => "fishing.harpoon.tool_311.products_359_371",
                     _ => "fishing.saltfish.op1",
                 }),
@@ -760,6 +769,11 @@ impl Cell {
             bag.insert("disposition".into(), json!("Bank"));
             bag.insert("bank".into(), json!("Nearest"));
         }
+        if case == LiveCase::FishGuildApproach {
+            bag.insert("location".into(), json!("Site"));
+            bag.insert("site".into(), json!("fishing.fishing_guild"));
+            bag.insert("disposition".into(), json!("Power"));
+        }
         bag
     }
 
@@ -835,6 +849,7 @@ enum LiveCase {
     FishBait,
     FishHarpoonBank,
     FishHarpoonBankAuto,
+    FishGuildApproach,
     CoinRunes,
     CoinRunesEmpty,
     PowerToBank,
@@ -874,6 +889,7 @@ impl LiveCase {
             Self::FishBait => "fish-bait-bank",
             Self::FishHarpoonBank => "fish-harpoon-bank",
             Self::FishHarpoonBankAuto => "fish-harpoon-bank-auto",
+            Self::FishGuildApproach => "fish-guild-ardougne",
             Self::CoinRunes => "coin-runes-topup",
             Self::CoinRunesEmpty => "coin-runes-empty-stock",
             Self::PowerToBank => "power-to-bank",
@@ -3115,6 +3131,11 @@ impl GatherSlot {
             .map_or(0, |stat| stat.base.max(stat.effective))
     }
 
+    fn stats_posted(&self) -> bool {
+        let stats = self.snapshot.stats();
+        !stats.is_empty() && stats.iter().all(|stat| !stat.used || stat.base > 0)
+    }
+
     fn advance_prep(&mut self, client: &mut client::client::Client) -> Result<(), String> {
         match self.phase {
             Prep::WaitIngame => {
@@ -3213,6 +3234,7 @@ impl GatherSlot {
                     && (self.fixture_helper && self.case != LiveCase::OakRespawn
                         || self.case.bank_tool_only()
                         || self.item_in_inventory())
+                    && self.stats_posted()
                     && self.stat_level() >= self.requested_level
                 {
                     if self.fixture_helper {
@@ -4440,6 +4462,22 @@ impl GatherSlot {
                 }
                 Ok(())
             }
+            LiveCase::FishGuildApproach => {
+                if !fishing_guild_area_reached(self.latest.as_ref().and_then(|latest| latest.tile))
+                    || self.witness.last_xp <= self.baseline_xp()
+                    || self
+                        .latest
+                        .as_ref()
+                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
+                {
+                    return Err(format!(
+                        "{} did not reach the Fishing Guild fishing area and gain Fishing XP: {:?}",
+                        self.name(),
+                        self.witness
+                    ));
+                }
+                Ok(())
+            }
             LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto => {
                 let seeded_casket_required = self.case.requires_seeded_casket();
                 if !self.complete_bank_selection()
@@ -4799,6 +4837,14 @@ fn world_tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
 }
 
+/// Fishing Guild NPC envelope [2599,3410]–[2612,3426] plus a 2-tile stand pad.
+/// The south guild door is outside this box, so a door/nav stall is a failure.
+fn fishing_guild_area_reached(tile: Option<(i32, i32, i32)>) -> bool {
+    tile.is_some_and(|(x, z, level)| {
+        level == 0 && (2597..=2614).contains(&x) && (3408..=3428).contains(&z)
+    })
+}
+
 fn bank_air_distance(from: WorldTile, to: WorldTile) -> i64 {
     let dx = i64::from(from.x) - i64::from(to.x);
     let dz = i64::from(from.z) - i64::from(to.z);
@@ -5017,6 +5063,7 @@ fn fixture_plan(
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
+        LiveCase::FishGuildApproach => ARDOUGNE_GUILD_START,
         LiveCase::Site => match cell {
             Cell::Fishing => world_tile(2809, 3441),
             Cell::Woodcutting => world_tile(3120, 3267),
@@ -5059,7 +5106,10 @@ fn fixture_plan(
     };
     if matches!(
         case,
-        LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple | LiveCase::Site
+        LiveCase::BankCostFirstGoal
+            | LiveCase::BankCostSeersMaple
+            | LiveCase::Site
+            | LiveCase::FishGuildApproach
     ) && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
     {
         return Err(
@@ -6239,6 +6289,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.post_bank_yields >= 1
                     && witness.last_status_yielded > 0
             }
+            LiveCase::FishGuildApproach => latest.as_ref().is_some_and(|latest| {
+                fishing_guild_area_reached(latest.tile) && latest.xp > baseline_xp
+            }),
             LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto => {
                 witness.fish_bank_complete(case.requires_seeded_casket())
                     && bank_selection_complete
@@ -6582,6 +6635,51 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "walks": witness.site_walks,
             "area": witness.last_area,
             "scene_seeds": fixture_plan.seed_locs.len(),
+        });
+    }
+    if case == LiveCase::FishGuildApproach {
+        let (end_tile, end_xp, end_tick, native_tick, baseline_xp, fishing, stats_ready, members) = {
+            let slot = state.lock().map_err(|_| "live state poisoned")?;
+            let stats = slot.snapshot.stats();
+            let fishing = stats
+                .iter()
+                .find(|stat| stat.name.eq_ignore_ascii_case("fishing"));
+            let stats_ready =
+                !stats.is_empty() && stats.iter().all(|stat| !stat.used || stat.base > 0);
+            (
+                slot.latest.as_ref().and_then(|latest| latest.tile),
+                slot.latest.as_ref().map(|latest| latest.xp).unwrap_or(0),
+                slot.latest.as_ref().map(|latest| latest.tick).unwrap_or(0),
+                slot.native_tick,
+                slot.baseline_xp(),
+                fishing.map(|stat| {
+                    json!({
+                        "index": stat.index,
+                        "base": stat.base,
+                        "effective": stat.effective,
+                        "xp": stat.xp,
+                        "used": stat.used,
+                    })
+                }),
+                stats_ready,
+                slot.snapshot.world().members,
+            )
+        };
+        receipt["guild_approach"] = json!({
+            "start_tile": [ARDOUGNE_GUILD_START.x, ARDOUGNE_GUILD_START.z, ARDOUGNE_GUILD_START.level],
+            "end_tile": end_tile,
+            "ticks": end_tick,
+            "native_ticks": native_tick,
+            "baseline_xp": baseline_xp,
+            "xp": end_xp,
+            "xp_gained": i64::from(end_xp) - i64::from(baseline_xp),
+            "in_guild_area": fishing_guild_area_reached(end_tile),
+            "site": "fishing.fishing_guild",
+            "method": "fishing.rarefish.op3",
+            "scene_seeds": fixture_plan.seed_locs.len(),
+            "final_fishing": fishing,
+            "final_stats_ready": stats_ready,
+            "final_world_members": members,
         });
     }
     receipt.as_object_mut().expect("receipt object").append(
@@ -6973,6 +7071,12 @@ fn gatherer_fish_harpoon_bank() {
 #[ignore = "requires LIVE=1 and local 289 engine"]
 fn gatherer_fish_harpoon_bank_auto() {
     run_cell(Cell::Fishing, LiveCase::FishHarpoonBankAuto).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_NAV_PACK, GATHERER_ENGINE_DIR, GATHERER_CATALOG_ROOT and Engine A"]
+fn gatherer_fish_guild_ardougne_approach() {
+    run_cell(Cell::Fishing, LiveCase::FishGuildApproach).unwrap();
 }
 
 #[test]
@@ -7727,6 +7831,42 @@ fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
         !power_complete(Cell::Mining, &witness),
         "seeded disposal cannot substitute for renewed gathering"
     );
+}
+
+#[cfg(test)]
+mod fish_guild_ardougne_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn guild_ardougne_fixture_uses_site_harpoon_without_spawned_npcs() {
+        let case = LiveCase::FishGuildApproach;
+        let settings = Cell::Fishing.settings(case);
+        assert_eq!(settings.get("skill"), Some(&json!("Fishing")));
+        assert_eq!(
+            settings.get("fishingMethod"),
+            Some(&json!("fishing.rarefish.op3"))
+        );
+        assert_eq!(settings.get("location"), Some(&json!("Site")));
+        assert_eq!(settings.get("site"), Some(&json!("fishing.fishing_guild")));
+        assert_eq!(settings.get("disposition"), Some(&json!("Power")));
+        assert_eq!(Cell::Fishing.default_level(case), 68);
+        assert_eq!(Cell::Fishing.level(case), 68);
+        assert_eq!(Cell::Fishing.default_tool_alias(case), "harpoon");
+        assert_eq!(Cell::Fishing.default_tool_id(case), 311);
+        assert_eq!(Cell::Fishing.products(case), &[TUNA_ID, SWORDFISH_ID]);
+        let (start, plan, task) = fixture_plan(Cell::Fishing, case).unwrap();
+        assert_eq!(start, ARDOUGNE_GUILD_START);
+        assert!(plan.inventory_seed.is_empty());
+        assert!(plan.bank_seed.is_empty());
+        assert!(plan.seed_locs.is_empty());
+        assert!(task.is_none());
+        assert!(fishing_guild_area_reached(Some((2612, 3412, 0))));
+        assert!(!fishing_guild_area_reached(Some((2661, 3306, 0))));
+        assert!(
+            !fishing_guild_area_reached(Some((2611, 3394, 0))),
+            "the south guild door must not count as the fishing area"
+        );
+    }
 }
 
 #[cfg(test)]
