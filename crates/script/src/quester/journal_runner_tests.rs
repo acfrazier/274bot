@@ -2791,3 +2791,275 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
     }
     assert!(script.journal_drain.is_none(), "the drain ended");
 }
+
+/// The 289 `multi3` choice root (live receipt 089 `run.log:1379`: "journal
+/// blocked by modal root 2469 (Select an Option)").
+const MULTI3_ROOT: i32 = 2469;
+/// The Jolly Boar bartender's `p_choice3` (`area_varrock/scripts/bartender.rs2:7`).
+const BEER_MENU: [&str; 3] = [
+    "I'll have a beer please.",
+    "Any hints where I can go adventuring?",
+    "Heard any good gossip?",
+];
+
+fn seed_coins_and_beer(snapshot: &mut GameSnapshot, coins: i32, beer: i32) {
+    use crate::quester::families::tests::def;
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let rows = [("coins", coins), ("beer", beer)]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .enumerate()
+        .map(|(slot, (alias, count))| ItemView {
+            def: def(data.item_by_alias(alias).unwrap().id, alias),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: slot as i32,
+            count,
+            actions: Vec::new(),
+            component_id: 0,
+        })
+        .collect();
+    snapshot.seed_inventory(rows, 28);
+}
+
+/// The Vampire Slayer Path restarted inside `stake` / `buy-harlow-beer` at
+/// `vampire:2` (live receipt 089 `07-stopped-2.json`, `08-start-3.png`): a
+/// fresh runner with no progress, the quest row in progress, 200 coins, and a
+/// `multi3` menu offering `options` open while `speaker` stands adjacent,
+/// facing the player when `facing` (`~chatnpc` then `p_choice3`,
+/// `bartender.rs2:2-7`; `chat.rs2:323-331`).
+fn vampire_menu(options: &[&str], speaker: &str, facing: bool) -> (Quester, GameSnapshot) {
+    use crate::quester::families::tests::local_player;
+    use api::snapshot::{ActorKind, ActorTargetView, ChatOptionView, NpcView, WorldTile};
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let document: crate::quester::path::PathDocument =
+        serde_json::from_str(super::super::compile::VAMPIRE_JSON).unwrap();
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let here = WorldTile {
+        x: 3277,
+        z: 3487,
+        level: 0,
+    };
+    let npc_tile = WorldTile { z: 3488, ..here };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(here);
+    snapshot.seed_local_player(local_player(here));
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Vampire Slayer".into(),
+            component_id: 43,
+            colour: 0xf8f800,
+        }],
+        true,
+    );
+    seed_coins_and_beer(&mut snapshot, 200, 0);
+    snapshot.seed_npcs(vec![NpcView {
+        index: 304,
+        r#type: Some(data.npc_by_config(speaker).unwrap().id as usize),
+        name: Some("Speaker".into()),
+        actions: vec![Some("Talk-to".into())],
+        tile: npc_tile,
+        distance: 1,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: if facing { 32768 } else { -1 },
+        target: facing.then_some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 0,
+        }),
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: npc_tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }]);
+    snapshot.seed_chat_modal(
+        MULTI3_ROOT,
+        std::iter::once("Select an Option")
+            .chain(options.iter().copied())
+            .map(String::from)
+            .collect(),
+    );
+    snapshot.seed_chat_options(
+        options
+            .iter()
+            .zip(MULTI3_ROOT + 1..)
+            .map(|(text, component_id)| ChatOptionView {
+                component_id,
+                text: (*text).into(),
+            })
+            .collect(),
+        -1,
+    );
+    (
+        Quester::new(
+            RunKey {
+                slot: 1,
+                run: 3,
+                session: 1,
+            },
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        ),
+        snapshot,
+    )
+}
+
+fn vampire_journal(script: &Quester, snapshot: &mut GameSnapshot, body: &str) {
+    let title = script
+        .quests
+        .quest("vampire")
+        .unwrap()
+        .journal_title
+        .clone()
+        .unwrap();
+    snapshot.seed_main_modal(
+        8134,
+        vec![
+            crate::quest_journal::test_widget(8144, &format!("@dre@{title}")),
+            crate::quest_journal::test_widget(8145, body),
+        ],
+    );
+}
+
+fn outbox_empty(ledger: &Ledger) -> bool {
+    ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty())
+}
+
+/// VAMPIRE-RESTART-0201: a Stop/Start inside `buy-harlow-beer` leaves the
+/// bartender's choice pending. The journal row's `if_openmain` would close it
+/// and drop the suspended script (`quest_journal.rs2:55`, `Player.ts:1997-2020`),
+/// so the restarted read first answers the authored "I'll have a beer please."
+/// through the dialogue driver, follows the content's pages to the end
+/// (`bartender.rs2:11-18`), and only then clicks the journal row.
+#[test]
+fn restart_inside_the_paths_own_choice_finishes_it_then_reads_the_journal() {
+    let (mut script, mut snapshot) = vampire_menu(&BEER_MENU, "jollyboar_bartender", true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        matches!(
+            ack(&mut ledger, 1),
+            HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 1 })
+        ),
+        "the restarted read answers the authored beer choice before any journal click"
+    );
+    assert!(!script.parked);
+    // `bartender.rs2:11`: the player's line.
+    snapshot.seed_chat_modal(
+        968,
+        vec!["Player".into(), "I'll have a pint of beer please.".into()],
+    );
+    snapshot.seed_chat_options(vec![], 970);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    assert!(is_continue(&ack(&mut ledger, 2)));
+    // `bartender.rs2:12`: the price.
+    snapshot.seed_chat_modal(
+        4882,
+        vec![
+            "Bartender".into(),
+            "Ok, that'll be two coins please.".into(),
+        ],
+    );
+    snapshot.seed_chat_options(vec![], 4884);
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    assert!(is_continue(&ack(&mut ledger, 3)));
+    // `bartender.rs2:16-18`: two coins out, a beer in, and the script ends.
+    close_chat(&mut snapshot);
+    seed_coins_and_beer(&mut snapshot, 198, 1);
+    let mut tick = 4;
+    while outbox_empty(&ledger) {
+        assert!(
+            tick < 20 && !script.parked,
+            "the read must resume once the chat closes"
+        );
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        tick += 1;
+    }
+    let tick = tick - 1;
+    assert!(
+        matches!(
+            ack(&mut ledger, tick),
+            HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        ),
+        "the journal row is clicked only after the conversation ended"
+    );
+    vampire_journal(
+        &script,
+        &mut snapshot,
+        "@str@I have spoken to Dr Harlow. He seemed terribly drunk, and",
+    );
+    drive(&mut script, &snapshot, &mut ledger, tick + 1);
+    drive(&mut script, &snapshot, &mut ledger, tick + 2);
+    assert!(matches!(
+        ack(&mut ledger, tick + 2),
+        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, tick + 3);
+    assert_eq!(script.stage().unwrap().0.as_ref(), "vampire:2");
+    assert!(!script.parked);
+}
+
+/// A menu the restarted read cannot prove is the Path's own stays
+/// fail-closed: no option is clicked and the read parks naming the page.
+/// The cases: text no allowed step authors, with its NPC facing the player;
+/// the authored beer text with no NPC proven to be speaking; and Morgan's
+/// start choice (authored only at `vampire:0`, which the in-progress colour
+/// excludes) with Morgan facing the player.
+#[test]
+fn restart_with_a_menu_the_path_does_not_own_parks_without_clicking() {
+    let cases: [(&[&str], &str, bool); 3] = [
+        (
+            &["Can you sell me a hat?", "Never mind."],
+            "jollyboar_bartender",
+            true,
+        ),
+        (&BEER_MENU, "jollyboar_bartender", false),
+        (
+            &["Ok, I'm up for an adventure.", "I think I need a nap."],
+            "morgan",
+            true,
+        ),
+    ];
+    for (options, speaker, facing) in cases {
+        let (mut script, snapshot) = vampire_menu(options, speaker, facing);
+        let mut ledger = None;
+        for tick in 1..60 {
+            drive(&mut script, &snapshot, &mut ledger, tick);
+            assert!(
+                outbox_empty(&ledger),
+                "{options:?}: tick {tick}: an unproven menu is never answered or covered"
+            );
+            if script.parked {
+                break;
+            }
+        }
+        assert!(script.parked, "{options:?}");
+        assert!(script.journal_drain.is_none(), "{options:?}");
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "journal blocked by modal root 2469 (Select an Option)",
+            "{options:?}"
+        );
+    }
+}

@@ -320,6 +320,18 @@ pub trait StepPlan: Send + Sync {
     fn with_goal(&self, _goal: StepGoal) -> Option<Arc<dyn StepPlan>> {
         None
     }
+    /// Collects this plan's authored conversation when it is the open chat
+    /// menu, for a progress read that finds the menu blocking it
+    /// (`Quester::drain_chat_page`): `talk` through its NPC and text answers
+    /// (`dialogue::owned_menu_answer`), `acquire` through its children whose
+    /// `skip_if` is not proven true. Every other family owns no menu.
+    fn owned_menus(
+        &self,
+        _cx: &PredicateContext<'_, '_>,
+        _step: &FactKey,
+        _out: &mut Vec<OwnedMenu>,
+    ) {
+    }
 }
 /// A step's compiled `skip_if` and `settle`, plus the authored settle
 /// summary, handed to the plan by [`StepPlan::with_goal`].
@@ -328,6 +340,13 @@ pub struct StepGoal {
     pub skip_if: Arc<dyn PredicatePlan>,
     pub settle: Arc<dyn PredicatePlan>,
     pub summary: Arc<str>,
+}
+/// An open chat menu recognised as an authored step's own conversation: the
+/// step, the option its text answers pick, and those text-only answers.
+pub struct OwnedMenu {
+    pub step: FactKey,
+    pub answer: i32,
+    pub options: super::families::dialogue::DialogueOptions,
 }
 #[derive(Debug, Clone)]
 pub enum StepTraceEvent {

@@ -12,8 +12,8 @@ pub mod setting;
 pub mod thieve;
 
 use super::compile::{
-    AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
-    StepContext, StepGoal, StepOutcome, StepPlan, StepRun, StepTraceEvent,
+    AcquisitionTraceOutcome, CompileContext, CompileError, OwnedMenu, PredicateContext,
+    PredicatePlan, StepContext, StepGoal, StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
@@ -1512,6 +1512,19 @@ impl StepPlan for TalkPlan {
             dialogue: None,
             started: false,
         }))
+    }
+    fn owned_menus(&self, cx: &PredicateContext<'_, '_>, step: &FactKey, out: &mut Vec<OwnedMenu>) {
+        let dialogue::DialogueTarget::Npc { id, .. } = &self.target else {
+            return;
+        };
+        let options = self.options.by_text_only();
+        if let Some(answer) = dialogue::owned_menu_answer(cx.cx, *id, &options) {
+            out.push(OwnedMenu {
+                step: step.clone(),
+                answer,
+                options,
+            });
+        }
     }
 }
 
@@ -3635,6 +3648,18 @@ impl StepPlan for AcquirePlan {
             goal: Some(goal),
             max_restarts: self.max_restarts,
         }))
+    }
+    fn owned_menus(
+        &self,
+        cx: &PredicateContext<'_, '_>,
+        _step: &FactKey,
+        out: &mut Vec<OwnedMenu>,
+    ) {
+        for child in self.steps.iter() {
+            if child.skip_if.evaluate(cx) != Truth::True {
+                child.plan.owned_menus(cx, &child.id, out);
+            }
+        }
     }
 }
 

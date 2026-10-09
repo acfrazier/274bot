@@ -123,6 +123,19 @@ impl DialogueOptions {
         }
     }
 
+    /// These authored answers narrowed to what a page's text proves: strict
+    /// line rules and preferences, never the fixed `choose` index or the
+    /// last-option fallback, and Chat clicks only (a Main document or modal
+    /// ends the driver untouched). For a page this driver did not open.
+    pub(crate) fn by_text_only(&self) -> Self {
+        Self {
+            choose: None,
+            strict: true,
+            chat_only: true,
+            ..self.clone()
+        }
+    }
+
     fn select(&self, obs: &ChatObs<'_>) -> Option<i32> {
         if let Some(rule) = self.line_rules.iter().find(|rule| {
             obs.texts
@@ -1006,6 +1019,46 @@ pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
         .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
+}
+
+/// The option `options` answers on the open chat menu when the menu is
+/// `npc_type`'s own conversation, or `None`. The speaker is proven by the
+/// content, not guessed: `~chatnpc` puts the speaking NPC in `playerfaceclose`
+/// toward the player before its page (`interface_chat/scripts/chat.rs2:323-331`,
+/// `NpcOps.ts:206-241`); the NPC faces its target on every turn (`Npc.ts:189`,
+/// `PathingEntity.ts:514-532`) and keeps that mode only within one tile of
+/// the player (`Npc.ts:896-905`). So a choice that follows its page
+/// (`p_choiceN` after `~chatnpc`, e.g. the Jolly Boar bartender's
+/// `bartender.rs2:2-7`) has its NPC adjacent and facing the local player.
+/// The answer comes from the page text alone ([`DialogueOptions::select`]
+/// over [`DialogueOptions::by_text_only`]); a Main modal, a continue page or
+/// a menu the text does not single out is `None`.
+pub(crate) fn owned_menu_answer(
+    cx: &ActionContext<'_>,
+    npc_type: i32,
+    options: &DialogueOptions,
+) -> Option<i32> {
+    let obs = observe(cx)?;
+    if !obs.open || obs.r#continue || obs.options.is_empty() {
+        return None;
+    }
+    if observe_main(cx, None)?.open() {
+        return None;
+    }
+    let player = cx.snapshot().local_player()?.value.player.index;
+    let facing = Some(api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: player,
+    });
+    let speaker = cx.snapshot().npcs()?.value.iter().any(|npc| {
+        npc.r#type == Some(npc_type as usize)
+            && npc.target == facing
+            && npc.distance <= npc.size.max(1)
+    });
+    if !speaker {
+        return None;
+    }
+    options.by_text_only().select(&obs)
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {

@@ -9,7 +9,8 @@
 //! - [`Mode::Clean`]/[`PairMode::Clean`]: clean completion with no cheat after
 //!   Start, no park, zero deaths and one Start per account (criterion 2);
 //! - [`Mode::Restart`]/[`PairMode::Restart`]: Stop mid-step at two stage points
-//!   and explicitly restart every account (criterion 3);
+//!   and explicitly restart every account (criterion 3); a single-account
+//!   round may instead Stop at an authored dialogue choice ([`ChoiceStop`]);
 //! - [`Mode::Death`]/[`PairMode::Death`]/[`PairMode::DeathIndependent`]:
 //!   inject only during the named step and observed owned combat (criterion 4).
 //!   Reserved pair phases require exact cancellation followed by fresh explicit
@@ -87,7 +88,12 @@ pub enum Mode {
     /// Pass on quest complete with one Start, zero deaths and no park.
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
-    Restart { at: [String; 2] },
+    /// `choice` places one round's Stop at an authored dialogue choice instead
+    /// of after [`MID_STEP`].
+    Restart {
+        at: [String; 2],
+        choice: Option<ChoiceStop>,
+    },
     /// Send one `~death` only while the named stage/step and owned combat are
     /// simultaneously observed; preserve that status and combat evidence.
     Death { at: String, step: String },
@@ -103,6 +109,26 @@ impl Mode {
         }
     }
 }
+
+/// A Restart round whose Stop lands at an authored dialogue choice. The frame
+/// hook runs before the slot's script observation and dispatch on every frame
+/// (`host-play/src/play_slots.rs:1480-1504`: `slot_frame` before the script
+/// tick), so it stops the Quester on the first frame its `step` is active and
+/// the chat menu offers `option`, before the Quester can answer: the Start that
+/// follows finds exactly that choice pending. After that Start the cell
+/// fails unless the menu gives way to a chat page with no main modal open,
+/// i.e. the answer, not a journal `if_openmain` that closes the chat
+/// (`Player.ts:1997-2020`).
+#[derive(Debug, Clone)]
+pub struct ChoiceStop {
+    /// Index into the Restart `at` stages of the round this Stop replaces.
+    pub round: usize,
+    /// The active step (or acquisition child) that owns the conversation.
+    pub step: String,
+    /// Exact option text the pending menu offers.
+    pub option: String,
+}
+
 /// One role/stage target in a paired qualification mode. Role 0 is Phoenix
 /// and role 1 is Black Arm.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -617,6 +643,13 @@ struct ActorShared {
     error: Option<String>,
     capture_error: Option<String>,
     end_captured: bool,
+    /// A [`ChoiceStop`] armed by the poll loop for the frame hook.
+    choice_stop: Option<ChoiceStop>,
+    /// The hook's boundary receipt once it stopped at the choice.
+    choice_stopped: Option<Value>,
+    /// The pending option and the Start count at its Stop, watched until a
+    /// later Start resolves it.
+    choice_watch: Option<(String, u32)>,
 }
 
 /// The callback owns each actor's client/snapshot, while this lock serializes
@@ -652,7 +685,7 @@ impl RunPlan {
 
     fn restart_targets(&self) -> Option<Vec<PairStage>> {
         match self {
-            Self::Single(Mode::Restart { at }) => Some(
+            Self::Single(Mode::Restart { at, .. }) => Some(
                 at.iter()
                     .cloned()
                     .map(|stage| PairStage { role: 0, stage })
@@ -662,6 +695,17 @@ impl RunPlan {
             Self::Pair(PairMode::RestartStep { at, .. })
             | Self::Pair(PairMode::RestartStepWithInventoryProof { at, .. })
             | Self::Pair(PairMode::Death { at, .. }) => Some(vec![at.clone()]),
+            _ => None,
+        }
+    }
+
+    /// The choice boundary that replaces the timed Stop of restart round `round`.
+    fn choice_stop(&self, round: usize) -> Option<&ChoiceStop> {
+        match self {
+            Self::Single(Mode::Restart {
+                choice: Some(choice),
+                ..
+            }) if choice.round == round => Some(choice),
             _ => None,
         }
     }
@@ -823,6 +867,104 @@ fn completion_proven(
 
 fn step_matches(status: &ScriptStatus, step: &str) -> bool {
     text(status, "step_id") == Some(step) || text(status, "child_step_id") == Some(step)
+}
+
+fn chat_page_json(snapshot: &GameSnapshot) -> Value {
+    json!({
+        "main_root": snapshot.modals().main,
+        "chat_root": snapshot.modals().chat,
+        "chat_texts": snapshot.chat_modal_texts(),
+        "chat_options": snapshot
+            .chat_options()
+            .iter()
+            .map(|option| option.text.as_str())
+            .collect::<Vec<_>>(),
+        "chat_continue_component_id": snapshot.chat_continue_component_id(),
+    })
+}
+
+/// Frame-hook half of a [`ChoiceStop`]: on the first frame the armed step is
+/// the Quester's active step and the chat menu offers the option (no main
+/// modal, no continue), stop the Quester before its own dispatch this frame.
+fn stop_at_choice(actor: &mut ActorShared) {
+    let Some(choice) = actor.choice_stop.clone() else {
+        return;
+    };
+    let step_active = actor.latest_status.as_ref().is_some_and(|status| {
+        status.phase == NativePhase::Working && step_matches(status, &choice.step)
+    });
+    let offered = actor.snapshot.modals().main == -1
+        && actor.snapshot.chat_continue_component_id() < 0
+        && actor
+            .snapshot
+            .chat_options()
+            .iter()
+            .any(|option| option.text == choice.option);
+    let Some(handle) = actor.start_handle.clone() else {
+        return;
+    };
+    if !step_active || !offered || handle.run_state(&actor.account) != script::RunState::Running {
+        return;
+    }
+    if let Err(error) = handle.stop(&actor.account) {
+        actor.error = Some(format!("choice-boundary Stop failed: {error}"));
+        return;
+    }
+    actor.choice_stop = None;
+    let boundary = json!({
+        "step": choice.step,
+        "option": choice.option,
+        "page": chat_page_json(&actor.snapshot),
+        "tile": actor.last_tile,
+        "inventory": inventory_receipt(&actor.snapshot),
+        "stopped_before_script_dispatch": true,
+    });
+    let receipt = capture_receipt(
+        actor,
+        "choice-boundary",
+        actor.latest_status.as_ref(),
+        json!({"choice_boundary": boundary}),
+    );
+    actor
+        .pending_captures
+        .push(("choice-boundary".into(), receipt));
+    actor.choice_watch = Some((choice.option, actor.starts));
+    actor.choice_stopped = Some(boundary);
+}
+
+/// After the Start that follows a [`ChoiceStop`], the first frame the option
+/// is no longer offered must show the answer's chat page with no main modal:
+/// a journal opened over the pending choice closes the chat instead
+/// (`Player.ts:1997-2020`).
+fn watch_choice_resolution(actor: &mut ActorShared) {
+    let Some((option, starts_at_stop)) = actor.choice_watch.as_ref() else {
+        return;
+    };
+    if actor.starts <= *starts_at_stop
+        || actor
+            .snapshot
+            .chat_options()
+            .iter()
+            .any(|offered| &offered.text == option)
+    {
+        return;
+    }
+    let page = chat_page_json(&actor.snapshot);
+    let answered = actor.snapshot.modals().main == -1 && actor.snapshot.modals().chat != -1;
+    actor.transitions.push(json!({
+        "event": "choice-resolved",
+        "option": option,
+        "start": actor.starts,
+        "answered_page": answered,
+        "page": page,
+        "inventory": inventory_receipt(&actor.snapshot),
+    }));
+    if !answered {
+        actor.error = Some(format!(
+            "the pending choice {option:?} closed without its answer page: {page}"
+        ));
+    }
+    actor.choice_watch = None;
 }
 fn active_owned_combat(snapshot: &GameSnapshot) -> Option<OwnedCombat> {
     let player = snapshot.local_player()?;
@@ -1244,6 +1386,9 @@ fn run_cells(
             error: None,
             capture_error: None,
             end_captured: false,
+            choice_stop: None,
+            choice_stopped: None,
+            choice_watch: None,
         });
     }
     let shared = Arc::new(Mutex::new(Shared {
@@ -1293,6 +1438,7 @@ fn run_cells(
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
             actor.last_tile = observed_tile(&actor.snapshot);
+            stop_at_choice(actor);
 
             if first_start {
                 if let Some(proof) = inventory_proof.as_ref() {
@@ -1372,6 +1518,7 @@ fn run_cells(
                     Err(error) => actor.error = Some(format!("Quester Start failed: {error}")),
                 }
             }
+            watch_choice_resolution(actor);
             let waiting_for_peer_setup =
                 actor.runner.on_start_script() && actor.starts == 0 && !initial_start_released;
             if !waiting_for_peer_setup
@@ -1944,6 +2091,16 @@ fn run_cells(
                 .iter()
                 .all(|actor| actor.run_state == script::RunState::Running && !actor.terminal);
         if let Some(targets) = restart_targets.as_ref() {
+            // A choice round's Stop is made by the frame hook; take its receipt.
+            let choice_boundary = match &restart_phase {
+                RestartPhase::MidStep { target, .. } if mode.choice_stop(*target).is_some() => {
+                    match shared.lock() {
+                        Ok(mut state) => state.actors[targets[*target].role].choice_stopped.take(),
+                        Err(_) => break 'run Err("live state poisoned".into()),
+                    }
+                }
+                _ => None,
+            };
             let next_phase = match &restart_phase {
                 RestartPhase::Seeking if mode.pair_death_target().is_some() => None,
                 RestartPhase::Seeking if restarts_done < targets.len() => {
@@ -1968,6 +2125,45 @@ fn run_cells(
                     })
                 }
                 RestartPhase::Seeking => None,
+                RestartPhase::MidStep { target, .. } if choice_boundary.is_some() => {
+                    let wanted = &targets[*target];
+                    let statuses_at_stop = observations
+                        .iter()
+                        .map(|actor| {
+                            actor
+                                .status
+                                .as_deref()
+                                .map(status_json)
+                                .unwrap_or(Value::Null)
+                        })
+                        .collect::<Vec<_>>();
+                    let target_status = statuses_at_stop[wanted.role].clone();
+                    let round = *target as u32 + 1;
+                    let mut state = match shared.lock() {
+                        Ok(state) => state,
+                        Err(_) => break 'run Err("live state poisoned".into()),
+                    };
+                    let actor = &mut state.actors[wanted.role];
+                    actor.choice_stop = None;
+                    actor.stops += 1;
+                    actor.transitions.push(json!({
+                        "event": "stop",
+                        "stop": actor.stops,
+                        "round": round,
+                        "target": {"role": wanted.role, "stage": wanted.stage},
+                        "account": names[wanted.role],
+                        "status_before_stop": statuses_at_stop[wanted.role],
+                        "target_status": target_status,
+                        "choice_boundary": choice_boundary,
+                        "explicit": true,
+                    }));
+                    Some(RestartPhase::Stopping {
+                        target: wanted.clone(),
+                        round,
+                        target_status,
+                        statuses_at_stop,
+                    })
+                }
                 RestartPhase::MidStep { target, since } => {
                     let wanted = &targets[*target];
                     let named_step_active = match restart_step_target {
@@ -1984,7 +2180,18 @@ fn run_cells(
                         && !terminal[wanted.role]
                         && named_step_active
                         && named_step_all_live;
-                    let stop_due = restart_step_target.is_some() || since.elapsed() >= MID_STEP;
+                    let choice = mode.choice_stop(*target);
+                    if let Some(choice) = choice {
+                        match shared.lock() {
+                            Ok(mut state) => {
+                                state.actors[wanted.role].choice_stop =
+                                    active.then(|| choice.clone());
+                            }
+                            Err(_) => break 'run Err("live state poisoned".into()),
+                        }
+                    }
+                    let stop_due = restart_step_target.is_some()
+                        || (choice.is_none() && since.elapsed() >= MID_STEP);
                     if !active {
                         Some(RestartPhase::Seeking)
                     } else if stop_due {

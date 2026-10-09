@@ -82,8 +82,9 @@ fn npc_in_scene(tick: &NativeTick<'_>, index: u16) -> bool {
         .is_some_and(|npcs| npcs.value.iter().any(|npc| npc.index == usize::from(index)))
 }
 
-// Continue drains a single progress read may spend on chat pages no step
-// owns, and the active time they may take together. A page that reopens past
+// Drains a single progress read may spend on chat pages no live step owns
+// (an unowned continue, or the Path's own menu left open across a restart),
+// and the active time they may take together. A page that reopens past
 // either parks with its root and text.
 const JOURNAL_CONTINUE_DRAINS: u8 = 3;
 const JOURNAL_DRAIN_WINDOW: Duration = Duration::from_secs(30);
@@ -293,8 +294,8 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
-    /// Continuation driver for an unowned chat continue page that blocks the
-    /// journal read; see `drain_unowned_continue`.
+    /// Dialogue driver for a chat page no live step owns that blocks the
+    /// journal read; see `drain_chat_page`.
     journal_drain: Option<ActionHandle<Dialogue>>,
     journal_drains: u8,
     journal_drain_since: Option<Duration>,
@@ -1601,17 +1602,28 @@ impl Quester {
         self.wait_for_read(tick, reason)
     }
 
-    /// Journal `begin` is Busy on a chat continue page (`chat_page_open`).
-    /// While a step or provisioning run is live, that page is its dialogue's
-    /// and the latched-continue Busy rule holds: the owner advances it. With
-    /// no live owner (a zone trigger's player chat, or the tail of a finished
-    /// step's conversation) nothing else will click it, so the read drains it
-    /// with the shared continuation driver, Chat continue clicks only (a menu
-    /// fails strict; a Main scroll, book or modal the page opens ends the
-    /// drain untouched), and retries. A read spends at most `JOURNAL_CONTINUE_DRAINS`
-    /// drains within `JOURNAL_DRAIN_WINDOW`; a page that keeps reopening then
-    /// parks with its root and text. `None`: not drainable, so the caller waits.
-    fn drain_unowned_continue(&mut self, tick: &mut NativeTick<'_>) -> Option<bool> {
+    /// Journal `begin` is Busy on an open chat page. While a step or
+    /// provisioning run is live, that page is its dialogue's and the
+    /// latched-continue Busy rule holds: the owner advances it. With no live
+    /// owner nothing else will click it, so the read clears it with the
+    /// shared dialogue driver and retries:
+    /// - a Chat continue (a zone trigger's player chat, the tail of a finished
+    ///   step's conversation): Chat continue clicks only (a menu fails strict;
+    ///   a Main scroll, book or modal the page opens ends the drain untouched);
+    /// - a menu that is this Path's own conversation ([`Self::owned_menu`]),
+    ///   left open by a Stop/Start or any other restart inside a talk step:
+    ///   its step's text answers ([`DialogueOptions::by_text_only`]) finish
+    ///   the choice. The journal row's script opens the journal with
+    ///   `if_openmain` (`player/scripts/quest_journal.rs2:55`), and the engine
+    ///   closes the chat modal and drops the suspended `p_choice` script when
+    ///   a main modal opens (`Player.ts:1997-2020`), so the read cannot come
+    ///   first without abandoning the content's own conversation.
+    ///
+    /// Any other menu is not drainable. A read spends at most
+    /// `JOURNAL_CONTINUE_DRAINS` drains within `JOURNAL_DRAIN_WINDOW`; a page
+    /// that keeps reopening then parks with its root and text. `None`: not
+    /// drainable, so the caller waits (and parks with the page).
+    fn drain_chat_page(&mut self, tick: &mut NativeTick<'_>) -> Option<bool> {
         if self.step.is_some() || self.provisioner.run_live() {
             return None;
         }
@@ -1620,14 +1632,20 @@ impl Quester {
             .snapshot()
             .main_modal()
             .is_some_and(|modal| modal.value.root == -1 && modal.value.texts.is_empty());
+        if !main_closed {
+            return None;
+        }
         let continue_open = tick
             .cx
             .snapshot()
             .chat_modal()
             .is_some_and(|chat| chat.value.continue_component_id >= 0);
-        if !main_closed || !continue_open {
-            return None;
-        }
+        let (options, owned) = if continue_open {
+            (DialogueOptions::chat_continue_only(), None)
+        } else {
+            let menu = self.owned_menu(tick)?;
+            (menu.options, Some((menu.step, menu.answer)))
+        };
         if self.journal_drains >= JOURNAL_CONTINUE_DRAINS {
             self.park_on_reopening_continue(
                 tick,
@@ -1637,19 +1655,30 @@ impl Quester {
         }
         let args = DialogueArgs {
             target: DialogueTarget::Continuation,
-            options: DialogueOptions::chat_continue_only(),
+            options,
         };
         match tick.actions.begin::<Dialogue>(args, &mut tick.cx) {
             Ok(handle) => {
                 let page = chat_page_label(tick);
-                self.trace.record(
-                    tick.output,
-                    api::hostlog::Level::Info,
-                    format_args!(
-                        "quester {}: journal read drains an unowned chat continue ({page})",
-                        self.path.id.0
+                match owned {
+                    Some((step, answer)) => self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: journal read first finishes step {}'s own choice \
+                             (option {answer}, {page})",
+                            self.path.id.0, step.0
+                        ),
                     ),
-                );
+                    None => self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: journal read drains an unowned chat continue ({page})",
+                            self.path.id.0
+                        ),
+                    ),
+                }
                 self.journal_drain = Some(handle);
                 self.journal_drains += 1;
                 self.journal_drain_since.get_or_insert(tick.cx.active_now());
@@ -1666,6 +1695,59 @@ impl Quester {
                 Some(false)
             }
         }
+    }
+
+    /// The open chat menu as this Path's own conversation, before progress
+    /// is known. Candidates are the prelude and the sequences the progress
+    /// allows: with a known stage, its sequence and the next; with none (a
+    /// restart drops progress), every in-progress stage, since this read runs
+    /// only on the in-progress colour. A step whose `skip_if` is proven true
+    /// would not run, so it owns no menu. Each candidate recognises the menu
+    /// through the dialogue family ([`super::compile::StepPlan::owned_menus`]);
+    /// candidates that answer differently leave it unrecognised.
+    fn owned_menu(&self, tick: &NativeTick<'_>) -> Option<super::compile::OwnedMenu> {
+        let pred = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &self.quests,
+            progress: self.progress_slice(),
+            required_after: tick.cx.evidence(),
+            chat_since: super::families::reach::last_chat_seq(&tick.cx),
+            outcome: None,
+        };
+        let known = self
+            .progress
+            .as_ref()
+            .and_then(|progress| match &progress.stage {
+                Knowledge::Known(stage) => sequence_for_stage(&self.path, &stage.0),
+                Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
+            });
+        let allowed = |(index, sequence): &(usize, &super::compile::CompiledSequence)| match known {
+            Some(current) => *index == current || *index == current + 1,
+            None => {
+                sequence.stage != self.path.colour_not_started
+                    && sequence.stage != self.path.colour_complete
+            }
+        };
+        let steps = self.path.prelude.iter().chain(
+            self.path
+                .sequences
+                .iter()
+                .enumerate()
+                .filter(allowed)
+                .flat_map(|(_, sequence)| sequence.steps.iter()),
+        );
+        let mut menus = Vec::new();
+        for step in steps {
+            if step.skip_if.evaluate(&pred) != Truth::True {
+                step.plan.owned_menus(&pred, &step.id, &mut menus);
+            }
+        }
+        let answer = menus.first()?.answer;
+        menus
+            .iter()
+            .all(|menu| menu.answer == answer)
+            .then(|| menus.swap_remove(0))
     }
 
     /// Polls the continue drain. `true` while it runs or after it parked the
@@ -1819,7 +1901,7 @@ impl Quester {
                     });
                     if !closed {
                         self.journal_quiet_since = None;
-                        if let Some(read) = self.drain_unowned_continue(tick) {
+                        if let Some(read) = self.drain_chat_page(tick) {
                             return read;
                         }
                         return self
@@ -1860,7 +1942,7 @@ impl Quester {
                         }
                     }
                     Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
-                        if let Some(read) = self.drain_unowned_continue(tick) {
+                        if let Some(read) = self.drain_chat_page(tick) {
                             return read;
                         }
                         return self

@@ -6,7 +6,7 @@ mod fixture;
 mod quester_live;
 
 use api::snapshot::WorldTile;
-use quester_live::{Cell, Mode};
+use quester_live::{Cell, ChoiceStop, Mode};
 
 fn cell(label: &str, stage: &str, mode: Mode) -> Cell {
     fixture::cell(fixture::Case {
@@ -60,11 +60,20 @@ fn vampire_clean() {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_resume() {
+    // The second Stop lands with the Jolly Boar bartender's authored choice
+    // pending (`area_varrock/scripts/bartender.rs2:2-7`), the boundary of
+    // live receipt 089, so the restarted Path must finish that choice before
+    // its journal read.
     quester_live::run(cell(
         "resume",
         "vampire:0",
         Mode::Restart {
             at: ["vampire:1".into(), "vampire:2".into()],
+            choice: Some(ChoiceStop {
+                round: 1,
+                step: "buy-harlow-beer".into(),
+                option: "I'll have a beer please.".into(),
+            }),
         },
     ))
     .unwrap();
