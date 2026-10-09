@@ -22,7 +22,7 @@ use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use frontend_core::{
     MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
-use host_play::walk_map::{ActionError, MapModel, RouteSource, Selection};
+use host_play::walk_map::{ActionError, MapModel, RouteProjection, RouteSource, Selection};
 use nav::map::spatial::GameTile;
 use nav::paint::{bake_reach, flood_components};
 use nav::router::{Leg, Route};
@@ -1342,10 +1342,9 @@ fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option
     });
 }
 
-/// Remaining path tiles for the focused slot: driven live, then script,
-/// then manual WalkTo. Borrow each owner separately: slot ticks take
-/// `Play::navs` before `WalkArm` in `NavBot::slot_escape`, so neither the
-/// manual arm nor scenario guard may cross the script route read.
+/// Remaining path tiles for the focused slot. Delegate live > script > manual
+/// precedence and the script/manual lock order to `Play::with_map_route`.
+/// Release the scenario guard before looking up script or manual routes.
 /// Cached by `(source, route generation)`; `here` advances a monotonic start
 /// index using [`remaining_path_tiles`] leg semantics without flattening again.
 fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
@@ -1353,41 +1352,36 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
         update_route_cache(None, here);
         return;
     };
+    let read = |proj: Option<RouteProjection<'_>>| {
+        update_route_cache(
+            proj.map(|proj| (proj.stamp.source, proj.stamp.generation, proj.route)),
+            here,
+        );
+    };
     {
         let scenario = session.scenario.lock().unwrap();
         let live_route = scenario
             .as_ref()
             .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
         if let Some(route) = live_route {
-            update_route_cache(Some((RouteSource::Live, session.route_gen(), route)), here);
+            let live = Some(RouteProjection::live(route, session.route_gen(), None));
+            if let Some(play) = session.core.play() {
+                play.with_map_route(&name, None, live, read);
+            } else {
+                read(live);
+            }
             return;
         }
     }
     #[cfg(test)]
     tests::before_map_route();
-    if session.core.play().is_some_and(|play| {
-        play.with_map_route(&name, None, None, |proj| {
-            let Some(proj) = proj else {
-                return false;
-            };
-            update_route_cache(
-                Some((proj.stamp.source, proj.stamp.generation, proj.route)),
-                here,
-            );
-            true
-        })
-    }) {
-        return;
-    }
-    // The script read has released navs before we borrow the fallback arm.
     let manual_arc = session.travellers.lock().unwrap().get(&name).cloned();
-    let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
-    let route = manual.as_ref().and_then(|arm| {
-        arm.route
-            .as_deref()
-            .map(|route| (RouteSource::Manual, arm.route_generation, route))
-    });
-    update_route_cache(route, here);
+    if let Some(play) = session.core.play() {
+        play.with_map_route(&name, manual_arc.as_deref(), None, read);
+    } else {
+        let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
+        read(manual.as_deref().and_then(RouteProjection::manual));
+    }
 }
 
 /// The remaining route tiles, borrowed across the canvas draw. The draw floods
