@@ -42,6 +42,13 @@ fn held(id: i32, count: i32) -> ItemView {
     native(id, "Held", count, 0, 3214, &[])
 }
 
+fn held_at(id: i32, count: i32, slot: i32) -> ItemView {
+    ItemView {
+        slot,
+        ..held(id, count)
+    }
+}
+
 /// The isolate row the host posts for the same facts: an action hole is an
 /// empty label in its slot.
 #[cfg(feature = "load")]
@@ -186,7 +193,7 @@ fn p_row_both_row_types_make_the_same_decisions() {
         keep: &[],
         only: None,
     };
-    let pack_native = [held(TROUT, 3)];
+    let pack_native = [held_at(TROUT, 3, 6)];
     let pack_compat = [compat(TROUT, "Trout", 3, None, None, &[])];
     assert_eq!(
         deposit_next(
@@ -429,7 +436,7 @@ fn p_match_identity_is_the_obj_id() {
             &[Some("Deposit-1"), Some("Deposit-All")],
         ),
     ];
-    let pack = [held(TROUT, 3), held(TROUT_NOTE, 12)];
+    let pack = [held_at(TROUT, 3, 0), held_at(TROUT_NOTE, 12, 1)];
     let keep_item = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[TROUT],
@@ -490,8 +497,103 @@ fn p_match_identity_is_the_obj_id() {
     ));
 }
 
-/// P-settle: a posted empty side is not an absent side, and only
-/// UntilEmpty may settle on the view bound.
+/// Stale side candidates cannot replace a current positive main-inventory row.
+#[test]
+fn stale_side_candidate_after_first_fish_is_skipped() {
+    let (swordfish, tuna) = (371, 359);
+    let side = [
+        native(swordfish, "Swordfish", 13, 0, 2006, &[Some("Deposit-All")]),
+        native(tuna, "Tuna", 14, 1, 2006, &[Some("Deposit-All")]),
+    ];
+    let pack = [held_at(tuna, 14, 1)];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[995, 311],
+        only: Some(&[swordfish, tuna][..]),
+    };
+    let click = DepositClick {
+        id: tuna,
+        slot: 1,
+        component: 2006,
+        operation: 1,
+    };
+    assert_eq!(
+        deposit_next(&spec, Some(&side[..]), Some(&pack[..]), false, true),
+        DepositScan::Click(click)
+    );
+    assert!(count_id(&pack, click.id) > 0);
+}
+
+/// Once the last fish leaves the pack, an incidental item still targeted by
+/// policy wins over the fish row left in a stale side snapshot.
+#[test]
+fn stale_last_fish_is_skipped_for_a_current_incidental_candidate() {
+    let (tuna, beer) = (359, 1917);
+    let side = [
+        native(tuna, "Tuna", 14, 0, 2006, &[Some("Deposit-All")]),
+        native(beer, "Beer", 1, 1, 2006, &[Some("Deposit-All")]),
+    ];
+    let pack = [held_at(beer, 1, 1)];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[995, 311],
+        only: Some(&[tuna, beer][..]),
+    };
+    let click = DepositClick {
+        id: beer,
+        slot: 1,
+        component: 2006,
+        operation: 1,
+    };
+    assert_eq!(
+        deposit_next(&spec, Some(&side[..]), Some(&pack[..]), false, true),
+        DepositScan::Click(click)
+    );
+    assert_eq!(count_id(&pack, click.id), 1);
+
+    let mismatched_side = [native(beer, "Beer", 1, 0, 2006, &[Some("Deposit-All")])];
+    assert_eq!(
+        deposit_next(
+            &spec,
+            Some(&mismatched_side[..]),
+            Some(&pack[..]),
+            false,
+            true
+        ),
+        DepositScan::WaitView,
+        "matching ids in different slots are not the same posted row"
+    );
+}
+
+/// Required completion follows current candidates, not leftover side rows;
+/// protected supplies remain untouched.
+#[test]
+fn stale_side_rows_do_not_block_completion_when_only_kept_items_remain() {
+    let fish = 371;
+    let side = [native(
+        fish,
+        "Swordfish",
+        13,
+        0,
+        2006,
+        &[Some("Deposit-All")],
+    )];
+    let pack = [held_at(311, 1, 0), held_at(995, 6191, 1)];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[311, 995],
+        only: Some(&[fish][..]),
+    };
+    assert_eq!(
+        deposit_next(&spec, Some(&side[..]), Some(&pack[..]), false, true),
+        DepositScan::Done
+    );
+    assert_eq!(count_id(&pack, 311), 1);
+    assert_eq!(count_id(&pack, 995), 6191);
+}
+
+/// A posted empty side is not an absent side; the UntilEmpty view bound
+/// fails closed rather than settling with current candidates still held.
 #[test]
 fn p_settle_posted_empty_is_not_absent() {
     let product = 436;
@@ -510,7 +612,7 @@ fn p_settle_posted_empty_is_not_absent() {
 
     assert_eq!(
         deposit_next(&required, Some(&empty[..]), Some(&holding[..]), false, true),
-        DepositScan::MissingRequired
+        DepositScan::WaitView
     );
     assert_eq!(
         deposit_next(&required, Some(&empty[..]), Some(&empty[..]), false, true),
@@ -533,8 +635,8 @@ fn p_settle_posted_empty_is_not_absent() {
             false,
             true
         ),
-        DepositScan::Done,
-        "a settled empty side is not a wait"
+        DepositScan::WaitView,
+        "an empty side is not usable while current candidates remain"
     );
     assert_eq!(
         deposit_next(&until_empty, None, Some(&holding[..]), false, true),
@@ -542,21 +644,24 @@ fn p_settle_posted_empty_is_not_absent() {
     );
     assert_eq!(
         deposit_next(&until_empty, None, Some(&holding[..]), true, true),
-        DepositScan::Done
+        DepositScan::ViewExpired
     );
-    for spec in [&required, &until_empty] {
-        assert_eq!(
-            deposit_next::<ItemView>(spec, Some(&empty[..]), None, true, true),
-            DepositScan::WaitView,
-            "an unposted pack never settles"
-        );
-    }
+    assert_eq!(
+        deposit_next::<ItemView>(&required, Some(&empty[..]), None, true, true),
+        DepositScan::WaitView,
+        "the Required caller keeps waiting for its usable view"
+    );
+    assert_eq!(
+        deposit_next::<ItemView>(&until_empty, Some(&empty[..]), None, true, true),
+        DepositScan::ViewExpired,
+        "the UntilEmpty caller fails instead of settling an unposted pack"
+    );
 
     // Required: a side row for another id does not satisfy the product.
     let other = [native(1, "Other", 1, 0, 2006, &[Some("Deposit-All")])];
     assert_eq!(
         deposit_next(&required, Some(&other[..]), Some(&holding[..]), false, true),
-        DepositScan::MissingRequired
+        DepositScan::WaitView
     );
     // Keep wins over only.
     let kept = DepositSpec {
@@ -568,17 +673,17 @@ fn p_settle_posted_empty_is_not_absent() {
         DepositScan::Done
     );
 
-    // Outside the request's bank session nothing clicks or completes, the
-    // settled-empty and view-bound completions included.
+    // Outside the request's bank session nothing clicks or completes, even
+    // the settled-empty or expired-view cases.
     for spec in [&required, &until_empty] {
-        for (side, pack, wait_done) in [
+        for (side, pack, view_wait_expired) in [
             (Some(&empty[..]), Some(&empty[..]), false),
             (Some(&empty[..]), Some(&holding[..]), false),
             (None, Some(&holding[..]), true),
             (Some(&other[..]), Some(&holding[..]), false),
         ] {
             assert_eq!(
-                deposit_next(spec, side, pack, wait_done, false),
+                deposit_next(spec, side, pack, view_wait_expired, false),
                 DepositScan::SessionGone
             );
         }
@@ -605,7 +710,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
             &[Some("Deposit-1"), Some("Deposit-All")],
         ),
     ];
-    let mut pack = [held(500, 4), held(501, 1), held(502, 1)];
+    let mut pack = [held_at(500, 4, 0), held_at(501, 1, 1), held_at(502, 1, 2)];
     pack[0].def.stackable = true;
     let keep = [502];
     assert_eq!(
@@ -744,7 +849,7 @@ fn load_click_prefers_the_rows_all_op() {
 
 #[test]
 fn close_scan_needs_shut_main_released_side_and_new_session() {
-    assert_eq!(close_deadline(None), TRANSFER_BOUND);
+    assert_eq!(close_deadline(None), CLOSE_BOUND);
     assert_eq!(close_deadline(Some(1_500)), Duration::from_millis(1_500));
     assert_eq!(close_begin(false), Some(CloseScan::AlreadyShut));
     assert_eq!(close_begin(true), None);

@@ -24,12 +24,32 @@ impl Runtime {
 }
 /// Typed host work retains an owner, never a frame borrow. The host must check
 /// `live` again immediately before applying the work or advancing its follower.
+/// Immutable evidence carried with a native deposit click until host dispatch.
+#[derive(Debug, Clone)]
+pub struct BankDepositTrace {
+    pub generation: u64,
+    pub transfer: u8,
+    pub click_tick: u64,
+    pub sequence: u64,
+    pub id: i32,
+    pub slot: i32,
+    pub component: i32,
+    pub option: Arc<str>,
+    pub operation: i32,
+    pub main_before: i32,
+    pub side_before: Option<i32>,
+    pub bank_before: Option<i32>,
+    pub main_revision: Option<u64>,
+    pub side_revision: Option<u64>,
+}
+
 pub struct HostAction {
     pub(crate) owner: Arc<Owner>,
     pub request_id: NonZeroU64,
     pub batch: u64,
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
+    pub bank_deposit: Option<Arc<BankDepositTrace>>,
 }
 
 pub enum HostEffect {

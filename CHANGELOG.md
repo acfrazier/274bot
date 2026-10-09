@@ -3,6 +3,16 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Gatherer
+
+- Bank transfers in the Gatherer, Quester and compatibility scripts now wait
+  through up to eight fresh game updates instead of expiring during a long
+  pause. Gatherer deposits also wait for a current inventory view. Compatibility
+  deposit sweeps require a positive held-item count before pressing, so stale
+  bank rows no longer trigger a deposit.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1

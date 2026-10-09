@@ -419,20 +419,22 @@ accounted before the runner blocks.
 ### Fishing bank returns
 
 The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell tests a fixed
-Start location at Catherby with an inventory harpoon and one seeded `casket`
-(item ID 405). The ignored
+Start location at Catherby with an inventory harpoon, a seeded `casket` (item
+ID 405), a spare `net` (303), and a `beer` (1917). Its first bank receipt
+requires all three incidental items to be deposited; the net and beer must
+also be included in the native deposit candidates.
 `gatherer_live::gatherer_fish_harpoon_bank_auto` cell exercises the operator's
 Auto return settings: Fishing level 76, canonical method ID
-`fishing.rarefish.op3`, location `Auto`, radius 40, Bank disposition, and
-Catherby bank. Its fixed test target is tile `2840,3436,0`. Initial level/tool
-fixtures precede the progression baseline; no fish, casket, proof XP gains, or
-randomized fishing-location state are seeded.
+`fishing.rarefish.op3`, location `Auto`, radius 40, Bank disposition, and the
+Catherby bank. It defaults to start at tile `2840,3436,0`. Initial level/tool
+fixtures precede the progression baseline; the Auto case has no seeded
+inventory items, proof XP gains, or randomized fishing-location state.
 
 Both cells require at least two positive fish deposits followed by a fresh
 fishing yield after each bank return. Only the fixed-location cell requires the
-seeded casket in the Start baseline and verifies its deposit; the Auto case has
-no seeded-casket gate. Each trip receipt derives expected item and product
-counts from the actual pre-deposit inventory, excluding protected
+seeded casket, spare net and beer in its first deposit receipt; the Auto case
+has no incidental-item gate. Each trip receipt derives expected item and
+product counts from the actual pre-deposit inventory, excluding protected
 tools/supplies; it verifies deposited IDs leave the pack and their bank counts
 increase while the bank is loaded. A naturally dropped casket is recorded only
 as an observation, never required. The existing preparation and wedge deadlines

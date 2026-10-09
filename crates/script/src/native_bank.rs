@@ -7,10 +7,10 @@
 //! kernel.
 use crate::bank::npc;
 use crate::bank::ops::{
-    self, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec, NoteIntent, Progress,
-    WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO, TRANSFER_BOUND,
+    self, deposit_option, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec,
+    NoteIntent, Progress, WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO,
 };
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkOptions};
+use crate::native::{ActionContext, ActionError, BankDepositTrace, NativeMachine, WalkOptions};
 use crate::shim::InteractReq;
 use api::named_banks::{BankOperation, BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -271,8 +271,11 @@ enum Phase {
     NpcAccess {
         core: npc::NpcAccess,
         dialogue: AccessDialogue,
+        first_target: Option<(i32, WorldTile)>,
     },
-    AwaitOpen,
+    AwaitOpen {
+        first_target: Option<(i32, WorldTile)>,
+    },
     AwaitNoteMode {
         request_id: u64,
         evidence: EvidenceStamp,
@@ -291,6 +294,21 @@ enum Phase {
         run: api::selected::RunKey,
     },
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DepositObservationKey {
+    main_now: Option<i32>,
+    side_now: Option<i32>,
+    bank_now: Option<i32>,
+    main_revision: Option<u64>,
+    side_revision: Option<u64>,
+}
+
+struct DepositLogState {
+    request: u64,
+    trace: Arc<BankDepositTrace>,
+    last_observation: Option<DepositObservationKey>,
+    last_logged_tick: u64,
+}
 
 pub struct BankMachine {
     request: BankRequest,
@@ -306,7 +324,6 @@ pub struct BankMachine {
     capacity_freed: u8,
     item_mode_ensured: bool,
     open_stage: u8,
-    open_first_target: Option<(i32, WorldTile)>,
     object_interaction_sent: bool,
     /// A completed object dialogue cannot be restarted just because its modal remains open.
     object_dialogue_finished: bool,
@@ -316,6 +333,7 @@ pub struct BankMachine {
     /// (`u64::MAX` before any session). A later generation is a session this
     /// open created, which the server starts in Item mode.
     opened_from: Option<u64>,
+    deposit_log: Option<Box<DepositLogState>>,
 }
 
 const BANK_OBJECT_RADIUS: i32 = 4;
@@ -468,7 +486,7 @@ impl NativeMachine for BankMachine {
             capacity_freed: 0,
             item_mode_ensured: false,
             open_stage: 0,
-            open_first_target: None,
+            deposit_log: None,
             object_interaction_sent: false,
             object_dialogue_finished: false,
             view_armed: false,
@@ -509,6 +527,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Teller,
+                            first_target: None,
                         };
                         continue;
                     }
@@ -525,7 +544,7 @@ impl NativeMachine for BankMachine {
                         .bank_session()
                         .is_some_and(|session| session.value.open)
                     {
-                        self.phase = Phase::AwaitOpen;
+                        self.phase = Phase::AwaitOpen { first_target: None };
                         continue;
                     }
                     if cx.active_now() >= self.open_deadline {
@@ -533,6 +552,7 @@ impl NativeMachine for BankMachine {
                             "bank did not open",
                         ))));
                     }
+                    let mut first_target = None;
                     if let BankAction::OpenStand { access } = &self.request.action {
                         let open_first = access
                             .bank
@@ -569,7 +589,7 @@ impl NativeMachine for BankMachine {
                             .reachable() else {
                                 return Poll::Pending;
                             };
-                            let first_target = opening_first.then_some((loc.id, loc.tile));
+                            first_target = opening_first.then_some((loc.id, loc.tile));
                             std::task::ready!(crate::native::defer_budget(cx.emit(
                                 InteractReq::Loc {
                                     x: loc.tile.x,
@@ -579,9 +599,6 @@ impl NativeMachine for BankMachine {
                                     id: Some(loc.id),
                                 },
                             )))?;
-                            if let Some(target) = first_target {
-                                self.open_first_target = Some(target);
-                            }
                             self.object_interaction_sent = true;
                             self.object_dialogue_finished = false;
                         } else {
@@ -627,7 +644,7 @@ impl NativeMachine for BankMachine {
                             )))?;
                         }
                         self.opened_from = Some(open_generation(cx));
-                        self.phase = Phase::AwaitOpen;
+                        self.phase = Phase::AwaitOpen { first_target };
                         return Poll::Pending;
                     }
                     let Some(bank) = self.request.bank else {
@@ -668,10 +685,14 @@ impl NativeMachine for BankMachine {
                         },
                     )))?;
                     self.opened_from = Some(open_generation(cx));
-                    self.phase = Phase::AwaitOpen;
+                    self.phase = Phase::AwaitOpen { first_target: None };
                     return Poll::Pending;
                 }
-                Phase::NpcAccess { mut core, dialogue } => {
+                Phase::NpcAccess {
+                    mut core,
+                    dialogue,
+                    first_target,
+                } => {
                     if dialogue == AccessDialogue::Object
                         && cx.active_now() >= self.open_deadline
                         && cx.snapshot().bank().is_none()
@@ -707,7 +728,11 @@ impl NativeMachine for BankMachine {
                     };
                     match step {
                         npc::Step::Wait => {
-                            self.phase = Phase::NpcAccess { core, dialogue };
+                            self.phase = Phase::NpcAccess {
+                                core,
+                                dialogue,
+                                first_target,
+                            };
                             return Poll::Pending;
                         }
                         npc::Step::Note(npc::Note::Unloaded) => {
@@ -721,13 +746,17 @@ impl NativeMachine for BankMachine {
                         npc::Step::Note(
                             npc::Note::NoBanker | npc::Note::NoDialogue | npc::Note::NotOpened,
                         ) => {
-                            self.phase = Phase::NpcAccess { core, dialogue };
+                            self.phase = Phase::NpcAccess {
+                                core,
+                                dialogue,
+                                first_target,
+                            };
                             continue;
                         }
                         npc::Step::Done(false) => {
                             if dialogue == AccessDialogue::Object {
                                 self.object_dialogue_finished = true;
-                                self.phase = Phase::AwaitOpen;
+                                self.phase = Phase::AwaitOpen { first_target };
                                 continue;
                             }
                             return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
@@ -773,7 +802,7 @@ impl NativeMachine for BankMachine {
                         }
                     }
                 }
-                Phase::AwaitOpen => {
+                Phase::AwaitOpen { first_target } => {
                     if cx.snapshot().bank().is_some() {
                         self.session = cx
                             .snapshot()
@@ -807,6 +836,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Object,
+                            first_target,
                         };
                         continue;
                     }
@@ -820,12 +850,11 @@ impl NativeMachine for BankMachine {
                                 if cx.snapshot().locs().is_none() {
                                     return Poll::Pending;
                                 }
-                                if let Some((id, tile)) = self.open_first_target {
+                                if let Some((id, tile)) = first_target {
                                     let still_closed =
                                         catalog_object_at(cx, id, tile, open_first).is_some();
                                     if !still_closed {
                                         self.open_stage = 1;
-                                        self.open_first_target = None;
                                         self.phase = Phase::Open;
                                         continue;
                                     }
@@ -839,10 +868,13 @@ impl NativeMachine for BankMachine {
                     request_id,
                     evidence,
                 } => {
-                    if cx.evidence().run != evidence.run
-                        || cx.evidence().sequence <= evidence.sequence
+                    let current_evidence = cx.evidence();
+                    if current_evidence.run != evidence.run
+                        || current_evidence.sequence <= evidence.sequence
                     {
-                        if cx.active_now() >= self.deadline {
+                        if current_evidence.tick.saturating_sub(evidence.tick)
+                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
+                        {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank item mode dispatch did not settle",
                             ))));
@@ -850,7 +882,9 @@ impl NativeMachine for BankMachine {
                         return Poll::Pending;
                     }
                     let Some(receipt) = cx.interaction_receipt(request_id) else {
-                        if cx.active_now() >= self.deadline {
+                        if current_evidence.tick.saturating_sub(evidence.tick)
+                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
+                        {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank item mode dispatch did not settle",
                             ))));
@@ -1048,11 +1082,14 @@ impl NativeMachine for BankMachine {
                     | BankAction::DepositAll { .. }
                     | BankAction::DepositProducts { .. }
                     | BankAction::DepositCapacity { .. } => {
+                        let now = cx.active_now();
+                        let snapshot = cx.snapshot();
+                        let pack = snapshot.inventory().map(|rows| rows.value);
                         if matches!(
                             self.request.action,
                             BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
                         ) {
-                            match self.protected_unchanged(cx) {
+                            match self.protected_unchanged(pack) {
                                 Some(true) => {}
                                 Some(false) => {
                                     return Poll::Ready(Err(ActionError::Blocked(Arc::from(
@@ -1062,16 +1099,13 @@ impl NativeMachine for BankMachine {
                                 None => return Poll::Pending,
                             }
                         }
-                        let now = cx.active_now();
-                        let snapshot = cx.snapshot();
-                        let pack = snapshot.inventory().map(|rows| rows.value);
                         let side = snapshot.bank_side().map(|rows| rows.value);
                         if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
                             if self.capacity_freed >= *slots {
                                 return Poll::Ready(Ok(self.receipt(true)));
                             }
                         }
-                        let wait_done = self.view_armed && now >= self.deadline;
+                        let view_wait_expired = self.view_armed && now >= self.deadline;
                         let scan = if let BankAction::DepositCapacity { keep, .. } =
                             &self.request.action
                         {
@@ -1079,7 +1113,13 @@ impl NativeMachine for BankMachine {
                         } else {
                             let spec = deposit_spec(&self.request.action)
                                 .expect("deposit actions have a deposit spec");
-                            ops::deposit_next(&spec, side, pack, wait_done, self.same_session(cx))
+                            ops::deposit_next(
+                                &spec,
+                                side,
+                                pack,
+                                view_wait_expired,
+                                self.same_session(cx),
+                            )
                         };
                         match scan {
                             DepositScan::WaitView => {
@@ -1097,6 +1137,11 @@ impl NativeMachine for BankMachine {
                                     ))));
                                 }
                                 return Poll::Pending;
+                            }
+                            DepositScan::ViewExpired => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank deposit view did not post",
+                                ))));
                             }
                             DepositScan::Done => {
                                 let complete = match &self.request.action {
@@ -1123,7 +1168,15 @@ impl NativeMachine for BankMachine {
                                         "bank deposit exceeded 32 item rows",
                                     ))));
                                 }
-                                let before = pack.map_or(0, |rows| ops::count_id(rows, click.id));
+                                let Some(before) = pack.map(|rows| ops::count_id(rows, click.id))
+                                else {
+                                    self.phase = Phase::Act;
+                                    return Poll::Pending;
+                                };
+                                if before <= 0 {
+                                    self.phase = Phase::Act;
+                                    return Poll::Pending;
+                                }
                                 let before_slots = matches!(
                                     self.request.action,
                                     BankAction::DepositCapacity { .. }
@@ -1133,12 +1186,62 @@ impl NativeMachine for BankMachine {
                                         rows.iter().filter(|row| row.count > 0).count()
                                     })
                                 });
-                                std::task::ready!(crate::native::defer_budget(
-                                    cx.emit(ops::deposit_req(click, self.session))
+                                let option = side
+                                    .and_then(|side| deposit_option(side, click))
+                                    .expect("a selected deposit has its posted operation label");
+                                let trace = Arc::new(BankDepositTrace {
+                                    generation: self.session,
+                                    transfer: self.deposits + 1,
+                                    click_tick: cx.evidence().tick,
+                                    sequence: cx.evidence().sequence,
+                                    id: click.id,
+                                    slot: click.slot,
+                                    component: click.component,
+                                    option: Arc::from(option),
+                                    operation: click.operation,
+                                    main_before: before,
+                                    side_before: side.map(|side| ops::count_id(side, click.id)),
+                                    bank_before: snapshot
+                                        .bank()
+                                        .map(|rows| ops::count_id(rows.value, click.id)),
+                                    main_revision: snapshot.inventory_packet_generation(),
+                                    side_revision: snapshot.bank_side_packet_generation(),
+                                });
+                                let request = std::task::ready!(crate::native::defer_budget(
+                                    cx.emit_bank_deposit(
+                                        ops::deposit_req(click, self.session),
+                                        &trace,
+                                    )
                                 ))?;
+                                api::host_log!(
+                                    api::hostlog::Category::BankOp,
+                                    api::hostlog::Level::Debug,
+                                    "bank-deposit-click run={:?} bank_generation={} transfer={} request={} click_tick={} sequence={} id={} slot={} component={} option={} operation={} main_before={} side_before={:?} bank_before={:?} main_revision={:?} side_revision={:?}",
+                                    cx.evidence().run,
+                                    trace.generation,
+                                    trace.transfer,
+                                    request,
+                                    trace.click_tick,
+                                    trace.sequence,
+                                    trace.id,
+                                    trace.slot,
+                                    trace.component,
+                                    trace.option,
+                                    trace.operation,
+                                    trace.main_before,
+                                    trace.side_before,
+                                    trace.bank_before,
+                                    trace.main_revision,
+                                    trace.side_revision,
+                                );
+                                self.deposit_log = Some(Box::new(DepositLogState {
+                                    request,
+                                    last_observation: None,
+                                    last_logged_tick: trace.click_tick,
+                                    trace: Arc::clone(&trace),
+                                }));
                                 self.deposits += 1;
                                 self.view_armed = false;
-                                self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
                                 self.phase = Phase::AwaitTransfer {
                                     before,
                                     before_slots,
@@ -1162,11 +1265,38 @@ impl NativeMachine for BankMachine {
                     {
                         return Poll::Pending;
                     }
+                    if self.deposit_log.is_some() {
+                        match self.await_deposit_transfer(
+                            cx,
+                            before,
+                            before_slots,
+                            item_id,
+                            evidence,
+                        ) {
+                            Ok(true) => {
+                                self.phase = Phase::Act;
+                                continue;
+                            }
+                            Ok(false) => return Poll::Pending,
+                            Err(error) => return Poll::Ready(Err(error)),
+                        }
+                    }
+                    let snapshot = cx.snapshot();
+                    let pack = snapshot.inventory().map(|rows| rows.value);
+                    let same_session = cx.evidence().run == evidence.run
+                        && snapshot.bank_session().is_some_and(|session| {
+                            session.value.open && session.value.generation == self.session
+                        });
+                    if !same_session {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank closed before the transfer settled",
+                        ))));
+                    }
                     if matches!(
                         self.request.action,
                         BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
                     ) {
-                        match self.protected_unchanged(cx) {
+                        match self.protected_unchanged(pack) {
                             Some(true) => {}
                             Some(false) => {
                                 return Poll::Ready(Err(ActionError::Blocked(Arc::from(
@@ -1176,20 +1306,9 @@ impl NativeMachine for BankMachine {
                             None => return Poll::Pending,
                         }
                     }
-                    // A count change settles only in the bank session that
-                    // sent the click; a closed or replaced session never
-                    // completes it, whichever way the count moved.
-                    if !self.same_session(cx) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank closed before the transfer settled",
-                        ))));
-                    }
                     // The clicked id's held count: a withdraw raises it, a
                     // deposit lowers it.
-                    let current = cx
-                        .snapshot()
-                        .inventory()
-                        .map(|rows| ops::count_id(rows.value, item_id));
+                    let current = pack.map(|rows| ops::count_id(rows, item_id));
                     let withdrawing = matches!(
                         self.request.action,
                         BankAction::Withdraw { .. }
@@ -1209,10 +1328,8 @@ impl NativeMachine for BankMachine {
                                 .saturating_add(before.saturating_sub(after).max(0) as u32);
                         }
                         if let Some(before_slots) = before_slots {
-                            if let Some(after_slots) = cx
-                                .snapshot()
-                                .inventory()
-                                .map(|rows| rows.value.iter().filter(|row| row.count > 0).count())
+                            if let Some(after_slots) =
+                                pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
                             {
                                 let freed = before_slots.saturating_sub(after_slots);
                                 self.capacity_freed = self
@@ -1223,7 +1340,9 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
-                    if cx.active_now() >= self.deadline {
+                    if cx.evidence().tick.saturating_sub(evidence.tick)
+                        >= ops::TRANSFER_OBSERVED_TICK_LIMIT
+                    {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank transfer did not settle",
                         ))));
@@ -1463,6 +1582,221 @@ fn open_generation(cx: &ActionContext<'_>) -> u64 {
 }
 
 impl BankMachine {
+    fn await_deposit_transfer(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        before: i32,
+        before_slots: Option<usize>,
+        item_id: i32,
+        evidence: EvidenceStamp,
+    ) -> Result<bool, ActionError> {
+        let stamp = cx.evidence();
+        let snapshot = cx.snapshot();
+        let pack = snapshot.inventory().map(|rows| rows.value);
+        let main_now = pack.map(|rows| ops::count_id(rows, item_id));
+        let side_now = snapshot
+            .bank_side()
+            .map(|rows| ops::count_id(rows.value, item_id));
+        let bank_now = snapshot
+            .bank()
+            .map(|rows| ops::count_id(rows.value, item_id));
+        let main_revision = snapshot.inventory_packet_generation();
+        let side_revision = snapshot.bank_side_packet_generation();
+        let observation = DepositObservationKey {
+            main_now,
+            side_now,
+            bank_now,
+            main_revision,
+            side_revision,
+        };
+        let same_session = stamp.run == evidence.run
+            && snapshot.bank_session().is_some_and(|session| {
+                session.value.open && session.value.generation == self.session
+            });
+        let protected = if matches!(
+            self.request.action,
+            BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
+        ) {
+            self.protected_unchanged(pack)
+        } else {
+            Some(true)
+        };
+        let moved = main_now.is_some_and(|now| now < before);
+        let timed_out =
+            stamp.tick.saturating_sub(evidence.tick) >= ops::TRANSFER_OBSERVED_TICK_LIMIT;
+        let click_main_revision = self
+            .deposit_log
+            .as_ref()
+            .expect("deposit transfer carries its click trace")
+            .trace
+            .main_revision;
+        let main_revision_advanced =
+            click_main_revision.is_some_and(|click| main_revision.is_some_and(|now| now > click));
+        let decision = if !same_session {
+            "session-gone"
+        } else if protected == Some(false) {
+            "protected-inventory-changed"
+        } else if protected == Some(true) && moved {
+            "settled-count-fell"
+        } else if timed_out {
+            "timeout-no-count-fall"
+        } else if protected.is_none() || !main_revision_advanced {
+            "pending-stale-evidence"
+        } else {
+            "pending-count-unchanged"
+        };
+        let terminal = !same_session
+            || protected == Some(false)
+            || timed_out
+            || (protected == Some(true) && moved);
+
+        self.log_deposit_observation(stamp, observation, same_session, decision, terminal);
+        if !same_session {
+            self.log_deposit_result(
+                stamp,
+                observation,
+                "aborted",
+                "session-gone",
+                api::hostlog::Level::Debug,
+            );
+            return Err(ActionError::Failed(Arc::from(
+                "bank closed before the transfer settled",
+            )));
+        }
+        if protected == Some(false) {
+            self.log_deposit_result(
+                stamp,
+                observation,
+                "blocked",
+                "protected-inventory-changed",
+                api::hostlog::Level::Debug,
+            );
+            return Err(ActionError::Blocked(Arc::from(
+                "protected inventory changed during bank deposit",
+            )));
+        }
+        if protected == Some(true) && moved {
+            self.log_deposit_result(
+                stamp,
+                observation,
+                "settled",
+                "main-count-fell",
+                api::hostlog::Level::Debug,
+            );
+            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
+                let after = main_now.unwrap_or(before);
+                self.deposited = self
+                    .deposited
+                    .saturating_add(before.saturating_sub(after).max(0) as u32);
+            }
+            if let Some(before_slots) = before_slots {
+                if let Some(after_slots) =
+                    pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
+                {
+                    let freed = before_slots.saturating_sub(after_slots);
+                    self.capacity_freed = self
+                        .capacity_freed
+                        .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
+                }
+            }
+            self.deposit_log = None;
+            return Ok(true);
+        }
+        if timed_out {
+            self.log_deposit_result(
+                stamp,
+                observation,
+                "timeout",
+                "no-main-count-fall",
+                api::hostlog::Level::Info,
+            );
+            return Err(ActionError::Failed(Arc::from(
+                "bank transfer did not settle",
+            )));
+        }
+        Ok(false)
+    }
+
+    fn log_deposit_observation(
+        &mut self,
+        stamp: EvidenceStamp,
+        observation: DepositObservationKey,
+        same_session: bool,
+        decision: &str,
+        terminal: bool,
+    ) {
+        let Some(state) = self.deposit_log.as_mut() else {
+            return;
+        };
+        let fresh = stamp.tick > state.last_logged_tick;
+        if !terminal && !fresh && state.last_observation == Some(observation) {
+            return;
+        }
+        let trace = &state.trace;
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Debug,
+            "bank-deposit-observe run={:?} bank_generation={} transfer={} request={} click_tick={} tick={} sequence={} fresh={} id={} main_before={} main_now={:?} side_now={:?} bank_now={:?} main_revision={:?} side_revision={:?} same_session={} elapsed_observed_ticks={} decision={}",
+            stamp.run,
+            trace.generation,
+            trace.transfer,
+            state.request,
+            trace.click_tick,
+            stamp.tick,
+            stamp.sequence,
+            fresh,
+            trace.id,
+            trace.main_before,
+            observation.main_now,
+            observation.side_now,
+            observation.bank_now,
+            observation.main_revision,
+            observation.side_revision,
+            same_session,
+            stamp.tick.saturating_sub(trace.click_tick),
+            decision,
+        );
+        state.last_observation = Some(observation);
+        state.last_logged_tick = stamp.tick;
+    }
+
+    fn log_deposit_result(
+        &self,
+        stamp: EvidenceStamp,
+        observation: DepositObservationKey,
+        result: &str,
+        reason: &str,
+        level: api::hostlog::Level,
+    ) {
+        let Some(state) = self.deposit_log.as_ref() else {
+            return;
+        };
+        let trace = &state.trace;
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            level,
+            "bank-deposit-result run={:?} bank_generation={} transfer={} request={} click_tick={} tick={} id={} slot={} component={} option={} operation={} main_before={} main_now={:?} side_now={:?} bank_now={:?} elapsed_observed_ticks={} result={} reason={}",
+            stamp.run,
+            trace.generation,
+            trace.transfer,
+            state.request,
+            trace.click_tick,
+            stamp.tick,
+            trace.id,
+            trace.slot,
+            trace.component,
+            trace.option,
+            trace.operation,
+            trace.main_before,
+            observation.main_now,
+            observation.side_now,
+            observation.bank_now,
+            stamp.tick.saturating_sub(trace.click_tick),
+            result,
+            reason,
+        );
+    }
+
     fn same_session(&self, cx: &ActionContext<'_>) -> bool {
         cx.snapshot()
             .bank_session()
@@ -1508,11 +1842,11 @@ impl BankMachine {
             self.item_mode_ensured = true;
         }
         if !self.item_mode_ensured {
-            let evidence = cx.evidence();
             let request_id = std::task::ready!(crate::native::defer_budget(
                 cx.emit(ops::note_req(NoteIntent::Item))
             ))?;
-            self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
+            let evidence = cx.evidence();
+
             self.phase = Phase::AwaitNoteMode {
                 request_id,
                 evidence,
@@ -1520,7 +1854,7 @@ impl BankMachine {
             return Poll::Ready(Ok(Clicked::Sent));
         }
         std::task::ready!(crate::native::defer_budget(cx.emit(request)))?;
-        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
+
         self.phase = Phase::AwaitTransfer {
             before: held,
             before_slots: None,
@@ -1530,13 +1864,12 @@ impl BankMachine {
         Poll::Ready(Ok(Clicked::Sent))
     }
 
-    fn protected_unchanged(&self, cx: &ActionContext<'_>) -> Option<bool> {
-        let snapshot = cx.snapshot();
-        let inventory = snapshot.inventory()?;
+    fn protected_unchanged<R: ops::BankRow>(&self, inventory: Option<&[R]>) -> Option<bool> {
+        let inventory = inventory?;
         Some(
             self.protected_before
                 .iter()
-                .all(|before| ops::count_id(inventory.value, before.id) == before.count),
+                .all(|before| ops::count_id(inventory, before.id) == before.count),
         )
     }
 
@@ -2643,37 +2976,55 @@ mod tests {
     }
 
     #[test]
-    fn deposit_products_fails_when_inventory_products_are_missing_from_loaded_side() {
+    fn deposit_products_waits_for_matching_loaded_side_row() {
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![item(item_id, "Ore", 1, ItemContainer::Inventory)], 28);
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
         let mut ledger = None;
+        let request = BankRequest {
+            bank: None,
+            action: BankAction::DepositProducts {
+                products: Arc::from([item_id]),
+                keep: Arc::from([]),
+            },
+            partial_ok: false,
+        };
+        let (handle, result) = begin_bank(&snapshot, &mut ledger, request);
+        assert!(result.is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
-        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            let handle = tick
-                .actions
-                .begin::<BankMachine>(
-                    BankRequest {
-                        bank: None,
-                        action: BankAction::DepositProducts {
-                            products: Arc::from([item_id]),
-                            keep: Arc::from([]),
-                        },
-                        partial_ok: false,
-                    },
-                    &mut tick.cx,
-                )
-                .unwrap();
+        let side = vec![row_with(
+            item(item_id, "Ore", 1, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
+        assert!(result.is_pending());
+        let generation = snapshot.bank_session_generation();
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::InvButton {
+                id,
+                slot: 0,
+                component: 7,
+                operation: 3,
+                bank_generation,
+            }) if id == item_id && bank_generation == generation
+        ));
 
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
         assert!(matches!(
             result,
-            Poll::Ready(Err(ActionError::Failed(message)))
-                if message.as_ref()
-                    == "inventory products remain but matching bank side row is missing"
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -3036,8 +3387,8 @@ mod tests {
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(
             vec![
-                item(trout, "Trout", 2, ItemContainer::Inventory),
-                item(noted, "Trout", 9, ItemContainer::Inventory),
+                row_with(item(trout, "Trout", 2, ItemContainer::Inventory), &[], 0),
+                row_with(item(noted, "Trout", 9, ItemContainer::Inventory), &[], 1),
             ],
             28,
         );
@@ -3065,14 +3416,470 @@ mod tests {
                 bank_generation,
             }) if id == noted && bank_generation == generation
         ));
-        snapshot.seed_inventory(vec![item(trout, "Trout", 2, ItemContainer::Inventory)], 28);
-        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side[..1].to_vec());
+        snapshot.seed_inventory(
+            vec![row_with(
+                item(trout, "Trout", 2, ItemContainer::Inventory),
+                &[],
+                0,
+            )],
+            28,
+        );
         let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
             poll,
             Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+    }
+    /// A main-first receipt after the first fish must skip that fish in the
+    /// still-old side component and select the held next target instead.
+    #[test]
+    fn stale_side_after_first_fish_clicks_the_current_next_target() {
+        let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
+        let side_row = |id, name, count, slot| {
+            row_with(
+                item(id, name, count, ItemContainer::BankSide),
+                &["Deposit-All"],
+                slot,
+            )
+        };
+        let pack_row = |id, name, count, slot| {
+            row_with(item(id, name, count, ItemContainer::Inventory), &[], slot)
+        };
+        let side = vec![
+            side_row(swordfish, "Swordfish", 13, 0),
+            side_row(tuna, "Tuna", 14, 1),
+            side_row(net, "Net", 1, 2),
+            side_row(beer, "Beer", 1, 3),
+            side_row(harpoon, "Harpoon", 1, 4),
+            side_row(coins, "Coins", 6_191, 5),
+        ];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![
+                pack_row(swordfish, "Swordfish", 13, 0),
+                pack_row(tuna, "Tuna", 14, 1),
+                pack_row(net, "Net", 1, 2),
+                pack_row(beer, "Beer", 1, 3),
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let request = bank_request(
+            BankAction::DepositProducts {
+                products: Arc::from([swordfish, tuna, net, beer]),
+                keep: Arc::from([harpoon, coins]),
+            },
+            false,
+        );
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request);
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == swordfish
+        ));
+
+        snapshot.seed_inventory(
+            vec![
+                pack_row(tuna, "Tuna", 14, 1),
+                pack_row(net, "Net", 1, 2),
+                pack_row(beer, "Beer", 1, 3),
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(poll.is_pending());
+        let action = ledger.as_ref().unwrap().outbox.first().unwrap();
+        let trace = action.bank_deposit.as_ref().expect("deposit trace");
+        assert_eq!(trace.id, tuna);
+        assert_eq!(trace.main_before, 14);
+        assert_eq!(trace.transfer, 2);
+        assert_eq!(trace.option.as_ref(), "Deposit-All");
+    }
+
+    /// After the last fish leaves main inventory, a stale fish row cannot
+    /// hide the held incidental targets; net and beer remain depositable.
+    #[test]
+    fn stale_last_fish_side_row_does_not_replace_net_or_beer() {
+        let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
+        let side_row = |id, name, count, slot| {
+            row_with(
+                item(id, name, count, ItemContainer::BankSide),
+                &["Deposit-All"],
+                slot,
+            )
+        };
+        let pack_row = |id, name, count, slot| {
+            row_with(item(id, name, count, ItemContainer::Inventory), &[], slot)
+        };
+        let side = vec![
+            side_row(swordfish, "Swordfish", 13, 0),
+            side_row(tuna, "Tuna", 14, 1),
+            side_row(net, "Net", 1, 2),
+            side_row(beer, "Beer", 1, 3),
+            side_row(harpoon, "Harpoon", 1, 4),
+            side_row(coins, "Coins", 6_191, 5),
+        ];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![
+                pack_row(swordfish, "Swordfish", 13, 0),
+                pack_row(tuna, "Tuna", 14, 1),
+                pack_row(net, "Net", 1, 2),
+                pack_row(beer, "Beer", 1, 3),
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let request = || {
+            bank_request(
+                BankAction::DepositProducts {
+                    products: Arc::from([swordfish, tuna, net, beer]),
+                    keep: Arc::from([harpoon, coins]),
+                },
+                false,
+            )
+        };
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request());
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == swordfish
+        ));
+
+        snapshot.seed_inventory(
+            vec![
+                pack_row(tuna, "Tuna", 14, 1),
+                pack_row(net, "Net", 1, 2),
+                pack_row(beer, "Beer", 1, 3),
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == tuna
+        ));
+
+        snapshot.seed_inventory(
+            vec![
+                pack_row(net, "Net", 1, 2),
+                pack_row(beer, "Beer", 1, 3),
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(poll.is_pending());
+        let action = ledger.as_ref().unwrap().outbox.first().unwrap();
+        let trace = action.bank_deposit.as_ref().expect("deposit trace");
+        assert_eq!(trace.id, net);
+        assert_eq!(trace.main_before, 1);
+        assert_eq!(trace.transfer, 3);
+    }
+
+    /// No current candidates means stale side rows are harmless; the kept
+    /// method tool and coins remain protected.
+    #[test]
+    fn stale_side_rows_do_not_block_completion_with_only_protected_items() {
+        let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
+        let side_row = |id, name, count, slot| {
+            row_with(
+                item(id, name, count, ItemContainer::BankSide),
+                &["Deposit-All"],
+                slot,
+            )
+        };
+        let pack_row = |id, name, count, slot| {
+            row_with(item(id, name, count, ItemContainer::Inventory), &[], slot)
+        };
+        let side = vec![
+            side_row(swordfish, "Swordfish", 13, 0),
+            side_row(tuna, "Tuna", 14, 1),
+            side_row(net, "Net", 1, 2),
+            side_row(beer, "Beer", 1, 3),
+        ];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![
+                pack_row(harpoon, "Harpoon", 1, 4),
+                pack_row(coins, "Coins", 6_191, 5),
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let (_, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::DepositProducts {
+                    products: Arc::from([swordfish, tuna, net, beer]),
+                    keep: Arc::from([harpoon, coins]),
+                },
+                false,
+            ),
+        );
+        assert!(matches!(
+            poll,
+            Poll::Ready(Ok(BankReceipt { complete: true }))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// `BankMachine` owns transfers for both the native Gatherer and Quester.
+    /// One delayed first observation must not spend the tick budget as wall time.
+    #[test]
+    fn transfer_is_pending_after_a_thirty_second_gap_and_settles_on_count_delta() {
+        let id = 333;
+        let side = vec![row_with(
+            item(id, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(id, "Trout", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            ),
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id: clicked, .. }) if clicked == id
+        ));
+
+        let delayed = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_secs(30);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            delayed.is_pending(),
+            "one unchanged observation after 30 wall seconds is not eight observed ticks: {delayed:?}"
+        );
+
+        snapshot.seed_inventory(Vec::new(), 28);
+        let settled = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            settled,
+            Poll::Ready(Ok(BankReceipt { complete: true }))
+        ));
+    }
+
+    #[test]
+    fn same_tick_transfer_repolls_remain_pending_after_wall_clock_gap() {
+        let id = 333;
+        let side = vec![row_with(
+            item(id, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(id, "Trout", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            ),
+        );
+        assert!(poll.is_pending());
+        let _ = acknowledge(&mut ledger, 1);
+
+        for repoll in 1..=3 {
+            let poll = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.cx.active_now = Duration::from_secs(30);
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                poll.is_pending(),
+                "same-tick repoll {repoll} cannot expire the transfer: {poll:?}"
+            );
+        }
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_secs(30);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            poll.is_pending(),
+            "one fresh tick after 30 wall seconds is still within the observed-tick bound: {poll:?}"
+        );
+    }
+
+    #[test]
+    fn transfer_expires_after_eight_fresh_ticks_and_success_wins_at_the_boundary() {
+        let id = 333;
+        let side = vec![row_with(
+            item(id, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        let make_snapshot = || {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(vec![item(id, "Trout", 2, ItemContainer::Inventory)], 28);
+            snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side.clone());
+            snapshot
+        };
+        let request = || {
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            )
+        };
+
+        let snapshot = make_snapshot();
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request());
+        assert!(poll.is_pending());
+        let _ = acknowledge(&mut ledger, 1);
+        for tick_number in 2..=8 {
+            let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                poll.is_pending(),
+                "tick {tick_number} is within the eight-tick bound: {poll:?}"
+            );
+        }
+        let expired = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            expired,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank transfer did not settle"
+        ));
+
+        let mut snapshot = make_snapshot();
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request());
+        assert!(poll.is_pending());
+        let _ = acknowledge(&mut ledger, 1);
+        for tick_number in 2..=8 {
+            let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(poll.is_pending(), "tick {tick_number}: {poll:?}");
+        }
+        let settled_at_boundary = {
+            snapshot.seed_inventory(Vec::new(), 28);
+            with_tick(&snapshot, &mut ledger, 9, |tick| {
+                tick.cx.active_now = Duration::from_secs(30);
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+        };
+        assert!(matches!(
+            settled_at_boundary,
+            Poll::Ready(Ok(BankReceipt { complete: true }))
+        ));
+    }
+
+    #[test]
+    fn note_mode_dispatch_uses_eight_fresh_ticks() {
+        let id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(
+                    BankRequest {
+                        bank: None,
+                        action: BankAction::WithdrawTo {
+                            withdrawals: Arc::from([Withdrawal {
+                                id,
+                                name: Arc::from("Bait"),
+                                target: 2,
+                            }]),
+                        },
+                        partial_ok: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.as_slice(),
+            [action]
+                if matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+                )
+        ));
+        for tick_number in 2..=8 {
+            let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(poll.is_pending(), "tick {tick_number}: {poll:?}");
+        }
+        let expired = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            expired,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item mode dispatch did not settle"
         ));
     }
 
@@ -3151,11 +3958,95 @@ mod tests {
             "a deposit outside its bank session must fail without another click: {wrong:#?}"
         );
     }
-
-    /// Until-empty deposit: a posted empty side settles at once; a side
-    /// root still down is not an empty side and waits the 1.2 s view bound.
+    /// At the transfer bound, unavailable inventory cannot mask timeout, and
+    /// losing the bank session still takes precedence over that timeout.
     #[test]
-    fn deposit_all_reads_the_side_root_not_the_list_length() {
+    fn unavailable_protected_pack_preserves_timeout_and_session_ordering() {
+        let trout = 333;
+        let side = vec![row_with(
+            item(trout, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-All"],
+            0,
+        )];
+        let request = || {
+            bank_request(
+                BankAction::DepositProducts {
+                    products: Arc::from([trout]),
+                    keep: Arc::from([311]),
+                },
+                false,
+            )
+        };
+        let open = || {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(
+                vec![
+                    item(trout, "Trout", 2, ItemContainer::Inventory),
+                    item(311, "Harpoon", 1, ItemContainer::Inventory),
+                ],
+                28,
+            );
+            snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side.clone());
+            snapshot
+        };
+
+        let snapshot = open();
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request());
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == trout
+        ));
+        let mut unavailable_open = GameSnapshot::new();
+        unavailable_open.seed_ingame(2);
+        unavailable_open.seed_bank_observation(10, 1, Some(Vec::new()), side.clone());
+        for tick in 2..=8 {
+            let poll = with_tick(&unavailable_open, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                poll.is_pending(),
+                "tick {tick} is within the eight-tick transfer bound: {poll:?}"
+            );
+        }
+        let timed_out = with_tick(&unavailable_open, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            timed_out,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank transfer did not settle"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        let snapshot = open();
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request());
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == trout
+        ));
+        let mut unavailable_closed = GameSnapshot::new();
+        unavailable_closed.seed_ingame(2);
+        unavailable_closed.seed_bank_observation(-1, 1, None, Vec::new());
+        let closed = with_tick(&unavailable_closed, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            closed,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank closed before the transfer settled"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// Until-empty waits for a usable side view; an empty or closed side root
+    /// cannot stand in for held candidates or report success at the bound.
+    #[test]
+    fn deposit_all_fails_when_side_view_never_becomes_usable() {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![item(526, "Bones", 1, ItemContainer::Inventory)], 28);
@@ -3169,11 +4060,23 @@ mod tests {
             )
         };
         let mut ledger = None;
-        let (_, poll) = begin_bank(&snapshot, &mut ledger, all());
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, all());
+        assert!(
+            poll.is_pending(),
+            "a posted empty side cannot hide a held candidate"
+        );
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
         assert!(matches!(
             poll,
-            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank deposit view did not post"
         ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
         snapshot.seed_side_modal(-1);
         let mut ledger = None;
@@ -3185,13 +4088,14 @@ mod tests {
         let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
-        assert!(
-            matches!(poll, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
-            "the until-empty view bound settles: {poll:?}"
-        );
+        assert!(matches!(
+            poll,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank deposit view did not post"
+        ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
-        // Required never settles on that bound.
+        // Required never settles on the UntilEmpty view bound.
         let mut ledger = None;
         let (handle, poll) = begin_bank(
             &snapshot,

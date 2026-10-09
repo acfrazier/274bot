@@ -16,10 +16,11 @@ use nav::WorldState;
 use script::{ScriptCtx, SlotScript};
 
 use super::{
-    abort_script_walk, apply_watchdog_nav_action, dispatch_observed_bank_op,
-    dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
-    reset_script_nav, resumed_walk, route_inspect, script_slot, take_carried_walk,
-    with_script_snapshot_input_shorts, NavBot, PostedWalkOutcome, ScriptWall,
+    abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
+    dispatch_observed_bank_op, dispatch_script_interact_cached, fill_withdraw_action,
+    pack_cached_reach, recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect,
+    script_slot, take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
+    PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -1150,6 +1151,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     while let Some(action) = slot.take_native_action() {
                         let batch = action.batch;
                         let authority = action.authority();
+                        let bank_deposit = action.bank_deposit;
                         if !authority.live() {
                             continue;
                         }
@@ -1194,11 +1196,12 @@ pub(crate) fn script_observe_cached_with_channels(
                                 #[cfg(test)]
                                 let proof_capture = crate::combat_proof::capture_enabled(name);
                                 #[cfg(test)]
-                                let packet_trace_enabled =
-                                    api::hostlog::enabled(Category::InteractTrace) || proof_capture;
+                                let packet_trace_enabled = bank_deposit.is_some()
+                                    || api::hostlog::enabled(Category::InteractTrace)
+                                    || proof_capture;
                                 #[cfg(not(test))]
-                                let packet_trace_enabled =
-                                    api::hostlog::enabled(Category::InteractTrace);
+                                let packet_trace_enabled = bank_deposit.is_some()
+                                    || api::hostlog::enabled(Category::InteractTrace);
                                 let packet_trace = packet_trace_enabled
                                     .then(|| driver.packet_checkpoint())
                                     .flatten();
@@ -1211,7 +1214,33 @@ pub(crate) fn script_observe_cached_with_channels(
                                 #[cfg(all(windows, test, feature = "journal-paint-proof"))]
                                 let proof_close =
                                     matches!(&request, script::shim::InteractReq::CloseModal);
-                                let accepted = if matches!(
+                                let bank_dispatch = bank_deposit.as_ref().map(|trace| {
+                                    let matches = matches!(
+                                        &request,
+                                        script::shim::InteractReq::InvButton {
+                                            id,
+                                            slot,
+                                            component,
+                                            operation,
+                                            bank_generation,
+                                        } if *id == trace.id
+                                            && *slot == trace.slot
+                                            && *component == trace.component
+                                            && *operation == trace.operation
+                                            && *bank_generation == trace.generation
+                                    );
+                                    if matches {
+                                        dispatch_native_bank_deposit(driver, snapshot, trace)
+                                    } else {
+                                        BankDepositDispatch {
+                                            accepted: false,
+                                            refusal: Some("metadata-mismatch".to_owned()),
+                                        }
+                                    }
+                                });
+                                let accepted = if let Some(dispatch) = bank_dispatch.as_ref() {
+                                    dispatch.accepted
+                                } else if matches!(
                                     request,
                                     script::shim::InteractReq::WithdrawX { .. }
                                 ) {
@@ -1244,18 +1273,20 @@ pub(crate) fn script_observe_cached_with_channels(
                                         obj_names_arc.clone(),
                                     )
                                 };
+                                let mut emitted_packets = 0;
+                                let mut opcode = None;
                                 if let Some(checkpoint) = packet_trace {
-                                    let mut count = 0;
-                                    let decoded = driver.trace_packets(*checkpoint, &mut |opcode| {
-                                        count += 1;
+                                    let decoded = driver.trace_packets(*checkpoint, &mut |packet_opcode| {
+                                        emitted_packets += 1;
+                                        opcode.get_or_insert(packet_opcode);
                                         #[cfg(test)]
                                         if let Some(opcodes) = proof_wire_opcodes.as_mut() {
-                                            opcodes.push(opcode);
+                                            opcodes.push(packet_opcode);
                                         }
                                         host_log!(
                                             Category::InteractTrace,
                                             Level::Debug,
-                                            "native-packet account={name} run={:?} tick={tick} request={} opcode={opcode}",
+                                            "native-packet account={name} run={:?} tick={tick} request={} opcode={packet_opcode}",
                                             authority.run(),
                                             authority.request_id(),
                                         );
@@ -1267,9 +1298,33 @@ pub(crate) fn script_observe_cached_with_channels(
                                     host_log!(
                                         Category::InteractTrace,
                                         Level::Debug,
-                                        "native-packets account={name} run={:?} tick={tick} request={} count={count} decoded={decoded} accepted={accepted}",
+                                        "native-packets account={name} run={:?} tick={tick} request={} count={emitted_packets} decoded={decoded} accepted={accepted}",
                                         authority.run(),
                                         authority.request_id(),
+                                    );
+                                }
+                                if let (Some(trace), Some(dispatch)) =
+                                    (bank_deposit.as_ref(), bank_dispatch.as_ref())
+                                {
+                                    host_log!(
+                                        Category::BankOp,
+                                        Level::Debug,
+                                        "bank-deposit-dispatch run={:?} bank_generation={} transfer={} request={} click_tick={} tick={} id={} slot={} component={} option={} operation={} accepted={} refusal={:?} emitted_packets={} opcode={:?}",
+                                        authority.run(),
+                                        trace.generation,
+                                        trace.transfer,
+                                        authority.request_id(),
+                                        trace.click_tick,
+                                        tick,
+                                        trace.id,
+                                        trace.slot,
+                                        trace.component,
+                                        trace.option,
+                                        trace.operation,
+                                        dispatch.accepted,
+                                        dispatch.refusal.as_deref(),
+                                        emitted_packets,
+                                        opcode,
                                     );
                                 }
                                 #[cfg(test)]
