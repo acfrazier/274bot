@@ -1124,6 +1124,15 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
                             matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
                         });
+                        if reached_endpoint {
+                            api::host_log!(
+                                api::hostlog::Category::NavTrace,
+                                api::hostlog::Level::Debug,
+                                slot = name,
+                                "gather-approach route-end request={} arrival={arrival:?} loc={loc_id:?} armed={armed:?} endpoint={endpoint:?} endpoint_arrived_at={endpoint_arrival:?} server={here:?} arrived={arrived} outcome={follow_outcome:?}",
+                                bot.walk_request_id,
+                            );
+                        }
                         if !owned_estimated_end || !reached_endpoint {
                             apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
                         }
