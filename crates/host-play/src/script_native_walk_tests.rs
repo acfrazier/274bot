@@ -1922,6 +1922,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                 &rig.navs,
                 "alice",
                 rig.shared.lock().options,
+                None,
             )
             .0
             .allow_bank_fetch,

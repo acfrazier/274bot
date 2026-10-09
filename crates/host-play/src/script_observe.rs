@@ -1343,7 +1343,12 @@ pub(crate) fn script_observe_cached_with_channels(
                                 };
                                 // A refusal reaches the owner as a typed
                                 // `Refused` receipt on the next observation.
-                                arm.queue_native_route(snapshot, request, authority);
+                                arm.queue_native_route(
+                                    snapshot,
+                                    request,
+                                    authority,
+                                    slot.api_gather_walk_permissions(),
+                                );
                             }
                             script::native::HostEffect::AssessWalk(request) => {
                                 let arm = super::ScriptWalkArm {
@@ -1363,6 +1368,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         tick,
                                         sequence: tick,
                                     },
+                                    slot.api_gather_walk_permissions(),
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
@@ -1378,6 +1384,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         tick,
                                         sequence: tick,
                                     },
+                                    slot.api_gather_walk_permissions(),
                                 );
                             }
                         }
