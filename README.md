@@ -53,9 +53,14 @@ profile is `Remote`. A TCP profile may opt in to a non-loopback endpoint with
 `allow_plaintext_offhost: true`, but remains `Remote`; the opt-in is rejected
 on WSS profiles.
 
-Public play uses the `rs2b2t` roster, with w1 and w2 bundled by default.
+Public play uses the `rs2b2t` roster, with w1, w2 and w3 bundled by default.
 The shared cache is prepared from the first world, trying the
 next if its asset server is unreachable; `~/.274bot/unpack-289` remains shared.
+The exact 0.2.0 `servers.json` roster with w1 and w2 is extended once;
+`servers.json.pre-0.2.0.1` is the byte-exact backup and completion marker, so
+later edits (including removing w3) stay respected. If the migration cannot be
+written or `servers.json` is a symlink, the app warns and keeps the existing
+roster. Other world lists are left alone.
 Each account can select `auto` or a listed world in the panel Profiles editor.
 An auto account moves to the next listed world when login says it is full,
 waiting after all worlds report full; pinned accounts stay put. Panel and TUI

@@ -564,7 +564,15 @@ fn parse_args_from_rs2b2t_selects_remote_profile() {
         .unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
-    assert_eq!(selection.public_worlds().unwrap().worlds.len(), 2);
+    let world_three = selection.public_worlds().unwrap().by_number(3).unwrap();
+    assert_eq!(
+        (
+            world_three.host.as_str(),
+            world_three.port,
+            world_three.node_id
+        ),
+        ("w3.rs2b2t.com", 443, 12)
+    );
     std::fs::remove_dir_all(home).unwrap();
     assert!(parse_args_from(["--prod"]).is_err());
 }

@@ -108,7 +108,7 @@ layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 ## Public worlds (`rs2b2t`)
 
 `--rs2b2t`, `--profile rs2b2t`, or `BOT_SERVER_PROFILE=rs2b2t` selects the
-rs2b2t roster (w1 and w2 on port 443 by default). `public-289` is a profile
+rs2b2t roster (w1, w2 and w3 on port 443 by default). `public-289` is a profile
 name alias; `--prod` and `BOT_TARGET` were removed.
 The shared cache is fetched from the first reachable asset world. Each vault account stores
 an optional world number: auto rotates on response 7, waits after all
