@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
@@ -1062,7 +1064,7 @@ fn spawn_slot_thread(
                         &username,
                         uid,
                         &arm,
-                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                     );
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
@@ -1140,12 +1142,20 @@ fn spawn_slot_thread(
                         }
                         Err(e) => {
                             show_title_message(&mut client, &e.mes1, &e.mes2);
+                            let transfer_countdown = Cell::new(None);
                             if wait_for_transfer_response(
                                 &e,
                                 &arm,
                                 &slot_statuses,
                                 &username,
-                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                                &transfer_countdown,
+                                &mut title_frames(
+                                    wait_frames,
+                                    &mut client,
+                                    &username,
+                                    &slot_frame,
+                                    Some(&transfer_countdown),
+                                ),
                             )
                             .is_some()
                             {
@@ -1188,7 +1198,7 @@ fn spawn_slot_thread(
                             }
                             arm.wait_for_retry(
                                 retry,
-                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                             );
                             continue;
                         }
@@ -1839,8 +1849,13 @@ fn title_frames<'a>(
     client: &'a mut Client,
     username: &'a str,
     slot_frame: &'a SlotFrame,
+    countdown: Option<&'a Cell<Option<u64>>>,
 ) -> impl FnMut() -> Duration + 'a {
+    let mut displayed_countdown = None;
     move || {
+        if let Some(remaining) = countdown.and_then(Cell::get) {
+            update_transfer_title(client, remaining, &mut displayed_countdown);
+        }
         wait.frame(client, username, |c| {
             slot_frame(
                 c,
@@ -1867,4 +1882,18 @@ fn show_title_message(client: &mut Client, mes1: &str, mes2: &str) {
             line.push_str(text);
         }
     }
+}
+
+pub(super) fn update_transfer_title(
+    client: &mut Client,
+    remaining: u64,
+    displayed: &mut Option<u64>,
+) -> bool {
+    if *displayed == Some(remaining) {
+        return false;
+    }
+    let mes2 = format!("Your profile will be transferred in: {remaining} seconds");
+    show_title_message(client, "You have only just left another world", &mes2);
+    *displayed = Some(remaining);
+    true
 }

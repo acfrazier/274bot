@@ -57,6 +57,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - The Quest Paths folder, its load switch and Reload Paths moved from Nav
   config to Script prefs, under the Quester card. They still apply to every
   bot, and the heading says so.
+- The title screen's "profile will be transferred in" countdown now ticks down instead of staying at its first number.
 
 ### TUI
 
