@@ -297,7 +297,7 @@ fn latest_chat(snapshot: api::snapshot::SnapshotView<'_>) -> Option<i32> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TargetObservation {
+pub(super) enum TargetObservation {
     Active,
     Depleted,
     Hazard,
@@ -315,7 +315,7 @@ impl TargetObservation {
     }
 }
 
-fn observe_target(
+pub(super) fn observe_target(
     snapshot: api::snapshot::SnapshotView<'_>,
     catalog: &GatherCatalog,
     target: &TargetPlan,
