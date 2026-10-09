@@ -65,6 +65,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   The Quest Paths rows sit under a "Quester: Quest Paths (all bots)"
   heading.
 
+### Login
+
+- rs2b2t World 3 is supported. New installs list it, and an existing World
+  1/World 2 list is extended once (a backup of the old `servers.json` is
+  kept); a list you edited is left alone.
+
 ### Navigation
 
 - Fleet walks no longer leave eligible group members stuck at doors that

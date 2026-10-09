@@ -606,14 +606,18 @@ fn full_world_round_uses_existing_backoff() {
     let worlds = public_worlds::PublicWorlds::default();
     let mut round = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
     let mut backoff = LoginBackoff::new();
-    assert_eq!(
-        round.on_login_error(7, worlds.worlds.len()),
-        public_worlds::WorldErrorStep::SwitchNow
-    );
+    for expected_world in [2, 3] {
+        assert_eq!(
+            round.on_login_error(7, worlds.worlds.len()),
+            public_worlds::WorldErrorStep::SwitchNow
+        );
+        assert_eq!(worlds.worlds[round.index].number, expected_world);
+    }
     assert_eq!(
         round.on_login_error(7, worlds.worlds.len()),
         public_worlds::WorldErrorStep::SwitchAfterWait
     );
+    assert_eq!(worlds.worlds[round.index].number, 1);
     assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
     let mut pinned = public_worlds::WorldRound::new(&worlds, Some(2), None).unwrap();
     assert_eq!(

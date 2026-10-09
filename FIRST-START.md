@@ -178,10 +178,10 @@ cargo run --release -p tui --bin tui-play -- --rs2b2t
 `rs2b2t` fetches `/crc` and jags over **HTTPS :443** into the shared
 `~/.274bot/unpack-289` directory (tries the next listed asset world when
 the first is unavailable). The game stream uses **WSS** (`binary`
-subprotocol) on the account's selected rs2b2t world (w1/w2 by default).
+subprotocol) on the account's selected rs2b2t world (w1/w2/w3 by default).
 Panel Profiles selects each account's world (`auto` or a listed world). Auto retries the
 next world promptly on \"world full\"; pinned accounts do not move.
-`tui-play --world 2` chooses w2 only for accounts stored as auto.
+`tui-play --world 3` chooses w3 only for accounts stored as auto.
 Local stays TCP on the profile's game/asset ports.
 Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
 `~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. `--vault PATH` still
