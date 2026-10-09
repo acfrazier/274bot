@@ -131,8 +131,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Known issues
 
-Found while testing 0.2.0.1; both were already in 0.2.0, and fixes are
-planned for 0.2.0.2.
+Found while testing 0.2.0.1. All of these were already in 0.2.0; fixes are
+planned for a later release.
 
 - **Panel:** with MultiBox on, saving a new profile that has auto-login
   enabled logs the bot in but doesn't add it to the wall, so it runs without
@@ -142,6 +142,22 @@ planned for 0.2.0.2.
   not just one, so a second harpoon (or axe, pickaxe or net) stays in your
   inventory and takes a slot. Bank the extra by hand; the bot leaves it in
   the bank.
+- **Scripts:** `api.gather` can stop with "walk failed" when the next
+  resource it picks has no spot to stand at that it can reach, instead of
+  picking another one. Start it again on a different work area.
+- **Quester:** Sheep Shearer can stop at a closed door on the way to the
+  spinning wheel. In a quest queue, the next quest then starts and Sheep
+  Shearer is left unfinished.
+- **Quester:** Imp Catcher can hand in the beads and give you the reward, but
+  keep waiting on the conversation instead of marking the quest done. Check
+  the quest journal; the quest itself is complete.
+- **Quester:** if you stop a quest in the middle of one of its conversations
+  (for example the bartender's beer in Vampire Slayer) and press Start again
+  while the choice is still open, the quest stops at that choice. Close the
+  conversation (walk a step) before pressing Start.
+- **Combat:** if a fight is started against a target that can't be attacked,
+  the bot stops as it should, but on very low HP its walk away can stall next
+  to the target.
 
 ### Not in this release
 
