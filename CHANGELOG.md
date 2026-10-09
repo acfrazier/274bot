@@ -136,8 +136,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Known issues
 
-Found while testing 0.2.0.1. All of these were already in 0.2.0; fixes are
-planned for a later release.
+Found while testing 0.2.0.1. Each comes from code this release didn't
+change, so 0.2.0 behaves the same way; fixes are planned for a later
+release.
 
 - **Panel:** with MultiBox on, saving a new profile that has auto-login
   enabled logs the bot in but doesn't add it to the wall, so it runs without
