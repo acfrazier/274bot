@@ -190,6 +190,55 @@ pub(crate) fn dispatch_script_interact(
     )
 }
 
+pub(crate) struct BankDepositDispatch {
+    pub accepted: bool,
+    pub refusal: Option<String>,
+}
+
+pub(crate) fn dispatch_native_bank_deposit(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    trace: &script::native::BankDepositTrace,
+) -> BankDepositDispatch {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+
+    let refuse = |reason: &str| BankDepositDispatch {
+        accepted: false,
+        refusal: Some(reason.to_owned()),
+    };
+    if snapshot.bank_component_id() < 0 {
+        return refuse("bank-not-open");
+    }
+    if !snapshot.bank_loaded() {
+        return refuse("bank-not-loaded");
+    }
+    if snapshot.bank_session_generation() != trace.generation {
+        return refuse("generation-mismatch");
+    }
+    let Some(item) = snapshot.bank_side().iter().find(|item| {
+        item.def.id == trace.id && item.slot == trace.slot && item.component_id == trace.component
+    }) else {
+        return refuse("row-missing");
+    };
+    let option = usize::try_from(trace.operation)
+        .ok()
+        .and_then(|operation| operation.checked_sub(1))
+        .and_then(|index| item.actions.get(index))
+        .and_then(Option::as_deref);
+    if option != Some(trace.option.as_ref()) {
+        return refuse("operation-mismatch");
+    }
+    match api::interact::Interactions::new(snapshot, driver)
+        .interact(OpTarget::Item(item), ActionSpec::Operation(trace.operation))
+    {
+        SendResult::Sent { .. } => BankDepositDispatch {
+            accepted: true,
+            refusal: None,
+        },
+        SendResult::Refused { reason, .. } => refuse(&format!("{reason:?}")),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_script_interact_cached<R>(
     driver: &mut dyn Driver,

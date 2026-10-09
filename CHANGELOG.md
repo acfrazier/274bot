@@ -73,6 +73,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   zero attacks, while arrows were used and Ranged XP rose, whenever another
   player stood on the bot's tile.
 
+### Gatherer
+
+- Bank trips no longer fail with "bank transfer did not settle" after the
+  first or last item goes in. The bot sometimes clicked an item a second time
+  because the bank's inventory panel still showed it for a moment after it
+  was deposited, then waited for a count that could never drop. It now
+  deposits only what is still in your inventory, so everything it should bank
+  (including spare tools and random-event items) goes in. The Quester's bank
+  visits get the same fix.
+- Bank transfers wait up to eight game ticks to complete instead of four
+  seconds of real time, so a laggy server or a busy computer no longer makes a
+  deposit or withdrawal give up early.
+
+### Scripts
+
+- rs2b0t-compatible deposits (`depositInventory`, `depositAllMatching`,
+  `depositAllExcept`) only deposit items you actually hold. If the bank's
+  inventory panel doesn't show a held item within about a second, they now
+  fail with "bank deposit view did not post" instead of reporting success
+  without depositing it.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1

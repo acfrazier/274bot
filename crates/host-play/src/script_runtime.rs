@@ -38,7 +38,9 @@ pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input}
 pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_shorts};
 #[path = "script_interact.rs"]
 mod script_interact;
-pub(super) use script_interact::dispatch_script_interact_cached;
+pub(super) use script_interact::{
+    dispatch_native_bank_deposit, dispatch_script_interact_cached, BankDepositDispatch,
+};
 #[cfg(test)]
 pub(super) use script_interact::{dispatch_script_interact, validated_duel_accept};
 #[path = "script_paint.rs"]

@@ -18,8 +18,10 @@
 //! G2 cells cover moving fishing spots, supply gates, oak respawn and scene
 //! boundaries, Auto widening, and an id-seeded gas hazard. G3 cells cover
 //! banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
-//! The Catherby harpoon Bank cell requires two positive deposit trips and fresh
-//! fishing yields after each return, with the inventory-only tool conserved.
+//! The fixed harpoon Bank cell requires two positive deposit trips and fresh
+//! fishing yields after each return, and conserves the inventory-only harpoon.
+//! Its first trip also verifies that a seeded casket, spare net and beer are
+//! deposited.
 //! Its Auto sibling exercises the operator Fishing 76/radius 40/Catherby Start
 //! bag and the panel's friendly "Raw tuna / Raw swordfish" label, without seeded
 //! fish, resources, NPCs or an incidental-drop gate. Initial level/tool fixtures
@@ -77,6 +79,8 @@ const TUNA_ID: i32 = 359;
 const SWORDFISH_ID: i32 = 371;
 const FEATHERS_ID: i32 = 314;
 const CASKET_ID: i32 = 405;
+const SPARE_NET_ID: i32 = 303;
+const BEER_ID: i32 = 1917;
 const OAK_ID: i32 = 1281;
 const MAPLE_LOG_ID: i32 = 1517;
 const WILLOW_LOG_ID: i32 = 1519;
@@ -2959,6 +2963,16 @@ impl GatherSlot {
         {
             let inventory_before = self.snapshot_inventory_counts();
             let deposit_ids = self.native_deposit_ids()?;
+            if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
+                for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
+                    if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
+                        return Err(format!(
+                            "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
+                            self.name()
+                        ));
+                    }
+                }
+            }
             let seeded_casket_expected =
                 if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
                     self.witness.seeded_casket_baseline_count
@@ -4875,7 +4889,11 @@ fn fixture_plan(
             plan.bank_seed.push(("bronze_axe".into(), 2));
         }
         LiveCase::FishBait => plan.bank_seed.push(("feather".into(), 7)),
-        LiveCase::FishHarpoonBank => plan.inventory_seed.push(("casket".into(), 1)),
+        LiveCase::FishHarpoonBank => {
+            plan.inventory_seed.push(("casket".into(), 1));
+            plan.inventory_seed.push(("net".into(), 1));
+            plan.inventory_seed.push(("beer".into(), 1));
+        }
         LiveCase::CoinRunes => {
             plan.bank_seed.push(("coins".into(), 1_000));
             plan.inventory_seed.push(("coins".into(), 40));
@@ -7754,7 +7772,14 @@ mod fish_harpoon_auto_fixture_tests {
         );
         assert_eq!(Cell::Fishing.default_level(fixed), 99);
         let (_, fixed_plan, _) = fixture_plan(Cell::Fishing, fixed).unwrap();
-        assert_eq!(fixed_plan.inventory_seed, vec![("casket".to_owned(), 1)]);
+        assert_eq!(
+            fixed_plan.inventory_seed,
+            vec![
+                ("casket".to_owned(), 1),
+                ("net".to_owned(), 1),
+                ("beer".to_owned(), 1)
+            ]
+        );
     }
 
     #[test]

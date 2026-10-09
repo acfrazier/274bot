@@ -2,21 +2,22 @@
 //! `bank_deposit` [`crate::machine`] family, and the [`Deposit`] piece the
 //! bank-nearest run reuses.
 //!
-//! Each round reads the posted bank-side backpack. A side root still down
-//! waits up to 1.2 s and then counts as empty; a posted empty side ends the
-//! loop at once. The matcher picks the first row in posted order (a script
-//! predicate through the callback path, every row whose id is not kept, or
-//! every row) and the loop presses that exact row's All op through the
-//! [`crate::bank::ops`] kernel (an id, slot and component, never a name),
-//! then waits for that id to leave the pack. No match, an unsettled
-//! deposit, a closed or new bank session, or 32 rounds end the loop.
+//! Each round reads both the posted bank-side backpack and the current main
+//! inventory. A side root down or a side view without the current candidate
+//! rows waits up to 1.2 s and then fails rather than reporting success; stale
+//! side-only rows are never clicked. The matcher picks the first usable row in
+//! posted order (a script predicate through the callback path, every row whose
+//! id is not kept, or every row) and presses that exact row's All op through
+//! the [`crate::bank::ops`] kernel (an id, slot and component, never a name),
+//! then waits for that id to leave the pack. No match, an unsettled deposit, a
+//! closed or new bank session, or 32 rounds end the loop.
 
 use crate::bank::ops::{
     self, DepositKind, DepositRequest, DepositScan, DepositSpec, DEPOSIT_VIEW_MS, MAX_DEPOSITS,
-    TRANSFER_BOUND,
+    TRANSFER_OBSERVED_TICK_LIMIT,
 };
 use crate::bank_op::{self, BankView};
-use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed::{self, ItemRow};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -71,8 +72,11 @@ enum Phase {
         index: usize,
         asked: Option<(i32, Option<i32>)>,
     },
-    /// One pressed row: waiting for `id`'s held count to fall below `before`.
-    Await { id: i32, before: i32 },
+    Await {
+        id: i32,
+        before: i32,
+        started_tick: u64,
+    },
 }
 
 /// One deposit loop.
@@ -94,6 +98,7 @@ enum Next {
     Press(ops::DepositClick),
     Ask,
     WaitView,
+    ViewExpired,
     Done,
 }
 
@@ -117,58 +122,81 @@ impl Deposit {
     }
 
     /// One round's decision from the posted side and pack.
-    fn scan(&mut self, same_session: bool, empty_wait_done: bool) -> Next {
+    fn scan(&mut self, same_session: bool, view_wait_expired: bool) -> Next {
         observed::with(|scene| {
             let session = scene.since_login();
             let side = bank_op::posted_side(session);
-            let keep: &[i32] = match (&mut self.matcher, side) {
-                (Matcher::Hook { .. }, _) => {
-                    return match side {
-                        _ if !same_session => Next::Done,
-                        Some(_) => Next::Ask,
-                        None if empty_wait_done => Next::Done,
-                        None => Next::WaitView,
-                    };
+            let pack = session.inv().map(Vec::as_slice);
+            if matches!(self.matcher, Matcher::Hook { .. }) {
+                if !same_session {
+                    return Next::Done;
                 }
+                let Some(pack) = pack else {
+                    return Next::WaitView;
+                };
+                if !pack.iter().any(|row| row.count > 0) {
+                    return Next::Done;
+                }
+                let usable = side.is_some_and(|side| {
+                    pack.iter()
+                        .filter(|row| row.count > 0)
+                        .all(|row| ops::pack_has_current_row(side, row.id, row.slot))
+                });
+                return if usable {
+                    Next::Ask
+                } else if view_wait_expired {
+                    Next::ViewExpired
+                } else {
+                    Next::WaitView
+                };
+            }
+            let keep: &[i32] = match (&mut self.matcher, side) {
                 (Matcher::All, _) => &[],
                 (Matcher::Keep { names, ids }, Some(side)) => {
                     ids.get_or_insert_with(|| kept_ids(side, names))
                 }
                 // Not posted yet: `deposit_next` waits before any click.
                 (Matcher::Keep { ids, .. }, None) => ids.as_deref().unwrap_or_default(),
+                (Matcher::Hook { .. }, _) => unreachable!("hook scan returned above"),
             };
             let spec = DepositSpec {
                 kind: DepositKind::UntilEmpty,
                 keep,
                 only: None,
             };
-            let pack = session.inv().map(Vec::as_slice);
-            match ops::deposit_next(&spec, side, pack, empty_wait_done, same_session) {
+            match ops::deposit_next(&spec, side, pack, view_wait_expired, same_session) {
                 DepositScan::Click(click) => Next::Press(click),
                 DepositScan::WaitView => Next::WaitView,
-                DepositScan::Done | DepositScan::MissingRequired | DepositScan::SessionGone => {
-                    Next::Done
+                DepositScan::ViewExpired => Next::ViewExpired,
+                DepositScan::Done | DepositScan::SessionGone => Next::Done,
+                DepositScan::MissingRequired => {
+                    unreachable!("until-empty selection has no capacity operation")
                 }
             }
         })
     }
 
     /// Press `click` in this loop's session and wait for it to settle.
-    fn press(&mut self, click: ops::DepositClick, generation: u64, cx: &mut Cx<'_>) {
-        let before = observed::with(|scene| {
-            scene
+    fn press(&mut self, click: ops::DepositClick, generation: u64, cx: &mut Cx<'_>) -> bool {
+        let (before, started_tick) = observed::with(|scene| {
+            let started_tick = scene.tick().unwrap_or_default();
+            let before = scene
                 .since_login()
                 .inv()
-                .map_or(0, |inv| ops::count_id(inv, click.id))
+                .map(|inv| ops::count_id(inv, click.id));
+            (before, started_tick)
         });
+        let Some(before) = before.filter(|before| *before > 0) else {
+            return false;
+        };
         cx.emit(ops::deposit_req(click, generation));
-        cx.clock()
-            .arm(u64::try_from(TRANSFER_BOUND.as_millis()).unwrap_or(u64::MAX));
         self.view_armed = false;
         self.phase = Phase::Await {
             id: click.id,
             before,
+            started_tick,
         };
+        true
     }
 
     /// Drive the loop; the reply of a predicate call it asked for is read
@@ -186,9 +214,12 @@ impl Deposit {
                     }
                     let view = BankView::now();
                     let same_session = self.same_session(&view);
-                    let empty_wait_done = self.view_armed && cx.clock().bound_reached();
-                    match self.scan(same_session, empty_wait_done) {
+                    let view_wait_expired = self.view_armed && cx.clock().bound_reached();
+                    match self.scan(same_session, view_wait_expired) {
                         Next::Done => return Step::Done(()),
+                        Next::ViewExpired => {
+                            return Step::Fail(Thrown::new("bank deposit view did not post"));
+                        }
                         Next::Press(click) => {
                             self.press(click, view.generation, cx);
                             return Step::Wait;
@@ -200,9 +231,8 @@ impl Deposit {
                             };
                         }
                         Next::WaitView if self.view_armed => {
-                            // The pack itself never posted inside the bound.
                             if cx.clock().bound_reached() {
-                                return Step::Done(());
+                                return Step::Fail(Thrown::new("bank deposit view did not post"));
                             }
                             return Step::Wait;
                         }
@@ -228,17 +258,50 @@ impl Deposit {
                     else {
                         unreachable!("only a predicate is asked row by row");
                     };
-                    // The posted row at `index`, re-read: the predicate is
-                    // answered on a later step.
-                    let row = observed::with(|scene| {
-                        bank_op::posted_side(scene.since_login())
-                            .and_then(|side| side.get(index))
-                            .map(|row| (row.name.clone(), row.id, row.slot))
+                    let (side_posted, row) = observed::with(|scene| {
+                        let session = scene.since_login();
+                        match (bank_op::posted_side(session), session.inv()) {
+                            (Some(side), Some(pack)) => (
+                                true,
+                                side.get(index).map(|row| {
+                                    (
+                                        row.name.clone(),
+                                        row.id,
+                                        row.slot,
+                                        row.count > 0
+                                            && ops::pack_has_current_row(pack, row.id, row.slot),
+                                    )
+                                }),
+                            ),
+                            _ => (false, None),
+                        }
                     });
-                    // Past the last row (or the side went down): no match.
-                    let Some((name, id, slot)) = row else {
+                    if !side_posted {
+                        if asked.is_some() {
+                            if let Some(Reply::Threw(thrown)) = cx.reply() {
+                                return Step::Fail(thrown);
+                            }
+                        }
+                        self.phase = Phase::Scan;
+                        continue;
+                    }
+                    let Some((name, id, slot, current)) = row else {
+                        if asked.is_some() {
+                            if let Some(Reply::Threw(thrown)) = cx.reply() {
+                                return Step::Fail(thrown);
+                            }
+                            self.phase = Phase::Scan;
+                            continue;
+                        }
                         return Step::Done(());
                     };
+                    if asked.is_none() && !current {
+                        self.phase = Phase::Match {
+                            index: index + 1,
+                            asked: None,
+                        };
+                        continue;
+                    }
                     let name = name.as_deref().unwrap_or_default();
                     let Some(asked) = asked else {
                         self.phase = Phase::Match {
@@ -265,6 +328,10 @@ impl Deposit {
                         }
                         None => false,
                     };
+                    if !current {
+                        self.phase = Phase::Scan;
+                        continue;
+                    }
                     if !hit {
                         self.phase = Phase::Match {
                             index: index + 1,
@@ -283,32 +350,62 @@ impl Deposit {
                         self.phase = Phase::Scan;
                         continue;
                     }
-                    let click = observed::with(|scene| {
-                        bank_op::posted_side(scene.since_login())
-                            .and_then(|side| side.get(index))
-                            .and_then(|row| ops::deposit_click(row, DepositRequest::Sweep))
+                    let (still_current, click) = observed::with(|scene| {
+                        let session = scene.since_login();
+                        let Some(pack) = session.inv() else {
+                            return (false, None);
+                        };
+                        let Some(side) = bank_op::posted_side(session) else {
+                            return (false, None);
+                        };
+                        let Some(row) = side.get(index) else {
+                            return (false, None);
+                        };
+                        let still_current = row.count > 0
+                            && (row.id, row.slot) == asked
+                            && ops::pack_has_current_row(pack, row.id, row.slot);
+                        (
+                            still_current,
+                            still_current
+                                .then(|| ops::deposit_click(row, DepositRequest::Sweep))
+                                .flatten(),
+                        )
                     });
-                    // Frozen: a matched row with no op ends the loop.
+                    if !still_current {
+                        self.phase = Phase::Scan;
+                        continue;
+                    }
+                    // Frozen: a matched current row with no op ends the loop.
                     let Some(click) = click else {
                         return Step::Done(());
                     };
-                    self.press(click, view.generation, cx);
-                    return Step::Wait;
+                    if self.press(click, view.generation, cx) {
+                        return Step::Wait;
+                    }
+                    self.phase = Phase::Scan;
                 }
-                Phase::Await { id, before } => {
+                Phase::Await {
+                    id,
+                    before,
+                    started_tick,
+                } => {
                     let view = BankView::now();
                     if !self.same_session(&view) {
                         return Step::Done(());
                     }
-                    let held = observed::with(|scene| {
-                        scene.since_login().inv().map(|inv| ops::count_id(inv, id))
+                    let (held, current_tick) = observed::with(|scene| {
+                        let tick = scene.tick();
+                        let held = scene.since_login().inv().map(|inv| ops::count_id(inv, id));
+                        (held, tick)
                     });
                     if held.is_some_and(|held| held < before) {
                         self.round += 1;
                         self.phase = Phase::Scan;
                         continue;
                     }
-                    if cx.clock().bound_reached() {
+                    if current_tick.is_some_and(|tick| {
+                        tick.saturating_sub(started_tick) >= TRANSFER_OBSERVED_TICK_LIMIT
+                    }) {
                         return Step::Done(());
                     }
                     return Step::Wait;
@@ -438,9 +535,13 @@ mod tests {
         }
     }
 
-    /// The open bank in generation 5 with its side root up; the pack
-    /// mirrors the side rows.
     fn post(tick: u64, side: Vec<ItemRow>) {
+        post_views(tick, side.clone(), side);
+    }
+
+    /// The open bank in generation 5 with an explicitly independent main and
+    /// side observation, including a deliberately stale side fixture.
+    fn post_views(tick: u64, main: Vec<ItemRow>, side: Vec<ItemRow>) {
         observed::post(tick, |post| {
             post.session(true)
                 .bank_open(true)
@@ -448,7 +549,7 @@ mod tests {
                 .bank_generation(5)
                 .side_modal_id(700)
                 .inv_size(28)
-                .inv(side.clone())
+                .inv(main)
                 .bank(Vec::new())
                 .bank_side(side);
         });
@@ -467,6 +568,114 @@ mod tests {
     fn step() -> Vec<InteractReq> {
         machine::step(&mut NoJs);
         machine::merge_ops(Vec::new())
+    }
+    #[test]
+    fn stale_side_after_first_fish_selects_a_current_main_candidate() {
+        machine::on_reset();
+        observed::on_reset();
+        let swordfish = side_row(Some("Swordfish"), 371, 13, 0);
+        let tuna = side_row(Some("Tuna"), 359, 14, 1);
+        let net = side_row(Some("Net"), 303, 1, 2);
+        let beer = side_row(Some("Beer"), 1917, 1, 3);
+        let harpoon = side_row(Some("Harpoon"), 311, 1, 4);
+        let coins = side_row(Some("Coins"), 995, 6_191, 5);
+        let side = vec![
+            swordfish.clone(),
+            tuna.clone(),
+            net.clone(),
+            beer.clone(),
+            harpoon.clone(),
+            coins.clone(),
+        ];
+        post_views(1, side.clone(), side.clone());
+        let Started::Running(_handle) = machine::start(
+            BankDeposit::NAME,
+            json!({"keep": ["Harpoon", "Coins"]}),
+            Vec::new(),
+            0,
+        ) else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(371, 0)]);
+
+        post_views(2, vec![tuna, net, beer, harpoon, coins], side);
+        assert_eq!(step(), vec![press(359, 1)]);
+    }
+
+    #[test]
+    fn stale_last_fish_does_not_hide_current_net_and_beer_targets() {
+        machine::on_reset();
+        observed::on_reset();
+        let swordfish = side_row(Some("Swordfish"), 371, 13, 0);
+        let tuna = side_row(Some("Tuna"), 359, 14, 1);
+        let net = side_row(Some("Net"), 303, 1, 2);
+        let beer = side_row(Some("Beer"), 1917, 1, 3);
+        let harpoon = side_row(Some("Harpoon"), 311, 1, 4);
+        let coins = side_row(Some("Coins"), 995, 6_191, 5);
+        let side = vec![
+            swordfish.clone(),
+            tuna.clone(),
+            net.clone(),
+            beer.clone(),
+            harpoon.clone(),
+            coins.clone(),
+        ];
+        post_views(1, side.clone(), side.clone());
+        let Started::Running(_handle) = machine::start(
+            BankDeposit::NAME,
+            json!({"keep": ["Harpoon", "Coins"]}),
+            Vec::new(),
+            0,
+        ) else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(371, 0)]);
+
+        post_views(
+            2,
+            vec![
+                tuna.clone(),
+                net.clone(),
+                beer.clone(),
+                harpoon.clone(),
+                coins.clone(),
+            ],
+            side.clone(),
+        );
+        assert_eq!(step(), vec![press(359, 1)]);
+
+        post_views(3, vec![net, beer, harpoon, coins], side);
+        assert_eq!(step(), vec![press(303, 2)]);
+    }
+
+    #[test]
+    fn stale_side_rows_do_not_delay_completion_with_only_kept_items() {
+        machine::on_reset();
+        observed::on_reset();
+        let harpoon = side_row(Some("Harpoon"), 311, 1, 4);
+        let coins = side_row(Some("Coins"), 995, 6_191, 5);
+        let kept = vec![harpoon, coins];
+        let mut side = vec![
+            side_row(Some("Swordfish"), 371, 13, 0),
+            side_row(Some("Tuna"), 359, 14, 1),
+            side_row(Some("Net"), 303, 1, 2),
+            side_row(Some("Beer"), 1917, 1, 3),
+        ];
+        side.extend(kept.iter().cloned());
+        post_views(1, kept, side);
+        let Started::Running(handle) = machine::start(
+            BankDeposit::NAME,
+            json!({"keep": ["Harpoon", "Coins"]}),
+            Vec::new(),
+            0,
+        ) else {
+            panic!("expected a running deposit");
+        };
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Null))
+        );
     }
 
     /// `depositAllExcept(names)` resolves the kept names to every id that
@@ -510,9 +719,9 @@ mod tests {
         );
     }
 
-    /// A side root still down waits the 1.2 s view bound and then ends the
-    /// sweep; a press that never leaves the pack ends at the transfer
-    /// bound; a new bank session ends it with no further press.
+    /// A side root still down waits the 1.2 s view bound and fails while
+    /// candidates remain; an unsettled press ends at the transfer bound, and
+    /// a new bank session ends it with no further press.
     #[test]
     fn sweep_waits_for_the_side_root_and_ends_on_an_unsettled_press() {
         machine::on_reset();
@@ -537,20 +746,34 @@ mod tests {
             "a leftover list under a down root is not posted"
         );
         assert_eq!(machine::take(handle), Take::Pending);
-        machine::tests::expire_deadlines();
+        machine::age(handle, DEPOSIT_VIEW_MS);
         assert!(step().is_empty());
-        assert_eq!(
-            machine::take(handle),
-            Take::Settled(Outcome::Done(Value::Null))
-        );
+        let Take::Settled(Outcome::Failed(thrown)) = machine::take(handle) else {
+            panic!("a candidate without a usable side view must fail, not succeed");
+        };
+        assert_eq!(thrown.message(), "bank deposit view did not post");
 
         post(2, vec![bones.clone()]);
         let Started::Running(handle) = start() else {
             panic!("expected a running deposit");
         };
-        assert_eq!(step(), vec![press(526, 0)]);
-        machine::tests::expire_deadlines();
-        assert!(step().is_empty(), "no second press after the bound");
+        assert_eq!(
+            step(),
+            vec![press(526, 0)],
+            "the fresh sweep emits the exact current row on its first poll"
+        );
+        assert_eq!(machine::take(handle), Take::Pending);
+        for tick in 3..=9 {
+            post(tick, vec![bones.clone()]);
+            assert!(step().is_empty(), "tick {tick}: no second press");
+            assert_eq!(
+                machine::take(handle),
+                Take::Pending,
+                "tick {tick} is within the eight-tick transfer bound"
+            );
+        }
+        post(10, vec![bones.clone()]);
+        assert!(step().is_empty(), "the eighth fresh tick expires the press");
         assert_eq!(
             machine::take(handle),
             Take::Settled(Outcome::Done(Value::Null))
@@ -564,6 +787,85 @@ mod tests {
         observed::post(4, |post| {
             post.bank_generation(6).inv(Vec::new());
         });
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Null))
+        );
+    }
+    #[test]
+    fn sweep_transfer_is_pending_after_thirty_seconds_and_settles_on_count_delta() {
+        machine::on_reset();
+        observed::on_reset();
+        let bones = side_row(Some("Bones"), 526, 1, 0);
+        post(1, vec![bones.clone()]);
+        let Started::Running(handle) =
+            machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0)
+        else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(526, 0)]);
+        machine::age(handle, 30_000);
+
+        post(2, vec![bones]);
+        assert!(step().is_empty());
+        assert_eq!(machine::take(handle), Take::Pending);
+        post(3, Vec::new());
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Null))
+        );
+    }
+
+    #[test]
+    fn sweep_same_tick_snapshot_repoll_does_not_consume_transfer_ticks() {
+        machine::on_reset();
+        observed::on_reset();
+        let bones = side_row(Some("Bones"), 526, 1, 0);
+        post(1, vec![bones.clone()]);
+        let Started::Running(handle) =
+            machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0)
+        else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(526, 0)]);
+        machine::age(handle, 30_000);
+
+        for sequence in 1..=3 {
+            observed::post(1, |_| {});
+            machine::snapshot_step(&mut NoJs, 1, sequence);
+            assert_eq!(
+                machine::take(handle),
+                Take::Pending,
+                "same-tick snapshot sequence {sequence}"
+            );
+        }
+        post(2, Vec::new());
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Null))
+        );
+    }
+    #[test]
+    fn sweep_count_delta_on_eighth_tick_precedes_expiration() {
+        machine::on_reset();
+        observed::on_reset();
+        let bones = side_row(Some("Bones"), 526, 1, 0);
+        post(1, vec![bones.clone()]);
+        let Started::Running(handle) =
+            machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0)
+        else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(526, 0)]);
+        for tick in 2..=8 {
+            post(tick, vec![bones.clone()]);
+            assert!(step().is_empty(), "tick {tick}");
+            assert_eq!(machine::take(handle), Take::Pending, "tick {tick}");
+        }
+        post(9, Vec::new());
         assert!(step().is_empty());
         assert_eq!(
             machine::take(handle),
