@@ -140,6 +140,7 @@ impl World {
             },
             energy: 100,
             weight: 0,
+            animation_update: None,
         };
         let mut world = Self {
             data,

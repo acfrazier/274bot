@@ -2,7 +2,7 @@
 use crate::combat::request::{ActorRef, RangedMode};
 use crate::combat::tables::{CombatTables, StyleMask};
 use api::game_data::{RangedAmmoFamily, RangedWeaponFact};
-use api::snapshot::ActorView;
+use api::snapshot::LocalPlayerView;
 
 pub fn weapon(tables: &CombatTables, id: i32) -> Option<&RangedWeaponFact> {
     let rows = tables.selected().ranged_weapons();
@@ -39,31 +39,32 @@ pub fn rate(base: u8, mode: RangedMode) -> u8 {
     }
 }
 
-/// Consume the local player's selected ranged attack animation. Rewinds in
-/// the same sequence mark a restarted swing; an animation aimed at another
-/// actor is excluded just as it is for melee.
+/// Consume a new local PLAYER_INFO animation instruction, not rendered frames.
+/// The server emits one selected ranged sequence per shot, even when the same
+/// sequence is already playing or has visually expired before the snapshot.
 pub fn onset(
-    local: &ActorView,
+    local: &LocalPlayerView,
     engaged: Option<ActorRef>,
     tables: &CombatTables,
-    last_id: &mut i32,
-    last_frame: &mut i32,
+    last_update: &mut Option<u32>,
 ) -> bool {
-    let animation = local.animation;
-    let frame = local.animation_frame;
-    let changed = animation != *last_id || (animation == *last_id && frame < *last_frame);
-    *last_id = animation;
-    *last_frame = frame;
-    if !changed || animation < 0 {
+    let Some(update) = local.animation_update else {
+        return false;
+    };
+    let changed = *last_update != Some(update.serial);
+    *last_update = Some(update.serial);
+    if !changed || update.sequence < 0 {
         return false;
     }
     if local
+        .player
+        .actor
         .target
         .is_some_and(|target| !engaged.is_some_and(|actor| actor.matches(target)))
     {
         return false;
     }
     tables
-        .style_seq(animation)
+        .style_seq(update.sequence)
         .is_some_and(|mask| mask.contains(StyleMask::RANGED))
 }

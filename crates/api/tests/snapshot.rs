@@ -212,6 +212,56 @@ fn player_rebuild_records_base_and_tile() {
     assert!(!snap.rebuild_family(&c, Family::Player));
 }
 
+#[test]
+fn local_animation_instructions_survive_render_expiry_and_snapshot_rebuilds() {
+    let mut client = Client::new_with_revision(cfg(), client::client::ClientRevision::R289);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    let mut snapshot = GameSnapshot::new();
+    for serial in 1..=2 {
+        // Local mask-only (1/00), zero old players, 2047 new-player sentinel;
+        // ANIM mask 0x2, sequence 929, zero delay.
+        let bytes = vec![0x80, 0x1f, 0xfc, 2, 3, 0xa1, 0];
+        client.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes);
+        packet.set_frame_end(client.psize as usize);
+        client.handle_packet(client::io::ServerProt289::PLAYER_INFO, &mut packet);
+        assert!(client.ingame);
+        // R3 launch48 had already visually expired when its snapshot was read.
+        client.local_player.as_mut().unwrap().primary_anim = -1;
+        client.local_player.as_mut().unwrap().primary_anim_frame = 9;
+        assert!(snapshot.rebuild_family(&client, Family::Player));
+        let local = snapshot.local_player().unwrap();
+        assert_eq!(local.player.actor.animation, -1);
+        assert_eq!(local.player.actor.animation_frame, 9);
+        assert_eq!(
+            local.animation_update,
+            Some(api::snapshot::AnimationUpdateView {
+                serial,
+                sequence: 929,
+            })
+        );
+        assert!(!snapshot.rebuild_family(&client, Family::Player));
+        assert_eq!(
+            snapshot
+                .local_player()
+                .unwrap()
+                .animation_update
+                .unwrap()
+                .serial,
+            serial
+        );
+    }
+    client.logout();
+    snapshot.rebuild(&client);
+    assert!(snapshot.local_player().unwrap().animation_update.is_none());
+    assert_eq!(
+        std::mem::size_of::<Option<api::snapshot::AnimationUpdateView>>(),
+        12
+    );
+}
+
 /// Combat observations preserve same-id animation restarts, spot-animation
 /// onset cycles, and the appearance weapon threshold for every actor family.
 #[test]

@@ -915,6 +915,7 @@ mod tests {
             },
             energy: 77,
             weight: 0,
+            animation_update: None,
         });
         snapshot.side_tabs_available = true;
         snapshot.active_side_tab = 3;

@@ -751,6 +751,7 @@ mod tests {
                     },
                     energy: 100,
                     weight: 0,
+                    animation_update: None,
                 },
                 stats: (0..25)
                     .map(|index| StatView {
