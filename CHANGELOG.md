@@ -67,9 +67,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Login
 
-- rs2b2t World 3 is supported. New installs list it, and an existing World
-  1/World 2 list is extended once (a backup of the old `servers.json` is
-  kept); a list you edited is left alone.
+- rs2b2t World 3 is supported and included on new installs. The existing w1/w2
+  migration is best-effort and runs once; the byte-exact backup is its marker,
+  so later edits (including removing w3) stay respected. A write failure or a
+  symlinked `servers.json` warns and leaves the old roster in place.
 
 ### Navigation
 
