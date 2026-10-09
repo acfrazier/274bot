@@ -86,6 +86,9 @@ impl Play {
     /// Shared paint precedence: driven live, then script, then manual WalkTo.
     /// Caller supplies live only for this exact focused slot/world, never
     /// another bot's route/session.
+    /// Do not hold a shared manual-arm or scenario mutex across this call:
+    /// the script read holds `navs`, and slot ownership checks take `navs`
+    /// before the manual arm. Read locked owners in separate scopes instead.
     pub fn with_map_route<R>(
         &self,
         name: &str,

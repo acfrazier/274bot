@@ -32,6 +32,112 @@ use script::IsolatedEnv;
 // set_pack(None)). Do not reintroduce separate REACH_TEST_LOCK /
 // FLOOD_TEST_LOCK; they raced. Lock order: see `picker::lock_nav_statics`.
 
+thread_local! {
+    static MAP_ROUTE_BARRIER: std::cell::RefCell<Option<Arc<std::sync::Barrier>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn before_map_route() {
+    MAP_ROUTE_BARRIER.with(|barrier| {
+        if let Some(barrier) = barrier.borrow().as_ref() {
+            barrier.wait();
+        }
+    });
+}
+
+#[test]
+fn route_cache_bind_does_not_deadlock_slot_tick() {
+    const CHILD: &str = "PANEL_ROUTE_BIND_DEADLOCK_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // Isolate the watchdog: an old-code lock cycle must fail this test,
+        // not leave blocked threads holding the suite's picker statics.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "picker::tests::route_cache_bind_does_not_deadlock_slot_tick",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "route bind child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let (done, finished) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        if finished
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_err()
+        {
+            eprintln!("route bind watchdog: navs -> WalkArm / WalkArm -> navs deadlock");
+            std::process::exit(1);
+        }
+    });
+    let _nav = super::lock_nav_statics();
+    let mut session = Session::new();
+    session.set_focus_for_test("alice");
+    session.core.set_play(Some(host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )));
+    let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
+        route: Some(Arc::new(test_route())),
+        route_generation: 42,
+        ..Default::default()
+    }));
+    session
+        .travellers
+        .lock()
+        .unwrap()
+        .insert("alice".into(), Arc::clone(&arm));
+    let paint = session.core.play().unwrap().script_nav_paint();
+    let scenario = Arc::clone(&session.scenario);
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    MAP_ROUTE_BARRIER.with(|hook| *hook.borrow_mut() = Some(Arc::clone(&barrier)));
+    let (ready, navs_locked) = std::sync::mpsc::channel();
+    let slot = std::thread::spawn(move || {
+        // This handle owns exactly Play::navs. The real slot tick holds it
+        // across ordinary_movement_owned -> slot_escape -> manual_arm.lock.
+        paint.with_map_route("alice", |_| {
+            ready.send(()).unwrap();
+            barrier.wait();
+            let _manual = arm.lock().unwrap();
+            // The frame must also release scenario before waiting on navs.
+            let _scenario = scenario.lock().unwrap();
+        });
+    });
+    navs_locked
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    super::bind_focused_route_cache(&session, Some(wt(2, 0)));
+    MAP_ROUTE_BARRIER.with(|hook| *hook.borrow_mut() = None);
+    slot.join().unwrap();
+    assert_eq!(
+        super::lock_route_path().as_slice(),
+        &[(wt(3, 0), true), (wt(4, 0), true), (wt(5, 0), false)],
+    );
+    assert_eq!(route_flatten_count(), 1);
+    super::bind_focused_route_cache(&session, Some(wt(2, 0)));
+    assert_eq!(route_flatten_count(), 1, "cache hit must not flatten again");
+    done.send(()).unwrap();
+    watchdog.join().unwrap();
+}
+
 fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
     payload
         .downcast_ref::<&str>()
