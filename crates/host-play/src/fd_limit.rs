@@ -82,6 +82,16 @@ pub fn describe(result: &std::io::Result<Option<OpenFileLimit>>) -> Option<Strin
     }
 }
 
+static STARTUP: std::sync::LazyLock<Option<String>> =
+    std::sync::LazyLock::new(|| describe(&raise_open_file_limit()));
+
+/// Raise the limit once per process (the first call does it) and return the
+/// log line describing it, so a session log opened later can still record
+/// it. `None` when the limit was already high enough.
+pub fn raise_at_startup() -> Option<&'static str> {
+    STARTUP.as_deref()
+}
+
 #[cfg(target_os = "macos")]
 fn per_process_cap() -> Option<u64> {
     let mut value: libc::c_int = 0;

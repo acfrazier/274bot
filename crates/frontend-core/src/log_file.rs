@@ -290,6 +290,11 @@ pub fn apply_session_log(on: bool) -> Option<PathBuf> {
             let file = SessionLogFile::start(logs_dir(), DEFAULT_ROTATION);
             let path = file.path().to_path_buf();
             store.set_file(Some(file));
+            // The binaries raise the open-file limit before the file exists;
+            // record the outcome in every session file.
+            if let Some(line) = host_play::fd_limit::raise_at_startup() {
+                store.process_line(api::hostlog::Source::Host, api::hostlog::Level::Info, line);
+            }
             Some(path)
         }
         (false, _) => {
