@@ -706,7 +706,7 @@ fn response_21_updates_client_title_countdown() {
     let arm = SlotArm::new(7, true);
     let error = LoginError {
         code: 21,
-        mes1: "You have only just left another world".into(),
+        mes1: "The server supplied a transfer message".into(),
         mes2: "Your profile will be transferred in: 1 seconds".into(),
         retry_after: Some(Duration::from_secs(1)),
     };
@@ -717,38 +717,29 @@ fn response_21_updates_client_title_countdown() {
         members: true,
         lowmem: false,
     });
-    client.login_mes1 = error.mes1.clone();
+    client.login_mes1 = "stale title".into();
     client.login_mes2 = error.mes2.clone();
     let countdown = Cell::new(None);
-    let mut title_updates = Vec::new();
+    let mut wait = host::TitleWait::new(None, None);
+    let slot_frame: SlotFrame = Arc::new(|_, _, _| {});
     {
-        let mut displayed = None;
-        let mut frames = || {
-            if let Some(remaining) = countdown.get() {
-                if super::play_slots::update_transfer_title(&mut client, remaining, &mut displayed)
-                {
-                    title_updates.push(client.login_mes2.clone());
-                }
-            }
-            Duration::MAX
-        };
-
+        let mut frames = play_slots::title_frames(
+            &mut wait,
+            &mut client,
+            "alice",
+            &slot_frame,
+            Some((&countdown, &error.mes1)),
+        );
         assert_eq!(
             wait_for_transfer_response(&error, &arm, &statuses, "alice", &countdown, &mut frames),
             Some(true)
         );
     }
     assert_eq!(
-        title_updates,
-        vec![
-            "Your profile will be transferred in: 1 seconds".to_string(),
-            "Your profile will be transferred in: 0 seconds".to_string(),
-        ]
-    );
-    assert_eq!(
         client.login_mes2,
         "Your profile will be transferred in: 0 seconds"
     );
+    assert_eq!(client.login_mes1, error.mes1);
 }
 
 #[test]
