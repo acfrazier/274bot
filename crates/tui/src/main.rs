@@ -11,5 +11,8 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
+    // Before any slot starts: macOS defaults the soft limit to 256 open files.
+    // The session log records the result when it opens.
+    host_play::fd_limit::raise_at_startup();
     tui::bin::main()
 }

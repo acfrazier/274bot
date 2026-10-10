@@ -82,6 +82,10 @@ fn main() -> ExitCode {
         }
     };
     passphrase::warn_legacy_env("host-play");
+    // Before any slot starts: macOS defaults the soft limit to 256 open files.
+    if let Some(line) = host_play::fd_limit::raise_at_startup() {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Info, "{line}");
+    }
 
     // Resolve, prepare and decode before opening or creating a vault. A 289
     // profile remains constructible, but the host boundary refuses gameplay
