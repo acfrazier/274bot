@@ -176,6 +176,11 @@ release.
 - **Combat:** if a fight is started against a target that can't be attacked,
   the bot stops as it should, but on very low HP its walk away can stall next
   to the target.
+- **Login:** rarely, the server sends a bot something the client can't read
+  (seen once in about 40 logins on rs2b2t). The bot reconnects on its own but
+  comes back to an empty world: only players and NPCs are drawn, and its
+  walks can stall. Log that bot out and back in to restore it. An ordinary
+  dropped connection is not affected.
 
 ### Not in this release
 
