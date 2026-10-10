@@ -669,6 +669,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
                 &arm,
                 &statuses,
                 "alice",
+                &std::cell::Cell::new(None),
                 &mut no_frames(),
             )
         })
@@ -695,6 +696,50 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
     assert_eq!(waiter.join().unwrap(), Some(true));
     assert!(started.elapsed() >= Duration::from_millis(1_900));
     assert_eq!(*arm.world.lock(), Some(2));
+}
+
+#[test]
+fn response_21_updates_client_title_countdown() {
+    use std::cell::Cell;
+
+    let statuses = rows(&["alice"]);
+    let arm = SlotArm::new(7, true);
+    let error = LoginError {
+        code: 21,
+        mes1: "The server supplied a transfer message".into(),
+        mes2: "Your profile will be transferred in: 1 seconds".into(),
+        retry_after: Some(Duration::from_secs(1)),
+    };
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    client.login_mes1 = "stale title".into();
+    client.login_mes2 = error.mes2.clone();
+    let countdown = Cell::new(None);
+    let mut wait = host::TitleWait::new(None, None);
+    let slot_frame: SlotFrame = Arc::new(|_, _, _| {});
+    {
+        let mut frames = play_slots::title_frames(
+            &mut wait,
+            &mut client,
+            "alice",
+            &slot_frame,
+            Some((&countdown, &error.mes1)),
+        );
+        assert_eq!(
+            wait_for_transfer_response(&error, &arm, &statuses, "alice", &countdown, &mut frames),
+            Some(true)
+        );
+    }
+    assert_eq!(
+        client.login_mes2,
+        "Your profile will be transferred in: 0 seconds"
+    );
+    assert_eq!(client.login_mes1, error.mes1);
 }
 
 #[test]
