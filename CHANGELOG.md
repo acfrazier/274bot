@@ -67,6 +67,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Login
 
+- After "You have only just left another world", the game view's login
+  screen now counts down "Your profile will be transferred in" each second
+  instead of staying at its first number.
 - rs2b2t World 3 is supported. New installs list it, and an existing World 1
   and World 2 list is extended once when you first start this version, with a
   copy of the old `servers.json` kept beside it. A list you edited is left

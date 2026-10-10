@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
@@ -25,8 +27,9 @@ use crate::play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
     granted_permit_world_is_current, login_and_acknowledge_permit, login_retry_wait,
     on_login_success, publish_login_latched_from_arm, refresh_slot_world_preference,
-    should_handshake, sync_profile_arm, tick_flags, wait_for_permit, wait_for_transfer_response,
-    GrantedReservation, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
+    should_handshake, sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
+    wait_for_transfer_response, GrantedReservation, PermitWait, QueuePlaceRetirement,
+    SharedLoginQueue, SlotArm,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -1062,7 +1065,7 @@ fn spawn_slot_thread(
                         &username,
                         uid,
                         &arm,
-                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                     );
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
@@ -1140,12 +1143,20 @@ fn spawn_slot_thread(
                         }
                         Err(e) => {
                             show_title_message(&mut client, &e.mes1, &e.mes2);
+                            let transfer_countdown = Cell::new(None);
                             if wait_for_transfer_response(
                                 &e,
                                 &arm,
                                 &slot_statuses,
                                 &username,
-                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                                &transfer_countdown,
+                                &mut title_frames(
+                                    wait_frames,
+                                    &mut client,
+                                    &username,
+                                    &slot_frame,
+                                    Some((&transfer_countdown, &e.mes1)),
+                                ),
                             )
                             .is_some()
                             {
@@ -1188,7 +1199,7 @@ fn spawn_slot_thread(
                             }
                             arm.wait_for_retry(
                                 retry,
-                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                             );
                             continue;
                         }
@@ -1834,13 +1845,20 @@ pub(super) fn slot_client_pump_should_exit(
 
 /// One login wait's title frames: the pump's frame on this slot's client,
 /// with the per-frame hook it runs on a logged-out title.
-fn title_frames<'a>(
+pub(super) fn title_frames<'a>(
     wait: &'a mut TitleWait,
     client: &'a mut Client,
     username: &'a str,
     slot_frame: &'a SlotFrame,
+    countdown: Option<(&'a Cell<Option<u64>>, &'a str)>,
 ) -> impl FnMut() -> Duration + 'a {
+    let mut displayed_countdown: Option<u64> = None;
     move || {
+        if let Some((countdown, mes1)) = countdown {
+            if let Some(remaining) = countdown.get() {
+                update_transfer_title(client, mes1, remaining, &mut displayed_countdown);
+            }
+        }
         wait.frame(client, username, |c| {
             slot_frame(
                 c,
@@ -1867,4 +1885,19 @@ fn show_title_message(client: &mut Client, mes1: &str, mes2: &str) {
             line.push_str(text);
         }
     }
+}
+
+pub(super) fn update_transfer_title(
+    client: &mut Client,
+    mes1: &str,
+    remaining: u64,
+    displayed: &mut Option<u64>,
+) -> bool {
+    if *displayed == Some(remaining) {
+        return false;
+    }
+    let mes2 = transfer_countdown_message(remaining);
+    show_title_message(client, mes1, &mes2);
+    *displayed = Some(remaining);
+    true
 }
