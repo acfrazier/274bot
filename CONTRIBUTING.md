@@ -260,7 +260,7 @@ digest is computed externally, never embedded in its own bytes.
 ## Client submodule
 
 `vendor/fr-client-rust` is [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost)
-branch **`r274-bh-modular`**. Public surface for that tree is its own
+branch **`multirev-bh-modular`**. Public surface for that tree is its own
 `README.md` / `NOTICE.md` (this is a **bot product** client, not Fairy
 Ring). Do **not** push `Fairy-Ring/FR-client-rust`. Do not add a bot
 action API inside `client`. Do not put 274bot crates in the client repo.

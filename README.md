@@ -26,7 +26,7 @@ Getting around and paying your way:
 |--|--|
 | **Revisions** | **289** is the production revision; **274** is best-effort (immutable per-process server profiles; see below) |
 | **Engine** | A **local** Lost City engine for the selected revision (defaults differ by profile) |
-| **Client** | submodule [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) `r274-bh-modular` (bot-host fork of the modularized Fairy-Ring client) |
+| **Client** | submodule [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) `multirev-bh-modular` (bot-host fork of the modularized Fairy-Ring client; revisions 289 and 274) |
 | **This repo** | [acfrazier/274bot](https://github.com/acfrazier/274bot) — **MIT** ([LICENSE](LICENSE), [NOTICE.md](NOTICE.md)) |
 | **Packages** | macOS app plus standalone `panel-play` / `tui-play` binaries for macOS, Windows and Linux (see [FIRST-START.md](FIRST-START.md)) |
 
@@ -102,7 +102,7 @@ The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D
 ## What it is not
 
 - No hosted product, no official anything: **not** Jagex, **not** official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t (rs2b0t’s chrome is mimicked in the panel; the code is our own).
-- Do **not** push `Fairy-Ring/FR-client-rust`. The live client branch is **`r274-bh-modular`**. `r274-modular` is the same refactor without bot-host hooks. `r274-bothost` is the pre-modular fork.
+- Do **not** push `Fairy-Ring/FR-client-rust`. The live client branch is **`multirev-bh-modular`** (renamed from `r274-bh-modular` on 2026-10-10); tags `274bot-<version>` mark the client each release shipped with. `r274-modular` is the same refactor without bot-host hooks. `r274-bothost` is the pre-modular fork.
 - Still no bot action API inside `client`. Packet timing and `doAction` stay Java-shaped. Client MIT/NOTICE stay in the submodule.
 - This tree ships **no Jagex assets**; you bring your own local engine and pack cache.
 - Not a foreign JavaScript runtime or an extra JSON host wire: the only JS ↔ Rust isolate wire is FlatBuffers. Behavior, config and fail-closed helpers live in Rust; the shim is thin coercion/marshaling.
