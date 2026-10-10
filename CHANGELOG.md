@@ -76,6 +76,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Login
 
+- Running many bots at once no longer fails with "Too many open files". On
+  macOS an app opened from Finder was limited to 256 open files, so beyond
+  roughly 70 bots, logins failed with "Error connecting to server" and
+  scripts wouldn't start. The panel, TUI and `host-play` now raise that
+  limit when they start and note the new value in the log.
 - After "You have only just left another world", the game view's login
   screen now counts down "Your profile will be transferred in" each second
   instead of staying at its first number.
