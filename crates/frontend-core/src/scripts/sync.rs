@@ -1037,13 +1037,14 @@ impl Scripts {
                                 bag: Arc::new(self.run_bag(core, &target, schema, &overrides)),
                             }
                         });
-                    core.save_profile(
+                    core.save_profile_with_log_action(
                         row,
                         ArmMirror::ScriptSettings {
                             card: card.clone(),
                             live,
                         },
                         "apply to all",
+                        "settings sync",
                     )
                 }
             };
