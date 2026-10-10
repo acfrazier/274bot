@@ -57,9 +57,11 @@ pub fn raise_open_file_limit() -> std::io::Result<Option<OpenFileLimit>> {
     };
     let after = match set(want) {
         Ok(after) => after,
-        // Older macOS refuses a soft limit above OPEN_MAX (10240).
+        // Older macOS refuses a soft limit above OPEN_MAX (10240) with EINVAL.
         #[cfg(target_os = "macos")]
-        Err(e) if want > 10_240 && before < 10_240 => set(10_240).map_err(|_| e)?,
+        Err(e) if e.raw_os_error() == Some(libc::EINVAL) && want > 10_240 && before < 10_240 => {
+            set(10_240).map_err(|_| e)?
+        }
         Err(e) => return Err(e),
     };
     Ok(Some(OpenFileLimit { before, after }))
