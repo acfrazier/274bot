@@ -8,18 +8,82 @@
 //! later jobs of its commit that wrote one of its profiles, so the session
 //! can tell which of the job's settings they replace.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use vault::{Profile, VaultChange, VaultStore};
+use vault::{Profile, ScriptAssignment, VaultChange, VaultStore};
 
 use crate::operations::OperationId;
 
 struct Job {
     op: OperationId,
     changes: Vec<VaultChange>,
+    assignment_action: &'static str,
+}
+
+/// An assignment transition owned by the last job that wrote its profile
+/// in a durable batch.
+pub(crate) struct AssignmentChange {
+    pub(crate) profile: String,
+    pub(crate) old_key: Option<String>,
+    pub(crate) new_key: Option<String>,
+    pub(crate) availability: Option<(Option<String>, Option<String>)>,
+}
+
+impl AssignmentChange {
+    fn new(
+        profile: &str,
+        before: Option<&ScriptAssignment>,
+        after: Option<&ScriptAssignment>,
+    ) -> Self {
+        let old_unavailable = before.and_then(|assignment| assignment.unavailable.as_deref());
+        let new_unavailable = after.and_then(|assignment| assignment.unavailable.as_deref());
+        let availability = (old_unavailable != new_unavailable).then(|| {
+            (
+                before.and_then(|assignment| assignment.unavailable.clone()),
+                after.and_then(|assignment| assignment.unavailable.clone()),
+            )
+        });
+        Self {
+            profile: profile.to_string(),
+            old_key: before.map(ScriptAssignment::key),
+            new_key: after.map(ScriptAssignment::key),
+            availability,
+        }
+    }
+
+    fn log(&self, op: OperationId, action: &str) {
+        use api::hostlog::{Level, Source};
+        use std::fmt::Write as _;
+
+        let mut message = format!(
+            "script assignment {} -> {}",
+            self.old_key.as_deref().unwrap_or("None"),
+            self.new_key.as_deref().unwrap_or("None"),
+        );
+        if let Some((before, after)) = &self.availability {
+            message.push_str("; availability ");
+            for (index, unavailable) in [before, after].into_iter().enumerate() {
+                if index != 0 {
+                    message.push_str(" -> ");
+                }
+                if let Some(reason) = unavailable {
+                    message.push_str("unavailable: ");
+                    message.push_str(reason);
+                } else {
+                    message.push_str("available");
+                }
+            }
+        }
+        let _ = write!(message, "; action {action}; op#{}", op.0);
+        if message.contains(['\n', '\r']) {
+            message = message.replace(['\n', '\r'], " ");
+        }
+        crate::log::global().slot_line(&self.profile, Source::Host, Level::Info, &message);
+    }
 }
 
 /// The result of one submitted job.
@@ -60,6 +124,39 @@ impl ProfileWriter {
                     let _batch = gate.lock().unwrap_or_else(PoisonError::into_inner);
                     let mut batch = vec![first];
                     batch.extend(inbox.try_iter());
+                    // Snapshot only assignment changes and attribute each
+                    // one to its final writer in this batch. Compare before
+                    // cloning so unchanged assignments allocate nothing.
+                    let mut assignment_changes = HashMap::new();
+                    for (index, job) in batch.iter().enumerate() {
+                        for (change_index, change) in job.changes.iter().enumerate() {
+                            let name = change.username();
+                            let later_in_job = job.changes[change_index + 1..]
+                                .iter()
+                                .any(|next| next.username() == name);
+                            let later_in_batch = batch[index + 1..].iter().any(|next| {
+                                next.changes.iter().any(|change| change.username() == name)
+                            });
+                            if later_in_job || later_in_batch {
+                                continue;
+                            }
+                            let before = store
+                                .get(name)
+                                .and_then(|profile| profile.settings.script_assignment.as_ref());
+                            let after = match change {
+                                VaultChange::Upsert(profile) => {
+                                    profile.settings.script_assignment.as_ref()
+                                }
+                                VaultChange::Remove(_) => None,
+                            };
+                            if before != after {
+                                assignment_changes
+                                    .entry(job.op)
+                                    .or_insert_with(Vec::new)
+                                    .push(AssignmentChange::new(name, before, after));
+                            }
+                        }
+                    }
                     // Applied in submission order in one commit, so the file
                     // ends with each profile's last value.
                     let changes: Vec<VaultChange> = batch
@@ -93,6 +190,13 @@ impl ProfileWriter {
                                 (name.to_string(), store.get(name).cloned())
                             })
                             .collect();
+                        if result.is_ok() {
+                            if let Some(changes) = assignment_changes.remove(&job.op) {
+                                for change in changes {
+                                    change.log(job.op, job.assignment_action);
+                                }
+                            }
+                        }
                         let written = Written {
                             op: job.op,
                             result: result.clone(),
@@ -115,9 +219,21 @@ impl ProfileWriter {
         }
     }
 
-    pub(crate) fn submit(&mut self, op: OperationId, changes: Vec<VaultChange>) {
+    pub(crate) fn submit(
+        &mut self,
+        op: OperationId,
+        changes: Vec<VaultChange>,
+        assignment_action: &'static str,
+    ) {
         if let Some(jobs) = &self.jobs {
-            if jobs.send(Job { op, changes }).is_ok() {
+            if jobs
+                .send(Job {
+                    op,
+                    changes,
+                    assignment_action,
+                })
+                .is_ok()
+            {
                 self.in_flight += 1;
             }
         }

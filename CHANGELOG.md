@@ -7,6 +7,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Scripts
 
+- Copying native-script settings to an unassigned bot no longer overwrites a
+  script you explicitly assign while the copy is still being prepared, even
+  if you edit that card again before the copy finishes.
+- Saved script changes now produce one info log line with the bot, previous
+  and new assignment, action and operation number. Failed saves and changes
+  superseded before reaching disk do not announce an assignment change.
 - Saved settings that need a restart show a badge (`[restart]` in the panel,
   `!` in the TUI) and offer Restart or Later. Restart stops only listed bots
   still running the same assigned script with pending settings. Bots that

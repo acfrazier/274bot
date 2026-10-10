@@ -602,6 +602,7 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         profile: &str,
         mirror: ArmMirror,
+        log_action: &'static str,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
         let result = core.vault().map(|vault| {
@@ -616,7 +617,7 @@ impl Scripts {
             Some(None) => Err(format!("script: no profile {profile}")),
             Some(Some(mut row)) => {
                 edit(&mut row.settings);
-                core.save_profile(row, mirror, "script")
+                core.save_profile_with_log_action(row, mirror, "script", log_action)
             }
         };
         if let Err(error) = &result {
@@ -633,10 +634,20 @@ impl Scripts {
         profile: &str,
         assignment: ScriptAssignment,
     ) -> bool {
+        self.persist_assignment_with_action(core, profile, assignment, "assignment")
+    }
+
+    pub(crate) fn persist_assignment_with_action<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        assignment: ScriptAssignment,
+        log_action: &'static str,
+    ) -> bool {
         if Self::assignment(core, profile).as_ref() == Some(&assignment) {
             return true;
         }
-        self.upsert_profile_settings(core, profile, ArmMirror::None, |settings| {
+        self.upsert_profile_settings(core, profile, ArmMirror::None, log_action, |settings| {
             settings.script_assignment = Some(assignment);
         })
         .is_ok()
@@ -649,11 +660,17 @@ impl Scripts {
         reason: impl Into<String>,
     ) {
         let reason = reason.into();
-        let _ = self.upsert_profile_settings(core, profile, ArmMirror::None, |settings| {
-            if let Some(asg) = settings.script_assignment.as_mut() {
-                asg.unavailable = Some(reason);
-            }
-        });
+        let _ = self.upsert_profile_settings(
+            core,
+            profile,
+            ArmMirror::None,
+            "unavailable",
+            |settings| {
+                if let Some(asg) = settings.script_assignment.as_mut() {
+                    asg.unavailable = Some(reason);
+                }
+            },
+        );
     }
 
     // ---- per-profile parameters ----------------------------------------
@@ -675,9 +692,15 @@ impl Scripts {
             return;
         }
         let legacy = self.legacy_overrides_for(key, card_name);
-        let _ = self.upsert_profile_settings(core, profile, ArmMirror::None, |settings| {
-            script::claim_legacy_overrides(settings, key, card_name, &legacy);
-        });
+        let _ = self.upsert_profile_settings(
+            core,
+            profile,
+            ArmMirror::None,
+            "legacy claim",
+            |settings| {
+                script::claim_legacy_overrides(settings, key, card_name, &legacy);
+            },
+        );
     }
 
     /// `profile`'s overrides bag for the card `key`, claiming the legacy
@@ -883,6 +906,7 @@ impl Scripts {
                 card: key.clone(),
                 live,
             },
+            "parameter edit",
             |settings| {
                 settings.script_settings.insert(key.clone(), bag);
             },
@@ -1398,6 +1422,7 @@ impl Scripts {
                             core,
                             &name,
                             ArmMirror::None,
+                            "Start",
                             |settings| {
                                 settings.script_assignment = Some(script::compiled_assignment(id));
                                 if settings.script_settings.get(&key).is_none_or(Map::is_empty) {
@@ -1434,7 +1459,12 @@ impl Scripts {
                             self.shown.clone_from(&with);
                             self.notice = Some(Notice::Retract { shown, with });
                         }
-                        self.persist_assignment(core, &name, card.assignment());
+                        self.persist_assignment_with_action(
+                            core,
+                            &name,
+                            card.assignment(),
+                            "Start",
+                        );
                     }
                 },
                 Some(script::StartOutcome::Failed(error)) => {
