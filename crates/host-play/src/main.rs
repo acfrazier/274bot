@@ -83,8 +83,7 @@ fn main() -> ExitCode {
     };
     passphrase::warn_legacy_env("host-play");
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
-    if let Some(line) = host_play::fd_limit::describe(&host_play::fd_limit::raise_open_file_limit())
-    {
+    if let Some(line) = host_play::fd_limit::raise_at_startup() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Info, "{line}");
     }
 
