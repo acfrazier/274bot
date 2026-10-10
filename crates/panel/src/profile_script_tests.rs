@@ -1082,6 +1082,98 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
 }
 
 #[test]
+fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
+    let (mut s, dir) = session_with_play(&["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    s.core.play_mut().unwrap().bind_script_test_data(data);
+    let root = dir.join("catalog-assignment");
+    fake_catalog(&root, &[("Thiever", THIEVER_TS)]);
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    let thiever = ScriptAssignment {
+        source_kind: "catalog".into(),
+        identity: "Thiever".into(),
+        display_name: "Thiever".into(),
+        unavailable: None,
+    };
+    s.persist_successful_assignment("alice", thiever.clone());
+    s.core.flush_writes();
+    focus_profile(&mut s, "alice");
+    s.script_start_selected();
+    settle(&mut s);
+    s.core.flush_writes();
+    wait_state(&s, "alice", script::RunState::Running);
+    let generation = s.core.play().unwrap().script_runtime_generation("alice");
+
+    // Marks persist when focus moves to Bob, but plain Start must skip
+    // Alice before it can queue a card or save an assignment there.
+    s.fleet_selection.mark_all([
+        frontend_core::ProfileIdentity::uid(1),
+        frontend_core::ProfileIdentity::uid(2),
+    ]);
+    focus_profile(&mut s, "bob");
+    let id = script::CompiledId("Gatherer");
+    s.select_script_selection(script::ScriptSel::Compiled(id));
+    s.fleet_start_selected();
+    settle(&mut s);
+    s.core.flush_writes();
+    wait_state(&s, "bob", script::RunState::Running);
+    assert!(s
+        .scripts
+        .last_bulk_report()
+        .unwrap()
+        .contains("alice: already active"));
+    assert_eq!(s.profile_assignment("alice"), Some(thiever.clone()));
+    assert_eq!(
+        s.profile_assignment("bob"),
+        Some(script::compiled_assignment(id))
+    );
+    assert_eq!(
+        s.core.play().unwrap().script_runtime_generation("alice"),
+        generation
+    );
+
+    s.scripts
+        .set_compiled_setting(&mut s.core, "bob", id, "radius", serde_json::json!(24))
+        .unwrap();
+    focus_profile(&mut s, "alice");
+    assert_eq!(
+        s.script_sel,
+        Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "Thiever".into()
+        ))
+    );
+    assert!(s.set_profile_setting(
+        "alice",
+        script::ScriptSource::Catalog,
+        "Thiever",
+        &root.join("src/bot/scripts/Thiever/Thiever.ts"),
+        "target",
+        serde_json::json!("Guard"),
+    ));
+    s.core.flush_writes();
+    let disk = Vault::unlock(&dir.join("v.vault"), "test-passphrase-01").unwrap();
+    let alice = disk.get("alice").unwrap();
+    assert_eq!(alice.settings.script_assignment.as_ref(), Some(&thiever));
+    assert!(!alice
+        .settings
+        .script_settings
+        .contains_key(&script::compiled_identity_key(id)));
+    assert_eq!(
+        alice.settings.script_settings["catalog:Thiever"]["target"],
+        "Guard"
+    );
+    assert_eq!(
+        s.core.play().unwrap().script_state("alice"),
+        script::RunState::Running
+    );
+    s.script_stop_all();
+}
+
+#[test]
 fn catalog_refresh_warns_before_stopping_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-run");

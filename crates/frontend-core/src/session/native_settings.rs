@@ -58,11 +58,17 @@ impl NativeCopyHold {
     }
 }
 
+#[derive(Clone)]
+struct AssignmentIntent {
+    previous: Option<vault::ScriptAssignment>,
+    next: Option<vault::ScriptAssignment>,
+}
+
 pub(super) struct PendingPreparation {
     profile: Profile,
-    /// Explicit or inherited intent from a pending same-card draft; absent
-    /// intent preserves the latest assignment during rebase.
-    assignment_intent: Option<Option<vault::ScriptAssignment>>,
+    /// Explicit or inherited intent from a pending same-card draft. New copies
+    /// supersede older intents; rebase checks the same staged-vault baseline.
+    assignment_intent: Option<AssignmentIntent>,
     renamed_from: Option<String>,
     mirror: ArmMirror,
     label: &'static str,
@@ -256,18 +262,26 @@ impl<Io> OperatorSession<Io> {
             return Err(format!("{label}: profile unavailable: {source}"));
         }
         let card = script::compiled_identity_key(id);
-        let assignment_intent = self.profile_for_edit(source).and_then(|base| {
-            if base.settings.script_assignment != profile.settings.script_assignment {
-                Some(profile.settings.script_assignment.clone())
-            } else {
-                // Same-card edits compose over their current draft. If it
-                // owns an assignment intent, carry it through supersession.
-                self.native_edits
-                    .get(&(source.to_owned(), card.clone()))
-                    .and_then(|prior_op| self.preparations.get(prior_op))
-                    .and_then(|pending| pending.assignment_intent.clone())
-            }
-        });
+        let assign = matches!(mirror, ArmMirror::NativeSettings { assign: true, .. });
+        let assignment_intent = if assign {
+            self.vault
+                .as_ref()
+                .and_then(|vault| vault.get(source))
+                .filter(|base| {
+                    base.settings.script_assignment != profile.settings.script_assignment
+                })
+                .map(|base| AssignmentIntent {
+                    previous: base.settings.script_assignment.clone(),
+                    next: profile.settings.script_assignment.clone(),
+                })
+        } else {
+            // Settings-only edits carry the same-card copy's original baseline,
+            // never the assignment inherited from another card's projection.
+            self.native_edits
+                .get(&(source.to_owned(), card.clone()))
+                .and_then(|prior_op| self.preparations.get(prior_op))
+                .and_then(|pending| pending.assignment_intent.clone())
+        };
         let play = self
             .play
             .as_ref()
@@ -285,6 +299,20 @@ impl<Io> OperatorSession<Io> {
                 return Err(error);
             }
         };
+        if assign && assignment_intent.is_some() {
+            // Last accepted copy wins even when it finishes before an older
+            // card's preparation. Older settings may still be saved.
+            for pending in self.preparations.values_mut() {
+                if pending
+                    .renamed_from
+                    .as_deref()
+                    .unwrap_or(&pending.profile.username)
+                    == source
+                {
+                    pending.assignment_intent = None;
+                }
+            }
+        }
         self.operations.set(op, &profile.username, Outcome::Pending);
         // Supersession must not admit a queued Start on the pre-copy bag.
         // Move the accepted copy's token, deadline and cancellation together;
@@ -407,6 +435,11 @@ impl<Io> OperatorSession<Io> {
                 }
                 continue;
             }
+            let assignment_action = if pending.assignment_intent.is_some() {
+                "native sync assignment"
+            } else {
+                "native parameters"
+            };
             // Preparation owns this card's entry, not a snapshot of the whole
             // profile. Preserve unrelated writes that landed while it ran.
             if let Some(mut latest) = self
@@ -421,7 +454,9 @@ impl<Io> OperatorSession<Io> {
                     latest.settings.script_settings.remove(&card);
                 }
                 if let Some(assignment) = pending.assignment_intent {
-                    latest.settings.script_assignment = assignment;
+                    if latest.settings.script_assignment == assignment.previous {
+                        latest.settings.script_assignment = assignment.next;
+                    }
                 }
                 latest.username.clone_from(&name);
                 pending.profile = latest;
@@ -441,7 +476,13 @@ impl<Io> OperatorSession<Io> {
             if let Some(vault) = self.vault.as_mut() {
                 vault.stage_upsert(pending.profile);
             }
-            self.submit_write_at(op, changes, pending.mirror.prepared(config), pending.label);
+            self.submit_write_at(
+                op,
+                changes,
+                pending.mirror.prepared(config),
+                pending.label,
+                assignment_action,
+            );
             if let Some(write) = self.writes.get_mut(&op) {
                 write.copy_start_hold = pending.copy_start_hold;
             }
@@ -952,6 +993,180 @@ mod tests {
             script::CompiledDelivery::Unchanged,
             "Bob's running Gatherer has the copied non-default setting"
         );
+    }
+
+    #[test]
+    fn accepted_native_copy_cannot_overwrite_a_later_explicit_assignment() {
+        for supersede in [false, true] {
+            let mut f = native_fixture(if supersede {
+                "copy-reassigned-superseded"
+            } else {
+                "copy-reassigned"
+            });
+            let id = script::CompiledId("Gatherer");
+            assert!(f.scripts.persist_assignment(
+                &mut f.core,
+                "alice",
+                script::compiled_assignment(id)
+            ));
+            f.scripts
+                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(24))
+                .unwrap();
+            f.core.flush_writes();
+
+            // Apply to marked accepts Bob while he has no assignment. Native
+            // preparation has not been folded into the vault yet.
+            let mut marked = MarkedSelection::default();
+            marked.mark_all([ProfileIdentity::uid(2)]);
+            prepare_apply_settings_marked(
+                &marked,
+                &f.core,
+                &mut f.scripts,
+                "alice",
+                &script::ScriptSel::Compiled(id),
+            )
+            .unwrap();
+            f.scripts.apply_settings_sync(&mut f.core).unwrap();
+            assert!(Scripts::assignment(&f.core, "bob").is_none());
+
+            // An explicit Assign wins over that older accepted copy. No
+            // subsequent Start, Assign or Browse-pick targets Bob.
+            let thiever = vault::ScriptAssignment {
+                source_kind: "catalog".into(),
+                identity: "Thiever".into(),
+                display_name: "Thiever".into(),
+                unavailable: None,
+            };
+            assert!(f
+                .scripts
+                .persist_assignment(&mut f.core, "bob", thiever.clone()));
+            // Settle only the writer, not preparations: Thiever must actually
+            // be on disk before the older native intent is allowed to finish.
+            let written = f.core.writer.as_mut().unwrap().wait_take().unwrap();
+            f.core.settle_write(written);
+            let before = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
+            assert_eq!(
+                before
+                    .get("bob")
+                    .unwrap()
+                    .settings
+                    .script_assignment
+                    .as_ref(),
+                Some(&thiever)
+            );
+            if supersede {
+                // A settings-only replacement must not inherit a stale
+                // assignment intent from the accepted same-card copy.
+                f.scripts
+                    .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(32))
+                    .unwrap();
+            }
+            f.core.select("alice");
+            f.scripts
+                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(40))
+                .unwrap();
+            assert_eq!(Scripts::assignment(&f.core, "bob"), Some(thiever.clone()));
+            f.core.flush_writes();
+            f.scripts.poll(&mut f.core);
+
+            let disk = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
+            let bob = disk.get("bob").unwrap();
+            assert_eq!(
+                bob.settings.script_assignment.as_ref(),
+                Some(&thiever),
+                "supersede={supersede}: the old copy must not reassign Bob"
+            );
+            let entry = &bob.settings.script_settings[&script::compiled_identity_key(id)];
+            let (_, values) = vault::CompiledSettingsRecord::view(entry).unwrap();
+            assert_eq!(values["radius"], json!(if supersede { 32 } else { 24 }));
+            assert_eq!(Scripts::assignment(&f.core, "bob"), Some(thiever));
+        }
+    }
+
+    fn assert_second_copy_wins(second_finishes_first: bool) {
+        let mut f = native_fixture(if second_finishes_first {
+            "second-copy-finishes-first"
+        } else {
+            "second-copy-finishes-last"
+        });
+        let gatherer = script::CompiledId("Gatherer");
+        let sherlock = script::CompiledId("Sherlock");
+        f.scripts
+            .set_compiled_overrides_assigning(
+                &mut f.core,
+                "bob",
+                gatherer,
+                Map::new(),
+                Some(script::compiled_assignment(gatherer)),
+            )
+            .unwrap();
+        let gate = second_finishes_first.then(|| block_preparation(&mut f));
+        assert!(Scripts::assignment(&f.core, "bob").is_none());
+        let second = f
+            .scripts
+            .set_compiled_overrides_assigning(
+                &mut f.core,
+                "bob",
+                sherlock,
+                Map::new(),
+                Some(script::compiled_assignment(sherlock)),
+            )
+            .unwrap();
+        assert!(Scripts::assignment(&f.core, "bob").is_none());
+
+        let intermediate = if let Some((release, done)) = gate {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while f.core.preparations.contains_key(&second) {
+                assert!(Instant::now() < deadline, "second copy did not settle");
+                f.core.poll();
+                std::thread::yield_now();
+            }
+            while let Some(written) = f.core.writer.as_mut().unwrap().wait_take() {
+                f.core.settle_write(written);
+            }
+            let disk = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
+            let assignment = disk.get("bob").unwrap().settings.script_assignment.clone();
+            // Release before asserting so a negative control cannot strand
+            // the older real preparation during fixture cleanup.
+            release.send(()).unwrap();
+            done.recv_timeout(Duration::from_secs(3)).unwrap();
+            Some(assignment)
+        } else {
+            None
+        };
+        f.core.flush_writes();
+        f.scripts.poll(&mut f.core);
+
+        let disk = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
+        let saved = disk.get("bob").unwrap();
+        assert_eq!(
+            saved.settings.script_assignment,
+            Some(script::compiled_assignment(sherlock)),
+            "the later accepted copy onto a vault-unassigned bot must win"
+        );
+        if let Some(assignment) = intermediate {
+            assert_eq!(
+                assignment,
+                Some(script::compiled_assignment(sherlock)),
+                "the later copy must be durable before the older one finishes"
+            );
+        }
+        for id in [gatherer, sherlock] {
+            assert!(
+                saved
+                    .settings
+                    .script_settings
+                    .contains_key(&script::compiled_identity_key(id)),
+                "both accepted copies must save their settings"
+            );
+        }
+    }
+
+    #[test]
+    fn zz_review_second_copy_onto_unassigned_bot() {
+        for second_finishes_first in [false, true] {
+            assert_second_copy_wins(second_finishes_first);
+        }
     }
 
     #[test]

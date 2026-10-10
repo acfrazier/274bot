@@ -152,7 +152,8 @@ pub fn assign_marked<Io>(
     for name in names {
         let outcome = if active(state(core, &name)) {
             BulkOutcome::skipped("script active: use Assign & restart")
-        } else if scripts.persist_assignment(core, &name, assignment.clone()) {
+        } else if scripts.persist_assignment_with_action(core, &name, assignment.clone(), "Assign")
+        {
             scripts.clear_pending_browse(&name);
             BulkOutcome::Done
         } else {
@@ -232,7 +233,12 @@ fn assign_and_restart_names<Io>(
             scripts.tally_skip(name, "not loaded");
             continue;
         }
-        if !scripts.persist_assignment(core, name, assignment.clone()) {
+        if !scripts.persist_assignment_with_action(
+            core,
+            name,
+            assignment.clone(),
+            "Assign & restart",
+        ) {
             scripts.tally_fail(name, "could not save");
             continue;
         }
