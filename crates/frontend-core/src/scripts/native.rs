@@ -191,7 +191,12 @@ impl Scripts {
         let result = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::NativeSettings { id, bag, live },
+            ArmMirror::NativeSettings {
+                id,
+                bag,
+                live,
+                assign: assignment.is_some(),
+            },
             log_action,
             |settings| {
                 if let Some(assignment) = assignment {
