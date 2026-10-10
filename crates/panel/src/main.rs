@@ -18,6 +18,12 @@ fn main() {
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     let args = parse_args();
+    // Before any slot starts: a Finder-launched app gets 256 open files.
+    if let Some(line) = host_play::fd_limit::describe(&host_play::fd_limit::raise_open_file_limit())
+    {
+        use frontend_core::log::{Level, Source};
+        frontend_core::log::global().process_line(Source::Host, Level::Info, &line);
+    }
     host_play::passphrase::warn_legacy_env("panel-play");
     if let Err(e) = panel::run_panel(args) {
         eprintln!("panel: {e}");
