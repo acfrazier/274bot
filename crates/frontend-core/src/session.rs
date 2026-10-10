@@ -152,6 +152,8 @@ pub enum ArmMirror {
         id: script::CompiledId,
         bag: Arc<serde_json::Map<String, serde_json::Value>>,
         live: Option<LiveSettings>,
+        /// Only an accepted unassigned-target copy originates assignment intent.
+        assign: bool,
     },
 }
 

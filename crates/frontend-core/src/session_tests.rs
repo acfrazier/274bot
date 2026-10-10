@@ -884,6 +884,75 @@ fn assignment_logs_only_the_final_value_and_owner_of_a_coalesced_commit() {
 }
 
 #[test]
+fn assignment_logs_ignore_rename_without_assignment_change() {
+    let old_name = "assignment-log-rename-old";
+    let new_name = "assignment-log-rename-new";
+    let mut vault = vault_with("assignment-log-rename", &[(old_name, 17, false)]);
+    let mut original = vault.get(old_name).unwrap().clone();
+    original.settings.script_assignment = Some(assignment("stable"));
+    vault.upsert(original).unwrap();
+
+    let mut s = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    s.set_spawn_workers(false);
+    s.start(vault, empty_play());
+    let mut renamed = s.vault().unwrap().get(old_name).unwrap().clone();
+    renamed.username = new_name.into();
+    s.rename_profile(old_name, renamed, ArmMirror::None, "profile")
+        .unwrap();
+    s.flush_writes();
+
+    let disk = Vault::unlock(&vault_path("assignment-log-rename"), "test-passphrase-01").unwrap();
+    assert!(disk.get(old_name).is_none());
+    let saved = disk.get(new_name).unwrap();
+    assert_eq!(saved.uid, 17);
+    assert_eq!(saved.settings.script_assignment, Some(assignment("stable")));
+    assert!(slot_log(old_name).is_empty());
+    assert!(slot_log(new_name).is_empty());
+}
+
+#[test]
+fn coalesced_assignment_log_uses_last_assignment_change_not_parameter_edit() {
+    let name = "assignment-log-owner";
+    let mut s = session("assignment-log-owner", &[(name, 1, false)]);
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+
+    let mut profile = s.vault().unwrap().get(name).unwrap().clone();
+    profile.settings.script_assignment = Some(assignment("assigned"));
+    let assign_op = s
+        .save_profile_with_log_action(profile, ArmMirror::None, "script", "Assign")
+        .unwrap();
+    let mut parameters = s.vault().unwrap().get(name).unwrap().clone();
+    parameters
+        .settings
+        .script_settings
+        .insert("compiled:assigned".into(), serde_json::Map::new());
+    s.save_profile_with_log_action(parameters, ArmMirror::None, "script", "parameter edit")
+        .unwrap();
+
+    drop(held);
+    s.flush_writes();
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "script assignment None -> compiled:assigned; action Assign; op#{}",
+                assign_op.0
+            ),
+        )]
+    );
+    let disk = Vault::unlock(&vault_path("assignment-log-owner"), "test-passphrase-01").unwrap();
+    assert!(disk
+        .get(name)
+        .unwrap()
+        .settings
+        .script_settings
+        .contains_key("compiled:assigned"));
+}
+
+#[test]
 fn dropping_session_logs_a_durable_assignment_without_polling() {
     let name = "assignment-log-drop";
     let op = {

@@ -8,7 +8,6 @@
 //! later jobs of its commit that wrote one of its profiles, so the session
 //! can tell which of the job's settings they replace.
 
-use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex, PoisonError};
@@ -24,8 +23,8 @@ struct Job {
     assignment_action: &'static str,
 }
 
-/// An assignment transition owned by the last job that wrote its profile
-/// in a durable batch.
+/// An assignment transition owned by the last job that changed the assignment
+/// in a durable batch, even if later parameter-only jobs write the profile.
 pub(crate) struct AssignmentChange {
     pub(crate) profile: String,
     pub(crate) old_key: Option<String>,
@@ -86,6 +85,170 @@ impl AssignmentChange {
     }
 }
 
+struct AssignmentNameState<'a> {
+    username: &'a str,
+    uid: Option<i32>,
+}
+
+/// Assignment snapshots are keyed by the profile UID, which is unchanged
+/// across a rename. References point into the durable store or queued changes;
+/// only the final log records clone assignment fields.
+struct AssignmentState<'a> {
+    uid: i32,
+    initial: Option<&'a ScriptAssignment>,
+    current: Option<&'a ScriptAssignment>,
+    current_name: Option<&'a str>,
+    log_name: Option<&'a str>,
+    owner: Option<(OperationId, &'static str)>,
+}
+
+fn durable_assignment_changes<'a>(
+    store: &'a VaultStore,
+    batch: &'a [Job],
+) -> Vec<(OperationId, &'static str, AssignmentChange)> {
+    // Keep parameter-only batches allocation-free. The conservative check
+    // allows rename pairs through when their destination does not exist yet.
+    let might_change = batch.iter().any(|job| {
+        job.changes.iter().any(|change| match change {
+            VaultChange::Upsert(profile) => {
+                let after = profile.settings.script_assignment.as_ref();
+                match store.get(&profile.username) {
+                    Some(before) => {
+                        before.uid != profile.uid
+                            || before.settings.script_assignment.as_ref() != after
+                    }
+                    None => after.is_some(),
+                }
+            }
+            VaultChange::Remove(username) => store
+                .get(username)
+                .is_some_and(|profile| profile.settings.script_assignment.is_some()),
+        })
+    });
+    if !might_change {
+        return Vec::new();
+    }
+
+    let mut names: Vec<AssignmentNameState<'a>> = Vec::new();
+    let mut states: Vec<AssignmentState<'a>> = Vec::new();
+    for job in batch {
+        for change in &job.changes {
+            let username = change.username();
+            if names.iter().any(|name| name.username == username) {
+                continue;
+            }
+            let profile = store.get(username);
+            names.push(AssignmentNameState {
+                username,
+                uid: profile.map(|profile| profile.uid),
+            });
+            if let Some(profile) = profile {
+                if !states.iter().any(|state| state.uid == profile.uid) {
+                    let assignment = profile.settings.script_assignment.as_ref();
+                    states.push(AssignmentState {
+                        uid: profile.uid,
+                        initial: assignment,
+                        current: assignment,
+                        current_name: Some(profile.username.as_str()),
+                        log_name: Some(profile.username.as_str()),
+                        owner: None,
+                    });
+                }
+            }
+        }
+    }
+
+    for job in batch {
+        for change in &job.changes {
+            match change {
+                VaultChange::Upsert(profile) => {
+                    let username = profile.username.as_str();
+                    let name_index = names
+                        .iter()
+                        .position(|name| name.username == username)
+                        .expect("every changed profile name was collected");
+                    if let Some(previous_uid) = names[name_index].uid {
+                        if previous_uid != profile.uid {
+                            if let Some(state_index) =
+                                states.iter().position(|state| state.uid == previous_uid)
+                            {
+                                let state = &mut states[state_index];
+                                if state.current_name == Some(username) {
+                                    if state.current.is_some() {
+                                        state.owner = Some((job.op, job.assignment_action));
+                                    }
+                                    state.current = None;
+                                    state.current_name = None;
+                                }
+                            }
+                        }
+                    }
+                    names[name_index].uid = Some(profile.uid);
+
+                    let state_index = match states.iter().position(|state| state.uid == profile.uid)
+                    {
+                        Some(index) => index,
+                        None => {
+                            states.push(AssignmentState {
+                                uid: profile.uid,
+                                initial: None,
+                                current: None,
+                                current_name: None,
+                                log_name: None,
+                                owner: None,
+                            });
+                            states.len() - 1
+                        }
+                    };
+                    let state = &mut states[state_index];
+                    let after = profile.settings.script_assignment.as_ref();
+                    if state.current != after {
+                        state.owner = Some((job.op, job.assignment_action));
+                    }
+                    state.current = after;
+                    state.current_name = Some(username);
+                    state.log_name = Some(username);
+                }
+                VaultChange::Remove(username) => {
+                    let name_index = names
+                        .iter()
+                        .position(|name| name.username == username)
+                        .expect("every changed profile name was collected");
+                    if let Some(uid) = names[name_index].uid.take() {
+                        if let Some(state_index) = states.iter().position(|state| state.uid == uid)
+                        {
+                            let state = &mut states[state_index];
+                            if state.current_name == Some(username.as_str()) {
+                                if state.current.is_some() {
+                                    state.owner = Some((job.op, job.assignment_action));
+                                }
+                                state.current = None;
+                                state.current_name = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    states
+        .into_iter()
+        .filter_map(|state| {
+            if state.initial == state.current {
+                return None;
+            }
+            let (op, action) = state.owner?;
+            let username = state.current_name.or(state.log_name)?;
+            Some((
+                op,
+                action,
+                AssignmentChange::new(username, state.initial, state.current),
+            ))
+        })
+        .collect()
+}
+
 /// The result of one submitted job.
 pub(crate) struct Written {
     pub(crate) op: OperationId,
@@ -124,39 +287,8 @@ impl ProfileWriter {
                     let _batch = gate.lock().unwrap_or_else(PoisonError::into_inner);
                     let mut batch = vec![first];
                     batch.extend(inbox.try_iter());
-                    // Snapshot only assignment changes and attribute each
-                    // one to its final writer in this batch. Compare before
-                    // cloning so unchanged assignments allocate nothing.
-                    let mut assignment_changes = HashMap::new();
-                    for (index, job) in batch.iter().enumerate() {
-                        for (change_index, change) in job.changes.iter().enumerate() {
-                            let name = change.username();
-                            let later_in_job = job.changes[change_index + 1..]
-                                .iter()
-                                .any(|next| next.username() == name);
-                            let later_in_batch = batch[index + 1..].iter().any(|next| {
-                                next.changes.iter().any(|change| change.username() == name)
-                            });
-                            if later_in_job || later_in_batch {
-                                continue;
-                            }
-                            let before = store
-                                .get(name)
-                                .and_then(|profile| profile.settings.script_assignment.as_ref());
-                            let after = match change {
-                                VaultChange::Upsert(profile) => {
-                                    profile.settings.script_assignment.as_ref()
-                                }
-                                VaultChange::Remove(_) => None,
-                            };
-                            if before != after {
-                                assignment_changes
-                                    .entry(job.op)
-                                    .or_insert_with(Vec::new)
-                                    .push(AssignmentChange::new(name, before, after));
-                            }
-                        }
-                    }
+                    let assignment_changes = durable_assignment_changes(&store, &batch);
+
                     // Applied in submission order in one commit, so the file
                     // ends with each profile's last value.
                     let changes: Vec<VaultChange> = batch
@@ -164,6 +296,12 @@ impl ProfileWriter {
                         .flat_map(|job| job.changes.iter().cloned())
                         .collect();
                     let result = store.commit(&changes).map_err(|e| e.to_string());
+                    if result.is_ok() {
+                        for (op, action, change) in &assignment_changes {
+                            change.log(*op, action);
+                        }
+                    }
+
                     for (index, job) in batch.iter().enumerate() {
                         let rest = &batch[index + 1..];
                         let writes = |next: &Job, name: &str| {
@@ -190,13 +328,6 @@ impl ProfileWriter {
                                 (name.to_string(), store.get(name).cloned())
                             })
                             .collect();
-                        if result.is_ok() {
-                            if let Some(changes) = assignment_changes.remove(&job.op) {
-                                for change in changes {
-                                    change.log(job.op, job.assignment_action);
-                                }
-                            }
-                        }
                         let written = Written {
                             op: job.op,
                             result: result.clone(),
