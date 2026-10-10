@@ -1676,6 +1676,19 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
+        self.save_profile_with_log_action(profile, mirror, label, "profile save")
+    }
+
+    /// Save a profile with the action that should own any durable assignment
+    /// transition it writes. Native preparations derive their action from
+    /// their assignment intent instead.
+    pub(crate) fn save_profile_with_log_action(
+        &mut self,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+        assignment_action: &'static str,
+    ) -> Result<OperationId, String> {
         if let Some((id, bag)) = mirror.native_draft() {
             return self.queue_native_settings(profile, mirror, label, id, bag, None);
         }
@@ -1691,6 +1704,7 @@ impl<Io> OperatorSession<Io> {
             vec![VaultChange::Upsert(profile)],
             mirror,
             label,
+            assignment_action,
         ))
     }
 
@@ -1743,6 +1757,7 @@ impl<Io> OperatorSession<Io> {
             ],
             mirror,
             label,
+            "profile rename",
         ))
     }
 
@@ -1824,6 +1839,7 @@ impl<Io> OperatorSession<Io> {
             vec![VaultChange::Remove(name.to_string())],
             ArmMirror::None,
             "chooser",
+            "profile delete",
         )))
     }
 
@@ -1859,9 +1875,10 @@ impl<Io> OperatorSession<Io> {
         changes: Vec<VaultChange>,
         mirror: ArmMirror,
         label: &'static str,
+        assignment_action: &'static str,
     ) -> OperationId {
         let op = self.operations.open(action);
-        self.submit_write_at(op, changes, mirror, label);
+        self.submit_write_at(op, changes, mirror, label, assignment_action);
         op
     }
 
@@ -1871,6 +1888,7 @@ impl<Io> OperatorSession<Io> {
         changes: Vec<VaultChange>,
         mirror: ArmMirror,
         label: &'static str,
+        assignment_action: &'static str,
     ) {
         // The operation's member is the profile the edit is about (a
         // rename's new name).
@@ -1896,7 +1914,7 @@ impl<Io> OperatorSession<Io> {
             },
         );
         if let Some(writer) = self.writer.as_mut() {
-            writer.submit(op, changes);
+            writer.submit(op, changes, assignment_action);
         }
     }
 

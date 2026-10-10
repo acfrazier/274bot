@@ -183,10 +183,16 @@ impl Scripts {
                 prepared: None,
             })
         });
+        let log_action = if assignment.is_some() {
+            "native sync assignment"
+        } else {
+            "native parameters"
+        };
         let result = self.upsert_profile_settings(
             core,
             profile,
             ArmMirror::NativeSettings { id, bag, live },
+            log_action,
             |settings| {
                 if let Some(assignment) = assignment {
                     settings.script_assignment = Some(assignment);
