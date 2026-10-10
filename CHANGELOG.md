@@ -9,8 +9,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - **Apply focused bot's settings to marked** no longer overwrites a script you
   explicitly assign while a native-script settings copy is still being prepared,
-  even if you edit that card again before the copy finishes. When two copies are
-  accepted for an unassigned bot, the last accepted copy chooses its script.
+  even if you edit that card again before the copy finishes. When you apply two
+  copies to an unassigned bot, the one you applied last chooses its script once
+  it finishes. If that later copy is cancelled or fails, the bot can be left
+  with no assigned script; assign it again.
 - Each bot's log now records every saved change to its assigned script,
   including the previous and new script and the action that changed it.
   Parameter edits alone do not produce assignment-change messages.
