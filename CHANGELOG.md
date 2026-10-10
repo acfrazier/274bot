@@ -11,7 +11,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   explicitly assign while a native-script settings copy is still being prepared,
   even if you edit that card again before the copy finishes. When two copies are
   accepted for an unassigned bot, the last accepted copy chooses its script.
-- The session log now records each saved change to a bot's assigned script,
+- Each bot's log now records every saved change to its assigned script,
   including the previous and new script and the action that changed it.
   Parameter edits alone do not produce assignment-change messages.
 - Saved settings that need a restart show a badge (`[restart]` in the panel,
