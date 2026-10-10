@@ -974,6 +974,10 @@ impl Play {
     }
 }
 
+pub(super) fn transfer_countdown_message(remaining: u64) -> String {
+    format!("Your profile will be transferred in: {remaining} seconds")
+}
+
 fn publish_transfer_countdown(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, remaining: u64) {
     let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
@@ -981,8 +985,7 @@ fn publish_transfer_countdown(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str
         s.startup_phase_started = Instant::now();
         s.error = None;
         s.startup_progress_percent = None;
-        s.startup_progress_message =
-            format!("Your profile will be transferred in: {remaining} seconds");
+        s.startup_progress_message = transfer_countdown_message(remaining);
     }
 }
 
