@@ -279,9 +279,11 @@ enum Phase {
     AwaitOpen {
         first_target: Option<(i32, WorldTile)>,
     },
+    AwaitTable,
     AwaitNoteMode {
         request_id: u64,
         evidence: EvidenceStamp,
+        started_at: Duration,
     },
     Act,
     AwaitTransfer {
@@ -289,6 +291,7 @@ enum Phase {
         before_slots: Option<usize>,
         item_id: i32,
         evidence: EvidenceStamp,
+        started_at: Duration,
     },
     AwaitClose {
         baseline: CloseBaseline,
@@ -360,13 +363,8 @@ impl BankDeadline {
 pub struct BankMachine {
     request: BankRequest,
     phase: Phase,
-    /// The outer open/close/table wait; NPC sub-dialogues have their own deadline.
+    /// Deadline for the active open, dialogue, table, or close wait.
     deadline: Option<BankDeadline>,
-    /// Current teller/object dialogue's active-time and observed-tick bound.
-    dialogue_deadline: Option<BankDeadline>,
-    /// A bank session opened without its item table; its bound takes precedence
-    /// over NPC sub-dialogue waits.
-    table_wait_armed: bool,
     session: u64,
     deposits: u8,
     withdraw_index: usize,
@@ -530,8 +528,6 @@ impl NativeMachine for BankMachine {
                 open_started_at,
                 ops::TRANSFER_OBSERVED_TICK_LIMIT,
             )),
-            dialogue_deadline: None,
-            table_wait_armed: false,
             session: 0,
             deposits: 0,
             withdraw_index: 0,
@@ -554,13 +550,18 @@ impl NativeMachine for BankMachine {
             let bank_open = snapshot
                 .bank_session()
                 .is_some_and(|session| session.value.open);
-            if bank_open && snapshot.bank().is_none() && !self.table_wait_armed {
+            let opening = !matches!(&self.request.action, BankAction::Close)
+                && matches!(
+                    self.phase,
+                    Phase::Open | Phase::NpcAccess { .. } | Phase::AwaitOpen { .. }
+                );
+            if opening && bank_open && snapshot.bank().is_none() {
                 self.arm_deadline(
                     cx.evidence().tick,
                     cx.active_now(),
                     ops::TRANSFER_OBSERVED_TICK_LIMIT,
                 );
-                self.table_wait_armed = true;
+                self.phase = Phase::AwaitTable;
             }
             match self.phase {
                 Phase::Open => {
@@ -596,7 +597,7 @@ impl NativeMachine for BankMachine {
                         BankAction::OpenStand { access } if access.kind == AccessKind::Teller
                     ) {
                         self.opened_from = Some(open_generation(cx));
-                        self.dialogue_deadline = None;
+                        self.deadline = None;
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Teller,
@@ -611,14 +612,6 @@ impl NativeMachine for BankMachine {
                             .map_or(0, |session| session.value.generation);
                         self.clear_wait_deadlines();
                         self.phase = Phase::Act;
-                        continue;
-                    }
-                    if cx
-                        .snapshot()
-                        .bank_session()
-                        .is_some_and(|session| session.value.open)
-                    {
-                        self.phase = Phase::AwaitOpen { first_target: None };
                         continue;
                     }
                     if self.deadline_reached(cx.evidence().tick, cx.active_now()) {
@@ -767,12 +760,6 @@ impl NativeMachine for BankMachine {
                     dialogue,
                     first_target,
                 } => {
-                    if cx.snapshot().bank().is_none()
-                        && self.deadline_reached(cx.evidence().tick, cx.active_now())
-                    {
-                        self.phase = Phase::AwaitOpen { first_target };
-                        continue;
-                    }
                     let BankAction::OpenStand { access } = &self.request.action else {
                         unreachable!("bank dialogue only belongs to OpenStand");
                     };
@@ -784,18 +771,16 @@ impl NativeMachine for BankMachine {
                             choose: "",
                         },
                     };
-                    let dialogue_deadline = self.dialogue_deadline;
+                    let deadline = self.deadline;
                     let step = match crate::native::defer_budget(core.step(
                         intent,
                         &mut NativeNpcContext {
                             cx,
-                            dialogue_deadline: &mut self.dialogue_deadline,
-                            open_deadline: self.deadline,
-                            table_wait_armed: self.table_wait_armed,
+                            deadline: &mut self.deadline,
                         },
                     )) {
                         Poll::Pending => {
-                            self.dialogue_deadline = dialogue_deadline;
+                            self.deadline = deadline;
                             return Poll::Pending;
                         }
                         Poll::Ready(result) => result?,
@@ -847,6 +832,11 @@ impl NativeMachine for BankMachine {
                                 continue;
                             }
                             if dialogue == AccessDialogue::Object {
+                                self.arm_deadline(
+                                    cx.evidence().tick,
+                                    cx.active_now(),
+                                    ops::TRANSFER_OBSERVED_TICK_LIMIT,
+                                );
                                 self.object_dialogue_finished = true;
                                 self.phase = Phase::AwaitOpen { first_target };
                                 continue;
@@ -923,7 +913,7 @@ impl NativeMachine for BankMachine {
                         && object_access
                         && chat_open
                     {
-                        self.dialogue_deadline = None;
+                        self.deadline = None;
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Object,
@@ -955,17 +945,40 @@ impl NativeMachine for BankMachine {
                     }
                     return Poll::Pending;
                 }
+                Phase::AwaitTable => {
+                    if cx.snapshot().bank().is_some() {
+                        self.session = cx
+                            .snapshot()
+                            .bank_session()
+                            .map_or(0, |session| session.value.generation);
+                        self.note_fresh_session(cx);
+                        self.clear_wait_deadlines();
+                        self.phase = Phase::Act;
+                        continue;
+                    }
+                    if self.deadline_reached(cx.evidence().tick, cx.active_now()) {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank item table unavailable",
+                        ))));
+                    }
+                    return Poll::Pending;
+                }
                 Phase::AwaitNoteMode {
                     request_id,
                     evidence,
+                    started_at,
                 } => {
                     let current_evidence = cx.evidence();
+                    let timed_out = ops::observed_wait_expired(
+                        evidence.tick,
+                        current_evidence.tick,
+                        cx.active_now().saturating_sub(started_at),
+                        ops::TRANSFER_OBSERVED_TICK_LIMIT,
+                    );
                     if current_evidence.run != evidence.run
                         || current_evidence.sequence <= evidence.sequence
                     {
-                        if current_evidence.tick.saturating_sub(evidence.tick)
-                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
-                        {
+                        if timed_out {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank item mode dispatch did not settle",
                             ))));
@@ -973,9 +986,7 @@ impl NativeMachine for BankMachine {
                         return Poll::Pending;
                     }
                     let Some(receipt) = cx.interaction_receipt(request_id) else {
-                        if current_evidence.tick.saturating_sub(evidence.tick)
-                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
-                        {
+                        if timed_out {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank item mode dispatch did not settle",
                             ))));
@@ -1356,6 +1367,7 @@ impl NativeMachine for BankMachine {
                                     before_slots,
                                     item_id: click.id,
                                     evidence: cx.evidence(),
+                                    started_at,
                                 };
                                 return Poll::Pending;
                             }
@@ -1368,6 +1380,7 @@ impl NativeMachine for BankMachine {
                     before_slots,
                     item_id,
                     evidence,
+                    started_at,
                 } => {
                     if cx.evidence().run != evidence.run
                         || cx.evidence().sequence <= evidence.sequence
@@ -1449,9 +1462,12 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
-                    if cx.evidence().tick.saturating_sub(evidence.tick)
-                        >= ops::TRANSFER_OBSERVED_TICK_LIMIT
-                    {
+                    if ops::observed_wait_expired(
+                        evidence.tick,
+                        cx.evidence().tick,
+                        cx.active_now().saturating_sub(started_at),
+                        ops::TRANSFER_OBSERVED_TICK_LIMIT,
+                    ) {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank transfer did not settle",
                         ))));
@@ -1496,9 +1512,7 @@ impl NativeMachine for BankMachine {
 
 struct NativeNpcContext<'a, 'frame> {
     cx: &'a mut ActionContext<'frame>,
-    dialogue_deadline: &'a mut Option<BankDeadline>,
-    open_deadline: Option<BankDeadline>,
-    table_wait_armed: bool,
+    deadline: &'a mut Option<BankDeadline>,
 }
 
 impl npc::Context for NativeNpcContext<'_, '_> {
@@ -1573,11 +1587,8 @@ impl npc::Context for NativeNpcContext<'_, '_> {
     }
 
     fn arm(&mut self, millis: u64) {
-        if self.table_wait_armed {
-            return;
-        }
         let ticks = ops::observed_ticks_for_millis(millis);
-        *self.dialogue_deadline = Some(BankDeadline::hybrid(
+        *self.deadline = Some(BankDeadline::hybrid(
             self.cx.evidence().tick,
             self.cx.active_now(),
             ticks,
@@ -1585,15 +1596,9 @@ impl npc::Context for NativeNpcContext<'_, '_> {
     }
 
     fn expired(&mut self) -> bool {
-        let tick = self.cx.evidence().tick;
-        let active_now = self.cx.active_now();
-        self.open_deadline
-            .is_some_and(|deadline| deadline.reached(tick, active_now))
-            || self
-                .dialogue_deadline
-                .is_some_and(|deadline| deadline.reached(tick, active_now))
+        (*self.deadline)
+            .is_some_and(|deadline| deadline.reached(self.cx.evidence().tick, self.cx.active_now()))
     }
-
     fn emit(&mut self, request: InteractReq) -> Result<(), Self::Error> {
         self.cx.emit(request).map(|_| ())
     }
@@ -1715,7 +1720,6 @@ impl BankMachine {
 
     fn clear_wait_deadlines(&mut self) {
         self.deadline = None;
-        self.table_wait_armed = false;
     }
     fn await_deposit_transfer(
         &mut self,
@@ -1996,6 +2000,7 @@ impl BankMachine {
             self.item_mode_ensured = true;
         }
         if !self.item_mode_ensured {
+            let started_at = cx.active_now();
             let request_id = std::task::ready!(crate::native::defer_budget(
                 cx.emit(ops::note_req(NoteIntent::Item))
             ))?;
@@ -2004,9 +2009,11 @@ impl BankMachine {
             self.phase = Phase::AwaitNoteMode {
                 request_id,
                 evidence,
+                started_at,
             };
             return Poll::Ready(Ok(Clicked::Sent));
         }
+        let started_at = cx.active_now();
         std::task::ready!(crate::native::defer_budget(cx.emit(request)))?;
 
         self.phase = Phase::AwaitTransfer {
@@ -2014,6 +2021,7 @@ impl BankMachine {
             before_slots: None,
             item_id: goal.lands_as_id,
             evidence: cx.evidence(),
+            started_at,
         };
         Poll::Ready(Ok(Clicked::Sent))
     }
@@ -2708,7 +2716,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_object_stuck_continue_modal_fails_at_eight_observed_ticks() {
+    fn catalog_object_stuck_continue_modal_uses_its_page_ack_bound() {
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -2771,15 +2779,23 @@ mod tests {
             HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
-        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 9, |tick| {
+        let pending = with_tick_reach(&snapshot, &reach, &mut ledger, 9, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
-        assert!(matches!(
-            result,
-            Poll::Ready(Err(ActionError::Failed(message)))
-                if message.as_ref() == "bank item table unavailable"
-        ));
+        assert!(
+            pending.is_pending(),
+            "the original open bound cannot expire an active dialogue: {pending:?}"
+        );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        let retried = with_tick_reach(&snapshot, &reach, &mut ledger, 13, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retried.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 13),
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+        ));
     }
 
     #[test]
@@ -2822,18 +2838,25 @@ mod tests {
 
         snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
         snapshot.seed_chat_options(Vec::new(), -1);
-        for tick_number in [2, 8] {
-            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
-                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        for tick_number in [2, 8, 9, 14, 20] {
+            let pending = with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
             });
+            assert!(
+                pending.is_pending(),
+                "active object dialogue remains inside its own bound at tick {tick_number}: {pending:?}"
+            );
             assert!(ledger.as_ref().unwrap().outbox.is_empty());
         }
 
-        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 9, |tick| {
+        assert!(with_tick_reach(&snapshot, &reach, &mut ledger, 27, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
-        });
+        })
+        .is_pending());
         assert!(matches!(
-            result,
+            with_tick_reach(&snapshot, &reach, &mut ledger, 28, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
             Poll::Ready(Err(ActionError::Failed(message)))
                 if message.as_ref() == "bank item table unavailable"
         ));
@@ -2966,26 +2989,38 @@ mod tests {
             }) if name == "Gundai" && action == "Talk-to"
         ));
 
+        for tick_number in 2..=10 {
+            let result = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                result.is_pending(),
+                "Gundai's Talk-to remains inside its six-second dialogue bound at tick {tick_number}: {result:?}"
+            );
+        }
+
+        // The Mage Arena teller has now used its full NPC_DIALOG_MS window;
+        // the content issues @openbank only after the dialogue choice.
         snapshot.seed_chat_modal(1, vec!["First page".into()]);
         snapshot.seed_chat_options(Vec::new(), 99);
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick(&snapshot, &mut ledger, 11, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
         assert!(matches!(
-            acknowledge(&mut ledger, 2),
+            acknowledge(&mut ledger, 11),
             HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(2, vec!["Second page".into()]);
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 12, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
-        with_tick(&snapshot, &mut ledger, 4, |tick| {
+        with_tick(&snapshot, &mut ledger, 13, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
         assert!(matches!(
-            acknowledge(&mut ledger, 4),
+            acknowledge(&mut ledger, 13),
             HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
@@ -3003,27 +3038,27 @@ mod tests {
             ],
             -1,
         );
-        with_tick(&snapshot, &mut ledger, 5, |tick| {
+        with_tick(&snapshot, &mut ledger, 14, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        with_tick(&snapshot, &mut ledger, 6, |tick| {
+        with_tick(&snapshot, &mut ledger, 15, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
         assert!(matches!(
-            acknowledge(&mut ledger, 6),
+            acknowledge(&mut ledger, 15),
             HostEffect::Interaction(InteractReq::Answer { option: 2 })
         ));
 
         snapshot.seed_chat_modal(-1, Vec::new());
         snapshot.seed_chat_options(Vec::new(), -1);
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
-        with_tick(&snapshot, &mut ledger, 7, |tick| {
+        with_tick(&snapshot, &mut ledger, 16, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        with_tick(&snapshot, &mut ledger, 8, |tick| {
+        with_tick(&snapshot, &mut ledger, 17, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let receipt = with_tick(&snapshot, &mut ledger, 9, |tick| {
+        let receipt = with_tick(&snapshot, &mut ledger, 18, |tick| {
             match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Ready(Ok(receipt)) => receipt,
                 other => {
@@ -3448,6 +3483,48 @@ mod tests {
             let poll = tick.actions.poll(&handle, &mut tick.cx);
             (handle, poll)
         })
+    }
+    fn begin_withdraw_after_item_mode(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        item_id: i32,
+    ) -> crate::native::ActionHandle<BankMachine> {
+        let (handle, started) = begin_bank(
+            snapshot,
+            ledger,
+            bank_request(
+                BankAction::Withdraw {
+                    item: BankItem {
+                        id: item_id,
+                        name: Arc::from("Bait"),
+                    },
+                    qty: 2,
+                },
+                false,
+            ),
+        );
+        assert!(started.is_pending());
+        assert!(matches!(
+            acknowledge(ledger, 2),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+        assert!(with_tick(snapshot, ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.as_slice(),
+            [action]
+                if matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::WithdrawX {
+                        bank_item_id,
+                        lands_as_id,
+                        ..
+                    }) if *bank_item_id == item_id && *lands_as_id == item_id
+                )
+        ));
+        handle
     }
 
     /// P-ladder (native): a fixed-only row serves an exact 7 as 5 + 1 + 1;
@@ -4014,7 +4091,7 @@ mod tests {
     }
 
     #[test]
-    fn note_mode_dispatch_uses_eight_fresh_ticks() {
+    fn note_mode_dispatch_requires_tick_and_time_bounds() {
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4055,19 +4132,82 @@ mod tests {
                     HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
                 )
         ));
-        for tick_number in 2..=8 {
+        for tick_number in 2..=9 {
             let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.cx.active_now =
+                    Duration::from_millis(600 + tick_number.saturating_sub(1) * 125);
                 tick.actions.poll(&handle, &mut tick.cx)
             });
-            assert!(poll.is_pending(), "tick {tick_number}: {poll:?}");
+            assert!(
+                poll.is_pending(),
+                "catch-up tick {tick_number} is not a server opportunity"
+            );
         }
         let expired = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.cx.active_now = Duration::from_millis(5_400);
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
             expired,
             Poll::Ready(Err(ActionError::Failed(message)))
                 if message.as_ref() == "bank item mode dispatch did not settle"
+        ));
+    }
+    #[test]
+    fn withdraw_timeout_ignores_eight_catch_up_ticks_in_one_second() {
+        let item_id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(item_id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let handle = begin_withdraw_after_item_mode(&snapshot, &mut ledger, item_id);
+
+        for tick_number in 3..=10 {
+            let pending = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.cx.active_now =
+                    Duration::from_millis(1_200 + tick_number.saturating_sub(2) * 125);
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                pending.is_pending(),
+                "withdraw backlog tick {tick_number} is not a server opportunity"
+            );
+        }
+    }
+
+    #[test]
+    fn withdraw_without_a_server_response_times_out_after_both_bounds() {
+        let item_id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(item_id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let handle = begin_withdraw_after_item_mode(&snapshot, &mut ledger, item_id);
+
+        for tick_number in 3..=9 {
+            assert!(with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending());
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 10, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank transfer did not settle"
         ));
     }
 
