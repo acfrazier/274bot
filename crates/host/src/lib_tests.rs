@@ -2926,3 +2926,89 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
         "lamp_auto flipped live: next guardian tick must rub"
     );
 }
+
+/// Drive four slot-loop services with the capacity recorder bound. Each
+/// observe marks the bot Active, does `own_work` (blocking, like a slow
+/// script tick on its isolate thread) and adds `queued` run-queue wait to
+/// the injected clock (`clock`; without it the loop's overshoot is used).
+/// Returns the delays (ms) recorded before the loop exits (leaving the loop
+/// parks the slot, which drops them).
+fn measured_loop(busy: bool, own_work: Duration, queued: Duration, clock: bool) -> Vec<u64> {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    const SERVICES: u32 = 4;
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let monitor = Arc::new(CapacityMonitor::new());
+    let waited = Rc::new(Cell::new(Duration::ZERO));
+    capacity::bind_capacity_for_test(&monitor, clock.then(|| Rc::clone(&waited)));
+    let ran = Cell::new(0u32);
+    let delays = RefCell::new(Vec::new());
+    Host::run_client(
+        &mut c,
+        "alice",
+        ProfileSettings::default(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        ScriptRunPolicy::default(),
+        |_, _, _, _, _| {
+            set_service_class(ServiceClass::Active);
+            thread::sleep(own_work);
+            waited.set(waited.get() + queued);
+            ran.set(ran.get() + 1);
+            busy
+        },
+        |_| {
+            let done = ran.get() >= SERVICES;
+            if done {
+                *delays.borrow_mut() = monitor.recorded_delays();
+            }
+            done
+        },
+        |_| RandomClaim::Host,
+    );
+    assert_eq!(
+        monitor.recorded_delays(),
+        Vec::<u64>::new(),
+        "leaving the loop drops the slot's delays"
+    );
+    unbind_capacity();
+    assert_eq!(monitor.registered(), 0, "unbind unregisters the slot");
+    delays.into_inner()
+}
+
+#[test]
+fn slot_loop_does_not_count_its_own_slow_frames() {
+    // 650 ms frames on the 20 ms path: R1 counted each as 630 ms late.
+    let own = Duration::from_millis(650);
+    assert_eq!(
+        measured_loop(true, own, Duration::ZERO, false),
+        Vec::<u64>::new(),
+        "an overrun frame has no timed wake, so no overshoot"
+    );
+    assert_eq!(
+        measured_loop(true, own, Duration::ZERO, true),
+        Vec::<u64>::new(),
+        "own work is not run-queue wait"
+    );
+}
+
+#[test]
+fn slot_loop_counts_run_queue_wait_on_the_idle_park() {
+    // An idle in-game bot (observe not busy) parks between services; each
+    // wake waits 700 ms for a CPU. The first service is skipped (the class
+    // only became Active during it).
+    assert_eq!(
+        measured_loop(false, Duration::ZERO, Duration::from_millis(700), true),
+        [700, 700, 700]
+    );
+}
