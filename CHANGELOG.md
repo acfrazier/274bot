@@ -50,6 +50,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Panel
 
+- Load all no longer steals the Game pane. The focused bot keeps focus and
+  keeps drawing while the others load and log in.
 - The Fleet window is tidier. Its button labels no longer end in "…", its
   table columns share the window's width instead of scrolling sideways, its
   buttons and column checkboxes wrap on a narrow window, and "Sort:" is a

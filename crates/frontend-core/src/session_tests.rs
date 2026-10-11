@@ -153,11 +153,100 @@ fn push_status(session: &OperatorSession<u32>, row: SlotStatus) {
     session.play().unwrap().statuses.lock().unwrap().push(row);
 }
 
+fn set_status(session: &OperatorSession<u32>, row: SlotStatus) {
+    let mut rows = session.play().unwrap().statuses.lock().unwrap();
+    rows.retain(|existing| existing.username != row.username);
+    rows.push(row);
+}
+
 fn row(name: &str) -> SlotStatus {
     SlotStatus {
         username: name.into(),
         ..SlotStatus::default()
     }
+}
+
+fn publish_login(session: &mut OperatorSession<u32>, name: &str, scene_state: i32) {
+    set_status(
+        session,
+        SlotStatus {
+            connected: true,
+            ingame: true,
+            scene_state,
+            ..row(name)
+        },
+    );
+    session.poll();
+}
+
+#[test]
+fn load_all_does_not_move_selection_when_others_log_in() {
+    let mut s = session(
+        "load-all-keeps-sel",
+        &[
+            ("alice", 1, false),
+            ("bob", 2, true),
+            ("carol", 3, true),
+            ("dave", 4, true),
+        ],
+    );
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.select("alice");
+    assert_eq!(s.selected(), Some("alice"));
+
+    let (op, added) = s.load_all(&mut surface);
+    assert_eq!(added, 3);
+    assert_eq!(
+        s.operation(op).unwrap().outcome("bob"),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(s.selected(), Some("alice"), "Load all is not selection");
+    s.login_all(&mut surface);
+
+    for name in ["bob", "carol", "dave"] {
+        publish_login(&mut s, name, 1);
+        assert_eq!(
+            s.selected(),
+            Some("alice"),
+            "{name} at scene_state==1 must not take focus"
+        );
+        publish_login(&mut s, name, 2);
+        assert_eq!(
+            s.selected(),
+            Some("alice"),
+            "{name} logging in must not take focus"
+        );
+    }
+    assert_eq!(s.selected(), Some("alice"));
+    assert_eq!(
+        s.members(),
+        [
+            "alice".to_string(),
+            "bob".to_string(),
+            "carol".to_string(),
+            "dave".to_string()
+        ]
+    );
+}
+
+#[test]
+fn load_all_leaves_selection_empty_when_none_was_selected() {
+    let mut s = session(
+        "load-all-no-sel",
+        &[("alice", 1, true), ("bob", 2, true), ("carol", 3, true)],
+    );
+    let mut surface = Recorder::default();
+    s.load_all(&mut surface);
+    assert_eq!(s.selected(), None);
+    s.login_all(&mut surface);
+    publish_login(&mut s, "alice", 2);
+    publish_login(&mut s, "bob", 2);
+    assert_eq!(
+        s.selected(),
+        None,
+        "Load all must not invent a focus; first login does not steal one either"
+    );
 }
 
 #[test]

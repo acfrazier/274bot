@@ -2818,6 +2818,91 @@ fn multibox_key_logs_a_loaded_logged_out_member_back_in() {
 }
 
 #[test]
+fn load_all_keeps_focus_when_others_log_in() {
+    let iso = IsolatedEnv::enter("tui-loadall-keeps-focus");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
+    for (i, name) in ["alice", "bob", "carol", "dave"].iter().enumerate() {
+        vault
+            .upsert(vault::Profile {
+                username: (*name).into(),
+                password: "pw".into(),
+                uid: 1 + i as i32,
+                settings: vault::ProfileSettings {
+                    auto_login: *name != "alice",
+                    ..vault::ProfileSettings::default()
+                },
+            })
+            .unwrap();
+    }
+    session.core.set_vault(Some(vault));
+    session.inject_play(run_with_io(
+        &dummy_options(),
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    ));
+    let mut surface = HeadlessSurface::new();
+    session.core.load("alice", &mut surface);
+    session.core.select("alice");
+    let mut app = TuiApp::new("tui");
+    session.pump(&mut app);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+
+    dispatch(&mut session, &mut app, AppAction::SpawnAll);
+    session.pump(&mut app);
+    assert_eq!(
+        session.core.members(),
+        [
+            "alice".to_string(),
+            "bob".to_string(),
+            "carol".to_string(),
+            "dave".to_string()
+        ]
+    );
+    assert_eq!(session.core.selected(), Some("alice"));
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+
+    for name in ["bob", "carol", "dave"] {
+        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        rows.retain(|row| row.username != name);
+        rows.push(host_play::SlotStatus {
+            username: name.into(),
+            connected: true,
+            ingame: true,
+            scene_state: 1,
+            ..host_play::SlotStatus::default()
+        });
+        drop(rows);
+        session.pump(&mut app);
+        assert_eq!(
+            app.focused_name().as_deref(),
+            Some("alice"),
+            "{name} at scene_state==1 must not take TUI focus"
+        );
+        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        rows.retain(|row| row.username != name);
+        rows.push(host_play::SlotStatus {
+            username: name.into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..host_play::SlotStatus::default()
+        });
+        drop(rows);
+        session.pump(&mut app);
+        assert_eq!(
+            app.focused_name().as_deref(),
+            Some("alice"),
+            "{name} logging in must not take TUI focus"
+        );
+        assert_eq!(session.core.selected(), Some("alice"));
+    }
+    let _iso = iso;
+}
+
+#[test]
 fn settings_popup_writes_only_guardian_fields() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
