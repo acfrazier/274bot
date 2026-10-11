@@ -138,6 +138,9 @@ struct StatusDetails<'a> {
     failure_message: Option<&'a str>,
     waiting_for: Option<&'a str>,
     action_state: Option<&'a str>,
+    method: Option<&'a str>,
+    area: Option<&'a str>,
+    target: Option<&'a str>,
     last_event: Option<&'a str>,
 }
 
@@ -151,6 +154,15 @@ impl std::fmt::Display for StatusDetails<'_> {
         }
         if let Some(value) = self.action_state {
             write!(f, " action_state={value}")?;
+        }
+        if let Some(value) = self.method {
+            write!(f, " method={value}")?;
+        }
+        if let Some(value) = self.area {
+            write!(f, " area={value}")?;
+        }
+        if let Some(value) = self.target {
+            write!(f, " target={value}")?;
         }
         if let Some(value) = self.last_event {
             write!(f, " last_event={value}")?;
@@ -219,6 +231,21 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         failure_message: failure.map(|failure| failure.message.as_ref()),
         waiting_for,
         action_state,
+        method: if gatherer {
+            status_text(status, "method")
+        } else {
+            None
+        },
+        area: if gatherer {
+            status_text(status, "area")
+        } else {
+            None
+        },
+        target: if gatherer {
+            status_text(status, "target")
+        } else {
+            None
+        },
         last_event: if gatherer {
             status_text(status, "last_event")
         } else {
