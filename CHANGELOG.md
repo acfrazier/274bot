@@ -44,6 +44,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Connection
+
+- Under heavy outgoing WebSocket traffic, a temporary block while replying to
+  a Ping no longer disconnects the bot; the queued Pong is retried.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
