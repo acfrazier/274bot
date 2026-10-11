@@ -167,7 +167,9 @@ impl Gatherer {
             }
             5 => {
                 self.return_to_resources(tick);
-                self.set_event("returning after death");
+                if matches!(self.active, Active::Walk(_)) {
+                    self.set_event("returning after death");
+                }
             }
             _ => unreachable!("invalid retained Gatherer recovery step"),
         }

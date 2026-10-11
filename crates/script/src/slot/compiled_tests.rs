@@ -2194,6 +2194,56 @@ fn native_status_logs_present_fields_as_plain_text() {
 }
 
 #[test]
+fn native_status_logs_gatherer_method_area_target_and_reason() {
+    const SLOT: &str = "status-diagnose-test";
+    install_status_line_sink();
+    let mut output = Output {
+        account: SLOT.to_owned(),
+        ..Output::default()
+    };
+    let mut blocked = status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            code: Arc::from("resource-unavailable"),
+            message: Arc::from(
+                "resource-unavailable: absent: 2; method=fishing.saltfish.op1; site=—; area=Custom (3086,3229,0) r12; planning=3092,3243,0",
+            ),
+        }),
+    );
+    blocked.fields = vec![
+        crate::native::StatusField {
+            key: "method",
+            label: "Method",
+            value: crate::native::StatusValue::Text(Arc::from("Net")),
+        },
+        crate::native::StatusField {
+            key: "area",
+            label: "Area",
+            value: crate::native::StatusValue::Text(Arc::from("Custom (3086,3229,0) r12")),
+        },
+        crate::native::StatusField {
+            key: "target",
+            label: "Target",
+            value: crate::native::StatusValue::Text(Arc::from("—")),
+        },
+        crate::native::StatusField {
+            key: "last_event",
+            label: "Last event",
+            value: crate::native::StatusValue::Text(Arc::from("target gone")),
+        },
+    ]
+    .into();
+    output.status(blocked);
+
+    let lines = status_lines_for(SLOT);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0].message,
+        "native Gatherer phase=blocked failure=resource-unavailable failure_message=resource-unavailable: absent: 2; method=fishing.saltfish.op1; site=—; area=Custom (3086,3229,0) r12; planning=3092,3243,0 method=Net area=Custom (3086,3229,0) r12 target=— last_event=target gone"
+    );
+}
+
+#[test]
 fn terminal_native_blocked_stop_logs_once_through_output_status() {
     install_status_line_sink();
     for (slot_name, phase, flow_blocked) in [

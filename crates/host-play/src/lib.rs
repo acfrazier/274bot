@@ -553,6 +553,8 @@ mod bank_npc_live;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]
+mod gather_return_live;
+#[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
 
