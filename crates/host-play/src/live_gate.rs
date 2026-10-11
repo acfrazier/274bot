@@ -25,6 +25,64 @@ pub const SCRIPT_STOP_WAIT: Duration = Duration::from_secs(45);
 pub const CATALOG_CORE_TAG: &str = "CATALOG_CORE";
 pub const PAIRED_CORE_TAG: &str = "PAIRED_CORE";
 pub const EXTERNAL_LOADER_TAG: &str = "EXTERNAL_LOADER";
+/// Maximum pre-Start wait for the Flax pair fixture to reach successful relog
+/// and staged readiness. The 120s bound includes the host's 60s retry for
+/// login response 5 plus one further bounded window for the engine's async
+/// logout-save release; it does not extend the live proof deadline.
+pub const PAIR_FIXTURE_SETUP_DEADLINE: Duration = Duration::from_secs(120);
+
+/// Split the original Flax live wall-clock ceiling into fixture setup and
+/// script elapsed time without moving that ceiling when Start is dispatched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiveTiming {
+    setup_started_at: Instant,
+    core_deadline: Option<Instant>,
+    script_started_at: Option<Instant>,
+}
+
+impl LiveTiming {
+    pub fn new(setup_started_at: Instant, core_deadline: Option<Instant>) -> Self {
+        Self {
+            setup_started_at,
+            core_deadline,
+            script_started_at: None,
+        }
+    }
+
+    /// Latch only the first successfully dispatched shared Start.
+    pub fn mark_script_started(&mut self, now: Instant) {
+        self.script_started_at.get_or_insert(now);
+    }
+
+    pub fn script_started(&self) -> bool {
+        self.script_started_at.is_some()
+    }
+
+    /// Setup has its own cap, clamped by the unchanged overall proof ceiling.
+    pub fn setup_deadline(&self, setup_budget: Duration) -> Instant {
+        let setup_deadline = self.setup_started_at + setup_budget;
+        self.core_deadline
+            .map_or(setup_deadline, |deadline| deadline.min(setup_deadline))
+    }
+
+    pub fn setup_expired(&self, setup_budget: Duration, now: Instant) -> bool {
+        !self.script_started() && now >= self.setup_deadline(setup_budget)
+    }
+
+    /// Stops at shared Start; if setup fails, reports elapsed time through the
+    /// failure instead.
+    pub fn setup_elapsed(&self, now: Instant) -> Duration {
+        self.script_started_at
+            .unwrap_or(now)
+            .saturating_duration_since(self.setup_started_at)
+    }
+
+    /// Script elapsed time is absent until an actual Start dispatch.
+    pub fn script_elapsed(&self, now: Instant) -> Option<Duration> {
+        self.script_started_at
+            .map(|started| now.saturating_duration_since(started))
+    }
+}
 
 /// The shared witness one live scenario run qualifies under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

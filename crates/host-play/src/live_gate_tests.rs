@@ -99,6 +99,57 @@ fn core_deadline_prefers_the_soak_budget_and_needs_a_configured_watch() {
 }
 
 #[test]
+fn late_pair_setup_keeps_the_original_live_deadline_and_splits_elapsed_time() {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(180);
+    let setup_budget = PAIR_FIXTURE_SETUP_DEADLINE;
+    let mut timing = LiveTiming::new(started, Some(deadline));
+    let late_start = started + Duration::from_secs(119);
+    let setup_deadline = timing.setup_deadline(setup_budget);
+
+    assert_eq!(setup_deadline, started + setup_budget);
+    assert!(!timing.setup_expired(setup_budget, late_start));
+    assert!(timing.setup_expired(setup_budget, setup_deadline));
+    timing.mark_script_started(late_start);
+    assert!(!timing.setup_expired(setup_budget, deadline));
+    assert_eq!(timing.setup_elapsed(deadline), Duration::from_secs(119));
+    assert_eq!(
+        timing.script_elapsed(deadline),
+        Some(Duration::from_secs(61)),
+        "Start reports its own elapsed interval without moving the run deadline"
+    );
+
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    assert!(matches!(
+        pair_core_gate(Some(&watch), Some(deadline), deadline),
+        CoreGate::Failed(message) if message.contains("pair core did not qualify before the headed deadline")
+    ));
+}
+
+#[test]
+fn prompt_pair_setup_stays_held_while_the_pair_gate_is_pending() {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(180);
+    let mut timing = LiveTiming::new(started, Some(deadline));
+    timing.mark_script_started(started + Duration::from_secs(2));
+    let finished = started + Duration::from_secs(170);
+    assert_eq!(timing.setup_elapsed(finished), Duration::from_secs(2));
+    assert_eq!(
+        timing.script_elapsed(finished),
+        Some(Duration::from_secs(168))
+    );
+
+    let mut grace = None;
+    let pending = CoreGate::Pending;
+    assert_eq!(
+        pass_hold(&[&pending], None, |_| false, &mut grace, finished),
+        PassHold::Core,
+        "prompt setup alone is not proof of a completed pair cycle"
+    );
+}
+
+#[test]
 fn pending_core_holds_pass_without_starting_the_clean_stop_grace() {
     const STOP: &str = "cell qualification complete";
     let start = Instant::now();
