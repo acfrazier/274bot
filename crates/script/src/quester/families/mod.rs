@@ -453,9 +453,13 @@ struct Near {
 }
 impl PredicatePlan for Near {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        match cx.cx.snapshot().here() {
+        match cx.cx.snapshot().local_player() {
             None => Truth::Unknown,
-            Some(here) => truth(reach::within(here.value, self.tile, self.radius)),
+            Some(player) => truth(reach::within(
+                player.value.player.network,
+                self.tile,
+                self.radius,
+            )),
         }
     }
 }
@@ -718,8 +722,8 @@ struct NpcPresent {
 impl PredicatePlan for NpcPresent {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         let here = match self.radius {
-            Some(_) => match cx.cx.snapshot().here() {
-                Some(here) => Some(here.value),
+            Some(_) => match cx.cx.snapshot().local_player() {
+                Some(player) => Some(player.value.player.network),
                 None => return Truth::Unknown,
             },
             None => None,
@@ -922,9 +926,9 @@ struct OnLevel {
 }
 impl PredicatePlan for OnLevel {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        match cx.cx.snapshot().here() {
+        match cx.cx.snapshot().local_player() {
             None => Truth::Unknown,
-            Some(here) => truth(here.value.level == self.level),
+            Some(player) => truth(player.value.player.network.level == self.level),
         }
     }
 }
@@ -953,12 +957,12 @@ struct InArea {
 }
 impl PredicatePlan for InArea {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        match cx.cx.snapshot().here() {
+        match cx.cx.snapshot().local_player() {
             None => Truth::Unknown,
-            Some(here) => truth(
+            Some(player) => truth(
                 self.boxes
                     .iter()
-                    .any(|b| super::path::box_contains(*b, here.value)),
+                    .any(|b| super::path::box_contains(*b, player.value.player.network)),
             ),
         }
     }
@@ -2267,7 +2271,11 @@ impl InteractRun {
                         loc.tile,
                         reach::loc_walk_request(
                             loc,
-                            cx.tick.cx.snapshot().here().map(|here| here.value),
+                            cx.tick
+                                .cx
+                                .snapshot()
+                                .local_player()
+                                .map(|player| player.value.player.network),
                             cx.required_after,
                         ),
                         reach::loc_arrived(&cx.tick.cx, loc),
@@ -3111,7 +3119,12 @@ impl StepRun for UseOnRun {
                     }));
                 }
                 if let Some(tile) = self.tile {
-                    let here = cx.tick.cx.snapshot().here();
+                    let here = cx
+                        .tick
+                        .cx
+                        .snapshot()
+                        .local_player()
+                        .map(|player| player.value.player.network);
                     let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
                     // Walk to the anchor area only when nothing in it can be
                     // reached from here; a visible anchored loc is approached
@@ -3148,7 +3161,7 @@ impl StepRun for UseOnRun {
                         .is_some(),
                         _ => false,
                     };
-                    if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius))
+                    if !here.is_some_and(|here| reach::within(here, tile, self.radius))
                         && !target_here
                     {
                         self.walk = Some(std::task::ready!(crate::native::defer_budget(
@@ -3232,7 +3245,11 @@ impl StepRun for UseOnRun {
                                     cx.tick.actions.begin::<Walk>(
                                         reach::loc_walk_request(
                                             loc,
-                                            cx.tick.cx.snapshot().here().map(|here| here.value),
+                                            cx.tick
+                                                .cx
+                                                .snapshot()
+                                                .local_player()
+                                                .map(|player| player.value.player.network),
                                             cx.required_after,
                                         ),
                                         &mut cx.tick.cx,

@@ -101,6 +101,16 @@ impl NativeMachine for OneOp {
     type Output = bool;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        if matches!(args.kind, OneOpKind::Wear { .. })
+            && cx
+                .snapshot()
+                .bank_session()
+                .is_some_and(|session| session.value.open)
+        {
+            return Err(ActionError::Blocked(Arc::from(
+                "cannot wear equipment while bank is open",
+            )));
+        }
         let continued_root = if args.kind == OneOpKind::ContinueDialog {
             cx.snapshot().chat_modal().map(|modal| modal.value.root)
         } else {
@@ -169,4 +179,50 @@ impl NativeMachine for OneOp {
     }
 
     fn cancel(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quester::families::tests::{def, with_tick};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+
+    #[test]
+    fn wear_is_blocked_while_bank_is_open() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(1351, "Bronze axe"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Wield".into())],
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot.seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            OneOp::begin(
+                OneOpArgs::wear(Arc::from("Bronze axe"), 1351, "Wield"),
+                &mut tick.cx,
+            )
+        });
+
+        assert!(matches!(
+            result,
+            Err(ActionError::Blocked(message))
+                if message.as_ref() == "cannot wear equipment while bank is open"
+        ));
+        if let Some(ledger) = &ledger {
+            assert!(
+                ledger.outbox.is_empty(),
+                "a blocked wear must not emit an interaction"
+            );
+        }
+    }
 }

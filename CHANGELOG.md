@@ -19,6 +19,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - A script waiting inside a Duel Arena fight pen is no longer restarted over and
   over trying to walk back to the lobby (the pen's walls make that impossible);
   the watchdog waits until the bot leaves the pen.
+- Quest location, production and reach checks use the game's reported player
+  tile, so a difference in displayed position no longer makes the script miss
+  nearby objectives.
+- Quester, Gatherer and Combat close an open bank and wait for its closure
+  before wearing equipment, rather than sending the wear action to the bank
+  interface.
 
 ### Gatherer
 
