@@ -318,11 +318,24 @@ impl LoginQueue {
         self.blocker(entry.uid, now)
     }
 
-    /// The first queued owner whose per-owner defer has elapsed.
+    /// The first owner past its defer whose selected admission blocker is not
+    /// its own device budget. If every otherwise eligible owner is blocked by
+    /// its device budget, keep the first so its poll can wait for that cooldown.
     fn eligible_head_index(&self, now: Instant) -> Option<usize> {
-        self.queue
-            .iter()
-            .position(|entry| entry.not_before.is_none_or(|until| until <= now))
+        let mut first_device_blocked = None;
+        for (index, entry) in self.queue.iter().enumerate() {
+            if entry.not_before.is_some_and(|until| until > now) {
+                continue;
+            }
+            first_device_blocked.get_or_insert(index);
+            if !matches!(
+                self.blocker(entry.uid, now),
+                Some(AdmitBlocker::DeviceBudget { .. })
+            ) {
+                return Some(index);
+            }
+        }
+        first_device_blocked
     }
 
     /// Drop one slot owner's place. Other owners with the same device UID
@@ -722,6 +735,60 @@ mod tests {
         assert_eq!(queue.poll_owner(1, 7, release), Permit::Grant);
         assert_eq!(queue.flights.len(), 1);
         assert_eq!(queue.ip_count, 2);
+    }
+
+    /// Release probes are real grants; once they fill one uid's device
+    /// budget, that owner's cooldown must not hold up a different device.
+    #[test]
+    fn release_probes_device_budget_yields_to_different_device_sibling() {
+        let exit = Instant::now();
+        let mut queue = LoginQueue::default();
+        queue.enqueue_owner(1, 7);
+        let mut eligible = exit + LOGIN_START_SPACING;
+        queue.defer_owner_until(1, eligible);
+        let mut last_return = exit;
+        for _ in 0..UID_GRANT_CAP {
+            assert_eq!(queue.poll_owner(1, 7, eligible), Permit::Grant);
+            assert!(queue
+                .start_attempt(1, eligible, LoginCancel::new())
+                .is_some());
+            last_return = eligible + Duration::from_millis(300);
+            assert!(queue.acknowledge_login_return(1, last_return));
+            queue.enqueue_owner(1, 7);
+            eligible = last_return + Duration::from_secs(5);
+            queue.defer_owner_until(1, eligible);
+        }
+        assert!(
+            eligible < exit + Duration::from_secs(30),
+            "the release retry remains inside its absolute budget"
+        );
+        assert!(
+            eligible < last_return + UID_COOLDOWN,
+            "the next release defer ends during the owner's device cooldown"
+        );
+
+        queue.enqueue_owner(2, 8);
+        assert!(matches!(queue.poll_owner(1, 7, eligible), Permit::Wait(_)));
+        assert_eq!(
+            queue.poll_owner(2, 8, eligible),
+            Permit::Grant,
+            "a different-device sibling may pass a release owner blocked by its own device budget"
+        );
+        assert!(queue
+            .start_attempt(2, eligible, LoginCancel::new())
+            .is_some());
+        assert!(queue.acknowledge_login_return(2, eligible + Duration::from_millis(300)));
+        assert_eq!(
+            queue.status_owner(1).unwrap().position,
+            1,
+            "the release owner keeps its FIFO place while the sibling passes"
+        );
+
+        assert_eq!(
+            queue.poll_owner(1, 7, last_return + UID_COOLDOWN),
+            Permit::Grant,
+            "the release owner regains eligibility after its device cooldown"
+        );
     }
 
     #[test]
