@@ -102,10 +102,15 @@ impl DrainedBatch {
         for offset in 0..self.len {
             assert_eq!(self.request_ids[offset], first + offset as u64);
             assert_eq!(self.batch_ids[offset], batch);
-            if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
+            if matches!(
+                self.get(offset),
+                Some(HostEffect::Interaction(InteractReq::Close))
+            ) {
+                assert_eq!(batch, 0, "bank Close is a standalone control interaction");
+            } else if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
                 assert_ne!(
                     batch, 0,
-                    "combat interactions use emit_batch, including one-row plans"
+                    "combat plan interactions use emit_batch, including one-row plans"
                 );
             }
         }
@@ -2011,6 +2016,43 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
             attack(harness.pending(&scene, 1));
         }
     }
+}
+
+#[test]
+fn combat_closes_open_bank_before_wearing_gear() {
+    let mut scene = Scene::new("imp");
+    let item = scene.held("bronze_scimitar", 0);
+    let id = item.def.id;
+    scene.inventory.push(item);
+    scene.refresh();
+    scene
+        .snapshot
+        .seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+    let mut request = scene.request();
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+
+    let first = harness.pending_batch(&scene, 1);
+    assert_len(&first, 1);
+    assert!(matches!(
+        first.get(0),
+        Some(HostEffect::Interaction(InteractReq::Close))
+    ));
+    assert!(harness.pending(&scene, 2).is_none());
+
+    scene
+        .snapshot
+        .seed_bank_observation(-1, 2, None, Vec::new());
+    let after_close = harness.pending_batch(&scene, 3);
+    assert_len(&after_close, 2);
+    assert!(matches!(
+        after_close.get(0),
+        Some(HostEffect::Interaction(InteractReq::Wear { .. }))
+    ));
+    attack_row(&after_close, 1);
 }
 
 #[test]

@@ -69,6 +69,14 @@ impl NativeMachine for EquipmentMachine {
                         changed: self.changed,
                     }));
                 }
+                if snapshot
+                    .bank_session()
+                    .is_some_and(|session| session.value.open)
+                {
+                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                        "cannot wear equipment while bank is open",
+                    ))));
+                }
                 let held = cx.snapshot().inventory().is_some_and(|rows| {
                     rows.value
                         .iter()
@@ -223,5 +231,38 @@ mod tests {
                 assert_eq!(handle.inspect(|machine| machine.pending_id), Some(Some(2)));
             }
         }
+    }
+
+    #[test]
+    fn wear_is_blocked_while_bank_is_open() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+        snapshot.seed_inventory(vec![item(1, ItemContainer::Inventory)], 28);
+        snapshot.seed_equipment(Vec::new());
+        let mut ledger = None;
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<EquipmentMachine>(
+                    EquipmentRequest::Wear {
+                        id: 1,
+                        name: Arc::from("Equipment"),
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Blocked(message)))
+                if message.as_ref() == "cannot wear equipment while bank is open"
+        ));
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "a blocked wear must not emit an interaction"
+        );
     }
 }

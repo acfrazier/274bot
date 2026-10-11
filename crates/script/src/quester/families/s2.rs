@@ -538,8 +538,8 @@ impl StepRun for BuyRun {
                 .tick
                 .cx
                 .snapshot()
-                .here()
-                .is_some_and(|here| reach::within(here.value, self.tile, 6));
+                .local_player()
+                .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
                     cx.tick.actions.begin::<Walk>(
@@ -715,8 +715,8 @@ impl StepRun for MakeRun {
                 .tick
                 .cx
                 .snapshot()
-                .here()
-                .is_some_and(|here| reach::within(here.value, self.tile, 6));
+                .local_player()
+                .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
                     cx.tick.actions.begin::<Walk>(
@@ -836,19 +836,66 @@ struct EquipmentPlan {
 }
 impl StepPlan for EquipmentPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let handle = cx
-            .tick
-            .actions
-            .begin::<EquipmentMachine>(self.request.clone(), &mut cx.tick.cx)?;
-        Ok(Box::new(EquipmentRun { handle }))
+        let mut run = EquipmentRun {
+            request: Some(self.request.clone()),
+            closing: None,
+            equipment: None,
+        };
+        run.start(cx)?;
+        Ok(Box::new(run))
     }
 }
 struct EquipmentRun {
-    handle: ActionHandle<EquipmentMachine>,
+    request: Option<EquipmentRequest>,
+    closing: Option<ActionHandle<Close>>,
+    equipment: Option<ActionHandle<EquipmentMachine>>,
+}
+impl EquipmentRun {
+    fn start(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
+        let wear = matches!(self.request.as_ref(), Some(EquipmentRequest::Wear { .. }));
+        let bank_open = cx
+            .tick
+            .cx
+            .snapshot()
+            .bank_session()
+            .is_some_and(|session| session.value.open);
+        if wear && bank_open {
+            self.closing = Some(cx.tick.actions.begin::<Close>((), &mut cx.tick.cx)?);
+        } else {
+            let request = self
+                .request
+                .take()
+                .expect("equipment request is still pending");
+            self.equipment = Some(
+                cx.tick
+                    .actions
+                    .begin::<EquipmentMachine>(request, &mut cx.tick.cx)?,
+            );
+        }
+        Ok(())
+    }
 }
 impl StepRun for EquipmentRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
+        if let Some(handle) = &self.closing {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => self.closing = None,
+            }
+        }
+        if self.equipment.is_none() {
+            if let Err(error) = self.start(cx) {
+                return Poll::Ready(Err(error));
+            }
+            if self.equipment.is_none() {
+                return Poll::Pending;
+            }
+        }
+        let Some(handle) = self.equipment.as_ref() else {
+            return Poll::Pending;
+        };
+        match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),

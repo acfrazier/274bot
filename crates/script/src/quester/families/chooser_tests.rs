@@ -137,7 +137,7 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
     let decoy_at = tile(3224, 3300);
     let reachable_at = tile(3222, 3305);
     let mut snapshot = ready();
-    snapshot.seed_local_player(local_player(player));
+    snapshot.seed_local_player(local_player_with_network(tile(3200, 3300), player));
     let mut decoy = ground();
     decoy.tile = decoy_at;
     decoy.distance = 2;
@@ -146,15 +146,20 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
     reachable.distance = 5;
     snapshot.seed_ground_items(vec![decoy, reachable]);
     let view = flood_view(tile(3212, 3290), 24, &pen(decoy_at), player);
-    let mut ledger = None;
-    let _handle = with_tick_reach(&snapshot, &view, &mut ledger, 1, |t| {
+    let mut trace = None;
+    let _handle = with_tick_reach(&snapshot, &view, &mut trace, 1, |t| {
+        assert!(reach::reach_known(&t.cx));
+        let mut neighbour = cow(1, 0, tile(player.x, player.z + 1), player);
+        neighbour.size = 1;
+        neighbour.distance = 100;
+        assert!(reach::npc_adjacent(&t.cx, &neighbour));
         t.actions
             .begin::<reach::Reach>(egg(true), &mut t.cx)
             .unwrap()
     });
     assert!(
         matches!(
-            last_effect(&ledger),
+            last_effect(&trace),
             HostEffect::Interaction(InteractReq::Obj {
                 x: 3222,
                 z: 3305,
@@ -162,7 +167,7 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
             })
         ),
         "the egg inside the closed pen must not be clicked while a reachable egg exists, got {:?}",
-        describe(&ledger)
+        describe(&trace)
     );
 }
 

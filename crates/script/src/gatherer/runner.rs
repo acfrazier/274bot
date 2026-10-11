@@ -101,6 +101,7 @@ enum Active {
     Deposit(ActionHandle<bank::Deposit>),
     Withdraw(ActionHandle<bank::Withdraw>),
     Close(ActionHandle<bank::Close>),
+    WearClose(ActionHandle<bank::Close>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,6 +231,7 @@ struct GatherScratch {
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
     bank_open_attempts: u8,
     bank_close_attempts: u8,
+    wear_close_attempts: u8,
 }
 
 pub struct Gatherer {
@@ -1031,6 +1033,30 @@ impl Gatherer {
 
     fn begin_wear(&mut self, tick: &mut NativeTick<'_>) {
         let snapshot = tick.cx.snapshot();
+        if snapshot
+            .bank_session()
+            .is_some_and(|session| session.value.open)
+        {
+            if self.scratch.wear_close_attempts >= MAX_BANK_CLOSE_ATTEMPTS {
+                self.fail(
+                    "bank-close-failed",
+                    format!(
+                        "bank-close-failed: bank did not close after {MAX_BANK_CLOSE_ATTEMPTS} attempts"
+                    ),
+                );
+                return;
+            }
+            match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+                Ok(handle) => {
+                    self.scratch.wear_close_attempts += 1;
+                    self.active = Active::WearClose(handle);
+                    self.set_event("closing bank before wielding tool");
+                }
+                Err(error) => self.action_failure(error),
+            }
+            return;
+        }
+        self.scratch.wear_close_attempts = 0;
         let Some(inventory) = snapshot.inventory() else {
             return;
         };
@@ -1631,6 +1657,28 @@ impl Gatherer {
                     );
                 }
             },
+            Active::WearClose(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::WearClose(handle),
+                Poll::Ready(Ok(())) => {
+                    self.scratch.wear_close_attempts = 0;
+                    self.set_event("bank closed; ready to wield tool");
+                }
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "bank did not close" =>
+                {
+                    if tick
+                        .cx
+                        .snapshot()
+                        .bank_session()
+                        .is_some_and(|session| session.value.open)
+                    {
+                        self.begin_wear(tick);
+                    } else {
+                        self.fail("bank-close-failed", format!("bank-close-failed: {message}"));
+                    }
+                }
+                Poll::Ready(Err(error)) => self.action_failure(error),
+            },
             Active::Close(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Close(handle),
                 Poll::Ready(Ok(_)) => {
@@ -2054,6 +2102,7 @@ impl Gatherer {
             | Active::Open(_)
             | Active::Deposit(_)
             | Active::Withdraw(_)
+            | Active::WearClose(_)
             | Active::Close(_) => ("banking", NativePhase::Working),
         }
     }
@@ -2840,6 +2889,122 @@ mod tests {
         }
     }
 
+    #[test]
+    fn gatherer_closes_open_bank_before_wearing_tool_without_advancing_trip_or_recovery() {
+        use crate::quester::families::tests::with_tick;
+
+        let mut fixture = BaitFixture::new();
+        fixture.snapshot.seed_inventory(
+            vec![ItemView {
+                def: crate::quester::families::tests::def(1351, "Bronze axe"),
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Wield".into())],
+                component_id: 3214,
+            }],
+            28,
+        );
+        fixture
+            .snapshot
+            .seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.tool = ToolState {
+            id: 1351,
+            worn: false,
+        };
+        let trip = gatherer.trip;
+        let recovery = gatherer.retained.recovery;
+        let mut ledger = None;
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.begin_wear(tick);
+            gatherer.poll_active(tick);
+        });
+
+        assert!(
+            matches!(gatherer.active, Active::WearClose(_)),
+            "an open-bank Wear must start a separate close action"
+        );
+        assert_eq!(gatherer.trip, trip);
+        assert_eq!(gatherer.retained.recovery, recovery);
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|row| &row.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Close
+            ))
+        ));
+    }
+
+    #[test]
+    fn gatherer_caps_open_bank_wear_close_attempts() {
+        use crate::quester::families::tests::with_tick;
+
+        let mut fixture = BaitFixture::new();
+        fixture.snapshot.seed_inventory(
+            vec![ItemView {
+                def: crate::quester::families::tests::def(1351, "Bronze axe"),
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Wield".into())],
+                component_id: 3214,
+            }],
+            28,
+        );
+        fixture
+            .snapshot
+            .seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.tool = ToolState {
+            id: 1351,
+            worn: false,
+        };
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.begin_wear(tick);
+            gatherer.poll_active(tick);
+        });
+        assert_eq!(gatherer.scratch.wear_close_attempts, 1);
+        for (timeout_tick, retry_tick, attempts) in [(9, 10, 2), (18, 19, 3)] {
+            with_tick(&fixture.snapshot, &mut ledger, timeout_tick, |tick| {
+                gatherer.poll_active(tick);
+            });
+            assert!(gatherer.failure.is_none());
+            assert_eq!(gatherer.scratch.wear_close_attempts, attempts);
+            with_tick(&fixture.snapshot, &mut ledger, retry_tick, |tick| {
+                gatherer.poll_active(tick);
+            });
+        }
+
+        with_tick(&fixture.snapshot, &mut ledger, 27, |tick| {
+            gatherer.poll_active(tick);
+        });
+        let failure = gatherer
+            .failure
+            .as_ref()
+            .expect("wear close retries are capped");
+        assert_eq!(failure.code.as_ref(), "bank-close-failed");
+        assert_eq!(
+            failure.message.as_ref(),
+            "bank-close-failed: bank did not close after 3 attempts"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.iter().all(|row| {
+            !matches!(
+                &row.effect,
+                crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::Held { .. } | crate::shim::InteractReq::Wear { .. }
+                )
+            )
+        }));
+    }
     #[test]
     fn gatherer_tickfix_admitted_bank_trip_begins_select_same_tick() {
         use crate::quester::families::tests::with_tick;
