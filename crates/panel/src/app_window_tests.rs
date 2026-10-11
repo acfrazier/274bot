@@ -406,13 +406,13 @@ fn opener_cases() -> Vec<OpenerCase> {
             press: Press::Op(|s| s.open_rs2b0t_catalog_picker(false)),
         },
         OpenerCase {
-            name: "Fleet Walk 1 to...",
+            name: "Fleet Walk 1 marked bots",
             target: PanelWindow::WalkTo,
             setup: with_marked_bob,
             opener: no_opener,
             press: Press::Button {
                 host: fleet,
-                label: "Walk 1 to...",
+                label: "Walk 1 marked bots",
             },
         },
     ]
@@ -730,4 +730,75 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         }
         assert_no_start(s, pick);
     }
+}
+
+/// The rail's mark checkbox mentions Debug actions only when the profile's
+/// server allows Debug (a Local server profile), not on a public world.
+#[test]
+fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let world = nav::world::NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 3,
+            height: 3,
+            walk: vec![0u8; 9],
+            blocked: vec![0u64; 1],
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    );
+    let mut ctx = context();
+    for (profile, debug_allowed, tooltip) in [
+        ("local-289", true, "mark for Fleet and Debug actions"),
+        ("public-289", false, "mark for Fleet actions"),
+    ] {
+        let fixture = map_fixture::MapFixture::new(&world, profile);
+        let mut session = Session::new();
+        session.server_profile = Some(Arc::clone(fixture.template.profile()));
+        assert_eq!(session.debug_ui(), debug_allowed, "{profile} allows Debug");
+        ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        let shown = super::draw_test_rail_mark_tooltip(ctx.frame(), session.debug_ui());
+        ctx.render();
+        assert_eq!(shown, tooltip, "{profile}");
+    }
+}
+
+/// The 1 Hz resource readout is on screen in every layout: the rail's card
+/// while the rail is shown, the panel strip's section otherwise (single bot
+/// and Grid), never both. Both read the one sampler through `core.resources()`.
+#[test]
+fn resource_readout_is_drawn_once_in_single_rail_and_grid_layouts() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = context();
+    let mut readouts = |multibox: bool, grid: bool| {
+        let mut session = Session::new();
+        session.multibox = multibox;
+        session.wall.grid = grid;
+        super::TEST_RESOURCE_READOUTS.set(0);
+        ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        super::panel_window(ctx.frame(), &mut session, None);
+        ctx.render();
+        (session.rail_shown(), super::TEST_RESOURCE_READOUTS.get())
+    };
+    assert_eq!(
+        readouts(false, false),
+        (false, 1),
+        "single bot: the strip's section"
+    );
+    assert_eq!(
+        readouts(true, false),
+        (true, 0),
+        "rail shown: its resource card carries the readout, not the strip"
+    );
+    assert_eq!(
+        readouts(true, true),
+        (false, 1),
+        "Grid: the strip's section"
+    );
 }

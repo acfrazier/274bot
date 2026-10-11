@@ -1198,9 +1198,22 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
         assess(&route, &cx, unknown).verdict,
         Verdict::Unknown(UnknownWhy::Poison)
     );
-    assert!(assess(&route, &cx, unknown)
-        .reason
-        .contains("separate safe-only walk"));
+    // The operator reads one short sentence: no internal slice name, and none of
+    // the debug-only explanation.
+    let unknown_reason = assess(&route, &cx, unknown).reason.clone();
+    assert!(
+        unknown_reason.starts_with("Poison status is unknown until the bot can track it; "),
+        "{unknown_reason}"
+    );
+    for internal in [
+        "S2c",
+        "not armed",
+        "waiting alone",
+        "safe-only walk",
+        "observer",
+    ] {
+        assert!(!unknown_reason.contains(internal), "{unknown_reason}");
+    }
     assert_eq!(assess(&safe, &cx, poisoned).input.poison, poisoned.poison);
 }
 

@@ -639,6 +639,13 @@ fn replay_with_admission(
     })
 }
 
+/// The one sentence a person sees when the route's poison state is unknown.
+const POISON_UNKNOWN_REASON: &str = "Poison status is unknown until the bot can track it";
+/// Why that is, for the debug log only.
+const POISON_UNKNOWN_DETAIL: &str = "poison state unknown: a refused crossing is not armed and \
+     cannot clear its own poison uncertainty, and waiting alone does not clear it; a separate \
+     safe-only walk can provide recovery evidence once the runtime observer is available";
+
 struct Reason {
     bytes: [u8; 1536],
     len: usize,
@@ -1068,9 +1075,12 @@ fn assess_inner(
     let mut supplies = Vec::with_capacity(need_count);
     supplies.extend(needs.into_iter().flatten());
     if matches!(verdict, Verdict::Unknown(UnknownWhy::Poison)) {
-        let _ = write!(
-            reason,
-            "poison state unknown: when a crossing is refused it is not armed and cannot clear its own poison uncertainty; waiting alone does not clear it. A separate safe-only walk can provide recovery evidence once the runtime observer is available (S2c); "
+        // What the operator reads, in the panel, the TUI and the session log.
+        let _ = write!(reason, "{POISON_UNKNOWN_REASON}; ");
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "{POISON_UNKNOWN_DETAIL}"
         );
     }
     if let Some(c) = no_way_out {
