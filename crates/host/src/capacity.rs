@@ -25,8 +25,11 @@
 //!   time the thread could have run and didn't: a late timer wake and
 //!   preemption in the middle of a tick, on both paths. The slot never
 //!   waits for its script isolate, and its per-frame locks are held only
-//!   briefly by other threads; GPU set-up, the one long block inside a
-//!   service, is bracketed. Unlike run-queue wait, though, it keeps any
+//!   briefly by other threads. The long blocks inside a service are
+//!   bracketed: GPU set-up, and every socket call the client makes that
+//!   can block (a send waiting for a slow network or server to take the
+//!   bytes, a read, a close), so outbound backpressure is not counted as
+//!   the host being late. Unlike run-queue wait, though, it keeps any
 //!   blocking that is not bracketed: a page-in, or the client's shared GPU
 //!   scene lock when many bots render. A packet wake that waited for a CPU
 //!   before the park bound is inside the park, so it is not seen.
@@ -341,6 +344,17 @@ impl Clock {
             Self::InjectedCpu(total) => cpu(Some(total.get())),
         }
     }
+
+    /// This thread's CPU time, for a clock that measures time off the CPU;
+    /// no read at all for the others.
+    fn cpu(&self) -> Option<Duration> {
+        match self {
+            Self::ThreadCpu => thread_cpu_time(),
+            #[cfg(test)]
+            Self::InjectedCpu(total) => Some(total.get()),
+            _ => None,
+        }
+    }
 }
 
 /// Time off the CPU: the `wall` time between two services that the thread
@@ -607,23 +621,25 @@ thread_local! {
     static RECORDER: RefCell<Option<SlotRecorder>> = const { RefCell::new(None) };
 }
 
+/// `f` on this thread's recorder, if it has one. Socket calls reach this
+/// through the client's hook on any thread, at thread exit too, so a
+/// recorder already torn down is simply none.
 fn with_recorder<T>(f: impl FnOnce(&mut SlotRecorder) -> T) -> Option<T> {
-    RECORDER.with(|cell| cell.borrow_mut().as_mut().map(f))
+    RECORDER
+        .try_with(|cell| cell.borrow_mut().as_mut().map(f))
+        .ok()
+        .flatten()
 }
 
 /// This slot's CPU time, when it measures time off the CPU.
 fn recorder_cpu() -> Option<Duration> {
-    with_recorder(|recorder| match recorder.clock.read() {
-        Reading::Cpu(total) => Some(total),
-        Reading::Waited(_) | Reading::None => None,
-    })
-    .flatten()
+    with_recorder(|recorder| recorder.clock.cpu()).flatten()
 }
 
 /// Run `wait`, a call the slot thread knows can block on the OS or another
-/// thread for a long time (GPU initialisation), and keep the time it spent
-/// off the CPU there out of this slot's scheduling delay. Only the
-/// time-off-the-CPU measure needs it: run-queue wait never counts
+/// thread for a long time (GPU initialisation, a socket call), and keep the
+/// time it spent off the CPU there out of this slot's scheduling delay.
+/// Only the time-off-the-CPU measure needs it: run-queue wait never counts
 /// blocking, and timed-wake overshoot doesn't look inside a tick.
 pub(crate) fn off_cpu_wait<R>(wait: impl FnOnce() -> R) -> R {
     let Some(cpu_before) = recorder_cpu() else {
@@ -641,10 +657,21 @@ pub(crate) fn off_cpu_wait<R>(wait: impl FnOnce() -> R) -> R {
     out
 }
 
+/// The client's hook for its blocking socket calls: [`off_cpu_wait`].
+fn transport_wait(wait: &mut dyn FnMut()) {
+    off_cpu_wait(wait);
+}
+
+/// Bind this thread's recorder; the client's blocking socket calls are
+/// bracketed from now on (the hook is process-wide and set once).
+fn bind(recorder: SlotRecorder) {
+    client::io::client_stream::set_transport_wait_hook(transport_wait);
+    RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
+}
+
 /// Register this slot thread with a play's monitor (once, at thread start).
 pub fn bind_capacity(monitor: &Arc<CapacityMonitor>) {
-    let recorder = SlotRecorder::new(monitor, Clock::for_this_thread());
-    RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
+    bind(SlotRecorder::new(monitor, Clock::for_this_thread()));
 }
 
 /// A test's stand-in for the slot thread's clock.
@@ -666,8 +693,7 @@ pub(crate) fn bind_capacity_for_test(monitor: &Arc<CapacityMonitor>, clock: Test
         TestClock::Waited(total) => Clock::InjectedWait(total),
         TestClock::Cpu(total) => Clock::InjectedCpu(total),
     };
-    let recorder = SlotRecorder::new(monitor, clock);
-    RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
+    bind(SlotRecorder::new(monitor, clock));
 }
 
 /// Unregister this slot thread (thread exit).
