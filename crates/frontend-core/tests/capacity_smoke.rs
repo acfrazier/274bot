@@ -1,7 +1,9 @@
 //! Live smoke: headless bots on Engine A; real CPU load makes the host
 //! capacity warning appear, and it clears once the load stops. Nothing in
-//! the product is slowed on purpose: the load is `yes` hogs pinned with
-//! `taskset` to the same CPUs this test process is pinned to.
+//! the product is slowed on purpose: the load is `yes` hogs. On Linux they
+//! are pinned with `taskset` to the CPUs in `CAPACITY_SMOKE_CPUS`, the same
+//! CPUs this test process is pinned to; elsewhere (macOS has no CPU
+//! pinning) leave `CAPACITY_SMOKE_CPUS` unset and they run anywhere.
 //!
 //! Build first, then run the test binary pinned (so cargo and rustc are
 //! not):
@@ -11,7 +13,7 @@
 //! isohome env LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=cw BOT_NAV_BUILD=skip \
 //!   WORLD_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack \
 //!   WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
-//!   CAPACITY_SMOKE_CPUS=31 CAPACITY_SMOKE_HOGS=32 CAPACITY_SMOKE_HOG_NICE=-10 \
+//!   CAPACITY_SMOKE_CPUS=31 CAPACITY_SMOKE_HOGS=64 CAPACITY_SMOKE_HOG_NICE=-11 \
 //!   CAPACITY_SMOKE_BOTS=20 \
 //!   taskset -c 31 target/debug/deps/capacity_smoke-<hash> \
 //!   --ignored --nocapture --test-threads=1
@@ -20,9 +22,16 @@
 //! `CAPACITY_SMOKE_BUSY=1` keeps every bot on the 20 ms frame path (as a
 //! running script does); by default the bots are idle in game (one wake per
 //! game tick). `CAPACITY_SMOKE_HOG_NICE` runs the hogs at that nice value
-//! (a negative one needs `ulimit -e` above 20); the bots keep the default.
-//! Linux's scheduler serves a waking thread quickly against equal-priority
-//! hogs, so equal-priority hogs alone keep each wake's wait near 10 ms.
+//! (a negative one needs `ulimit -e` above 20 on Linux, root on macOS); the
+//! bots keep the default. Linux's scheduler serves a waking thread quickly
+//! against equal-priority hogs, so equal-priority hogs alone keep each
+//! wake's wait near 10 ms.
+//!
+//! On Linux, `CAPACITY_SMOKE_MEASURE=off-cpu` makes the bots measure time
+//! off the CPU (wall − thread CPU time − the loop's own waits), the macOS
+//! and Windows measure, instead of run-queue wait; on macOS and Windows
+//! that is the measure anyway. The receipts are each bot's own per-service
+//! delays as the warning reads them.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -42,21 +51,61 @@ fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-/// `n` `yes` processes pinned to `cpus` (a `taskset -c` list) at `nice`.
-fn hogs(n: usize, cpus: &str, nice: i32) -> Vec<Child> {
+/// `n` `yes` processes at `nice`, pinned to `cpus` (a `taskset -c` list)
+/// when given. They are forked from a thread allowed on every CPU, so the
+/// `taskset` and `nice` wrappers start at once instead of queueing behind
+/// the hogs already on `cpus`; `taskset` pins only the `yes`.
+fn hogs(n: usize, cpus: Option<&str>, nice: i32) -> Vec<Child> {
     let nice = nice.to_string();
-    (0..n)
-        .map(|_| {
-            Command::new("taskset")
-                .args(["-c", cpus, "nice", "-n", &nice, "yes"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .expect("cpu hog")
-        })
-        .collect()
+    let hog = || {
+        let mut command = match cpus {
+            Some(cpus) => {
+                let mut command = Command::new("taskset");
+                command.args(["-c", cpus, "nice"]);
+                command
+            }
+            None => Command::new("nice"),
+        };
+        command
+            .args(["-n", &nice, "yes"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cpu hog")
+    };
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                allow_every_cpu();
+                (0..n).map(|_| hog()).collect()
+            })
+            .join()
+            .expect("hog spawner")
+    })
 }
+
+/// Let this thread (and what it forks) run on any online CPU.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+fn allow_every_cpu() {
+    // SAFETY: a zeroed cpu_set_t is valid; the kernel keeps only online
+    // CPUs of the mask; pid 0 is this thread.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for cpu in 0..libc::CPU_SETSIZE as usize {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        assert_eq!(
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set),
+            0
+        );
+    }
+}
+
+/// Nothing pins threads elsewhere.
+#[cfg(not(target_os = "linux"))]
+fn allow_every_cpu() {}
 
 fn kill_hogs(hogs: &mut [Child]) {
     for child in hogs {
@@ -89,57 +138,32 @@ fn ingame(session: &OperatorSession<()>) -> usize {
     })
 }
 
-/// Run-queue wait of this process's slot threads (each is named after its
-/// bot), read from the same `/proc` counters the product reads, for the
-/// receipt: the average per wake since the previous report, and the worst
-/// bot's.
-#[derive(Default)]
-struct SlotWaits {
-    prev: std::collections::HashMap<String, (u64, u64)>,
-}
-
-impl SlotWaits {
-    fn report(&mut self, prefix: &str) -> String {
-        let (mut wait, mut wakes, mut worst) = (0u64, 0u64, 0f64);
-        for task in std::fs::read_dir("/proc/self/task")
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let Ok(comm) = std::fs::read_to_string(task.path().join("comm")) else {
-                continue;
-            };
-            let comm = comm.trim();
-            if !comm.starts_with(prefix) {
-                continue;
-            }
-            let Ok(stat) = std::fs::read_to_string(task.path().join("schedstat")) else {
-                continue;
-            };
-            let fields: Vec<u64> = stat
-                .split_whitespace()
-                .filter_map(|f| f.parse().ok())
-                .collect();
-            let [_, w, s] = fields[..] else { continue };
-            let tid = task.file_name().to_string_lossy().into_owned();
-            let (pw, ps) = self.prev.insert(tid, (w, s)).unwrap_or((w, s));
-            let (dw, ds) = (w.saturating_sub(pw), s.saturating_sub(ps));
-            wait += dw;
-            wakes += ds;
-            if ds > 0 {
-                worst = worst.max(dw as f64 / ds as f64 / 1e6);
-            }
-        }
-        let avg = if wakes == 0 {
-            0.0
-        } else {
-            wait as f64 / wakes as f64 / 1e6
-        };
-        format!(
-            "slot threads: {avg:.1} ms run-queue wait per wake, worst bot {worst:.1} ms, \
-             {wakes} wakes"
-        )
-    }
+/// Each active bot's delay per service over the last 10 s, as the warning
+/// reads them: per bot, the late services (600 ms or more), the max and
+/// the p95, each list lowest to highest.
+fn service_delays(session: &OperatorSession<()>) -> String {
+    let Some(play) = session.play() else {
+        return "no play".into();
+    };
+    let bots = play.capacity().service_delays(Instant::now());
+    let services: usize = bots.iter().map(|bot| bot.services).sum();
+    let sorted = |pick: fn(&host::ServiceDelays) -> u128| {
+        let mut values: Vec<u128> = bots.iter().map(pick).collect();
+        values.sort_unstable();
+        values
+            .iter()
+            .map(u128::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    format!(
+        "per-service delay over 10 s, {} bots, {services} services: \
+         per-bot late services [{}]; max ms [{}]; p95 ms [{}]",
+        bots.len(),
+        sorted(|bot| bot.late as u128),
+        sorted(|bot| bot.max.as_millis()),
+        sorted(|bot| bot.p95.as_millis()),
+    )
 }
 
 #[test]
@@ -147,18 +171,26 @@ impl SlotWaits {
 fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
+    // The operator log is installed before any bot starts, as in the panel.
+    frontend_core::log::global();
     let engine = std::env::var("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR");
     let pack = std::env::var("WORLD_NAV_PACK").expect("WORLD_NAV_PACK");
-    let cpus = std::env::var("CAPACITY_SMOKE_CPUS").expect("CAPACITY_SMOKE_CPUS");
+    let cpus = std::env::var("CAPACITY_SMOKE_CPUS").ok();
     let bots: usize = env_or("CAPACITY_SMOKE_BOTS", 20);
     let hog_n: usize = env_or("CAPACITY_SMOKE_HOGS", 16);
     let hog_nice: i32 = env_or("CAPACITY_SMOKE_HOG_NICE", 0);
     let busy = std::env::var("CAPACITY_SMOKE_BUSY").as_deref() == Ok("1");
+    let off_cpu = std::env::var("CAPACITY_SMOKE_MEASURE").as_deref() == Ok("off-cpu");
+    if off_cpu {
+        host::force_off_cpu_measure();
+    }
     eprintln!(
-        "pid {} allowed cpus {} | hogs {hog_n} at nice {hog_nice} on cpus {cpus} | \
-         bots {bots} busy {busy}",
+        "pid {} allowed cpus {} | hogs {hog_n} at nice {hog_nice} on cpus {} | \
+         bots {bots} busy {busy} | measure {}",
         std::process::id(),
-        allowed_cpus()
+        allowed_cpus(),
+        cpus.as_deref().unwrap_or("any"),
+        if off_cpu { "off-cpu" } else { "default" }
     );
     let options = ProfileOptions {
         profile: Some("local-289".into()),
@@ -229,10 +261,6 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    let prefix = names[0].split('_').next().unwrap_or_default().to_string();
-    let mut waits = SlotWaits::default();
-    waits.report(&prefix);
-
     // Unloaded: the same pinned CPUs, no hogs, must not warn.
     let calm_until = Instant::now() + Duration::from_secs(20);
     while Instant::now() < calm_until {
@@ -249,11 +277,11 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     eprintln!(
         "no warning for 20 s without load; ingame {}; {}",
         ingame(&session),
-        waits.report(&prefix)
+        service_delays(&session)
     );
 
     let loaded_at = Instant::now();
-    let mut load = hogs(hog_n, &cpus, hog_nice);
+    let mut load = hogs(hog_n, cpus.as_deref(), hog_nice);
     let pids: Vec<u32> = load.iter().map(Child::id).collect();
     eprintln!(
         "hog pids ({:.1}s to start them all): {pids:?}",
@@ -265,9 +293,10 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         session.poll();
         if let Some(notice) = session.capacity_notice() {
             eprintln!(
-                "WARN after {:.1}s of load: {}",
+                "WARN after {:.1}s of load: {}; {}",
                 loaded_at.elapsed().as_secs_f64(),
-                notice.notice_text()
+                notice.notice_text(),
+                service_delays(&session)
             );
             break;
         }
@@ -276,7 +305,7 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
                 "waiting for warn ({:.0}s, ingame {}); {}",
                 loaded_at.elapsed().as_secs_f64(),
                 ingame(&session),
-                waits.report(&prefix)
+                service_delays(&session)
             );
             report = Instant::now();
         }
@@ -288,14 +317,15 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     }
     kill_hogs(&mut load);
     let stopped_at = Instant::now();
-    eprintln!("hogs stopped; {}", waits.report(&prefix));
+    eprintln!("hogs stopped; {}", service_delays(&session));
     let clear_deadline = stopped_at + Duration::from_secs(90);
     loop {
         session.poll();
         if session.capacity_notice().is_none() {
             eprintln!(
-                "CLEARED {:.1}s after the hogs stopped",
-                stopped_at.elapsed().as_secs_f64()
+                "CLEARED {:.1}s after the hogs stopped; {}",
+                stopped_at.elapsed().as_secs_f64(),
+                service_delays(&session)
             );
             break;
         }
@@ -305,9 +335,34 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    // The session log carries one line into and one out of the warning.
-    let mut view = frontend_core::log::LogView::new(frontend_core::log::LogScope::Process);
-    frontend_core::log::global().refresh(&mut view);
+    // The first slot thread to bind names the measure in its own log; the
+    // session log carries one line into and one out of the warning.
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut measure = Vec::new();
+    for name in &names {
+        let mut view = LogView::new(LogScope::Slot(name.clone()));
+        global().refresh(&mut view);
+        measure.extend(
+            view.rows()
+                .iter()
+                .filter(|row| row.message.starts_with("host capacity: "))
+                .map(|row| format!("{name}: {}", row.message)),
+        );
+    }
+    eprintln!("log: {measure:?}");
+    let expected = if off_cpu {
+        "time off the CPU (thread CPU clock; forced by a test)"
+    } else if cfg!(target_os = "linux") {
+        "run-queue wait (Linux schedstat)"
+    } else {
+        "time off the CPU (thread CPU clock)"
+    };
+    assert!(
+        measure.len() == 1 && measure[0].ends_with(expected),
+        "{measure:?}"
+    );
+    let mut view = LogView::new(LogScope::Process);
+    global().refresh(&mut view);
     let lines: Vec<String> = view
         .rows()
         .iter()

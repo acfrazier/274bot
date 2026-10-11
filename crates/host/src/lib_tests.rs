@@ -2927,13 +2927,34 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
     );
 }
 
+/// Which clock the measured slot loop reads.
+#[derive(Clone, Copy)]
+enum LoopClock {
+    /// Timed-wake overshoot only.
+    Overshoot,
+    /// Injected run-queue wait (Linux).
+    RunQueue,
+    /// Injected thread CPU time: time off the CPU (macOS, Windows).
+    OffCpu,
+}
+
+/// What each observe does: `own` of its own work (blocking for the
+/// run-queue clock, like a slow script tick on its isolate thread; CPU
+/// for the CPU clock, like a slow compiled tick), `starved` kept off a
+/// CPU, and `bracketed` blocked inside [`capacity::off_cpu_wait`].
+#[derive(Clone, Copy, Default)]
+struct LoopFrame {
+    own: Duration,
+    starved: Duration,
+    bracketed: Duration,
+}
+
 /// Drive four slot-loop services with the capacity recorder bound. Each
-/// observe marks the bot Active, does `own_work` (blocking, like a slow
-/// script tick on its isolate thread) and adds `queued` run-queue wait to
-/// the injected clock (`clock`; without it the loop's overshoot is used).
-/// Returns the delays (ms) recorded before the loop exits (leaving the loop
-/// parks the slot, which drops them).
-fn measured_loop(busy: bool, own_work: Duration, queued: Duration, clock: bool) -> Vec<u64> {
+/// observe marks the bot Active and does `frame`. Returns the delays (ms)
+/// recorded before the loop exits (leaving the loop parks the slot, which
+/// drops them).
+fn measured_loop(busy: bool, clock: LoopClock, frame: LoopFrame) -> Vec<u64> {
+    use capacity::TestClock;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     const SERVICES: u32 = 4;
@@ -2945,8 +2966,15 @@ fn measured_loop(busy: bool, own_work: Duration, queued: Duration, clock: bool) 
         Vec::new(),
     );
     let monitor = Arc::new(CapacityMonitor::new());
-    let waited = Rc::new(Cell::new(Duration::ZERO));
-    capacity::bind_capacity_for_test(&monitor, clock.then(|| Rc::clone(&waited)));
+    let total = Rc::new(Cell::new(Duration::ZERO));
+    capacity::bind_capacity_for_test(
+        &monitor,
+        match clock {
+            LoopClock::Overshoot => TestClock::Overshoot,
+            LoopClock::RunQueue => TestClock::Waited(Rc::clone(&total)),
+            LoopClock::OffCpu => TestClock::Cpu(Rc::clone(&total)),
+        },
+    );
     let ran = Cell::new(0u32);
     let delays = RefCell::new(Vec::new());
     Host::run_client(
@@ -2962,8 +2990,18 @@ fn measured_loop(busy: bool, own_work: Duration, queued: Duration, clock: bool) 
         ScriptRunPolicy::default(),
         |_, _, _, _, _| {
             set_service_class(ServiceClass::Active);
-            thread::sleep(own_work);
-            waited.set(waited.get() + queued);
+            match clock {
+                LoopClock::Overshoot => thread::sleep(frame.own + frame.starved),
+                LoopClock::RunQueue => {
+                    thread::sleep(frame.own + frame.starved);
+                    total.set(total.get() + frame.starved);
+                }
+                LoopClock::OffCpu => {
+                    thread::sleep(frame.own + frame.starved);
+                    total.set(total.get() + frame.own);
+                }
+            }
+            capacity::off_cpu_wait(|| thread::sleep(frame.bracketed));
             ran.set(ran.get() + 1);
             busy
         },
@@ -2986,20 +3024,28 @@ fn measured_loop(busy: bool, own_work: Duration, queued: Duration, clock: bool) 
     delays.into_inner()
 }
 
+/// Delays near `ms` each (real sleeps overshoot a little).
+fn about(delays: &[u64], n: usize, ms: u64) -> bool {
+    delays.len() == n && delays.iter().all(|&d| (ms..ms + 100).contains(&d))
+}
+
 #[test]
 fn slot_loop_does_not_count_its_own_slow_frames() {
     // 650 ms frames on the 20 ms path: R1 counted each as 630 ms late.
-    let own = Duration::from_millis(650);
-    assert_eq!(
-        measured_loop(true, own, Duration::ZERO, false),
-        Vec::<u64>::new(),
-        "an overrun frame has no timed wake, so no overshoot"
-    );
-    assert_eq!(
-        measured_loop(true, own, Duration::ZERO, true),
-        Vec::<u64>::new(),
-        "own work is not run-queue wait"
-    );
+    let own = LoopFrame {
+        own: Duration::from_millis(650),
+        ..LoopFrame::default()
+    };
+    for (clock, why) in [
+        (
+            LoopClock::Overshoot,
+            "an overrun frame has no timed wake, so no overshoot",
+        ),
+        (LoopClock::RunQueue, "own work is not run-queue wait"),
+        (LoopClock::OffCpu, "own work is CPU time, not time off it"),
+    ] {
+        assert_eq!(measured_loop(true, clock, own), Vec::<u64>::new(), "{why}");
+    }
 }
 
 #[test]
@@ -3007,8 +3053,41 @@ fn slot_loop_counts_run_queue_wait_on_the_idle_park() {
     // An idle in-game bot (observe not busy) parks between services; each
     // wake waits 700 ms for a CPU. The first service is skipped (the class
     // only became Active during it).
+    let starved = LoopFrame {
+        starved: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
     assert_eq!(
-        measured_loop(false, Duration::ZERO, Duration::from_millis(700), true),
+        measured_loop(false, LoopClock::RunQueue, starved),
         [700, 700, 700]
+    );
+    // Time off the CPU sees the same 700 ms on the idle path (the park up
+    // to its bound is the bot's own wait)...
+    let delays = measured_loop(false, LoopClock::OffCpu, starved);
+    assert!(about(&delays, 3, 700), "{delays:?}");
+}
+
+#[test]
+fn slot_loop_counts_time_off_the_cpu_inside_a_busy_frame() {
+    // ...and inside a busy frame, where the overshoot sees nothing.
+    let starved = LoopFrame {
+        own: Duration::from_millis(5),
+        starved: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
+    let delays = measured_loop(true, LoopClock::OffCpu, starved);
+    assert!(about(&delays, 3, 700), "{delays:?}");
+    assert_eq!(
+        measured_loop(true, LoopClock::Overshoot, starved),
+        Vec::<u64>::new()
+    );
+    // A wait the slot brackets (GPU set-up) is its own, not the host's.
+    let bracketed = LoopFrame {
+        bracketed: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
+    assert_eq!(
+        measured_loop(true, LoopClock::OffCpu, bracketed),
+        Vec::<u64>::new()
     );
 }

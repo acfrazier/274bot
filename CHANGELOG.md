@@ -55,11 +55,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   late, how long they were kept waiting, the game tick rate they kept up with,
   and what is being rendered. It suggests running fewer bots (and turning off
   render-all when it's on), and it clears after 30 s of the host keeping up.
-  On Linux it measures how long each bot waits for a free CPU; on macOS and
-  Windows, how late a bot wakes from its timed waits, which can miss shorter
-  stalls. A bot's own slow script doesn't count, nor do bots that are logging
-  in or paused, or whose script has heard nothing from the game server for
-  10 s.
+  On Linux it measures how long each bot waits for a free CPU. On macOS and
+  Windows it measures how long each bot was off the CPU when it wasn't
+  sleeping or working: a late wake-up, or being pushed off the CPU in the
+  middle of its work. There it also counts other stalls the bot didn't
+  choose, such as the system paging memory back in, and it can't see the
+  wait for a CPU after a game packet wakes an idle bot. A bot's own slow
+  script doesn't count, nor do bots that are logging in or paused, or whose
+  script has heard nothing from the game server for 10 s.
 
 ### Panel
 

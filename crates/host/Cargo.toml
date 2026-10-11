@@ -16,12 +16,20 @@ render-diagnostics = ["client/render-diagnostics"]
 performance-profile = []
 # Lossless, immutable paint witnesses for the Windows journal fixture only.
 journal-paint-proof = ["dep:parking_lot"]
+# Test-only capacity seams (force the time-off-the-CPU measure on Linux,
+# per-service delay receipts). Enabled from dev-dependencies, never
+# production builds.
+test-support = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Networking_WinSock"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
