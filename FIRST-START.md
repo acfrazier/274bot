@@ -189,9 +189,11 @@ wins. Unit tests do not verify public login.
 
 ## Credits
 
-274bot is built on the work of [rs2b0t](https://github.com/rs2b2t/rs2b0t) and
-its contributors: its script API, which lets the rs2b0t catalog run here, its
-AIOQuester (where our quest Paths started) and parts of our game data come from
-it. It also builds on [Lost City](https://github.com/LostCityRS) and the
-[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust) client. The full
-list of contributors is in the README; licenses are in NOTICE.md.
+274bot exists because of [rs2b0t](https://github.com/rs2b2t/rs2b0t). Its
+interface is modelled on rs2b0t's (drawn with ImGui instead of Electron), it
+keeps rs2b0t's script API so the rs2b0t catalog runs here, our quest Paths
+started from its AIOQuester, and parts of our game data come from it. Thank you
+to [everyone who has contributed to rs2b0t](https://github.com/rs2b2t/rs2b0t/graphs/contributors).
+It also builds on [Lost City](https://github.com/LostCityRS) and the
+[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust) client. Licenses
+are in NOTICE.md.
