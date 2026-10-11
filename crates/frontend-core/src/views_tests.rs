@@ -133,19 +133,40 @@ fn a_member_row_follows_every_offline_transition() {
     });
     let queued = row(&s, "vt-alice");
     assert_eq!(queued.phase, Phase::Queued);
-    assert_eq!(
-        queued.queue,
-        Some(QueuePlace {
-            position: 2,
-            total: 3
-        })
-    );
+    assert_eq!(queued.queue, Some(QueuePlace::new(2, 3)));
     assert_eq!(queued.queue.unwrap().ahead(), 1);
     assert_eq!(queued.brief, "queued 2/3");
     assert_eq!(queued.light(), Light::Grey);
     assert_eq!(detail(&s).state, "waiting in login queue (2/3)");
     assert!(detail(&s).since.is_some(), "the queue wait shows a timer");
     assert_eq!(s.fleet_view().counts().queued, 1);
+
+    // At the head, the state says what the host is waiting for and when it
+    // lifts, not just "0 bots in front".
+    step(&mut s, &|r| {
+        (r.queue_position, r.queue_total) = (1, 3);
+        r.queue_blocker = Some(AdmitBlocker::Handshake);
+    });
+    assert_eq!(
+        detail(&s).state,
+        "waiting in login queue (1/3): next in line, another bot is logging in"
+    );
+    step(&mut s, &|r| {
+        r.queue_blocker = Some(AdmitBlocker::AddressBudget {
+            attempts: 29,
+            until: Some(Instant::now() + Duration::from_secs(41)),
+        });
+    });
+    assert_eq!(
+        detail(&s).state,
+        "waiting in login queue (1/3): next in line, login rate cooldown (29 attempts), next try in 41 s"
+    );
+    assert_eq!(row(&s, "vt-alice").brief, "queued 1/3");
+    step(&mut s, &|r| {
+        (r.queue_position, r.queue_total) = (2, 3);
+        r.queue_blocker = None;
+    });
+    assert_eq!(detail(&s).state, "waiting in login queue (2/3)");
 
     // A place outside its total is not a place (the old TUI showed "3 of 2"),
     // so this auto-login member just waits to connect (the old rail said

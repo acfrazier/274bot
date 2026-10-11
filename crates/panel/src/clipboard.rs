@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn fake_backend_roundtrip_via_imgui_clipboard_api() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = imgui::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let store = Arc::new(Mutex::new(None));
         ctx.set_clipboard_backend(FakeClipboard {
             value: store.clone(),
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn platform_io_callbacks_installed_after_set_clipboard_backend() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = imgui::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let raw = ctx.as_raw();
 
         // Default C++ handlers exist but are local-buffer only (OS funcs
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn masked_inputtext_select_all_and_paste_via_shortcut_chords() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = imgui::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let macos = ctx.io().config_macosx_behaviors();
 
         let fixture = "ux-fixture-only";

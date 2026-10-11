@@ -835,6 +835,10 @@ impl AppWindow {
 
         // ImGui setup: ini before fonts; `restore_previous_geometry: false`
         // disables the ini file entirely.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the product sets its own ini policy just below"
+        )]
         let mut context = imgui::Context::create();
         // dear-imgui-sys disables OS clipboard funcs; DefaultImpl is a local
         // buffer only. Install arboard so password-manager paste reaches

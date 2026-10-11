@@ -1,0 +1,5 @@
+# A default ImGui context reads and writes imgui.ini in the working
+# directory, so one test's saved table widths changed another test's layout.
+disallowed-methods = [
+    { path = "dear_imgui_rs::Context::create", reason = "tests use test_support::imgui_context(), which turns imgui.ini off; the product sets its own ini policy in window.rs" },
+]

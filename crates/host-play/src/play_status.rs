@@ -68,6 +68,10 @@ pub struct SlotStatus {
     /// the `walk_*` fields).
     pub queue_position: i32,
     pub queue_total: i32,
+    /// While this slot is the login queue's head: what keeps it from
+    /// starting its login, and until when. `None` behind the head (the bots
+    /// ahead are the reason) and when not queued.
+    pub queue_blocker: Option<host::login_queue::AdmitBlocker>,
     /// Intentional logout latch ([`SlotArm::login_latched`]): the slot is
     /// parked on the title until the operator explicitly arms login again.
     pub login_latched: bool,
@@ -133,6 +137,7 @@ impl Clone for SlotStatus {
             walk_level: self.walk_level,
             queue_position: self.queue_position,
             queue_total: self.queue_total,
+            queue_blocker: self.queue_blocker,
             login_latched: self.login_latched,
             login_latch_reason: self.login_latch_reason,
             bytes_in: self.bytes_in,
@@ -177,6 +182,7 @@ impl Clone for SlotStatus {
         self.walk_level.clone_from(&source.walk_level);
         self.queue_position.clone_from(&source.queue_position);
         self.queue_total.clone_from(&source.queue_total);
+        self.queue_blocker = source.queue_blocker;
         self.login_latched.clone_from(&source.login_latched);
         self.login_latch_reason
             .clone_from(&source.login_latch_reason);
@@ -338,6 +344,7 @@ impl Default for SlotStatus {
             walk_level: -1,
             queue_position: -1,
             queue_total: -1,
+            queue_blocker: None,
             login_latched: false,
             login_latch_reason: None,
             bytes_in: 0,
@@ -511,7 +518,12 @@ pub(super) fn record_login_error(
     name: &str,
     e: &LoginError,
 ) {
-    let msg = format!("code {}: {}", e.code, e.mes2);
+    // A failed connection names where and why it failed; the server's own
+    // refusals keep their response code.
+    let msg = match &e.transport {
+        Some(transport) => format!("{} ({transport})", e.mes2),
+        None => format!("code {}: {}", e.code, e.mes2),
+    };
     // Code 1 is a transient retry the host owns and never publishes; any
     // other code reaches the slot log as the status row's login error.
     if e.code == 1 {
@@ -520,6 +532,18 @@ pub(super) fn record_login_error(
             Level::Info,
             slot = name,
             "login {msg}: retrying"
+        );
+    } else if let Some(transport) = &e.transport {
+        let errno = transport
+            .errno
+            .map_or(String::new(), |n| format!(" errno={n}"));
+        host_log!(
+            Category::Echo,
+            Level::Warn,
+            slot = name,
+            "login {msg} [stage={} kind={:?}{errno}]",
+            transport.stage,
+            transport.kind
         );
     } else {
         host_log!(Category::Echo, Level::Warn, slot = name, "login {msg}");
@@ -617,6 +641,7 @@ pub(super) fn publish_worker_terminal(
         status.login_started = None;
         status.queue_position = -1;
         status.queue_total = -1;
+        status.queue_blocker = None;
         status.startup_phase = StartupPhase::Error;
         status.startup_phase_started = Instant::now();
         status.startup_progress_percent = None;
