@@ -157,10 +157,27 @@ enum Phase {
     Fail(String),
 }
 
-/// The Open pump's menu send `(action, a, b, c)` and the tile it was sent
-/// from.
-type OpenSend = ((i32, i32, i32, i32), (i32, i32, i32));
+/// The Open pump's actual menu send and the player tick that emitted it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OpenSend {
+    action: (i32, i32, i32, i32),
+    from: (i32, i32, i32),
+    tick: u64,
+}
 
+fn open_send_after_pump(
+    open_step_active: bool,
+    access: Access,
+    action: (i32, i32, i32, i32),
+    from: (i32, i32, i32),
+    tick: u64,
+) -> Option<OpenSend> {
+    (open_step_active && is_open_action(action.0, access)).then_some(OpenSend {
+        action,
+        from,
+        tick,
+    })
+}
 /// Per-leg observations.
 #[derive(Default)]
 struct LegRun {
@@ -313,7 +330,79 @@ fn is_npc_op(action: i32) -> bool {
     ]
     .contains(&action)
 }
+fn is_open_action(action: i32, access: Access) -> bool {
+    match access {
+        Access::Booth => is_loc_op(action),
+        Access::Banker => is_npc_op(action),
+    }
+}
 
+#[cfg(test)]
+mod open_witness_tests {
+    use super::*;
+
+    #[test]
+    fn expected_open_send_is_captured_for_each_access() {
+        let from = (3127, 8758, 0);
+        for (access, action_code) in [
+            (Access::Booth, MiniMenuAction::OP_LOC1),
+            (Access::Banker, MiniMenuAction::OP_NPC1),
+        ] {
+            let action = (action_code, 0, 3128, 8758);
+            let witness = open_send_after_pump(true, access, action, from, 17)
+                .expect("the player's expected Open send");
+            assert_eq!(
+                witness,
+                OpenSend {
+                    action,
+                    from,
+                    tick: 17
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn missing_or_stale_open_send_is_not_a_witness() {
+        assert!(
+            open_send_after_pump(
+                false,
+                Access::Booth,
+                (MiniMenuAction::OP_LOC1, 0, 3128, 8758),
+                (0, 0, 0),
+                17,
+            )
+            .is_none(),
+            "an Open from before this leg cannot witness its Open"
+        );
+        assert!(
+            open_send_after_pump(true, Access::Booth, (-1, 0, 0, 0), (0, 0, 0), 17).is_none(),
+            "a missing menu send cannot witness Open"
+        );
+        assert!(
+            open_send_after_pump(
+                true,
+                Access::Booth,
+                (MiniMenuAction::INV_BUTTON1, 0, 0, 0),
+                (3185, 3436, 0),
+                18,
+            )
+            .is_none(),
+            "Withdraw observed while Open is the old front is not an Open send"
+        );
+        assert!(
+            open_send_after_pump(
+                true,
+                Access::Banker,
+                (MiniMenuAction::OP_LOC1, 0, 3128, 8758),
+                (0, 0, 0),
+                18,
+            )
+            .is_none(),
+            "a booth action cannot witness a banker Open"
+        );
+    }
+}
 fn rows(items: &[api::snapshot::ItemView]) -> Vec<(i32, i32)> {
     items.iter().map(|it| (it.def.id, it.count)).collect()
 }
@@ -602,9 +691,9 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
     if g.run.latch != Some(key) {
         g.run.latch = Some(key);
         let front_before = g.session_front(spec.owner).flatten();
-        if front_before == Some(BankStep::Open) {
-            client.menu_action[0] = -1;
-        }
+        // Menu actions persist across client ticks. Clear the action slot so
+        // the witness below can only use an interaction emitted by this pump.
+        client.menu_action[0] = -1;
         match spec.owner {
             Owner::Script => {
                 let name = g.name.clone();
@@ -635,23 +724,47 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
             }
         }
         g.run.pumps += 1;
-        if front_before == Some(BankStep::Open) && client.menu_action[0] != -1 {
-            g.run.open = Some((
-                (
-                    client.menu_action[0],
-                    client.menu_param_a[0],
-                    client.menu_param_b[0],
-                    client.menu_param_c[0],
-                ),
-                here,
-            ));
-        }
         let front_after = g.session_front(spec.owner).flatten();
+        let action = (
+            client.menu_action[0],
+            client.menu_param_a[0],
+            client.menu_param_b[0],
+            client.menu_param_c[0],
+        );
+        if let Some(open) = open_send_after_pump(
+            front_before == Some(BankStep::Open) || front_after == Some(BankStep::Open),
+            spec.access,
+            action,
+            here,
+            key.0,
+        ) {
+            println!(
+                "live_bank_fetch: {label}: Open send witness player_tick={} action={} args=({},{},{}) from={:?}",
+                open.tick,
+                open.action.0,
+                open.action.1,
+                open.action.2,
+                open.action.3,
+                open.from,
+            );
+            g.run.open = Some(open);
+        } else if front_before == Some(BankStep::Open) && action.0 != -1 {
+            println!(
+                "live_bank_fetch: {label}: ignored non-Open witness player_tick={} action={}",
+                key.0, action.0
+            );
+        } else if front_after == Some(BankStep::Open) {
+            println!(
+                "live_bank_fetch: {label}: no expected Open action player_tick={} action={}",
+                key.0, action.0
+            );
+        }
         if front_after != g.run.front {
             println!(
-                "live_bank_fetch: {label}: {:?} -> {front_after:?} here={here:?} pumps={} bank_com={} inventory={:?} bank_side={:?} worn={:?}",
+                "live_bank_fetch: {label}: {:?} -> {front_after:?} here={here:?} pumps={} player_tick={} bank_com={} inventory={:?} bank_side={:?} worn={:?}",
                 g.run.front,
                 g.run.pumps,
+                key.0,
                 g.snap.bank_component_id(),
                 rows(g.snap.inventory()),
                 rows(g.snap.bank_side()),
@@ -700,14 +813,21 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
         g.phase = Phase::Fail(format!("{label}: the fetch changed the carried bones"));
         return;
     }
+    // The equipment observation can precede the bank-close observation by a
+    // player tick. Keep the close gate active until it lands or LEG_TIMEOUT.
     if g.snap.bank_component_id() >= 0 {
-        g.phase = Phase::Fail(format!("{label}: the bank is still open"));
+        println!(
+            "live_bank_fetch: {label}: waiting for bank-close observation player_tick={}",
+            client.gens.player
+        );
         return;
     }
-    let Some(((action, a, b, c), from)) = g.run.open else {
+    let Some(open) = g.run.open else {
         g.phase = Phase::Fail(format!("{label}: no Open send observed"));
         return;
     };
+    let (action, a, b, c) = open.action;
+    let from = open.from;
     let used = match spec.access {
         Access::Booth => {
             let (bx, bz) = client_scene_to_world(client, b, c);
@@ -739,7 +859,8 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
         }
     };
     let line = format!(
-        "{label}: worn dagger, bones retained, bank closed; Open used {used}; {} pumps, {:.1}s",
+        "{label}: worn dagger, bones retained, bank closed; Open tick={} used {used}; {} pumps, {:.1}s",
+        open.tick,
         g.run.pumps,
         g.run
             .started
