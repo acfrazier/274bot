@@ -1899,6 +1899,19 @@ impl SlotScript {
         self.watchdog.progress(now)
     }
 
+    /// Record a fresh player-info tick observed from game packet input.
+    pub fn note_game_packet_tick(&mut self, now: Instant) {
+        self.watchdog.stamp_game_packet_tick(now);
+    }
+
+    fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
+        let Some(player_pen) = crate::duel::fight_pen_index(player.x, player.z, player.level)
+        else {
+            return false;
+        };
+        Some(player_pen) != crate::duel::fight_pen_index(anchor.x, anchor.z, anchor.level)
+    }
+
     /// Apply isolate lifecycle facts and host tile/XP, then decide.
     pub fn feed_watchdog(
         &mut self,
@@ -1923,6 +1936,16 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
+        if self.load_active() {
+            if let (Some(anchor), Some((x, z, level))) =
+                (self.watchdog.held_fight_pen_anchor(), here)
+            {
+                let player = WatchdogTile { x, z, level };
+                if !Self::duel_fight_pen_anchor_unreachable(player, anchor) {
+                    self.watchdog.resume_after_fight_pen(now);
+                }
+            }
+        }
         let previous_gameplay = self.watchdog.gameplay_stamp();
         use crate::shim::InteractReq;
         let mut anchor_reply = None;
@@ -1945,6 +1968,18 @@ impl SlotScript {
         }
         if let Some(reply) = anchor_reply {
             let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
+            if let (Some(player), Some(anchor)) = (player, reply) {
+                if self.load_active() && Self::duel_fight_pen_anchor_unreachable(player, anchor) {
+                    let action = self.watchdog.hold_in_fight_pen(anchor);
+                    if action == WatchdogAction::HoldInFightPen {
+                        self.pending_logs.push(
+                            "watchdog: holding watchdog in Duel Arena fight pen; recovery anchor is unreachable"
+                                .into(),
+                        );
+                    }
+                    return action;
+                }
+            }
             return self.watchdog.on_anchor(now, player, reply);
         }
         if let Some((x, z, level)) = here {
@@ -1998,9 +2033,14 @@ impl SlotScript {
                 );
             }
         }
-        if matches!(action, WatchdogAction::WarnHungLoop) {
-            self.pending_logs
-                .push("watchdog: hung loop (10s, no scheduler progress)".into());
+        match action {
+            WatchdogAction::WarnHungLoop => self
+                .pending_logs
+                .push("watchdog: hung loop (10s, no scheduler progress)".into()),
+            WatchdogAction::WarnNoGamePackets => self
+                .pending_logs
+                .push("watchdog: no game packets for 10 s".into()),
+            _ => {}
         }
         action
     }

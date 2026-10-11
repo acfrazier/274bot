@@ -328,18 +328,25 @@ fn probe(scripts: &ScriptWall, expression: &str) -> serde_json::Value {
 }
 
 fn force_watchdog_sampling(slot: &mut script::SlotScript, here: WorldTile) {
-    let now = Instant::now();
+    let now = Instant::now() - script::watchdog::WEDGE;
+    slot.note_game_packet_tick(now);
     slot.feed_watchdog(
         now,
         Some((here.x, here.z, here.level)),
         &[],
         false,
         true,
-        &[],
+        &[script::shim::InteractReq::NoteProgress],
     );
+    let until = now + script::watchdog::WEDGE;
+    let mut packet_tick = now;
+    while packet_tick < until {
+        packet_tick = (packet_tick + Duration::from_secs(5)).min(until);
+        slot.note_game_packet_tick(packet_tick);
+    }
     assert_eq!(
         slot.feed_watchdog(
-            now + script::watchdog::WEDGE,
+            until,
             Some((here.x, here.z, here.level)),
             &[],
             false,

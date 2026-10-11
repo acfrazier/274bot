@@ -18533,17 +18533,24 @@ fn script_observe_posts_blob_while_held_and_skips_dispatch() {
 }
 
 fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32)) {
-    let t = Instant::now();
-    slot.feed_watchdog(t, Some(here), &[], false, true, &[]);
+    let t = Instant::now() - script::watchdog::WEDGE;
+    slot.note_game_packet_tick(t);
+    slot.feed_watchdog(
+        t,
+        Some(here),
+        &[],
+        false,
+        true,
+        &[script::shim::InteractReq::NoteProgress],
+    );
+    let until = t + script::watchdog::WEDGE;
+    let mut packet_tick = t;
+    while packet_tick < until {
+        packet_tick = (packet_tick + Duration::from_secs(5)).min(until);
+        slot.note_game_packet_tick(packet_tick);
+    }
     assert_eq!(
-        slot.feed_watchdog(
-            t + script::watchdog::WEDGE,
-            Some(here),
-            &[],
-            false,
-            true,
-            &[]
-        ),
+        slot.feed_watchdog(until, Some(here), &[], false, true, &[]),
         script::WatchdogAction::RequestAnchor
     );
     assert!(matches!(
@@ -26912,17 +26919,24 @@ mod host_batch_tests {
         {
             let slot = script_slot(&recovering.scripts, "alice").unwrap();
             let mut slot = slot.lock().unwrap();
-            let now = Instant::now();
-            slot.feed_watchdog(now, Some((0, 0, 0)), &[], false, true, &[]);
+            let now = Instant::now() - script::watchdog::WEDGE;
+            slot.note_game_packet_tick(now);
+            slot.feed_watchdog(
+                now,
+                Some((0, 0, 0)),
+                &[],
+                false,
+                true,
+                &[script::shim::InteractReq::NoteProgress],
+            );
+            let until = now + script::watchdog::WEDGE;
+            let mut packet_tick = now;
+            while packet_tick < until {
+                packet_tick = (packet_tick + Duration::from_secs(5)).min(until);
+                slot.note_game_packet_tick(packet_tick);
+            }
             assert!(matches!(
-                slot.feed_watchdog(
-                    now + script::watchdog::WEDGE,
-                    Some((0, 0, 0)),
-                    &[],
-                    false,
-                    true,
-                    &[],
-                ),
+                slot.feed_watchdog(until, Some((0, 0, 0)), &[], false, true, &[]),
                 script::WatchdogAction::ArmWalk { .. }
             ));
             assert!(slot.watchdog().holds_script_actions());
