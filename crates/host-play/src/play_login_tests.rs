@@ -163,9 +163,9 @@ fn code_sixteen_keeps_shared_hold_and_does_not_extend_release_budget() {
 }
 
 #[test]
-fn stop_logout_withdraw_world_identity_and_replacement_invalidate_release_wait() {
+fn stop_logout_withdraw_world_and_identity_invalidate_release_wait() {
     let now = Instant::now();
-    for action in 0..8 {
+    for action in 0..7 {
         let arm = clean_exit(now);
         let command = arm.login_command(false).unwrap();
         assert!(arm
@@ -182,8 +182,7 @@ fn stop_logout_withdraw_world_identity_and_replacement_invalidate_release_wait()
                 arm.uid.store(8, Ordering::Relaxed);
             }
             5 => arm.invalidate_login_identity(),
-            6 => arm.arm_explicit_login(),
-            7 => arm.set_auto_login(false),
+            6 => arm.set_auto_login(false),
             _ => unreachable!(),
         }
         assert_eq!(
@@ -250,7 +249,7 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
 
 #[test]
 fn queued_release_cancellation_retires_place_without_withdrawing_replacement() {
-    for action in 0..5 {
+    for action in 0..4 {
         let arm = clean_exit(Instant::now());
         let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
         let statuses = Arc::new(Mutex::new(Vec::new()));
@@ -266,13 +265,11 @@ fn queued_release_cancellation_retires_place_without_withdrawing_replacement() {
                 0 => arm.stop.store(true, Ordering::Relaxed),
                 1 => arm.request_logout(),
                 2 => {
-                    arm.request_logout();
-                    arm.arm_explicit_login();
-                }
-                3 => {
                     arm.world_generation.fetch_add(1, Ordering::Relaxed);
                 }
-                4 => arm.invalidate_login_identity(),
+                3 => {
+                    arm.uid.store(8, Ordering::Relaxed);
+                }
                 _ => unreachable!(),
             }
             Duration::ZERO
@@ -310,4 +307,136 @@ fn stale_attempt_cannot_install_generic_backoff_on_new_login_intent() {
         },)
     );
     assert!(arm.login_wanted());
+}
+
+#[test]
+fn reaffirming_login_and_load_all_keep_bound_release_evidence() {
+    for load_all in [false, true] {
+        let now = Instant::now();
+        let arm = clean_exit(now);
+        let command = arm.login_command(false).unwrap();
+        let until = arm.clean_release_admission_at(HOST, PORT, now).unwrap();
+        if load_all {
+            arm.set_auto_login(true);
+        } else {
+            arm.arm_explicit_login();
+        }
+        assert_eq!(arm.clean_release_admission_at(HOST, PORT, now), Some(until));
+        assert!(arm.login_attempt_is_current(command, 0));
+        assert_eq!(
+            arm.defer_clean_release_at(&busy(), command, HOST, PORT, until),
+            Some(CLEAN_RELEASE_CADENCE)
+        );
+    }
+}
+
+#[test]
+fn agreeing_commands_keep_fifo_place_with_and_without_release_wait() {
+    for release in [false, true] {
+        for action in 0..3 {
+            let arm = SlotArm::new(7, true);
+            if release {
+                arm.record_session_exit_at(true, HOST, PORT, Instant::now());
+            }
+            let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
+            let statuses = Arc::new(Mutex::new(Vec::new()));
+            queue.lock().enqueue_owner(u64::MAX, 9);
+            queue.lock().enqueue_owner(arm.queue_owner, 7);
+            queue.lock().enqueue_owner(u64::MAX - 1, 10);
+            if release {
+                queue
+                    .lock()
+                    .defer_owner_until(arm.queue_owner, Instant::now() + CLEAN_RELEASE_CADENCE);
+            }
+            let mut changed = false;
+            let result = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
+                if changed {
+                    return Duration::from_millis(20);
+                }
+                changed = true;
+                match action {
+                    0 => arm.arm_explicit_login(),
+                    1 => arm.set_auto_login(true),
+                    2 => {
+                        let profile = Profile {
+                            username: "alice".into(),
+                            password: "new-password".into(),
+                            uid: 7,
+                            settings: vault::ProfileSettings::default(),
+                        };
+                        sync_profile_arm(&arm, &profile);
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    queue.lock().status_owner(arm.queue_owner).unwrap().position,
+                    2
+                );
+                if release {
+                    assert!(arm
+                        .clean_release_admission_at(HOST, PORT, Instant::now())
+                        .is_some());
+                }
+                queue.lock().leave_owner(u64::MAX);
+                queue.lock().clear_owner_defer(arm.queue_owner);
+                Duration::from_millis(20)
+            });
+            assert!(changed);
+            assert!(matches!(result, PermitWait::Granted(_)));
+            assert_eq!(queue.lock().status_owner(u64::MAX - 1).unwrap().position, 1);
+        }
+    }
+}
+
+#[test]
+fn plain_login_does_not_shorten_an_established_generic_backoff() {
+    let arm = SlotArm::new(7, true);
+    let command = arm.login_command(false).unwrap();
+    arm.arm_explicit_login();
+    assert!(arm.login_attempt_is_current(command, 0));
+    let began = Instant::now();
+    let mut clicked = false;
+    let mut frames = 0;
+    let result = arm.wait_for_retry(Duration::from_secs(60), Some((command, 0)), &mut || {
+        frames += 1;
+        if !clicked {
+            clicked = true;
+            arm.arm_explicit_login();
+        } else {
+            // Two real frames prove the agreeing command did not end the
+            // production 60 s wait; Stop terminates it without sleeping 60 s.
+            arm.stop.store(true, Ordering::Relaxed);
+        }
+        Duration::ZERO
+    });
+    assert!(!result);
+    assert_eq!(frames, 2);
+    assert!(began.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn logout_then_login_clears_release_delay_without_losing_fifo_place() {
+    let arm = clean_exit(Instant::now());
+    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    queue.lock().enqueue_owner(arm.queue_owner, 7);
+    queue
+        .lock()
+        .defer_owner_until(arm.queue_owner, Instant::now() + CLEAN_RELEASE_CADENCE);
+    let mut changed = false;
+    let result = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
+        assert!(
+            !changed,
+            "cancelled pacing must be cleared before another frame"
+        );
+        changed = true;
+        arm.request_logout();
+        arm.arm_explicit_login();
+        Duration::ZERO
+    });
+    assert!(changed);
+    assert!(matches!(result, PermitWait::Granted(_)));
+    assert!(arm
+        .clean_release_admission_at(HOST, PORT, Instant::now())
+        .is_none());
 }

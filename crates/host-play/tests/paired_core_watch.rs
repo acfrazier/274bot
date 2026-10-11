@@ -233,6 +233,7 @@ fn flax_pair_waits_for_both_scene2_observations_before_start() {
         .begin_shared_start("runner", "spinner")
         .expect("both Flax roles must be ingame in scene 2 before shared Start");
 }
+
 #[test]
 fn mule_seed_only_cannot_qualify() {
     let watch = PairWatch::default();
