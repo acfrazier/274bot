@@ -376,7 +376,7 @@ pub struct SlotDetail {
     /// The profile's last successful script assignment (display name).
     pub card: Option<String>,
     /// Only focused detail retains the richer native output; fleet rows stay scalar.
-    pub native_status: Option<Arc<script::native::ScriptStatus>>,
+    native_status: Option<Arc<script::native::ScriptStatus>>,
     /// Retained native/v2 walk reason; only the focused detail projects it.
     pub walk_risk: Option<Arc<str>>,
     /// Current or last manual WalkTo reason, separate from script ownership.
@@ -416,6 +416,67 @@ impl Clone for SlotDetail {
         self.native_status.clone_from(&source.native_status);
         self.walk_risk.clone_from(&source.walk_risk);
         self.manual_walk_risk.clone_from(&source.manual_walk_risk);
+    }
+}
+
+impl SlotDetail {
+    /// The retained native status of the focused slot; `None` for a slot
+    /// that runs no native script.
+    pub fn native_status(&self) -> Option<&script::native::ScriptStatus> {
+        self.native_status.as_deref()
+    }
+
+    /// Replaces the retained native status. The poll sets it; fixtures use
+    /// it too, since the field is private.
+    pub fn with_native_status(mut self, status: Option<Arc<script::native::ScriptStatus>>) -> Self {
+        self.native_status = status;
+        self
+    }
+
+    /// The phase and park reason the Status card shows for this slot's
+    /// script. `None` when no script runs and no terminal failure remains.
+    pub fn script_phase(&self) -> Option<ScriptPhase<'_>> {
+        let status = self.native_status()?;
+        if self.row.script == RunState::Idle && status.failure.is_none() {
+            return None;
+        }
+        Some(ScriptPhase {
+            label: script_status_label(self.row.script, Some(status)),
+            phase: if parked(status) {
+                Some("blocked")
+            } else {
+                text_field(status, "action_state").or_else(|| text_field(status, "phase"))
+            },
+            reason: park_reason(status).or_else(|| text_field(status, "waiting_for")),
+        })
+    }
+}
+
+/// The script line the Status card shows: the lifecycle label, the phase
+/// the script is in and why it waits or parked. Borrowed from the retained
+/// status, so a front end renders it without allocating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptPhase<'a> {
+    label: &'static str,
+    phase: Option<&'a str>,
+    reason: Option<&'a str>,
+}
+
+impl<'a> ScriptPhase<'a> {
+    /// The lifecycle label: `working`, `blocked`, `stopped (blocked)`, ….
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+
+    /// The phase text: the quest's action (`walking`, `banking`), `blocked`
+    /// while parked, or the script's own phase line.
+    pub fn phase(&self) -> Option<&'a str> {
+        self.phase
+    }
+
+    /// Why the script is parked or waiting.
+    pub fn reason(&self) -> Option<&'a str> {
+        self.reason
     }
 }
 
@@ -1059,36 +1120,55 @@ pub fn script_status_label(
     if state != RunState::Running {
         return run_state_label(state);
     }
-    match status.map(|status| status.phase) {
-        Some(script::native::NativePhase::Preparing) => "preparing",
-        Some(script::native::NativePhase::Working) => "working",
-        Some(script::native::NativePhase::Waiting) => "waiting",
-        Some(script::native::NativePhase::Blocked) => "blocked",
-        Some(script::native::NativePhase::Complete) => "complete",
-        None => "running",
+    let Some(status) = status else {
+        return "running";
+    };
+    if parked(status) {
+        return "blocked";
+    }
+    match status.phase {
+        script::native::NativePhase::Preparing => "preparing",
+        script::native::NativePhase::Working => "working",
+        script::native::NativePhase::Waiting => "waiting",
+        script::native::NativePhase::Blocked => "blocked",
+        script::native::NativePhase::Complete => "complete",
     }
 }
 
 /// The current refusal or wait takes priority over a normal action caption.
 pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&str> {
-    status
-        .failure
-        .as_ref()
-        .map(|failure| failure.message.as_ref())
-        .or_else(|| {
-            ["waiting_for", "action_state"].into_iter().find_map(|key| {
-                status.fields.iter().find_map(|field| {
-                    (field.key == key)
-                        .then_some(&field.value)
-                        .and_then(|value| match value {
-                            script::native::StatusValue::Text(text) if !text.is_empty() => {
-                                Some(text.as_ref())
-                            }
-                            _ => None,
-                        })
-                })
-            })
-        })
+    park_reason(status)
+        .or_else(|| text_field(status, "waiting_for"))
+        .or_else(|| text_field(status, "action_state"))
+}
+
+/// The park reason: the terminal failure, or while parked the script's own
+/// `block_reason`. A queue wait parks without a failure, so it needs the field.
+fn park_reason(status: &script::native::ScriptStatus) -> Option<&str> {
+    if let Some(failure) = status.failure.as_ref() {
+        return Some(failure.message.as_ref());
+    }
+    if parked(status) {
+        return text_field(status, "block_reason");
+    }
+    None
+}
+
+/// Whether the script is parked. A Quester queue wait parks while its phase
+/// stays `Working`, so the published `action_state` is checked as well.
+fn parked(status: &script::native::ScriptStatus) -> bool {
+    status.phase == script::native::NativePhase::Blocked
+        || text_field(status, "action_state") == Some("blocked")
+}
+
+/// The non-empty text of a status field, borrowed from the status.
+fn text_field<'a>(status: &'a script::native::ScriptStatus, key: &str) -> Option<&'a str> {
+    status.fields.iter().find_map(|field| match &field.value {
+        script::native::StatusValue::Text(text) if field.key == key && !text.is_empty() => {
+            Some(text.as_ref())
+        }
+        _ => None,
+    })
 }
 
 /// The short text rows both front ends show under the status line, as

@@ -795,6 +795,76 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     assert_eq!(script_status_label(RunState::Running, None), "running");
 }
 
+/// The Status card's script line. A parked Quester shows its phase and why
+/// it parked; a terminal refusal on an idle run keeps the failure as the
+/// reason; a slot that runs no script shows nothing extra.
+#[test]
+fn status_card_shows_the_script_phase_and_park_reason() {
+    use script::native::{NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue};
+    use std::sync::Arc;
+
+    let status = |phase, fields: Vec<StatusField>, failure| ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from(fields),
+        failure,
+    };
+    let action = |value: &'static str| StatusField {
+        key: "action_state",
+        label: "Action",
+        value: StatusValue::Text(Arc::from(value)),
+    };
+
+    let mut queued = SlotDetail::default();
+    queued.row.script = RunState::Running;
+    let queued = queued.with_native_status(Some(Arc::new(status(
+        NativePhase::Working,
+        vec![
+            action("blocked"),
+            StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text(Arc::from("queue position 5 of 9")),
+            },
+        ],
+        None,
+    ))));
+    let phase = queued
+        .script_phase()
+        .expect("a parked script shows its phase");
+    assert_eq!(phase.label(), "blocked");
+    assert_eq!(phase.phase(), Some("blocked"));
+    assert_eq!(phase.reason(), Some("queue position 5 of 9"));
+
+    let mut refused = SlotDetail::default();
+    refused.row.script = RunState::Idle;
+    let refused = refused.with_native_status(Some(Arc::new(status(
+        NativePhase::Blocked,
+        vec![],
+        Some(ScriptFailure {
+            code: Arc::from("empty-queue"),
+            message: Arc::from("no quests selected; review Script prefs, then Start"),
+        }),
+    ))));
+    let phase = refused
+        .script_phase()
+        .expect("a terminal refusal stays visible after the run stops");
+    assert_eq!(phase.label(), "stopped (blocked)");
+    assert_eq!(
+        phase.reason(),
+        Some("no quests selected; review Script prefs, then Start")
+    );
+
+    assert_eq!(SlotDetail::default().script_phase(), None);
+}
+
 #[test]
 fn draft_path_status_is_projected_to_one_short_status_row() {
     use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};

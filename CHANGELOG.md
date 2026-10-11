@@ -44,6 +44,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Panel
+
+- The Status card shows what the selected bot's script is doing and why it
+  waits: its phase, and the reason when the script is parked (for example a
+  Quester waiting in a queue). A bot that runs no script shows nothing extra.
+
+### TUI
+
+- The status pane shows the script's phase and park reason on the same rows
+  as the panel. Those rows appear only while a script runs or a script
+  refusal is still showing.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
