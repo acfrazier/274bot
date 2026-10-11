@@ -2304,7 +2304,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .core
         .fleet_view()
         .detail()
-        .and_then(|detail| detail.native_status.as_deref());
+        .and_then(|detail| detail.native_status());
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
@@ -4041,6 +4041,15 @@ fn status_section(ui: &Ui, session: &mut Session) {
 
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", &d.state);
+    if let Some(script) = d.script_phase() {
+        kv_row(ui, "script", script.label());
+        if let Some(phase) = script.phase() {
+            kv_row(ui, "phase", phase);
+        }
+        if let Some(reason) = script.reason() {
+            kv_row(ui, "reason", reason);
+        }
+    }
     kv_row(
         ui,
         "player",

@@ -12,7 +12,6 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use frontend_core::resources::{format_background, format_bots};
-use frontend_core::views::{script_status_label, script_status_reason};
 use frontend_core::{ResourceView, SlotDetail};
 
 /// The status pane widget: key/value rows for the selected slot, plus the
@@ -73,13 +72,13 @@ impl Widget for StatusPane<'_> {
             ],
             Some(d) => {
                 let mut lines = vec![Line::from(format!("state: {}", d.state))];
-                if let Some(status) = d.native_status.as_deref() {
-                    lines.push(Line::from(format!(
-                        "script: {}",
-                        script_status_label(d.row.script, Some(status))
-                    )));
-                    if let Some(reason) = script_status_reason(status) {
-                        lines.push(Line::from(reason));
+                if let Some(script) = d.script_phase() {
+                    lines.push(Line::from(format!("script: {}", script.label())));
+                    if let Some(phase) = script.phase() {
+                        lines.push(Line::from(format!("phase: {phase}")));
+                    }
+                    if let Some(reason) = script.reason() {
+                        lines.push(Line::from(format!("reason: {reason}")));
                     }
                 }
                 if let (false, Some(error)) = (d.row.phase.is_error(), d.row.error.as_deref()) {
@@ -170,21 +169,19 @@ mod tests {
     /// a retrying slot is labelled history, and its newest operation shows.
     #[test]
     fn a_retrying_slot_shows_its_last_error_and_operation() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "alice".into(),
-                phase: Phase::Connecting,
-                error: Some("code 5: already logged in".into()),
-                last_op: Some(OpBrief {
-                    id: OperationId(7),
-                    action: ActionKind::Login,
-                    outcome: Outcome::Pending,
-                }),
-                ..FleetRow::default()
-            },
-            state: "logging in…".into(),
-            ..SlotDetail::default()
+        let mut detail = SlotDetail::default();
+        detail.row = FleetRow {
+            name: "alice".into(),
+            phase: Phase::Connecting,
+            error: Some("code 5: already logged in".into()),
+            last_op: Some(OpBrief {
+                id: OperationId(7),
+                action: ActionKind::Login,
+                outcome: Outcome::Pending,
+            }),
+            ..FleetRow::default()
         };
+        detail.state = "logging in…".into();
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 14);
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(
@@ -196,16 +193,14 @@ mod tests {
 
     #[test]
     fn a_current_error_is_the_state_not_a_last_error() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "bob".into(),
-                phase: Phase::LoginError,
-                error: Some("code 3: invalid username or password".into()),
-                ..FleetRow::default()
-            },
-            state: "login code 3: invalid username or password".into(),
-            ..SlotDetail::default()
+        let mut detail = SlotDetail::default();
+        detail.row = FleetRow {
+            name: "bob".into(),
+            phase: Phase::LoginError,
+            error: Some("code 3: invalid username or password".into()),
+            ..FleetRow::default()
         };
+        detail.state = "login code 3: invalid username or password".into();
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 12);
         assert!(!text.contains("last error"), "{text:?}");
     }
@@ -235,23 +230,21 @@ mod tests {
     /// newest operation, its background bots and the whole meter.
     #[test]
     fn a_58x14_pane_shows_the_whole_meter() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "fc3bob".into(),
-                phase: Phase::Ready,
-                last_op: Some(OpBrief {
-                    id: OperationId(8),
-                    action: ActionKind::Logout,
-                    outcome: Outcome::Completed,
-                }),
-                ..FleetRow::default()
-            },
-            state: "ingame scene 2".into(),
-            player: "Fc3bob".into(),
-            tile: (3094, 3106, 0),
-            modal: 3559,
-            ..SlotDetail::default()
+        let mut detail = SlotDetail::default();
+        detail.row = FleetRow {
+            name: "fc3bob".into(),
+            phase: Phase::Ready,
+            last_op: Some(OpBrief {
+                id: OperationId(8),
+                action: ActionKind::Logout,
+                outcome: Outcome::Completed,
+            }),
+            ..FleetRow::default()
         };
+        detail.state = "ingame scene 2".into();
+        detail.player = "Fc3bob".into();
+        detail.tile = (3094, 3106, 0);
+        detail.modal = 3559;
         let view = ResourceView {
             bots: 3,
             ingame: 2,
@@ -277,49 +270,45 @@ mod tests {
     /// ahead of the player/tile rows.
     #[test]
     fn a_38x6_pane_keeps_the_retry_reason() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "fc3alice".into(),
-                phase: Phase::Connecting,
-                error: Some("code 5: Try again in 60 secs".into()),
-                ..FleetRow::default()
-            },
-            state: "logging in…".into(),
-            ..SlotDetail::default()
+        let mut detail = SlotDetail::default();
+        detail.row = FleetRow {
+            name: "fc3alice".into(),
+            phase: Phase::Connecting,
+            error: Some("code 5: Try again in 60 secs".into()),
+            ..FleetRow::default()
         };
+        detail.state = "logging in…".into();
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 38, 6);
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(text.contains("last error: code 5"), "{text:?}");
     }
     #[test]
     fn stopped_native_queue_refusal_precedes_routine_status_rows() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "qs-alice".into(),
-                phase: Phase::Ready,
-                script: script::RunState::Idle,
-                ..FleetRow::default()
-            },
-            state: "ingame scene 2".into(),
-            native_status: Some(std::sync::Arc::new(script::native::ScriptStatus {
-                run: api::selected::RunKey {
-                    slot: 1,
-                    run: 2,
-                    session: 3,
-                },
-                card: script::CompiledId("Quester"),
-                phase: script::native::NativePhase::Blocked,
-                active_settings: 1,
-                pending_settings: None,
-                fields: std::sync::Arc::from([]),
-                failure: Some(script::native::ScriptFailure {
-                    code: "empty-queue".into(),
-                    message: "no quests selected; review Script prefs and Skip, then Stop/Start"
-                        .into(),
-                }),
-            })),
-            ..SlotDetail::default()
+        let mut detail = SlotDetail::default();
+        detail.row = FleetRow {
+            name: "qs-alice".into(),
+            phase: Phase::Ready,
+            script: script::RunState::Idle,
+            ..FleetRow::default()
         };
+        detail.state = "ingame scene 2".into();
+        let status = script::native::ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            card: script::CompiledId("Quester"),
+            phase: script::native::NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            fields: std::sync::Arc::from([]),
+            failure: Some(script::native::ScriptFailure {
+                code: "empty-queue".into(),
+                message: "no quests selected; review Script prefs and Skip, then Stop/Start".into(),
+            }),
+        };
+        let detail = detail.with_native_status(Some(std::sync::Arc::new(status)));
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
         assert!(text.contains("script: stopped (blocked)"), "{text:?}");
         assert!(text.contains("no quests selected"), "{text:?}");
@@ -338,11 +327,9 @@ mod walk_risk_tests {
 
     #[test]
     fn manual_refusal_reason_survives_an_unarmed_route() {
-        let detail = SlotDetail {
-            state: "ingame".into(),
-            manual_walk_risk: Some(std::sync::Arc::from("Route assessment unknown: Poison")),
-            ..Default::default()
-        };
+        let mut detail = SlotDetail::default();
+        detail.state = "ingame".into();
+        detail.manual_walk_risk = Some(std::sync::Arc::from("Route assessment unknown: Poison"));
         let mut terminal = Terminal::new(TestBackend::new(90, 14)).unwrap();
         terminal
             .draw(|frame| {

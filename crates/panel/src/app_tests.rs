@@ -228,6 +228,59 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(shown.contains("modals") && shown.contains("0"));
 }
 
+/// A parked Quester shows its script phase and the reason it waits on the
+/// status card; a slot with no script shows neither row.
+#[test]
+fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
+    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "action_state",
+                label: "Action",
+                value: StatusValue::Text(Arc::from("blocked")),
+            },
+            StatusField {
+                key: "block_reason",
+                label: "Blocked",
+                value: StatusValue::Text(Arc::from("no step for stage")),
+            },
+        ]),
+        failure: None,
+    };
+    let mut parked = frontend_core::SlotDetail::default();
+    parked.row.phase = frontend_core::Phase::Ready;
+    parked.row.script = script::RunState::Running;
+    parked.state = "ingame scene 2".into();
+    let parked = parked.with_native_status(Some(Arc::new(status)));
+    let shown = draw_status_detail(&parked, "—", "lowmem");
+    assert!(
+        shown.contains("script") && shown.contains("blocked"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("reason") && shown.contains("no step for stage"),
+        "{shown}"
+    );
+
+    let bare = draw_status_detail(&frontend_core::SlotDetail::default(), "—", "lowmem");
+    assert!(
+        !bare.contains("script") && !bare.contains("reason"),
+        "{bare}"
+    );
+}
+
 /// On a 1024×768 desktop the app's client area is about 1008×580 and the
 /// docked Profiles window runs past its right edge. The last row's Edit and
 /// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in
