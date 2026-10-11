@@ -624,9 +624,7 @@ struct FixtureBank {
 /// snapshot's bank into it before every tick the way the host does.
 /// Returns the bank item ids whose withdraw was clicked and how the run
 /// ended: `Ok(Some(name))` at its first `Wear`, `Ok(None)` when it
-/// completed without one. Every `Wear`/`Unequip` must find the bank shut:
-/// both act on the regular inventory widget, which an open bank hides. An
-/// `Unequip` moves the worn row into the pack.
+/// completed without one. An `Unequip` moves the worn row into the pack.
 fn drive_loadout(
     plan: &Arc<dyn StepPlan>,
     snapshot: &mut GameSnapshot,
@@ -725,17 +723,9 @@ fn drive_loadout(
         };
         match request {
             crate::shim::InteractReq::Wear { name } => {
-                assert!(
-                    snapshot.bank_component_id() < 0,
-                    "Wear {name} dispatched with the bank open"
-                );
                 return (withdrawn, Ok(Some(name.clone())));
             }
             crate::shim::InteractReq::Unequip { name } => {
-                assert!(
-                    snapshot.bank_component_id() < 0,
-                    "Unequip {name} dispatched with the bank open"
-                );
                 accept(&mut ledger_state);
                 let mut equipment = snapshot.equipment().to_vec();
                 let index = equipment
@@ -971,9 +961,9 @@ fn loadout_at_an_open_bank_issues_no_select_walk_or_open() {
     });
 }
 
-/// A legal tier that is held but not worn still needs its `Wear`, and a
-/// `Wear` acts on the regular inventory widget: the carry withdrawal at
-/// the open bank is followed by a `Close` before the helm goes on.
+/// A legal tier that is held but not worn still needs its `Wear`. The
+/// missing carry requires an ordinary bank trip; its normal Close occurs
+/// before the already-held helm is worn.
 #[test]
 fn held_legal_tier_is_worn_only_after_the_carry_trip_closes_the_bank() {
     with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
@@ -1002,10 +992,10 @@ fn held_legal_tier_is_worn_only_after_the_carry_trip_closes_the_bank() {
     });
 }
 
-/// Everything held at an incoming open bank: no trip at all, yet the bank
-/// is closed before the `Wear`.
+/// Everything is held at an incoming open bank: no trip is needed, so
+/// Quester sends the Wear without a separate Close.
 #[test]
-fn fully_held_loadout_closes_an_open_bank_before_wearing() {
+fn fully_held_loadout_wears_with_open_bank() {
     with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
         let lobster = data.item_by_alias("lobster").unwrap();
@@ -1027,12 +1017,15 @@ fn fully_held_loadout_closes_an_open_bank_before_wearing() {
         let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
         assert!(withdrawn.is_empty(), "nothing to withdraw");
         assert_eq!(end.unwrap().as_deref(), Some("Adamant full helm"));
+        assert!(
+            snapshot.bank_component_id() >= 0,
+            "the Wear leaves bank closure to the engine"
+        );
     });
 }
 
-/// An exclusive loadout strips the extra worn item only after the trip
-/// and its `Close`: the `Unequip`, like the `Wear`, needs the regular
-/// inventory widget.
+/// An exclusive loadout strips the extra worn item after its bank trip has
+/// closed the bank.
 #[test]
 fn exclusive_strip_follows_the_trip_and_its_close() {
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});

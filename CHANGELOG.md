@@ -22,9 +22,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Quest location, production and reach checks use the game's reported player
   tile, so a difference in displayed position no longer makes the script miss
   nearby objectives.
-- Quester, Gatherer and Combat close an open bank and wait for its closure
-  before wearing equipment, rather than sending the wear action to the bank
-  interface.
+- Quester loadouts now wear held items directly while a bank is open; the 289
+  engine closes the bank and equips the item on that same Wear interaction,
+  avoiding a separate close-and-wait.
 
 ### Gatherer
 
