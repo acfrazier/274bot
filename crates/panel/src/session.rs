@@ -3207,6 +3207,12 @@ impl Session {
     pub fn pump_status(&mut self) {
         self.core
             .set_pause_script_on_manual_walk_abort(self.ui.nav.pause_script_on_manual_walk_abort);
+        let only_selected = self.focus.lock().unwrap().only_render_selected;
+        self.core.set_capacity_render(if only_selected {
+            frontend_core::RenderPolicyLabel::OnlySelected
+        } else {
+            frontend_core::RenderPolicyLabel::RenderAll
+        });
         self.core.advance_removals(Instant::now());
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;

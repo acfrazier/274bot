@@ -2270,6 +2270,8 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.core
+            .set_capacity_render(frontend_core::RenderPolicyLabel::Headless);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
@@ -2830,6 +2832,10 @@ impl TuiSession {
         if self.copied_meter.replace(meter) != Some(meter) {
             app.resources.clone_from(self.core.resources());
         }
+        app.capacity = self
+            .core
+            .capacity_notice()
+            .map(|notice| notice.notice_text().to_owned());
     }
 }
 

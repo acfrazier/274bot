@@ -4042,6 +4042,47 @@ fn memory_notice_gets_its_own_readable_popup_row() {
     );
 }
 
+#[test]
+fn capacity_warning_is_on_the_panel_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    session
+        .core
+        .inject_capacity_notice(frontend_core::CapacityNotice::from_warning(
+            frontend_core::CapacityWarning {
+                late_bots: 5,
+                active_bots: 20,
+                threshold: 3,
+                p95_delay: std::time::Duration::from_millis(800),
+                tick_ms: 900,
+                render: frontend_core::RenderPolicyLabel::RenderAll,
+            },
+        ));
+    let mut ctx = dear_imgui_rs::Context::create();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("capacity-layout")
+            .build(|| super::capacity_banner(ui, &session));
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Host is falling behind") && text.contains("5 of 20 bots late"),
+        "{text:?}"
+    );
+    assert!(
+        text.contains("Run fewer bots or turn off render-all"),
+        "{text:?}"
+    );
+}
+
 /// What one frame of the Profiles window showed.
 struct Shown {
     text: String,

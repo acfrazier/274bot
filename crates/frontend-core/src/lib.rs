@@ -17,6 +17,7 @@
 //! and never copies a `GameSnapshot`.
 
 pub mod bulk;
+pub mod capacity;
 pub mod fleet;
 pub mod group_walk;
 pub mod log;
@@ -39,6 +40,7 @@ pub mod views;
 pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
+pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use fleet::Fleet;
 pub use group_walk::{walk_marked, MarkedWalk, WalkInputs};
 pub use map_bake::{

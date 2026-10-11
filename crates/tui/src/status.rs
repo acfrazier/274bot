@@ -27,6 +27,7 @@ pub struct StatusPane<'a> {
     pub mem_notice: Option<&'a str>,
     pub resources: Option<&'a ResourceView>,
     pub background_notice: Option<&'a str>,
+    pub capacity: Option<&'a str>,
 }
 
 impl<'a> StatusPane<'a> {
@@ -38,6 +39,7 @@ impl<'a> StatusPane<'a> {
             mem_notice: None,
             resources: None,
             background_notice: None,
+            capacity: None,
         }
     }
 
@@ -53,6 +55,11 @@ impl<'a> StatusPane<'a> {
 
     pub fn notice(mut self, notice: Option<&'a str>) -> Self {
         self.background_notice = notice;
+        self
+    }
+
+    pub fn capacity(mut self, notice: Option<&'a str>) -> Self {
+        self.capacity = notice;
         self
     }
 }
@@ -134,6 +141,9 @@ impl Widget for StatusPane<'_> {
         }
         if let Some(notice) = self.background_notice {
             lines.push(Line::from(format!("notice: {notice}")));
+        }
+        if let Some(notice) = self.capacity {
+            lines.push(Line::from(notice));
         }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -271,6 +281,29 @@ mod tests {
             "{text:?}"
         );
         assert!(text.contains("traffic: 1.2 KB/s"), "{text:?}");
+    }
+
+    #[test]
+    fn capacity_warning_is_on_the_status_snapshot() {
+        let notice = frontend_core::CapacityNotice::from_warning(frontend_core::CapacityWarning {
+            late_bots: 4,
+            active_bots: 22,
+            threshold: 3,
+            p95_delay: std::time::Duration::from_millis(700),
+            tick_ms: 800,
+            render: frontend_core::RenderPolicyLabel::Headless,
+        });
+        let text = render(
+            StatusPane::new(None, "—", "lowmem").capacity(Some(notice.notice_text())),
+            80,
+            12,
+        );
+        assert!(text.contains("Host is falling behind"), "{text:?}");
+        assert!(text.contains("4 of 22 bots late"), "{text:?}");
+        assert!(
+            text.contains("Run fewer bots or turn off render-all"),
+            "{text:?}"
+        );
     }
 
     /// A 38x6 pane keeps a retrying bot's state and why it is retrying

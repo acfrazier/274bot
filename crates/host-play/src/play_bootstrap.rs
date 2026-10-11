@@ -450,6 +450,7 @@ impl Play {
             walk_globals_store: None,
             world,
             wakes: HashMap::new(),
+            capacity: Arc::new(host::CapacityMonitor::new()),
         }
     }
 }
