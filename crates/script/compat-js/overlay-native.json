@@ -367,5 +367,14 @@
     "reason": "The native resolver prefers exact saved names, selects the first loadout for a blank setting, otherwise accepts only a unique trimmed ASCII-case-insensitive match, and refuses unresolved or ambiguous names with the available loadouts.",
     "runtime": "crates/script/src/loadouts_store.rs:722",
     "declaration": "/** Exact names win; a blank setting selects the first loadout. Otherwise a unique trimmed, ASCII case-insensitive match is required, or the function throws with the available loadout names. */\nexport function selectedLoadout(bag: SettingsBag): Loadout;"
+  },
+
+  {
+    "id": "duel-challenge-area",
+    "module": "api/duel/Duel.js",
+    "selector": "$add",
+    "reason": "The current rs2b0t Duel API adds this lobby predicate beyond the frozen compat revision; the host keeps its bounds and fight-pen exclusion native.",
+    "runtime": "crates/script/src/shim/duel.js:33",
+    "declaration": "/** Whether a tile is in the level-zero challenge area outside every fight pen. */\nexport function inDuelChallengeArea(tile: WorldTile | null): boolean;"
   }
 ]

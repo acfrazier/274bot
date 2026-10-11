@@ -407,6 +407,37 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn duel_challenge_area_export_uses_the_native_contract() {
+    let src = r#"
+import { inDuelChallengeArea } from '../../api/duel/Duel.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            inside: inDuelChallengeArea({ x: 3368, z: 3274, level: 0 }),
+            edge: inDuelChallengeArea({ x: 3328, z: 3274, level: 0 }),
+            pen: inDuelChallengeArea({ x: 3340, z: 3250, level: 0 }),
+            outside: inDuelChallengeArea({ x: 3327, z: 3274, level: 0 }),
+            nullTile: inDuelChallengeArea(null),
+        };
+    }
+}
+"#;
+    let iso = spawn(src);
+    let probe = probe_loop(&iso, &base_snapshot());
+    assert_eq!(
+        probe,
+        serde_json::json!({
+            "inside": true,
+            "edge": true,
+            "pen": false,
+            "outside": false,
+            "nullTile": false,
+        })
+    );
+    iso.join();
+}
+
+#[test]
 fn missing_distance_or_max_refuses_hostile_true() {
     let src = r#"
 import { isHostileAttacker } from '../../api/thieving/targets.js';
