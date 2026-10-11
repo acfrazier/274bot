@@ -19,9 +19,20 @@ use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+/// Failures before an isolate thread has been created.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadIsolateError {
+    /// The embedder did not initialize V8 at its process root.
+    #[error("V8 platform is not bootstrapped: call script::bootstrap_v8_platform() on main before creating any JavaScript runtime worker threads")]
+    PlatformNotBootstrapped,
+    /// The operating system refused to create the isolate thread.
+    #[error("isolate thread: {0}")]
+    ThreadSpawn(#[source] std::io::Error),
+}
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static LIVE_RUNTIMES: AtomicUsize = AtomicUsize::new(0);
@@ -391,13 +402,14 @@ enum SetupState {
 impl LoadIsolate {
     /// Spawn the isolate thread with already-cached JS (no transpile).
     /// Returns as soon as the thread is created; V8 setup is resolved by
-    /// [`LoadIsolate::poll_ready`]. Thread-create failure is the only
-    /// synchronous error.
+    /// [`LoadIsolate::poll_ready`]. Missing process-root
+    /// [`crate::bootstrap_v8_platform`] or thread-create failure is returned
+    /// synchronously, before any runtime worker is started.
     pub fn spawn(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
             shape,
@@ -414,7 +426,7 @@ impl LoadIsolate {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: std::sync::Arc<api::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
             shape,
@@ -431,7 +443,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
@@ -444,7 +456,8 @@ impl LoadIsolate {
         shape: LoadShape,
         siblings: &[(String, String)],
     ) -> Result<(), String> {
-        let isolate = Self::spawn(js.to_owned(), shape, siblings.to_vec())?;
+        let isolate = Self::spawn(js.to_owned(), shape, siblings.to_vec())
+            .map_err(|error| error.to_string())?;
         let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
         let result = match result {
             Ready::Ready => Ok(()),
@@ -461,8 +474,8 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<Self, String> {
-        ensure_platform();
+    ) -> Result<Self, LoadIsolateError> {
+        super::platform::require_v8_platform()?;
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
         let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
@@ -512,7 +525,7 @@ impl LoadIsolate {
                     thread_counters,
                 )
             })
-            .map_err(|e| format!("isolate thread: {e}"))?;
+            .map_err(LoadIsolateError::ThreadSpawn)?;
         Ok(LoadIsolate {
             #[cfg(feature = "memory-profile")]
             counters,
@@ -1692,15 +1705,6 @@ impl Drop for LoadIsolate {
             }
         }
     }
-}
-
-/// Initialize the V8 platform once, on the caller's thread (Start and
-/// Load both run here, and the isolate threads are spawned by it).
-fn ensure_platform() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        rustyscript::init_platform(1, true);
-    });
 }
 
 /// Walk requests a reconnect keeps; `held` never grows past this.

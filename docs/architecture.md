@@ -76,7 +76,7 @@ graph, derived from the manifests:
 - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `client`, `host-play`, `scenario` **dev-only**
 - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `frontend-core` and `host-play` also **dev**
 - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**; `frontend-core` and `host-play` also **dev**
-- `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `vault`
+- `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `vault`; `host-play` also **dev**
 
 `e2e` does **not** Cargo-depend on `script`, `panel`, or `tui`. The suite
 launches product binaries as child processes. That is orchestration, not a
@@ -119,7 +119,7 @@ and get review. Do not add a second hidden graph.
 
 | Crate | Features |
 | --- | --- |
-| `script` | `load` (default): the V8 isolate, the JS library, the clue step machine and the isolate journal machine. The native journal click machine is always compiled; `path-schema`: Path JSON Schema generation; `memory-profile`; `test-hooks` |
+| `script` | `load` (default): the V8 isolate, the JS library, the clue step machine and the isolate journal machine. The native journal click machine is always compiled; `path-schema`: Path JSON Schema generation; `memory-profile`; `test-hooks`: integration-only isolate seams, and (with `debug_assertions`) V8's unprotected test platform. `cfg(test)` selects that platform for script unit tests. Release product builds cannot compile it. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
 | `host-play` | `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
@@ -389,6 +389,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `load/mod.rs` | Load facade: shapes, cards, isolate | feature-gated library and isolate |
 | `load/library.rs`, `load/library/catalog.rs` | JS card library and catalog apply | file store in root |
 | `load/isolate.rs`, `load/isolate/thread.rs`, `load/isolate/teardown.rs` | V8 isolate thread and teardown | caller handle in root |
+| `load/platform.rs` | process-wide V8 platform bootstrap | protected on embedder main; unprotected only in tests |
 | `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
 | `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
 | `load/*_v8.rs` | typed local V8 marshalling | one native call each, no machines |
@@ -407,6 +408,24 @@ Quester Path documents) with `paths/path.schema.json`, `schema/isolate.fbs`
 with its checked-in `schema/generated` bindings, `compat-js/` (the JS API v1
 name maps and generator), `host-js/index.d.ts` (the generated JS API v2
 declarations) and `examples/`.
+
+V8 embedders call `script::bootstrap_v8_platform()` on process main before
+creating any slot, worker or control thread that might create a JS runtime,
+including validation and restarts. The protected platform's Linux
+memory-protection-key permissions are inherited only by descendants created
+after initialization; a once-only call on the first bot cannot authorize
+pre-existing sibling slots. Missing bootstrap returns
+`LoadIsolateError::PlatformNotBootstrapped` before spawning an isolate.
+
+Stable libtest workers are pre-created siblings. Script unit tests and debug
+test consumers with the dev-dependency `script/test-hooks` feature use V8's
+documented unprotected test platform instead. The function and fallback are
+gated by `cfg(test)` or `all(feature = "test-hooks", debug_assertions)`:
+release panel/host-play/tui dependencies cannot compile that path, even if the
+feature is enabled. Their main entrypoints always bootstrap the protected
+platform. The harness-free `v8_platform` subprocess test also initializes the
+protected platform on main, so it tests production ancestry rather than the
+libtest exception.
 
 ### host-play
 

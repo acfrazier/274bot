@@ -15,6 +15,7 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() {
+    script::bootstrap_v8_platform();
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     let args = parse_args();

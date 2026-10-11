@@ -33,6 +33,11 @@ serde_json = "=1.0.140"
 sha2 = "=0.10.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[dev-dependencies]
+# e2e tests that drive Play inherit script's unprotected V8 test platform
+# through host-play test-support. Production e2e-suite binaries do not.
+host-play = { path = "../host-play", features = ["test-support"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
