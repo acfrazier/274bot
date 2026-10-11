@@ -650,7 +650,7 @@ mod tests {
         session.fleet_open = true;
         let bob = session.core.profile_identity("bob").unwrap();
         session.fleet_selection.set(bob, true);
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
             ctx.prepare_frame(
                 dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)

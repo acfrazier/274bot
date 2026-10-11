@@ -30,9 +30,7 @@ fn panel_state(session: Session) -> PanelState {
 }
 
 fn context() -> Context {
-    let mut ctx = Context::create();
-    ctx.set_ini_filename::<std::path::PathBuf>(None).unwrap();
-    ctx
+    crate::test_support::imgui_context()
 }
 
 /// Of the windows drawn this frame, the one ImGui focused last (the front

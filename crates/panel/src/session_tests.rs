@@ -3427,7 +3427,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     s.open_walkto_for_marked();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut label_after_frame = |s: &mut Session| {
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
