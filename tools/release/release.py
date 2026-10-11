@@ -41,6 +41,7 @@ NAV_NAMES = (
     "274bot.navpack.json",
 )
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+NOTES_FOOTER = Path(__file__).resolve().parent / "notes-footer.md"
 SAFE_REMOTE = re.compile(r"^[A-Za-z0-9._/-]+$")
 RELEASE_TAG = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*$")
 
@@ -946,7 +947,7 @@ def render_finalize_plan(args):
     plans = []
     for platform in selected_platforms(args.platform):
         steps = [
-            "copy RELEASE-NOTES.md into the staged package",
+            "copy RELEASE-NOTES.md (with the credits footer) into the staged package",
             "record runtime requirements and re-hash every package file",
             "create the final archive",
             "copy the archive to the local artifact directory",
@@ -997,6 +998,17 @@ def update_sha256s(artifact_dir, tag):
     (artifact_dir / "SHA256SUMS").write_text(text)
 
 
+def compose_release_notes(notes, destination):
+    """Write the release notes with the credits footer appended exactly once."""
+    body = Path(notes).read_text()
+    footer = NOTES_FOOTER.read_text()
+    if footer.strip() not in body:
+        body = body.rstrip("\n") + "\n\n" + footer
+    destination = Path(destination)
+    destination.write_text(body)
+    return destination
+
+
 def finalize_controller(args):
     require_commit(args.commit)
     if args.dry_run:
@@ -1015,6 +1027,8 @@ def finalize_controller(args):
         raise ReleaseError(f"prepared manifest is missing: {expect_path}")
     expect = json.loads(expect_path.read_text())
     validate_tag(args.tag, expect["version"])
+    notes = compose_release_notes(notes, commit_root / "RELEASE-NOTES.md")
+    args.release_notes = notes
     artifact_dir = Path(args.artifact_dir).resolve() if args.artifact_dir else commit_root / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     for platform in selected_platforms(args.platform):
