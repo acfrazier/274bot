@@ -193,6 +193,8 @@ impl Deposit {
         let Some(before) = before.filter(|before| *before > 0) else {
             return false;
         };
+        cx.clock()
+            .arm(TRANSFER_OBSERVED_TICK_LIMIT.saturating_mul(crate::bank::ops::SERVER_TICK_MS));
         cx.emit(ops::deposit_req(click, generation));
         self.view_armed = false;
         self.phase = Phase::Await {
@@ -408,7 +410,12 @@ impl Deposit {
                         continue;
                     }
                     if current_tick.is_some_and(|tick| {
-                        tick.saturating_sub(started_tick) >= TRANSFER_OBSERVED_TICK_LIMIT
+                        ops::observed_wait_expired_with_time_bound(
+                            started_tick,
+                            tick,
+                            cx.clock().bound_reached(),
+                            TRANSFER_OBSERVED_TICK_LIMIT,
+                        )
                     }) {
                         return Step::Done(());
                     }
@@ -822,7 +829,14 @@ mod tests {
             );
         }
         post(10, vec![bones.clone()]);
-        assert!(step().is_empty(), "the eighth fresh tick expires the press");
+        assert!(step().is_empty(), "the eighth observed tick is not enough");
+        assert_eq!(machine::take(handle), Take::Pending);
+        machine::age(
+            handle,
+            TRANSFER_OBSERVED_TICK_LIMIT * crate::bank::ops::SERVER_TICK_MS,
+        );
+        post(11, vec![bones.clone()]);
+        assert!(step().is_empty(), "both timeout bounds have passed");
         assert_eq!(
             machine::take(handle),
             Take::Settled(Outcome::Done(Value::Null))
@@ -860,6 +874,35 @@ mod tests {
         assert!(step().is_empty());
         assert_eq!(machine::take(handle), Take::Pending);
         post(3, Vec::new());
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Null))
+        );
+    }
+
+    #[test]
+    fn sweep_catch_up_ticks_do_not_expire_before_server_time() {
+        machine::on_reset();
+        observed::on_reset();
+        let bones = side_row(Some("Bones"), 526, 1, 0);
+        post(1, vec![bones.clone()]);
+        let Started::Running(handle) =
+            machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0)
+        else {
+            panic!("expected a running deposit");
+        };
+        assert_eq!(step(), vec![press(526, 0)]);
+
+        post(9, vec![bones]);
+        assert!(step().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "eight observed ticks can drain before one server-tick interval"
+        );
+
+        post(10, Vec::new());
         assert!(step().is_empty());
         assert_eq!(
             machine::take(handle),

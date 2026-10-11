@@ -11,7 +11,7 @@
 //! access option. Both end with the frozen `openedReady` item-list wait.
 //! Log lines go to the caller's `log` through the callback path.
 
-use crate::bank::npc;
+use crate::bank::{npc, ops};
 use crate::bank_op::BankView;
 use crate::bank_open::{BankOpen, BankOpenArgs};
 use crate::dialog::{CHOICE_TICKS, CONTINUE_TICKS, PAGE_ACK_MS};
@@ -21,9 +21,11 @@ use crate::shim::InteractReq;
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
+use std::num::NonZeroU64;
 
-/// Frozen `openedReady` item-list wait.
+/// Nominal `openedReady` window, rounded up to complete production server ticks.
 pub const READY_MS: u64 = 4_000;
+const READY_TICKS: u64 = ops::observed_ticks_for_millis(READY_MS);
 /// Frozen first loc/opener interact wait.
 pub const INTERACT_MS: u64 = 8_000;
 /// Frozen retry interact wait once beside the loc.
@@ -60,22 +62,35 @@ impl Chat {
 fn posted_tick() -> u64 {
     observed::with(|scene| scene.tick().unwrap_or(0))
 }
+fn arm_tick_deadline(cx: &mut Cx<'_>, started_tick: u64, tick_limit: u64) -> NonZeroU64 {
+    cx.clock()
+        .arm(tick_limit.saturating_mul(ops::SERVER_TICK_MS));
+    NonZeroU64::new(started_tick.saturating_add(tick_limit))
+        .expect("bank wait has a positive tick bound")
+}
+
+fn tick_deadline_reached(cx: &mut Cx<'_>, current_tick: u64, deadline: NonZeroU64) -> bool {
+    current_tick >= deadline.get() && cx.clock().bound_reached()
+}
 
 /// One `ChatDialog.continue()` / `chooseOption()` press: the verb, the page
-/// acknowledgement (bounded) and the frozen settle ticks.
+/// acknowledgement (observed ticks plus a server-time floor) and settle ticks.
 struct Press {
     choice: bool,
     ack_modal: i32,
+    ack_deadline_tick: NonZeroU64,
     due: Option<u64>,
 }
 
 impl Press {
     fn send(req: InteractReq, choice: bool, chat: &Chat, cx: &mut Cx<'_>) -> Self {
-        cx.clock().arm(PAGE_ACK_MS);
+        let ticks = ops::observed_ticks_for_millis(PAGE_ACK_MS);
+        let ack_deadline_tick = arm_tick_deadline(cx, chat.tick, ticks);
         cx.emit(req);
         Self {
             choice,
             ack_modal: chat.modal,
+            ack_deadline_tick,
             due: None,
         }
     }
@@ -100,14 +115,14 @@ impl Press {
             self.due = Some(chat.tick.saturating_add(ticks));
             return None;
         }
-        cx.clock().bound_reached().then_some(false)
+        tick_deadline_reached(cx, chat.tick, self.ack_deadline_tick).then_some(false)
     }
 }
 
-/// Frozen `openedReady`: a closed bank is false; an open one waits up to
-/// 4 s for its item list, logs when it never came, and answers open.
+/// Frozen `openedReady`: a closed bank is false; an open one waits until both
+/// bounds pass, then answers open if its item list never came.
 struct Ready {
-    armed: bool,
+    deadline_tick: Option<NonZeroU64>,
 }
 
 enum Readied {
@@ -124,11 +139,14 @@ impl Ready {
         if view.ready() {
             return Readied::Done(true, None);
         }
-        if !self.armed {
-            self.armed = true;
-            cx.clock().arm(READY_MS);
+        let tick = posted_tick();
+        if self.deadline_tick.is_none() {
+            self.deadline_tick = Some(arm_tick_deadline(cx, tick, READY_TICKS));
         }
-        if !cx.clock().bound_reached() {
+        if !self
+            .deadline_tick
+            .is_some_and(|deadline| tick_deadline_reached(cx, tick, deadline))
+        {
             return Readied::Wait;
         }
         Readied::Done(
@@ -298,7 +316,7 @@ enum Phase {
     NearApproach(u32, Loc),
     NearWalk(u32, Option<Loc>, WorldTile),
     Continue(u32, Press, AfterContinue),
-    ContinueOpen(u32, AfterContinue),
+    ContinueOpen(u32, AfterContinue, NonZeroU64),
     Ready(Ready),
     Finish(bool),
 }
@@ -359,7 +377,9 @@ impl BankAccess {
         match phase {
             Phase::Start => {
                 if BankView::now().open {
-                    self.phase = Phase::Ready(Ready { armed: false });
+                    self.phase = Phase::Ready(Ready {
+                        deadline_tick: None,
+                    });
                 } else if self.default_booth() {
                     let booth =
                         observed::with(|scene| scene.since_login().nearest_booth().cloned());
@@ -457,7 +477,9 @@ impl BankAccess {
             }
             Phase::OpenerGate => {
                 if BankView::now().open {
-                    self.phase = Phase::Ready(Ready { armed: false });
+                    self.phase = Phase::Ready(Ready {
+                        deadline_tick: None,
+                    });
                 } else if loc_with_action(&self.name, &self.op).is_none() {
                     let name = self.name.clone();
                     self.say(
@@ -470,7 +492,9 @@ impl BankAccess {
             }
             Phase::NearFind(attempt) => {
                 if attempt >= NEAREST_ATTEMPTS || BankView::now().open {
-                    self.phase = Phase::Ready(Ready { armed: false });
+                    self.phase = Phase::Ready(Ready {
+                        deadline_tick: None,
+                    });
                     return None;
                 }
                 let Some(loc) = usable_loc(&self.name, false) else {
@@ -518,7 +542,9 @@ impl BankAccess {
                     return Some(Step::Wait);
                 }
                 if open {
-                    self.phase = Phase::Ready(Ready { armed: false });
+                    self.phase = Phase::Ready(Ready {
+                        deadline_tick: None,
+                    });
                 } else if cx.clock().bound_reached() {
                     self.phase = if first {
                         Phase::NearApproach(attempt, loc)
@@ -570,25 +596,28 @@ impl BankAccess {
                     return Some(Step::Wait);
                 }
                 Some(true) => {
-                    cx.clock().arm(DIALOG_OPEN_MS);
-                    self.phase = Phase::ContinueOpen(attempt, after);
+                    let ticks = ops::observed_ticks_for_millis(DIALOG_OPEN_MS);
+                    let deadline_tick = arm_tick_deadline(cx, posted_tick(), ticks);
+                    self.phase = Phase::ContinueOpen(attempt, after, deadline_tick);
                 }
                 Some(false) => {
                     let next = after_continue(attempt, after);
                     self.say("bank: failed to Continue the object dialogue".into(), next);
                 }
             },
-            Phase::ContinueOpen(attempt, after) => {
+            Phase::ContinueOpen(attempt, after, deadline_tick) => {
                 if BankView::now().open {
-                    self.phase = Phase::Ready(Ready { armed: false });
-                } else if cx.clock().bound_reached() {
+                    self.phase = Phase::Ready(Ready {
+                        deadline_tick: None,
+                    });
+                } else if tick_deadline_reached(cx, posted_tick(), deadline_tick) {
                     let next = after_continue(attempt, after);
                     self.say(
                         "bank: object dialogue completed without opening the bank".into(),
                         next,
                     );
                 } else {
-                    self.phase = Phase::ContinueOpen(attempt, after);
+                    self.phase = Phase::ContinueOpen(attempt, after, deadline_tick);
                     return Some(Step::Wait);
                 }
             }
@@ -710,14 +739,15 @@ pub(crate) struct NpcAccess {
     op: String,
     choose: String,
     core: npc::NpcAccess,
+    deadline_tick: u64,
     line: Option<String>,
     log_hook: Option<usize>,
 }
 
 struct NpcContext<'a, 'frame> {
     cx: &'a mut Cx<'frame>,
+    deadline_tick: &'a mut u64,
 }
-
 impl npc::Context for NpcContext<'_, '_> {
     type Error = std::convert::Infallible;
 
@@ -776,11 +806,17 @@ impl npc::Context for NpcContext<'_, '_> {
     }
 
     fn arm(&mut self, millis: u64) {
-        self.cx.clock().arm(millis);
+        let ticks = ops::observed_ticks_for_millis(millis);
+        let current_tick = observed::with(|scene| scene.tick().unwrap_or_default());
+        *self.deadline_tick = current_tick.saturating_add(ticks);
+        self.cx
+            .clock()
+            .arm(ticks.saturating_mul(ops::SERVER_TICK_MS));
     }
 
     fn expired(&mut self) -> bool {
-        self.cx.clock().bound_reached()
+        let current_tick = observed::with(|scene| scene.tick().unwrap_or_default());
+        current_tick >= *self.deadline_tick && self.cx.clock().bound_reached()
     }
 
     fn emit(&mut self, request: InteractReq) -> Result<(), Self::Error> {
@@ -796,6 +832,7 @@ impl NpcAccess {
             op: args.op,
             choose: args.choose,
             core: npc::NpcAccess::new(),
+            deadline_tick: 0,
             line: None,
             log_hook,
         }
@@ -811,9 +848,10 @@ impl NpcAccess {
                 op: npc::NpcOp::Name(&self.op),
                 choose: &self.choose,
             };
+            let deadline_tick = &mut self.deadline_tick;
             let step = self
                 .core
-                .step(intent, &mut NpcContext { cx })
+                .step(intent, &mut NpcContext { cx, deadline_tick })
                 .unwrap_or_else(|error| match error {});
             match step {
                 npc::Step::Wait => return Step::Wait,
@@ -1080,7 +1118,7 @@ mod tests {
     }
 
     /// Frozen `openedReady`: an open bank whose list never posts still
-    /// answers open once the 4 s wait lapses.
+    /// answers open after its observed ticks and time floor.
     #[test]
     fn opened_ready_answers_open_after_its_wait() {
         reset();
@@ -1096,6 +1134,13 @@ mod tests {
         );
         assert!(tick().is_empty());
         assert_eq!(machine::take(handle), Take::Pending, "inside the wait");
+        observed::post(9, |_| {});
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "observed ticks alone do not meet the time floor"
+        );
         machine::tests::expire_deadlines();
         assert!(tick().is_empty());
         done(handle, true);
@@ -1119,7 +1164,13 @@ mod tests {
         assert!(tick().is_empty());
         assert_eq!(machine::take(handle), Take::Pending);
         machine::tests::expire_deadlines();
-        observed::post(2, |_| {});
+        observed::post(7, |_| {});
+        assert!(
+            tick().is_empty(),
+            "the active deadline alone is insufficient"
+        );
+        assert_eq!(machine::take(handle), Take::Pending);
+        observed::post(8, |_| {});
         assert!(tick().is_empty());
         done(handle, true);
     }
@@ -1142,15 +1193,19 @@ mod tests {
         });
         assert_eq!(tick(), vec![talk()]);
         machine::tests::expire_deadlines();
-        assert_eq!(tick(), vec![talk()], "no dialogue opened: the next attempt");
-        observed::post(3, |post| {
+        observed::post(11, |_| {});
+        assert!(tick().is_empty(), "the observed tick bound has not elapsed");
+        assert_eq!(machine::take(handle), Take::Pending);
+        observed::post(12, |_| {});
+        assert_eq!(tick(), vec![talk()], "the next attempt starts at the bound");
+        observed::post(13, |post| {
             post.chat_modal_id(1).chat_continue(true);
         });
         assert_eq!(
             tick(),
             vec![InteractReq::ContinueDialog { component_id: None }]
         );
-        observed::post(4, |post| {
+        observed::post(14, |post| {
             post.chat_modal_id(2)
                 .chat_continue(false)
                 .chat_options(vec![
@@ -1159,7 +1214,7 @@ mod tests {
                 ]);
         });
         assert!(tick().is_empty(), "acknowledged: one settle tick");
-        observed::post(5, |_| {});
+        observed::post(15, |_| {});
         assert_eq!(tick(), vec![InteractReq::Answer { option: 2 }]);
         assert_eq!(machine::take(handle), Take::Pending);
     }

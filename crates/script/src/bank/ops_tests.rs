@@ -848,6 +848,49 @@ fn load_click_prefers_the_rows_all_op() {
 }
 
 #[test]
+fn bank_wait_requires_observed_ticks_and_server_tick_time() {
+    let started = 100;
+    let limit = TRANSFER_OBSERVED_TICK_LIMIT;
+    assert!(!observed_wait_expired(
+        started,
+        started + limit,
+        Duration::from_millis(limit * SERVER_TICK_MS - 1),
+        limit,
+    ));
+    assert!(!observed_wait_expired(
+        started,
+        started + limit - 1,
+        Duration::from_secs(60),
+        limit,
+    ));
+    assert!(observed_wait_expired(
+        started,
+        started + limit,
+        Duration::from_millis(limit * SERVER_TICK_MS),
+        limit,
+    ));
+    assert!(!observed_wait_expired_with_time_bound(
+        started,
+        started + limit,
+        false,
+        limit,
+    ));
+    assert!(!observed_wait_expired_with_time_bound(
+        started,
+        started + limit - 1,
+        true,
+        limit,
+    ));
+    assert!(observed_wait_expired_with_time_bound(
+        started,
+        started + limit,
+        true,
+        limit,
+    ));
+    assert_eq!(observed_ticks_for_millis(12_000), 20);
+}
+
+#[test]
 fn close_scan_needs_shut_main_released_side_and_new_session() {
     assert_eq!(close_begin(false), Some(CloseScan::AlreadyShut));
     assert_eq!(close_begin(true), None);
