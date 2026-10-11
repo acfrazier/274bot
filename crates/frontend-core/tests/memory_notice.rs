@@ -115,9 +115,14 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     session.set_memory_mode("alice", false).unwrap();
     session.flush_writes();
 
-    release_tx.send(()).unwrap(); // Dirty transport drop, not Logout.
+    // Dirty transport drop, not Logout. As for the clean exit below, the
+    // first `!connected` projection can carry the boundary metadata of the
+    // frame before it; wait for the settled dirty notice.
+    release_tx.send(()).unwrap();
     wait_for(&mut session, |s| {
-        s.memory_status("alice").is_some_and(|n| !n.connected)
+        s.memory_status("alice").is_some_and(|n| {
+            !n.connected && n.notice_text().contains("Log in keeps the current mode")
+        })
     });
     let dirty = session.memory_status("alice").unwrap();
     let arm = session.play().unwrap().arm("alice").unwrap();

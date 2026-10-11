@@ -6,6 +6,7 @@
 //! fleet row ([`QueuePlace`]), and so does the head's reason for waiting;
 //! only the rs2b0t card copy lives here.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use dear_imgui_rs::Ui;
@@ -93,36 +94,90 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
     }
 }
 
-/// Queue card over one bot's Image. No-op when that bot is not queued, so
-/// the card disappears the moment the grant lands.
-pub fn draw_queue_card_for(ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2]) {
-    let mut wait = String::new();
-    if let Some(place) = queue {
-        place.write_wait(&mut wait, Instant::now());
-    }
-    let lines = queue_card_lines(queue, &wait);
-    if !lines.is_empty() {
-        draw_queue_card(ui, min, &lines);
-    }
-}
-
-/// Cached queue-card state for the bot shown by this overlay. The card must
-/// appear immediately on enqueue, so it is cached on the FIFO place and the
-/// head's wait text (whose countdown changes once a second), not a timer.
-pub struct PathOverlay {
+/// One Image's queue card. Its text is cached on the FIFO place and the
+/// head's wait text (whose countdown changes once a second), so steady
+/// frames reuse it and only a change rebuilds it. The card must appear
+/// immediately on enqueue, so this is not a timer.
+#[derive(Default)]
+struct QueueCard {
     queue: Option<QueuePlace>,
     wait: String,
     wait_scratch: String,
-    queue_lines: Vec<String>,
+    lines: Vec<String>,
+}
+
+impl QueueCard {
+    /// Bring the card up to `queue` at `now`; `true` when its lines were
+    /// rebuilt.
+    fn update(&mut self, queue: Option<QueuePlace>, now: Instant) -> bool {
+        self.wait_scratch.clear();
+        if let Some(place) = queue {
+            place.write_wait(&mut self.wait_scratch, now);
+        }
+        if queue == self.queue && self.wait_scratch == self.wait {
+            return false;
+        }
+        self.queue = queue;
+        std::mem::swap(&mut self.wait, &mut self.wait_scratch);
+        self.lines = queue_card_lines(queue, &self.wait);
+        true
+    }
+
+    /// No-op when the bot is not queued, so the card disappears the moment
+    /// the grant lands.
+    fn draw(&self, ui: &Ui, min: [f32; 2]) {
+        if !self.lines.is_empty() {
+            draw_queue_card(ui, min, &self.lines);
+        }
+    }
+}
+
+/// Queue cards over the Grid's Images: one cached card per queued bot,
+/// dropped when that bot leaves the queue.
+#[derive(Default)]
+pub struct QueueCards {
+    cards: HashMap<String, QueueCard>,
+}
+
+impl QueueCards {
+    /// Draw `name`'s queue card over its Image (`min` is the Image's
+    /// top-left corner).
+    pub fn frame(&mut self, ui: &Ui, name: &str, queue: Option<QueuePlace>, min: [f32; 2]) {
+        if let Some(card) = self.update(name, queue, Instant::now()) {
+            card.draw(ui, min);
+        }
+    }
+
+    /// `name`'s card brought up to `queue`, or `None` (and no card kept)
+    /// when it is not queued.
+    fn update(
+        &mut self,
+        name: &str,
+        queue: Option<QueuePlace>,
+        now: Instant,
+    ) -> Option<&QueueCard> {
+        if queue.is_none() {
+            self.cards.remove(name);
+            return None;
+        }
+        if !self.cards.contains_key(name) {
+            self.cards.insert(name.to_owned(), QueueCard::default());
+        }
+        let card = self.cards.get_mut(name).expect("inserted above");
+        card.update(queue, now);
+        Some(card)
+    }
+}
+
+/// Cached queue-card state for the bot shown by this overlay.
+pub struct PathOverlay {
+    card: QueueCard,
 }
 
 impl PathOverlay {
     pub fn new() -> Self {
         Self {
-            queue: None,
-            wait: String::new(),
-            wait_scratch: String::new(),
-            queue_lines: Vec::new(),
+            card: QueueCard::default(),
         }
     }
 
@@ -136,18 +191,8 @@ impl PathOverlay {
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
     pub fn frame(&mut self, ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2], _size: [f32; 2]) {
-        self.wait_scratch.clear();
-        if let Some(place) = queue {
-            place.write_wait(&mut self.wait_scratch, Instant::now());
-        }
-        if queue != self.queue || self.wait_scratch != self.wait {
-            self.queue = queue;
-            std::mem::swap(&mut self.wait, &mut self.wait_scratch);
-            self.queue_lines = queue_card_lines(queue, &self.wait);
-        }
-        if !self.queue_lines.is_empty() {
-            draw_queue_card(ui, min, &self.queue_lines);
-        }
+        self.card.update(queue, Instant::now());
+        self.card.draw(ui, min);
     }
 }
 
@@ -162,8 +207,8 @@ mod tests {
     use frontend_core::QueuePlace;
 
     use super::{
-        draw_queue_card, queue_card_lines, queue_card_metrics, PathOverlay, QUEUE_CARD_OUTER,
-        QUEUE_CARD_PAD,
+        draw_queue_card, queue_card_lines, queue_card_metrics, PathOverlay, QueueCard, QueueCards,
+        QUEUE_CARD_OUTER, QUEUE_CARD_PAD,
     };
     use crate::session::Session;
 
@@ -210,18 +255,76 @@ mod tests {
                 [10.0, 10.0],
                 [90.0, 90.0],
             );
-            assert_eq!(overlay.queue_lines[2], "0 bots in front");
-            assert_eq!(overlay.queue_lines[3], "another bot is logging in");
+            assert_eq!(overlay.card.lines[2], "0 bots in front");
+            assert_eq!(overlay.card.lines[3], "another bot is logging in");
             let cooldown = head(host::login_queue::AdmitBlocker::ServerHold {
                 until: std::time::Instant::now() + std::time::Duration::from_secs(20),
             });
             overlay.frame(ui, cooldown, [10.0, 10.0], [90.0, 90.0]);
             assert_eq!(
-                overlay.queue_lines[3],
+                overlay.card.lines[3],
                 "server: too many login attempts, next try in 20 s"
             );
         });
         ctx.render();
+    }
+
+    /// Grid cards are cached per bot: steady frames rebuild nothing, a
+    /// countdown that moves rebuilds that bot's lines, and a bot that leaves
+    /// the queue drops its card.
+    #[test]
+    fn grid_cards_rebuild_only_when_their_text_changes() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let head = QueuePlace::of(&host_play::SlotStatus {
+            queue_position: 1,
+            queue_total: 3,
+            queue_blocker: Some(host::login_queue::AdmitBlocker::ServerHold {
+                until: start + Duration::from_secs(20),
+            }),
+            ..host_play::SlotStatus::default()
+        });
+        let behind = place(2, 3);
+        let mut cards = QueueCards::default();
+        let lines = |cards: &mut QueueCards, name, queue, now| {
+            let card = cards.update(name, queue, now).expect("queued");
+            (card.lines.as_ptr(), card.lines.clone())
+        };
+        let (head_ptr, head_lines) = lines(&mut cards, "alice", head, start);
+        let (behind_ptr, _) = lines(&mut cards, "bob", behind, start);
+        assert_eq!(
+            head_lines[3],
+            "server: too many login attempts, next try in 20 s"
+        );
+
+        let mut card = QueueCard::default();
+        assert!(card.update(head, start), "the first frame builds the card");
+        for frame in 1..60u64 {
+            let now = start + Duration::from_millis(16 * frame);
+            assert!(
+                !card.update(head, now),
+                "steady frame {frame} rebuilt the card"
+            );
+            assert_eq!(lines(&mut cards, "alice", head, now).0, head_ptr);
+            assert_eq!(lines(&mut cards, "bob", behind, now).0, behind_ptr);
+        }
+
+        let tick = start + Duration::from_secs(1);
+        assert!(card.update(head, tick), "the countdown moved");
+        let (_, ticked) = lines(&mut cards, "alice", head, tick);
+        assert_eq!(
+            ticked[3],
+            "server: too many login attempts, next try in 19 s"
+        );
+        assert_eq!(lines(&mut cards, "bob", behind, tick).0, behind_ptr);
+
+        assert!(cards.update("alice", None, tick).is_none());
+        assert!(
+            !cards.cards.contains_key("alice"),
+            "a granted bot drops its card"
+        );
+        assert!(cards.cards.contains_key("bob"));
     }
 
     #[test]
@@ -240,7 +343,7 @@ mod tests {
             overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
-        assert!(overlay.queue_lines.is_empty(), "no queue -> no card");
+        assert!(overlay.card.lines.is_empty(), "no queue -> no card");
     }
 
     #[test]

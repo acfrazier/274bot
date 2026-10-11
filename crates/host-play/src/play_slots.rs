@@ -25,11 +25,10 @@ use crate::memory;
 use crate::play_bootstrap::{bot_client_config, PlayConnection};
 use crate::play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
-    granted_permit_world_is_current, login_and_acknowledge_permit, on_login_success,
-    plan_login_retry, publish_login_latched_from_arm, refresh_slot_world_preference,
-    should_handshake, sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, GrantedReservation, PermitWait, QueuePlaceRetirement,
-    SharedLoginQueue, SlotArm,
+    granted_permit_world_is_current, on_login_success, plan_login_retry,
+    publish_login_latched_from_arm, refresh_slot_world_preference, server_hold, should_handshake,
+    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
+    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -1067,18 +1066,16 @@ fn spawn_slot_thread(
                         &arm,
                         &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                     );
-                    if wait == PermitWait::Cancelled {
+                    // The reservation is owned from the granting poll on:
+                    // every `continue`/`return` (or unwind) below that drops
+                    // it unused gives the grant back.
+                    let PermitWait::Granted(mut permit) = wait else {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
-                    }
-                    if !granted_permit_world_is_current(
-                        &slot_queue,
-                        uid,
-                        world_round.as_ref(),
-                        &arm,
-                    ) {
+                    };
+                    if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
                         continue;
                     }
                     // A withdrawal or stop that lands after the granting poll
@@ -1086,18 +1083,14 @@ fn spawn_slot_thread(
                     // as does a relog wanted only by a script that has since
                     // stopped.
                     sync_script_login(&arm, &slot_scripts, &username);
-                    let Some(login_command) = granted_permit_may_start_login(
-                        &slot_queue,
-                        uid,
-                        &arm,
-                        client.ingame,
-                    ) else {
+                    let Some(login_command) =
+                        granted_permit_may_start_login(&arm, client.ingame)
+                    else {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
                     };
-                    let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     host_log!(
@@ -1123,9 +1116,17 @@ fn spawn_slot_thread(
                         }
                     }
                     let handshake_lowmem = client.config.lowmem;
-                    let login = login_and_acknowledge_permit(&mut permit, || {
-                        client.login(&username, &password, reconnect)
-                    });
+                    // Spacing counts from the attempt's start, and the client
+                    // stops all handshake I/O at the deadline the queue gives.
+                    let Some(login) = permit.attempt(
+                        |deadline| {
+                            client.set_login_deadline(deadline);
+                            client.login(&username, &password, reconnect)
+                        },
+                        |result| server_hold(result, &backoff),
+                    ) else {
+                        continue;
+                    };
                     match login {
                         Ok(()) => {
                             show_title_message(&mut client, "", "");
@@ -1198,9 +1199,6 @@ fn spawn_slot_thread(
                                 retry.as_millis(),
                                 e.code
                             );
-                            if e.code == 16 {
-                                slot_queue.lock().hold_for(Instant::now(), retry);
-                            }
                             arm.wait_for_retry(
                                 retry,
                                 &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
