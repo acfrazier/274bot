@@ -390,8 +390,17 @@ impl FlaxSlotRecord {
         ) else {
             return false;
         };
-        if my_generation <= self.episode_offer_my_inventory_floor.unwrap_or(0)
-            || their_generation <= self.episode_offer_their_inventory_floor.unwrap_or(0)
+        let (contributing_generation, contributing_floor) = match self.role {
+            FlaxRole::Runner => (my_generation, self.episode_offer_my_inventory_floor),
+            FlaxRole::Spinner => (their_generation, self.episode_offer_their_inventory_floor),
+        };
+        // Empty container packets can precede modal-open. Only the side that
+        // contributes items must advance after that floor; an unchanged empty
+        // counteroffer contributes no delivery credit. Positive counteroffers
+        // and stale contributing contents remain refused.
+        if contributing_generation <= contributing_floor.unwrap_or(0)
+            || my_generation < self.episode_offer_my_inventory_floor.unwrap_or(0)
+            || their_generation < self.episode_offer_their_inventory_floor.unwrap_or(0)
             || observation.trade_modal_generation != offer_modal_generation
             || other_quantity != 0
         {

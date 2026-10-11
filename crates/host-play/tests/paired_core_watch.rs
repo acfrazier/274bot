@@ -2809,6 +2809,105 @@ fn flax_pair_watch_rejects_old_offer_packets_after_unrelated_inventory_update() 
     assert!(watch.qualify().is_err());
 }
 
+// po1.log: runner ticks 107/109/110/111 and spinner 111/113/114/115.
+// Both empty packets precede modal-open; only the contributing side updates.
+fn flax_packet_order_receipt(
+    stale_counteroffer: bool,
+    stale_contribution: bool,
+) -> serde_json::Value {
+    let watch = flax_pair_watch_with_picked_pack();
+    for (player, partner, role) in [
+        ("runner", "spinner", FlaxRole::Runner),
+        ("spinner", "runner", FlaxRole::Spinner),
+    ] {
+        let mut engine = FlaxTradeEngine::new(partner);
+        let contributing = if role == FlaxRole::Runner { 3415 } else { 3416 };
+        let counter = if role == FlaxRole::Runner { 3416 } else { 3415 };
+        let held_before = if role == FlaxRole::Runner {
+            FLAX_LOAD
+        } else {
+            0
+        };
+        engine.open_offer(0, 0);
+        if stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, FLAX_LOAD),
+            );
+        }
+        if stale_counteroffer {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(counter, 1),
+            );
+        }
+        watch.observe_flax(player, engine.observation(player, 2, held_before), false);
+        engine.close();
+        watch.observe_flax(player, engine.observation(player, 3, held_before), false);
+
+        if !stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, 0),
+            );
+        }
+        if !stale_counteroffer {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(counter, 0),
+            );
+        }
+        watch.observe_flax(player, engine.observation(player, 4, held_before), false);
+        engine.dispatch(ServerProt::IF_OPENMAIN, vec![12, 251]);
+        let held_at_open = if stale_contribution { 0 } else { held_before };
+        watch.observe_flax(player, engine.observation(player, 4, held_at_open), false);
+        if !stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, FLAX_LOAD),
+            );
+            watch.observe_flax(player, engine.observation(player, 5, 0), false);
+        }
+        engine.stop_offer_containers();
+        watch.observe_flax(player, engine.observation(player, 6, 0), false);
+        engine.close();
+        watch.observe_flax(player, engine.observation(player, 7, 0), false);
+        engine.open_confirm();
+        watch.observe_flax(player, engine.observation(player, 8, 0), false);
+        engine.close();
+        let received = if role == FlaxRole::Spinner {
+            FLAX_LOAD
+        } else {
+            0
+        };
+        watch.observe_flax(player, engine.observation(player, 9, received), false);
+    }
+    watch.evidence()
+}
+
+#[test]
+fn flax_preopen_empty_packets_then_fresh_contribution_prove_delivery() {
+    let evidence = flax_packet_order_receipt(false, false);
+    assert_eq!(evidence["witness"]["runner"]["transferred_out"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["spinner"]["transferred_in"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+}
+
+#[test]
+fn flax_stale_positive_counteroffer_from_previous_episode_is_refused() {
+    let evidence = flax_packet_order_receipt(true, false);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+}
+
+#[test]
+fn flax_unchanged_contributing_container_from_previous_episode_is_refused() {
+    let evidence = flax_packet_order_receipt(false, true);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+}
+
 #[test]
 fn flax_pair_watch_accepts_real_stop_transmit_handoff_before_confirm() {
     let watch = flax_pair_watch_with_picked_pack();
