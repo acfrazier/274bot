@@ -325,6 +325,59 @@ pub struct ReturnObservation<'a> {
     pub collision: Option<&'a nav::collision::WorldCollision>,
 }
 
+/// Bank-return and death-recovery selection. A temporary avoid deadline is
+/// not the same as a missing stand: callers wait and retry instead of
+/// blocking the run.
+#[derive(Debug, Clone)]
+pub enum ResourceReturn {
+    Ready(TargetPlan),
+    ExcludedUntil { until: u64 },
+    Unavailable { reason: &'static str },
+}
+
+impl ResourceReturn {
+    #[cfg(test)]
+    pub fn plan(self) -> Option<TargetPlan> {
+        match self {
+            Self::Ready(plan) => Some(plan),
+            Self::ExcludedUntil { .. } | Self::Unavailable { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnStand {
+    Ready(WorldTile),
+    Excluded(u64),
+    Access,
+    Metadata,
+    Area,
+    Collision,
+}
+
+const RETURN_UNAVAILABLE_COLLISION: &str = "no standable observation tile in the work area";
+const RETURN_UNAVAILABLE_ACCESS: &str = "no accessible resource in the work area";
+const RETURN_UNAVAILABLE_AREA: &str = "no resource placement in the work area";
+const RETURN_UNAVAILABLE_METADATA: &str = "resource metadata does not name a usable target";
+
+fn note_unavailable(slot: &mut Option<&'static str>, reason: &'static str) {
+    const ORDER: [&str; 4] = [
+        RETURN_UNAVAILABLE_COLLISION,
+        RETURN_UNAVAILABLE_ACCESS,
+        RETURN_UNAVAILABLE_AREA,
+        RETURN_UNAVAILABLE_METADATA,
+    ];
+    let rank = |reason: &str| {
+        ORDER
+            .iter()
+            .position(|entry| *entry == reason)
+            .unwrap_or(ORDER.len())
+    };
+    if slot.is_none_or(|current| rank(reason) < rank(current)) {
+        *slot = Some(reason);
+    }
+}
+
 pub struct PlacementScene<'a> {
     pub world: &'a WorldStateView,
     pub locs: &'a [LocView],
@@ -869,50 +922,83 @@ pub fn resource_return_target(
     settings: &GathererSettings,
     area: WorkArea,
     observation: ReturnObservation<'_>,
-) -> Option<TargetPlan> {
+) -> ResourceReturn {
     let preference = settings.target_preference_kind();
     let mut best = None;
+    let mut excluded_until: Option<u64> = None;
+    let mut unavailable = None;
     for &method_index in method_indices {
         let Some(method) = catalog.methods().get(method_index) else {
+            note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
             continue;
         };
         let Ok(method_index) = u16::try_from(method_index) else {
+            note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
             continue;
         };
         if method.skill == GatherSkill::Fishing {
             let Some(spots) = complete_spots(method) else {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
                 continue;
             };
             for spot in spots {
-                let Some(stand) = fishing_return_stand(catalog, method, spot, area, &observation)
-                else {
-                    continue;
-                };
-                consider_candidate(
-                    &mut best,
-                    preference,
-                    (
-                        method_index,
-                        method,
-                        spot,
-                        PlacementClass::Unloaded,
-                        stand,
-                        NO_NPC_INDEX,
-                        distance(observation.here, stand),
+                match fishing_return_stand(catalog, method, spot, area, &observation) {
+                    ReturnStand::Ready(stand) => consider_candidate(
+                        &mut best,
+                        preference,
+                        (
+                            method_index,
+                            method,
+                            spot,
+                            PlacementClass::Unloaded,
+                            stand,
+                            NO_NPC_INDEX,
+                            distance(observation.here, stand),
+                        ),
+                        observation.skill_stat,
                     ),
-                    observation.skill_stat,
-                );
+                    ReturnStand::Excluded(until) => {
+                        excluded_until =
+                            Some(excluded_until.map_or(until, |current| current.min(until)));
+                    }
+                    ReturnStand::Access => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_ACCESS);
+                    }
+                    ReturnStand::Metadata => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
+                    }
+                    ReturnStand::Area => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
+                    }
+                    ReturnStand::Collision => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_COLLISION);
+                    }
+                }
             }
         } else {
             let Ok(spots) = catalog.spots(method, &area.region()) else {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
                 continue;
             };
+            let mut saw_spot = false;
             for spot in spots {
-                if !known_resource_target(method, spot.entity)
-                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-                    || avoid_until(spot, method.skill, observation.avoided) > observation.now
-                    || !has_area_arrival(observation.collision, spot.origin)
-                {
+                saw_spot = true;
+                if !known_resource_target(method, spot.entity) {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
+                    continue;
+                }
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_ACCESS);
+                    continue;
+                }
+                if !has_area_arrival(observation.collision, spot.origin) {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_COLLISION);
+                    continue;
+                }
+                let until = avoid_until(spot, method.skill, observation.avoided);
+                if until > observation.now {
+                    excluded_until =
+                        Some(excluded_until.map_or(until, |current| current.min(until)));
                     continue;
                 }
                 consider_candidate(
@@ -930,18 +1016,28 @@ pub fn resource_return_target(
                     observation.skill_stat,
                 );
             }
+            if !saw_spot {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
+            }
         }
     }
-    let (method_index, method, spot, _, tile, npc_index, _) = best?;
-    Some(make_plan(
-        catalog,
-        method_index,
-        method,
-        spot,
-        tile,
-        npc_index,
-        observation.skill_stat,
-    ))
+    if let Some((method_index, method, spot, _, tile, npc_index, _)) = best {
+        ResourceReturn::Ready(make_plan(
+            catalog,
+            method_index,
+            method,
+            spot,
+            tile,
+            npc_index,
+            observation.skill_stat,
+        ))
+    } else if let Some(until) = excluded_until {
+        ResourceReturn::ExcludedUntil { until }
+    } else {
+        ResourceReturn::Unavailable {
+            reason: unavailable.unwrap_or(RETURN_UNAVAILABLE_METADATA),
+        }
+    }
 }
 
 fn fishing_return_stand(
@@ -950,20 +1046,29 @@ fn fishing_return_stand(
     spot: &GatherSpot,
     area: WorkArea,
     observation: &ReturnObservation<'_>,
-) -> Option<WorldTile> {
-    if !fishing_spot_eligible(spot, area)
-        || !known_resource_target(method, spot.entity)
-        || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-        || avoid_until(spot, method.skill, observation.avoided) > observation.now
-    {
-        return None;
+) -> ReturnStand {
+    if !known_resource_target(method, spot.entity) {
+        return ReturnStand::Metadata;
+    }
+    if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+        return ReturnStand::Access;
+    }
+    if !fishing_spot_eligible(spot, area) {
+        return ReturnStand::Area;
+    }
+    let until = avoid_until(spot, method.skill, observation.avoided);
+    if until > observation.now {
+        return ReturnStand::Excluded(until);
     }
     // Observe the resource from the resource, never from `here`. Clamping
     // toward the player is how a Draynor bank trip lands a stand inside the
     // booth (the spots sit inside NPC view of the interior). Packed Area
     // goals reuse `standable` over radius one; an all-water origin clamp is
     // replaced by the nearest observation-safe stand Walk can arrive at.
-    observation_cells(movement_bounds(spot)?)
+    let Some(bounds) = movement_bounds(spot) else {
+        return ReturnStand::Metadata;
+    };
+    observation_cells(bounds)
         .filter_map(|cell| {
             legal_fishing_return_stand(cell, spot.origin, spot.origin, area, observation.collision)
         })
@@ -973,6 +1078,8 @@ fn fishing_return_stand(
                 distance(spot.origin, *stand),
             )
         })
+        .map(ReturnStand::Ready)
+        .unwrap_or(ReturnStand::Collision)
 }
 
 fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: WorldTile) -> bool {
@@ -1295,6 +1402,22 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 }
 
 #[cfg(test)]
+pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
+    static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
+        let pack = std::env::var_os("NAV_PACK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(
+                    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+                )
+            });
+        nav::world::NavWorld::load_pack(&pack)
+            .unwrap_or_else(|error| panic!("load real 289 nav pack {}: {error}", pack.display()))
+    });
+    &WORLD
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use api::gather_methods::{GatherTarget, SpotId};
@@ -1606,19 +1729,8 @@ mod tests {
         z: 3412,
         level: 0,
     };
-    const REFERENCE_NAV_PACK: &str =
-        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
-
     fn real_nav_world() -> &'static nav::world::NavWorld {
-        static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
-            let pack = std::env::var_os("NAV_PACK")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from(REFERENCE_NAV_PACK));
-            nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
-                panic!("load real 289 nav pack {}: {error}", pack.display())
-            })
-        });
-        &WORLD
+        super::test_real_nav_world()
     }
 
     fn fishing_guild_spot(
@@ -1762,7 +1874,7 @@ mod tests {
         };
         assert_eq!(
             fishing_return_stand(&catalog, method, &spot, area, &observation),
-            Some(expected_return),
+            ReturnStand::Ready(expected_return),
             "Return must not reject a spot solely because its movement spans nine cells"
         );
         let mut fishing = FishingSurvey::default();
@@ -2370,6 +2482,7 @@ mod tests {
                     collision: Some(&collision),
                 },
             )
+            .plan()
             .expect("the selected content supplies a resource observation stand");
             assert_ne!(target.tile, area.anchor);
             assert!(distance(here, target.tile) > i64::from(NPC_VIEW_RADIUS));
@@ -2460,6 +2573,7 @@ mod tests {
                 collision: Some(&collision),
             },
         )
+        .plan()
         .expect("Catherby harpoon supplies a resource return stand");
         assert_ne!(
             target.tile, water,
@@ -2584,6 +2698,7 @@ mod tests {
                     collision: Some(&collision),
                 },
             )
+            .plan()
             .expect("Draynor saltfish supplies a resource return stand");
             assert_ne!(
                 target.tile, bank_interior,
@@ -2674,6 +2789,7 @@ mod tests {
                 collision: Some(&collision),
             },
         )
+        .plan()
         .expect("willow origin is the loc return stand");
         assert!(
             catalog
@@ -3805,5 +3921,114 @@ mod tests {
                 "incidental gem product {gem} missing from target yield"
             );
         }
+    }
+
+    #[test]
+    fn draynor_small_net_return_waits_out_a_shared_placement_exclusion() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog
+            .method("fishing.saltfish.op1")
+            .expect("Draynor small-net fishing");
+        let index = method_index(&catalog, method);
+        let bank = WorldTile {
+            x: 3092,
+            z: 3243,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: AreaMode::Custom,
+            anchor: WorldTile {
+                x: 3086,
+                z: 3229,
+                level: 0,
+            },
+            radius: 12,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let spots: Vec<_> = complete_spots(method)
+            .expect("complete small-net placements")
+            .iter()
+            .filter(|spot| {
+                fishing_spot_eligible(spot, area)
+                    && known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+            })
+            .collect();
+        assert!(
+            spots.len() >= 2,
+            "Draynor small-net must offer both movement placements, got {}",
+            spots.len()
+        );
+        let shared = movement_bounds(spots[0]).expect("eligible spots have movement");
+        assert!(
+            spots.iter().all(|spot| {
+                movement_bounds(spot).is_some_and(|bounds| {
+                    bounds.min_x == shared.min_x
+                        && bounds.max_x == shared.max_x
+                        && bounds.min_z == shared.min_z
+                        && bounds.max_z == shared.max_z
+                        && bounds.level == shared.level
+                })
+            }),
+            "the Draynor small-net placements share one movement envelope"
+        );
+        let collision = synthetic_collision(
+            fishing_cover(method, area)
+                .into_iter()
+                .chain([bank, area.anchor]),
+            std::iter::empty::<WorldTile>(),
+        );
+        let observation = |now, avoided: &[AvoidedTile; MAX_AVOID]| {
+            resource_return_target(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                ReturnObservation {
+                    here: bank,
+                    now,
+                    skill_stat: 1,
+                    avoided,
+                    collision: Some(&collision),
+                },
+            )
+        };
+        assert!(
+            matches!(
+                observation(117, &[AvoidedTile::EMPTY; MAX_AVOID]),
+                ResourceReturn::Ready(_)
+            ),
+            "both placements are ready before any exclusion"
+        );
+        let mut avoided = [AvoidedTile::EMPTY; MAX_AVOID];
+        avoided[0] = AvoidedTile {
+            tile: WorldTile {
+                x: 3085,
+                z: 3231,
+                level: 0,
+            },
+            until: 167,
+        };
+        match observation(117, &avoided) {
+            ResourceReturn::ExcludedUntil { until } => assert_eq!(until, 167),
+            other => panic!("temporary exclusion must wait, got {other:?}"),
+        }
+        let ResourceReturn::Ready(plan) = observation(167, &avoided) else {
+            panic!("the shared exclusion must lift at its deadline");
+        };
+        assert_ne!(plan.tile, bank);
+        assert!(
+            spots
+                .iter()
+                .any(|spot| distance(plan.tile, spot.origin) <= i64::from(NPC_VIEW_RADIUS)),
+            "after the deadline the return stand must observe a small-net placement"
+        );
     }
 }
