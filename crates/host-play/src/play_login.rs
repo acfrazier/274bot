@@ -10,6 +10,7 @@ use api::hostlog::{Category, Level};
 use client::client::client::SessionExitReason;
 use client::client::{Client, LoginError};
 use client::config::IfType;
+use client::io::client_stream::LoginCancel;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::Profile;
@@ -773,106 +774,141 @@ pub(super) fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
     arm.login_command(ingame).is_some()
 }
 
-/// Claim the boundary between a granted reservation and `client.login`.
-/// Cancellation or stop observed here abandons only this unused permit; a
-/// returned generation must be acknowledged after the login call.
-pub(super) fn granted_permit_may_start_login(
-    queue: &SharedLoginQueue,
-    uid: i32,
-    arm: &SlotArm,
-    ingame: bool,
-) -> Option<IntentCommand> {
-    let command = (!arm.stop.load(Ordering::Relaxed))
+/// Whether a granted slot may start its login: not stopped, and the arm
+/// still wants one (a withdrawal, or a relog wanted only by a script that
+/// has since stopped, lands here). `None` gives the grant back when the
+/// caller drops its [`GrantedReservation`].
+pub(super) fn granted_permit_may_start_login(arm: &SlotArm, ingame: bool) -> Option<IntentCommand> {
+    (!arm.stop.load(Ordering::Relaxed))
         .then(|| arm.login_command(ingame))
-        .flatten();
-    if command.is_some() {
-        return command;
-    }
-    let abandoned = queue.lock().abandon_permit(uid);
-    debug_assert!(abandoned, "granted permit must be abandoned exactly once");
-    None
+        .flatten()
 }
 
-/// A profile edit can land while this slot waits in the FIFO. Abandon that
-/// unused grant so the next pass can configure the new endpoint before the
-/// socket handshake starts.
+/// A profile edit can land while this slot waits in the FIFO. `false`: the
+/// caller drops its unused grant so the next pass can configure the new
+/// endpoint before the socket handshake starts.
 pub(super) fn granted_permit_world_is_current(
-    queue: &SharedLoginQueue,
-    uid: i32,
     round: Option<&public_worlds::WorldRound>,
     arm: &SlotArm,
 ) -> bool {
-    if round.is_none_or(|round| round.preference() == *arm.world.lock()) {
-        return true;
-    }
-    let abandoned = queue.lock().abandon_permit(uid);
-    debug_assert!(abandoned, "granted permit must be abandoned exactly once");
-    false
+    round.is_none_or(|round| round.preference() == *arm.world.lock())
 }
 
-/// Unwind-safe ownership for one granted reservation. Until the socket call
-/// begins, Drop abandons it; once attempted, Drop conservatively acknowledges
-/// it. Thus neither preparation panics nor `client.login` panics leak capacity.
-pub(super) struct GrantedReservation<'a> {
-    queue: &'a QueueMutex<LoginQueue>,
-    uid: i32,
+/// Owns one granted login reservation from the granting poll on (it is
+/// built under the queue lock that granted it). Dropped unused, it gives the
+/// grant back; dropped after its attempt started, it acknowledges the
+/// attempt. So no return, panic or unwind between the grant and the end of
+/// `client.login` leaks the queue's only in-flight slot.
+pub(super) struct GrantedReservation {
+    queue: SharedLoginQueue,
+    owner: u64,
     state: ReservationState,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum ReservationState {
     Unused,
     Attempted,
     Resolved,
 }
 
-impl<'a> GrantedReservation<'a> {
-    pub(super) fn new(queue: &'a SharedLoginQueue, uid: i32) -> Self {
+impl std::fmt::Debug for GrantedReservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GrantedReservation")
+            .field("owner", &self.owner)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
+impl GrantedReservation {
+    pub(super) fn new(queue: &SharedLoginQueue, owner: u64) -> Self {
         Self {
-            queue,
-            uid,
+            queue: Arc::clone(queue),
+            owner,
             state: ReservationState::Unused,
         }
     }
 
-    fn attempt<T, E>(&mut self, login: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
-        self.state = ReservationState::Attempted;
-        let result = login();
-        let acknowledged = self
+    /// Start the attempt: the queue marks its start (spacing counts from
+    /// here) and `login` runs with the deadline by which the client must stop
+    /// all socket I/O, and the [`LoginCancel`] the queue fires to shut the
+    /// attempt's socket if its lease ends before it returns. `server_hold`
+    /// sees the result while the attempt still holds the in-flight slot; a
+    /// hold it returns is published in the same queue update that frees the
+    /// slot, so no sibling can be granted in between. `None`: the grant's
+    /// lease ran out before the attempt started (a stalled worker), so
+    /// nothing was attempted and the slot queues again.
+    pub(super) fn attempt<T, E>(
+        &mut self,
+        login: impl FnOnce(Instant, LoginCancel) -> Result<T, E>,
+        server_hold: impl FnOnce(&Result<T, E>) -> Option<Duration>,
+    ) -> Option<Result<T, E>> {
+        let cancel = LoginCancel::new();
+        let started = self
             .queue
             .lock()
-            .acknowledge_login_return(self.uid, Instant::now());
-        debug_assert!(
-            acknowledged,
-            "each client.login return acknowledges one granted permit"
-        );
+            .start_attempt(self.owner, Instant::now(), cancel.clone());
+        let Some(deadline) = started else {
+            self.state = ReservationState::Resolved;
+            host_log!(
+                Category::Login,
+                Level::Warn,
+                "login grant expired before the attempt started; queueing again"
+            );
+            return None;
+        };
+        self.state = ReservationState::Attempted;
+        let result = login(deadline, cancel);
+        let hold = server_hold(&result);
+        let acknowledged = {
+            let mut queue = self.queue.lock();
+            let now = Instant::now();
+            if let Some(hold) = hold {
+                queue.hold_for(now, hold);
+            }
+            queue.acknowledge_login_return(self.owner, now)
+        };
         self.state = ReservationState::Resolved;
-        result
+        if !acknowledged {
+            host_log!(
+                Category::Login,
+                Level::Warn,
+                "login returned after its in-flight lease ran out"
+            );
+        }
+        Some(result)
     }
 }
 
-impl Drop for GrantedReservation<'_> {
+impl Drop for GrantedReservation {
     fn drop(&mut self) {
         match self.state {
             ReservationState::Unused => {
-                let _ = self.queue.lock().abandon_permit(self.uid);
+                let _ = self.queue.lock().abandon_permit(self.owner);
             }
             ReservationState::Attempted => {
                 let _ = self
                     .queue
                     .lock()
-                    .acknowledge_login_return(self.uid, Instant::now());
+                    .acknowledge_login_return(self.owner, Instant::now());
             }
             ReservationState::Resolved => {}
         }
     }
 }
 
-pub(super) fn login_and_acknowledge_permit<T, E>(
-    permit: &mut GrantedReservation<'_>,
-    login: impl FnOnce() -> Result<T, E>,
-) -> Result<T, E> {
-    permit.attempt(login)
+/// The shared hold a response 16 (too many login attempts) puts on every
+/// sibling's next attempt: this slot's next throttle delay, which its own
+/// retry wait then takes ([`login_retry_wait`]).
+pub(super) fn server_hold<T>(
+    result: &Result<T, LoginError>,
+    backoff: &LoginBackoff,
+) -> Option<Duration> {
+    match result {
+        Err(error) if error.code == 16 => Some(backoff.next_throttle_delay()),
+        _ => None,
+    }
 }
 
 /// After a successful handshake, keep an unlatched slot armed exactly when
@@ -898,10 +934,15 @@ pub(super) fn tick_flags(
     arm: &SlotArm,
 ) -> bool {
     if let Some(reason) = client.take_session_exit_reason() {
-        arm.last_exit_clean.store(
-            matches!(reason, SessionExitReason::ServerLogout { .. }),
-            Ordering::Relaxed,
-        );
+        let clean = matches!(reason, SessionExitReason::ServerLogout { .. });
+        arm.last_exit_clean.store(clean, Ordering::Relaxed);
+        if clean {
+            // The server logged the player out (operator logout, world
+            // change, idle): the original client logs in fresh from the
+            // title (`Client.java:6657`, `login(.., false)`); only a lost
+            // connection reconnects (`Client.java:6162`, `login(.., true)`).
+            arm.reconnect.store(false, Ordering::Relaxed);
+        }
         match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.
@@ -1045,12 +1086,155 @@ pub(super) fn configure_slot_world(
     client.set_public_world(&world.host, world.port, world.node_id, &modulus)
 }
 
-pub(super) fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
-    match code {
+/// Delay before the next attempt after a failed login. A failed connection
+/// and a full world back off with the slot's escalating, jittered delay
+/// (`entropy` picks the jitter); response 16 escalates on its own schedule
+/// and waits out the same delay [`server_hold`] published to its siblings.
+pub(super) fn login_retry_wait(
+    backoff: &mut LoginBackoff,
+    error: &LoginError,
+    entropy: u32,
+) -> Duration {
+    match error.code {
         1 => Duration::from_secs(2),
-        16 => backoff.delay(),
+        16 => backoff.throttle_delay(),
         5 => Duration::from_secs(60),
+        7 => backoff.retry_delay(entropy),
+        _ if error.transport.is_some() => backoff.retry_delay(entropy),
         _ => Duration::from_secs(5),
+    }
+}
+
+/// Whether the refused world was the operator's pick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorldChoice {
+    /// The profile's world is Auto: the slot tries the other public worlds.
+    Auto,
+    /// The profile names a world: the slot keeps it.
+    Pinned,
+    /// A local server profile, which has no world list.
+    Local,
+}
+
+/// A world number (public worlds only) and its game endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WorldEndpoint<'a> {
+    pub(super) world: Option<u16>,
+    pub(super) host: &'a str,
+    pub(super) port: u16,
+}
+
+impl std::fmt::Display for WorldEndpoint<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(world) = self.world {
+            write!(f, "w{world} ")?;
+        }
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
+/// One line explaining a world-full refusal (response 7) and what the slot
+/// does next. In the engine, 7 means the world has no room: more than
+/// `maxConnected` players (`World.ts:2227-2229`) or no free player slot
+/// (`World.ts:883-888`); the login server's own refusals map to 11 instead
+/// (`World.ts:1873-1877`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WorldFullReceipt<'a> {
+    pub(super) refused: WorldEndpoint<'a>,
+    pub(super) choice: WorldChoice,
+    /// Auto only: every world refused this round, so the slot waits.
+    pub(super) round_full: bool,
+    pub(super) next: WorldEndpoint<'a>,
+    /// `None`: the next world is tried at once (through the login queue).
+    pub(super) retry_in: Option<Duration>,
+}
+
+impl std::fmt::Display for WorldFullReceipt<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "world full (code 7) on {} (", self.refused)?;
+        f.write_str(match self.choice {
+            WorldChoice::Auto if self.round_full => "auto world; every world was full this round",
+            WorldChoice::Auto => "auto world",
+            WorldChoice::Pinned => "pinned world",
+            WorldChoice::Local => "local server",
+        })?;
+        write!(f, "); next attempt {}", self.next)?;
+        match self.retry_in {
+            Some(delay) => write!(f, " in {:.1} s", delay.as_secs_f64()),
+            None => f.write_str(" now, through the login queue"),
+        }
+    }
+}
+
+/// What a slot does after a failed login (response 21 is consumed by the
+/// transfer countdown before this).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RetryPlan<'a> {
+    /// Configure the round's next world before the next attempt.
+    pub(super) switch_world: bool,
+    /// Wait before re-entering the login queue; `None` re-enters at once.
+    pub(super) wait: Option<Duration>,
+    /// Present for response 7.
+    pub(super) world_full: Option<WorldFullReceipt<'a>>,
+}
+
+/// Plan the retry after `error`. `round` and `worlds` are the slot's public
+/// world rotation (absent for a local profile, whose endpoint is `local`).
+/// An Auto profile moves on to the next world at once and waits only after a
+/// full round; a pinned or local profile keeps its endpoint and waits.
+pub(super) fn plan_login_retry<'a>(
+    error: &LoginError,
+    public: Option<(
+        &mut public_worlds::WorldRound,
+        &'a public_worlds::PublicWorlds,
+    )>,
+    local: (&'a str, u16),
+    backoff: &mut LoginBackoff,
+    entropy: u32,
+) -> RetryPlan<'a> {
+    let endpoint = |world: &'a public_worlds::PublicWorld| WorldEndpoint {
+        world: Some(world.number),
+        host: &world.host,
+        port: world.port,
+    };
+    let (step, choice, refused, next) = match public {
+        Some((round, worlds)) => {
+            let refused = endpoint(&worlds.worlds[round.index]);
+            let choice = if round.preference().is_some() {
+                WorldChoice::Pinned
+            } else {
+                WorldChoice::Auto
+            };
+            let step = round.on_login_error(error.code, worlds.worlds.len());
+            (step, choice, refused, endpoint(&worlds.worlds[round.index]))
+        }
+        None => {
+            let local = WorldEndpoint {
+                world: None,
+                host: local.0,
+                port: local.1,
+            };
+            (
+                public_worlds::WorldErrorStep::Stay,
+                WorldChoice::Local,
+                local,
+                local,
+            )
+        }
+    };
+    let switch_world = step != public_worlds::WorldErrorStep::Stay;
+    let wait = (step != public_worlds::WorldErrorStep::SwitchNow)
+        .then(|| login_retry_wait(backoff, error, entropy));
+    RetryPlan {
+        switch_world,
+        wait,
+        world_full: (error.code == 7).then_some(WorldFullReceipt {
+            refused,
+            choice,
+            round_full: step == public_worlds::WorldErrorStep::SwitchAfterWait,
+            next,
+            retry_in: wait,
+        }),
     }
 }
 
@@ -1072,6 +1256,7 @@ pub(super) fn publish_login_latched(
             s.login_started = None;
             s.queue_position = -1;
             s.queue_total = -1;
+            s.queue_blocker = None;
             s.startup_progress_percent = None;
             s.startup_progress_message.clear();
         }
@@ -1086,6 +1271,8 @@ pub(super) fn publish_login_latched_from_arm(
     publish_login_latched(statuses, name, arm.login_latch_reason());
 }
 
+/// Publish a FIFO place (`None` clears it). The head's admission blocker is
+/// cleared too; [`publish_queue_place`] republishes it from the queue.
 pub(super) fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
     let (position, total) =
         match pos.filter(|p| p.position >= 1 && p.total >= 1 && p.position <= p.total) {
@@ -1095,6 +1282,18 @@ pub(super) fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<
     for s in rows.iter_mut().filter(|s| s.username == name) {
         s.queue_position = position;
         s.queue_total = total;
+        s.queue_blocker = None;
+    }
+}
+
+/// Publish `owner`'s place from the locked queue and, while it is the head,
+/// what keeps it from starting its login and until when.
+pub(super) fn publish_queue_place(q: &LoginQueue, rows: &mut [SlotStatus], name: &str, owner: u64) {
+    let pos = q.status_owner(owner);
+    let blocker = pos.and_then(|_| q.head_blocker(owner, Instant::now()));
+    apply_queue_wait(rows, name, pos);
+    for s in rows.iter_mut().filter(|s| s.username == name) {
+        s.queue_blocker = blocker;
     }
 }
 
@@ -1104,14 +1303,14 @@ pub(super) fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<
 /// re-reads `status(uid)` and never requests a permit.
 const QUEUE_PUBLISH: Duration = Duration::from_millis(200);
 
-/// Outcome of [`wait_for_permit`]. `Granted` owns a pending reservation that
-/// the caller must either pass into `client.login` and acknowledge on return,
-/// or abandon if its final intent check fails. `Cancelled` owns no reservation:
-/// the request was withdrawn before a grant and neither its FIFO place nor its
-/// published `k of n` survives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Outcome of [`wait_for_permit`]. `Granted` carries the reservation, owned
+/// from the granting poll on: the caller passes it into `client.login`
+/// ([`GrantedReservation::attempt`]) or drops it to give the grant back.
+/// `Cancelled` owns no reservation: the request was withdrawn before a grant
+/// and neither its FIFO place nor its published `k of n` survives.
+#[derive(Debug)]
 pub(super) enum PermitWait {
-    Granted,
+    Granted(GrantedReservation),
     Cancelled,
 }
 
@@ -1127,8 +1326,7 @@ pub(super) fn enqueue_queue_place(
 ) {
     let mut q = queue.lock();
     q.enqueue_owner(arm.queue_owner, uid);
-    let pos = q.status_owner(arm.queue_owner);
-    apply_queue_wait(&mut lock_statuses(statuses), username, pos);
+    publish_queue_place(&q, &mut lock_statuses(statuses), username, arm.queue_owner);
 }
 
 /// Drop one slot owner's login-FIFO place and always clear this slot's
@@ -1216,12 +1414,21 @@ pub(super) fn wait_for_permit(
             let mut q = queue.lock();
             match q.poll_owner(arm.queue_owner, uid, Instant::now()) {
                 Permit::Grant => {
+                    // Owned under the lock that granted it, before anything
+                    // else runs; the lock is released first so an unwind
+                    // can give the grant back.
+                    let permit = GrantedReservation::new(queue, arm.queue_owner);
+                    drop(q);
                     apply_queue_wait(&mut lock_statuses(statuses), username, None);
-                    return PermitWait::Granted;
+                    return PermitWait::Granted(permit);
                 }
                 Permit::Wait(wait) => {
-                    let pos = q.status_owner(arm.queue_owner);
-                    apply_queue_wait(&mut lock_statuses(statuses), username, pos);
+                    publish_queue_place(
+                        &q,
+                        &mut lock_statuses(statuses),
+                        username,
+                        arm.queue_owner,
+                    );
                     wait
                 }
             }
@@ -1233,8 +1440,12 @@ pub(super) fn wait_for_permit(
         while Instant::now() < deadline && !permit_wait_cancelled(arm) {
             let now = Instant::now();
             if now >= next_publish {
-                let pos = queue.lock().status_owner(arm.queue_owner);
-                apply_queue_wait(&mut lock_statuses(statuses), username, pos);
+                publish_queue_place(
+                    &queue.lock(),
+                    &mut lock_statuses(statuses),
+                    username,
+                    arm.queue_owner,
+                );
                 next_publish = now + QUEUE_PUBLISH;
             }
             let next_frame = frames();

@@ -1,13 +1,15 @@
-# Login: FIFO throttle numbers
+# Login: FIFO, pacing and throttle numbers
 
-`crates/host/src/login_queue.rs` stays under Lost City's **production**
-login rate limits. FIFO identity is a process-unique slot owner, while device
-rate accounting remains keyed by UID. Only a slot thread creates membership
-when it reaches Queueing. Workers enter in arrival order; the focused/preferred
+`crates/host/src/login_queue.rs` admits **one login handshake at a time**,
+spaces login starts, and stays under Lost City's **production** login rate
+limits. FIFO identity is a process-unique slot owner, while device rate
+accounting remains keyed by UID. Only a slot thread creates membership when
+it reaches Queueing. Workers enter in arrival order; the focused/preferred
 owner is the sole exception, entering at the front or moving there if already
-queued. Login all, Log in, and auto-login changes only arm intent and wake
-workers. They create no membership, record no order hints, and no absent owner
-can gate the head.
+queued. Focus never bypasses the in-flight cap, the spacing or the rate limits.
+Login all, Log in, and auto-login changes only arm intent and wake workers.
+They create no membership, record no order hints, and no absent owner can gate
+the head.
 
 A process binds one entry from `~/.274bot/servers.json` before sockets open.
 The built-ins are `local-274`, `local-289`, and `rs2b2t`; `public-289` is an
@@ -23,37 +25,83 @@ or `login_key.engine_dir` in `~/.274bot/servers.json`):
 | --- | --- |
 | `src/util/WorldConfig.ts` | defaults `rateLimitAddressLogin: 30`, `rateLimitDeviceLogin: 5`; `NODE_RATELIMIT_ADDRESS_LOGIN` / `NODE_RATELIMIT_DEVICE_LOGIN` override |
 | `src/engine/World.ts` | `loginAddressAttempts` TTL **60 s**, `loginDeviceAttempts` TTL **15 s**. Counters increment on opcode 14 (address) and 16/18 (device = `uid@ip`). **`>=` the cap sends response 16.** Both run **only** when `node.production` is true. |
+| `src/engine/World.ts` | `processLogins` admits new players once per 600 ms world tick (`TICKRATE`, `:120`; called from the tick at `:384`; sends response 2 at `:809-957`). |
+| `src/server/tcp/TcpServer.ts` | `s.setTimeout(30000)` (`:19`): a socket silent for 30 s is destroyed (`:61-67`). The original client's read timeout is also 30 s (`javaclient/.../jagex2/io/ClientStream.java:47`). |
 
 Local default is `production: false` (`NODE_PRODUCTION`). A loopback engine
 does **not** apply these counters. The host still stays under the production
 numbers so flipping production on does not 16 the wall.
 
-There is **no** inter-grant spacing in the engine. A previous 2.5 s host
-gap was invented (rs2b0t used 1 s); it is not a server default.
+The engine has **no** inter-login spacing rule. The host's 1.2 s spacing is
+its own policy, not a protocol requirement. Spacing alone would not keep two
+attempts in different admission ticks (network delay can bunch or split
+them). The one-in-flight rule does that: a successful handshake returns only
+after `processLogins` answered it, so the next attempt starts after that tick.
+The spacing only keeps fast handshakes (about 0.4 s on a local engine) from
+following each other back to back.
 
 ## Constants (the numbers agents must respect)
 
 | Rule | Value | Meaning |
 | --- | --- | --- |
-| spacing | **0** | engine has none; not-head polls every **20 ms** |
+| handshakes in flight | **1**, for at most **30 s + 1 s** | the next login starts only after the previous `client.login` returned (or its unused grant was given back); scene loading and the response-21 countdown do not hold it. The client stops the connect, every read (also of data already buffered) and every write of the handshake 30 s (`HANDSHAKE_HOLD`) after the attempt started, however much WebSocket control traffic arrives; handshake writes go to the socket on the caller's thread, each armed with the time left. The 30 s is host policy matching the 30 s read timeouts above, which bound single reads, not a whole handshake. The queue frees the slot 1 s (`LEASE_SLACK`, host policy: time for the client to report its own deadline failure) later even if the call never returns: it first shuts that attempt's socket both ways (`LoginCancel`), so the server reads end of stream before the next login can be granted, and counts the attempt as returned then |
+| start spacing | **1.2 s** (host policy) | measured between attempt starts (the moment each connect begins), not grants; not-head polls every **20 ms** |
 | per-IP window | **29 attempts / 60 s idle** | production threshold is 30 and rejects the attempt that reaches it; pending reservations count |
 | per-uid cap | **4 attempts, then remaining of 15 s idle** | production device threshold is 5 (`>= 5` rejects); partial counts expire after the same idle TTL |
-| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall; `LoginBackoff::reset()` clears per-slot escalation |
+| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall, published in the same queue update that frees the in-flight slot; `LoginBackoff::reset()` clears per-slot escalation |
+| backoff (connection failure, response 7) | **5, 10, 20, 40, then 60 s**, each ×0.8–1.2 jitter, never above 60 s | per slot; 60 s is the engine's address-attempt TTL |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
 exists for tests and rejects a zero address cap. A requester waits when another
-owner is ahead of it or for the longest unmet spacing, shared-throttle, per-IP,
-or per-uid constraint. There is no separate hint wait.
+owner is ahead of it or for the longest unmet in-flight, spacing,
+shared-throttle, per-IP, or per-uid constraint. There is no separate hint wait.
+
+`LoginQueue::head_blocker(owner, now)` names that constraint for the queue
+head (`AdmitBlocker`: another login in flight, start spacing, address
+cooldown with its attempt count, device limit, or a response-16 hold) with its
+deadline when known. host-play publishes it on the slot row next to the
+place, and `frontend-core` turns it into the one line both the panel (status
+and Game image queue card) and the TUI show, e.g. `waiting in login queue
+(1/21): next in line, login rate cooldown (29 attempts), next try in 41 s`.
 
 ## Backoff
 
 `LoginBackoff` delays generic retries after response 16 (“Login attempts
 exceeded”): first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A
-response-16 hold is also published to the shared queue so sibling slots pause.
+response-16 hold is also published to the shared queue, in the same update
+that acknowledges the refused login, so no sibling starts in between.
+A failed connection (the client's code -1, see below) and a full world
+(response 7) use the slot's escalating jittered delay instead of a fixed 5 s.
 These generic retry waits run to their deadline and exit early only for Stop,
 login withdrawal, an intentional-logout latch, or a changed world selection.
 Generic focus, render, script, and panel wakes do not shorten them. Any
 successful login resets the slot's escalation.
+
+## Failed connections
+
+A login that fails before the server answers keeps its cause: the handshake
+stage (`connect`, `send_hello`, `read_hello`, `read_seed`, `send_login`,
+`read_response`, `read_transfer_delay`, `read_accept`), the I/O error kind, the
+OS error number when there is one, and the bounded error text
+(`LoginError::transport`). A server that hangs up instead of answering is an
+`UnexpectedEof` at the stage it hung up in, and one that stops answering is a
+`TimedOut` (`login handshake deadline passed`) at the stage it reached when
+the handshake deadline passed. The slot row shows
+`Error connecting to server. (connect: Connection refused (os error 111))`
+rather than `code -1`, and the session log adds `stage=… kind=… errno=…`.
+
+## Response 7 (world full)
+
+In the engine, response 7 means the world has no room: more than
+`maxConnected` players (`World.ts:2227-2229`) or no free player slot
+(`World.ts:883-888`). The login server's own refusals (including its "safety"
+and IP-ban replies) reach the client as 11, not 7 (`World.ts:1873-1877`).
+Each refusal logs one line with the world, its endpoint, Auto or pinned, and
+the next attempt, e.g. `world full (code 7) on w2 w2.rs2b2t.com:443 (pinned
+world); next attempt w2 w2.rs2b2t.com:443 in 9.6 s`. An Auto profile moves on
+to the next world at once (back through the paced queue) and waits only after
+every world refused it in one round; a pinned profile keeps its world and
+waits; both waits escalate as above.
 
 ## Response 21 transfer cooldown
 
@@ -137,10 +185,12 @@ Every host-owned socket attempt is preceded by a shared permit, including
 opcode-18 reconnects and a retry after response 1. In external-ownership mode
 the embedded client returns those intents to host-play instead of reconnecting
 or recursively retrying internally; standalone clients retain their
-Java-compatible response-1 retry. A granted attempt is acknowledged on
-success, error, or unwind; an unused grant is abandoned before any socket
-call. Host-play keeps transient response 1 in Connecting rather than
-publishing phase Error.
+Java-compatible response-1 retry. The worker owns the grant from the polling
+call that granted it (`GrantedReservation`): an unused grant is given back on
+any return or unwind before the socket call, and a started attempt is
+acknowledged on success, error, or unwind. A grant whose lease ran out before
+its attempt started cannot start; the slot queues again. Host-play keeps
+transient response 1 in Connecting rather than publishing phase Error.
 
 
 ## Panel: Login all vs auto-login
