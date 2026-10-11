@@ -366,3 +366,52 @@ fn catalog_missing_compat_api_export_gets_actionable_start_message() {
         .expect_err("file-card diagnostics are not a catalog API mismatch");
     assert_eq!(file_error, raw);
 }
+
+#[test]
+fn catalog_missing_compat_api_default_export_keeps_raw_start_message() {
+    let dir = scratch("catalog-missing-default-export");
+    let path = bot_script(&dir, "bot.ts");
+    let mut lib = library(&dir);
+    let mut card = lib.load(&path).expect("bot loads");
+    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+
+    let raw = "load: Uncaught SyntaxError: The requested module '../../api/duel/Duel.js' does not provide an export named 'default' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1";
+    let error = lib
+        .record_start_result(&card, Err(crate::StartLoadError::RuntimeLoad(raw.into())))
+        .expect_err("missing default export is the script's error, not an API version mismatch");
+    assert_eq!(error, raw);
+}
+
+#[test]
+fn catalog_missing_export_from_scripts_sibling_api_keeps_raw_start_message() {
+    let dir = scratch("catalog-sibling-api-missing-export");
+    let path = bot_script(&dir, "bot.ts");
+    let mut lib = library(&dir);
+    let mut card = lib.load(&path).expect("bot loads");
+    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+
+    let raw = "load: Uncaught SyntaxError: The requested module '../api/Helper.js' does not provide an export named 'helper' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1";
+    let error = lib
+        .record_start_result(&card, Err(crate::StartLoadError::RuntimeLoad(raw.into())))
+        .expect_err("a scripts-folder sibling is not a compat API module");
+    assert_eq!(error, raw);
+}
+
+#[test]
+fn unrelated_syntax_and_missing_relative_module_errors_stay_raw() {
+    let dir = scratch("catalog-unrelated-load-errors");
+    let path = bot_script(&dir, "bot.ts");
+    let mut lib = library(&dir);
+    let mut card = lib.load(&path).expect("bot loads");
+    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+
+    for raw in [
+        "load: Uncaught SyntaxError: Unexpected token '}' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1",
+        "load: Uncaught Error: Module not found: '../api/Missing.js' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1",
+    ] {
+        let error = lib
+            .record_start_result(&card, Err(crate::StartLoadError::RuntimeLoad(raw.into())))
+            .expect_err("unrelated load errors are never rewritten");
+        assert_eq!(error, raw);
+    }
+}

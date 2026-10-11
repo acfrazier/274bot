@@ -931,11 +931,32 @@ fn missing_compat_api_export(source: ScriptSource, diagnostic: &str) -> Option<&
     }
     let (_, diagnostic) = diagnostic.split_once("The requested module '")?;
     let (module, diagnostic) = diagnostic.split_once("' does not provide an export named '")?;
-    if !module.split('/').any(|part| part == "api") {
+    let export = diagnostic.split_once('\'')?.0;
+    if export.is_empty() || export == "default" || !is_compat_api_module(module) {
         return None;
     }
-    let export = diagnostic.split_once('\'')?.0;
-    (!export.is_empty()).then_some(export)
+    Some(export)
+}
+
+fn is_compat_api_module(module: &str) -> bool {
+    if module == "@rs2b0t/api" {
+        return true;
+    }
+    let Some(path) = module
+        .strip_prefix("./../../")
+        .or_else(|| module.strip_prefix("../../"))
+        .or_else(|| module.strip_prefix("#/bot/"))
+        .or_else(|| module.strip_prefix("/rs2b0t/bot/"))
+    else {
+        return false;
+    };
+    let Some(path) = path.strip_prefix("api/") else {
+        return false;
+    };
+    !path.is_empty()
+        && path
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
 fn classify_stage(diagnostic: &str, sibling: Option<&str>) -> LoadStage {

@@ -62,12 +62,8 @@ impl Session {
             }
         };
         if let Some(root) = selected {
-            self.scripts.mark_catalog_scanned(&root);
-            if let Err(e) = self
-                .scripts
-                .js
-                .register_rs2b0t(&root, &self.rs2b0t_path_file())
-            {
+            let path_file = self.rs2b0t_path_file();
+            if let Err(e) = self.scripts.register_catalog(&root, &path_file) {
                 if host::debug_enabled() {
                     eprintln!("[panel] $RS2B0T registry: {e}");
                 }
@@ -109,11 +105,8 @@ impl Session {
                 script::registry_index_path(root).display()
             ));
         }
-        self.scripts.mark_catalog_scanned(root);
-        let n = self
-            .scripts
-            .js
-            .register_rs2b0t(root, &self.rs2b0t_path_file())?;
+        let path_file = self.rs2b0t_path_file();
+        let n = self.scripts.register_catalog(root, &path_file)?;
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.ui.script_catalog_last_dir = Some(root.to_path_buf());
         if self.persist_ui {
