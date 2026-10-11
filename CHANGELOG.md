@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ## [Unreleased] — 0.2.0.2
 
+### Development
+
+- Added the standalone `seat-model` conformance oracle for the architecture
+  contract's seat gate. It reproduces the six round-5 counterexamples and checks
+  the chosen request, result, cancellation and dispatch rules. Product behavior
+  is unchanged. The model uses only the Rust standard library.
+
 ### Scripts
 
 - When an rs2b0t script walks to a spot "within N tiles", the bot now heads for
