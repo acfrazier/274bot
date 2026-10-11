@@ -41,7 +41,7 @@ use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
     deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
-    reset_script_nav, script_active, script_frame_state, script_observe_cached_with_channels,
+    reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
     script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
@@ -549,6 +549,7 @@ impl Play {
             self.catalog_core.clone(),
             self.paired_core.clone(),
             Arc::clone(&self.per_frame),
+            Arc::clone(&self.capacity),
             &mut self.handles,
         );
         Ok(())
@@ -784,6 +785,25 @@ pub(super) fn observe_slot_catalog_and_paired(
     }
 }
 
+/// Whether this frame's bot counts toward the host capacity warning.
+fn capacity_service_class(
+    ingame: bool,
+    latched: bool,
+    frame: crate::script_runtime::ScriptFrame,
+) -> host::ServiceClass {
+    if !ingame || latched {
+        host::ServiceClass::Parked
+    } else if frame.state == Some(script::RunState::Paused) {
+        host::ServiceClass::Paused
+    } else if frame.frozen || frame.state == Some(script::RunState::Stopping) {
+        host::ServiceClass::Suspended
+    } else if frame.no_game_packets {
+        host::ServiceClass::Quiet
+    } else {
+        host::ServiceClass::Active
+    }
+}
+
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
 // The worker body keeps its hand layout: rustfmt used to skip it (an
@@ -817,6 +837,7 @@ fn spawn_slot_thread(
     slot_catalog_core: catalog_core::CoreWatch,
     slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
+    slot_capacity: Arc<host::CapacityMonitor>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
@@ -839,6 +860,7 @@ fn spawn_slot_thread(
             .stack_size(THREAD_STACK)
             .spawn(move || {
             api::hostlog::bind_slot(&username);
+            host::bind_capacity(&slot_capacity);
             let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             let startup_entries_published = arm.wait_worker_start_for_test();
@@ -1516,8 +1538,14 @@ fn spawn_slot_thread(
                                 *script_tick,
                                 slot_manual_abort_pause.load(Ordering::Relaxed),
                             );
-                            let script_state = script_frame_state(&slot_scripts, name);
+                            let frame = script_frame(&slot_scripts, name);
+                            let script_state = frame.state;
                             let running = script_state == Some(script::RunState::Running);
+                            host::set_service_class(capacity_service_class(
+                                c.ingame,
+                                arm_latch_obs.login_latched(),
+                                frame,
+                            ));
                             let nav_facts = script_state_builds_nav_facts(script_state);
                             let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
                                 bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
@@ -1803,6 +1831,7 @@ fn spawn_slot_thread(
                 }
             }
             }));
+            host::unbind_capacity();
             // No later session observes this slot, however the worker
             // ended (a Stop while parked at the title never reaches the
             // boundary above): its channel member leaves the party now.
@@ -1904,4 +1933,64 @@ pub(super) fn update_transfer_title(
     show_title_message(client, mes1, &mes2);
     *displayed = Some(remaining);
     true
+}
+
+#[cfg(test)]
+mod capacity_class_tests {
+    use super::capacity_service_class;
+    use crate::script_runtime::ScriptFrame;
+    use host::ServiceClass;
+
+    fn frame(state: Option<script::RunState>) -> ScriptFrame {
+        ScriptFrame {
+            state,
+            ..ScriptFrame::default()
+        }
+    }
+
+    #[test]
+    fn only_an_in_game_unpaused_bot_hearing_the_server_counts() {
+        let running = frame(Some(script::RunState::Running));
+        assert_eq!(
+            capacity_service_class(true, false, running),
+            ServiceClass::Active
+        );
+        assert_eq!(
+            capacity_service_class(true, false, frame(None)),
+            ServiceClass::Active,
+            "an in-game bot without a script counts"
+        );
+        assert_eq!(
+            capacity_service_class(false, false, running),
+            ServiceClass::Parked
+        );
+        assert_eq!(
+            capacity_service_class(true, true, running),
+            ServiceClass::Parked
+        );
+        assert_eq!(
+            capacity_service_class(true, false, frame(Some(script::RunState::Paused))),
+            ServiceClass::Paused
+        );
+        assert_eq!(
+            capacity_service_class(true, false, frame(Some(script::RunState::Stopping))),
+            ServiceClass::Suspended
+        );
+        let frozen = ScriptFrame {
+            frozen: true,
+            ..running
+        };
+        assert_eq!(
+            capacity_service_class(true, false, frozen),
+            ServiceClass::Suspended
+        );
+        let quiet = ScriptFrame {
+            no_game_packets: true,
+            ..running
+        };
+        assert_eq!(
+            capacity_service_class(true, false, quiet),
+            ServiceClass::Quiet
+        );
+    }
 }

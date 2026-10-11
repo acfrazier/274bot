@@ -484,10 +484,12 @@ pub struct TuiSession {
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
     /// Core projection generations the app last copied (fleet rows, the
-    /// whole view, the resource meter): a pump copies only what moved.
+    /// whole view, the resource meter, the capacity warning): a pump copies
+    /// only what moved.
     copied_rows: Option<u64>,
     copied_view: Option<u64>,
     copied_meter: Option<u64>,
+    copied_capacity: Option<u64>,
     persist_ui: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
@@ -579,6 +581,7 @@ impl TuiSession {
             copied_rows: None,
             copied_view: None,
             copied_meter: None,
+            copied_capacity: None,
             persist_ui: true,
             background_bots_acked: background_bots_acked(),
             ack_checked_at: Some(Instant::now()),
@@ -2270,6 +2273,8 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.core
+            .set_capacity_render(frontend_core::RenderPolicyLabel::Headless);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
@@ -2829,6 +2834,17 @@ impl TuiSession {
         let meter = self.core.resource_generation();
         if self.copied_meter.replace(meter) != Some(meter) {
             app.resources.clone_from(self.core.resources());
+        }
+        let capacity = self.core.capacity_generation();
+        if self.copied_capacity.replace(capacity) != Some(capacity) {
+            match self.core.capacity_notice() {
+                Some(notice) => {
+                    let line = app.capacity.get_or_insert_with(String::new);
+                    line.clear();
+                    line.push_str(notice.notice_text());
+                }
+                None => app.capacity = None,
+            }
         }
     }
 }
