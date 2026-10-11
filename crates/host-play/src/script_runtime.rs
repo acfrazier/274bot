@@ -209,10 +209,29 @@ impl SettledStart for SlotScript {
     }
 }
 
-/// Capture one script-state projection for the frame's ownership and inventory
-/// gates. Script observation re-checks the state under its own dispatch fence.
-pub(super) fn script_frame_state(scripts: &ScriptWall, name: &str) -> Option<script::RunState> {
-    script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+/// One frame's script facts, taken under a single wall + slot lock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct ScriptFrame {
+    pub(super) state: Option<script::RunState>,
+    /// The watchdog's clocks are frozen (guardian hold, pause).
+    pub(super) frozen: bool,
+    /// The watchdog has seen no game packets for 10 s.
+    pub(super) no_game_packets: bool,
+}
+
+/// Capture one script-state projection for the frame's ownership, inventory
+/// and capacity gates. Script observation re-checks the state under its own
+/// dispatch fence.
+pub(super) fn script_frame(scripts: &ScriptWall, name: &str) -> ScriptFrame {
+    script_slot(scripts, name)
+        .and_then(|slot| {
+            slot.lock().ok().map(|slot| ScriptFrame {
+                state: Some(slot.state()),
+                frozen: slot.watchdog().frozen(),
+                no_game_packets: slot.watchdog().no_game_packets(),
+            })
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {

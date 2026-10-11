@@ -255,6 +255,12 @@ impl ProgressWatchdog {
         self.frozen
     }
 
+    /// [`WatchdogAction::WarnNoGamePackets`] fired and no game packet has
+    /// arrived since: the server is quiet, not the local scheduler.
+    pub fn no_game_packets(&self) -> bool {
+        self.warned_no_game_packets
+    }
+
     /// Fresh Load start: both clocks now, cooldown history cleared.
     pub fn arm_fresh(&mut self, now: Instant) {
         self.deferred = None;
