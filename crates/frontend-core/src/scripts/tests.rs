@@ -3245,6 +3245,48 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     assert_ne!(f.state("alice"), script::RunState::Running);
 }
 
+#[test]
+fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
+    let mut f = fixture("catalog-fill-retry-after-registration-error", &["alice"]);
+    let failed_root = f.dir.join("failed-catalog-root");
+    let failed_scripts = failed_root.join("src/bot/scripts");
+    std::fs::create_dir_all(&failed_scripts).unwrap();
+    std::fs::write(failed_scripts.join("index.ts"), "const x = 1;\n").unwrap();
+
+    f.scripts.fill_catalog_once(Some(&failed_root));
+    assert!(
+        !f.scripts.catalog_filled,
+        "a failed registry parse must not mark the catalog filled"
+    );
+    assert!(
+        f.scripts.catalog_root.is_none(),
+        "a failed registry parse must not be recorded as scanned"
+    );
+
+    let root = f.dir.join("catalog-root");
+    let scripts = root.join("src/bot/scripts");
+    let present_dir = scripts.join("PresentBot");
+    std::fs::create_dir_all(&present_dir).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import PresentBot from './PresentBot/PresentBot.js';\n\
+         ScriptRegistry.register({ name: 'PresentBot', create: () => new PresentBot() });\n",
+    )
+    .unwrap();
+    std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
+
+    f.scripts.fill_catalog_once(Some(&root));
+    assert!(f.scripts.catalog_filled);
+    assert_eq!(f.scripts.catalog_root.as_deref(), Some(root.as_path()));
+    assert!(
+        f.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "PresentBot")
+            .is_some(),
+        "a later valid $RS2B0T root must still register its cards"
+    );
+}
+
 /// A member removed while waiting for a marked Start is named as skipped
 /// and the frontend never dispatches a Start for it.
 #[test]

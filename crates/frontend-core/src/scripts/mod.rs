@@ -528,10 +528,12 @@ impl Scripts {
         self.catalog_filled = true;
     }
 
-    /// Record the root before scanning it, including when the scan fails.
-    pub fn mark_catalog_scanned(&mut self, root: &Path) {
+    /// Register the catalog and remember its root only after registration succeeds.
+    pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
+        let registered = self.js.register_rs2b0t(root, path_file)?;
         self.catalog_root = Some(root.to_path_buf());
         self.catalog_filled = true;
+        Ok(registered)
     }
 
     /// Register the catalog at `root` once per session. Without a root the
@@ -543,11 +545,7 @@ impl Scripts {
         let Some(root) = root else {
             return;
         };
-        self.mark_catalog_scanned(root);
-        if let Err(error) = self
-            .js
-            .register_rs2b0t(root, &script::default_rs2b0t_path_file())
-        {
+        if let Err(error) = self.register_catalog(root, &script::default_rs2b0t_path_file()) {
             if host::debug_enabled() {
                 eprintln!("[scripts] $RS2B0T registry: {error}");
             }
