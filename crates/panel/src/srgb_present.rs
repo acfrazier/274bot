@@ -1,5 +1,4 @@
 use dear_imgui_rs::render::DrawData;
-use dear_imgui_rs::Context;
 use dear_imgui_wgpu::{GammaMode, WgpuInitInfo, WgpuRenderer};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -22,7 +21,7 @@ fn render_swatches(
     format: wgpu::TextureFormat,
     gamma_mode: GammaMode,
 ) -> Vec<[u8; 4]> {
-    let mut context = Context::create();
+    let mut context = crate::test_support::imgui_context();
     context
         .io_mut()
         .set_display_size([WIDTH as f32, CELL as f32]);

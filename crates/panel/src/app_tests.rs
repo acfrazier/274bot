@@ -1041,7 +1041,7 @@ fn dock_host_frame(ctx: &mut dear_imgui_rs::Context, state: &mut PanelState, os:
 }
 
 fn dock_host_context() -> dear_imgui_rs::Context {
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     ctx.io_mut()
         .set_backend_flags(BackendFlags::RENDERER_HAS_TEXTURES);
     assert!(crate::window::add_panel_font(&mut ctx));
@@ -1443,7 +1443,7 @@ fn dockspace_does_not_lock_undock_on_every_node() {
 #[test]
 fn apply_ui_scale_scales_padding_for_retina() {
     let _guard = crate::test_support::imgui_context_guard();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let before = ctx.style().window_padding();
     apply_ui_scale(ctx.style_mut(), 2.0);
     let after = ctx.style().window_padding();
@@ -3769,7 +3769,7 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
         "File cards have no registry description — this is the abort path"
     );
     s.script_browse_open = true;
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     // AUTO_RESIZE_Y measures on frame 1 and applies on frame 2.
     for _ in 0..3 {
         ctx.prepare_frame(
@@ -3817,7 +3817,7 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     }
     session.core.set_vault(Some(vault));
     session.begin_edit_profile(Some("Hans"));
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     chooser_frame(&mut ctx, &mut session);
     chooser_frame(&mut ctx, &mut session);
     // Tab into the form until one of its text fields is being edited.
@@ -3878,7 +3878,7 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
     }
 }
 fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let drawn = DrawnText::default();
     ctx.set_clipboard_backend(drawn.clone());
     ctx.prepare_frame(
@@ -3943,7 +3943,7 @@ fn memory_notice_gets_its_own_readable_popup_row() {
         });
     session.core.poll();
 
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let drawn = DrawnText::default();
     ctx.set_clipboard_backend(drawn.clone());
     let mut offer_rect = None;
@@ -4301,7 +4301,7 @@ impl ProfilesUi {
         let mut session = crate::session::Session::new();
         session.core.set_vault(Some(vault));
         session.wall.chooser_open = true;
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let drawn = DrawnText::default();
         ctx.set_clipboard_backend(drawn.clone());
         let mut ui = Self {

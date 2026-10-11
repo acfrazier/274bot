@@ -17,7 +17,7 @@ fn gpu_texture_register_update_unregister_delegates_to_renderer_store() {
         return; // no adapter: nothing to delegate to
     };
     let _guard = crate::test_support::imgui_context_guard();
-    let mut context = imgui::Context::create();
+    let mut context = crate::test_support::imgui_context();
     let mut renderer = imgui_wgpu::WgpuRenderer::new(
         imgui_wgpu::WgpuInitInfo::new(
             device.clone(),
@@ -399,7 +399,7 @@ fn headless_capture_renderer(
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
 ) -> (imgui::Context, imgui_wgpu::WgpuRenderer) {
-    let mut context = imgui::Context::create();
+    let mut context = crate::test_support::imgui_context();
     context
         .io_mut()
         .set_display_size([OCCLUDED_TEST_PX as f32, OCCLUDED_TEST_PX as f32]);
@@ -458,7 +458,7 @@ fn baked_glyph_y0(ui: &imgui::Ui, codepoint: char) -> f32 {
 }
 
 fn draw_dpi_layout_frame(scale: f32) -> DpiLayoutFrame {
-    let mut context = imgui::Context::create();
+    let mut context = crate::test_support::imgui_context();
     context
         .io_mut()
         .set_backend_flags(imgui::BackendFlags::RENDERER_HAS_TEXTURES);
@@ -1134,7 +1134,7 @@ fn panel_font_advance_stays_within_five_percent_of_old_layout() {
 }
 
 fn panel_font_test_context() -> (imgui::Context, bool) {
-    let mut ctx = imgui::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let required_glyphs_present = add_panel_font(&mut ctx);
     let _ = ctx.font_atlas_mut().build();
     ctx.io_mut().set_display_size([128.0, 128.0]);
