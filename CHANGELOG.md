@@ -59,6 +59,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - "World full" names the world and when the bot tries next; on Auto the bot
   moves on to another world. After you log a bot out, its next login is a
   fresh one; a dropped connection still reconnects.
+- When the server sends a bot something the client can't read, the bot now
+  logs in again from the start instead of reconnecting, so it comes back to
+  a complete world. This fixes the 0.2.0.1 known issue where such a bot came
+  back to an empty world until you logged it out and in. The server may still
+  be holding the old session, so this login can take about a minute. A
+  dropped connection, or a server that stops answering for 15 seconds, still
+  reconnects into the running session and keeps its world.
+- The log line for that exit now records the packet's size, the packets just
+  before it and how far into the session it came, to help find the cause.
 
 ### Panel
 

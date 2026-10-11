@@ -566,6 +566,9 @@ mod quester_journal_live_tests;
 mod nav_arrival_live_tests;
 
 #[cfg(test)]
+mod relog_live_tests;
+
+#[cfg(test)]
 mod walk_optins_live_tests;
 
 #[cfg(test)]
