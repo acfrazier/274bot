@@ -1922,12 +1922,10 @@ fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
         "the script's already-waiting isolate keeps running while recovery is held"
     );
     let logs = slot.take_pending_logs();
+    assert_eq!(logs.len(), 1, "entering the hold is logged once: {logs:?}");
     assert_eq!(
-        logs.iter()
-            .filter(|line| line.contains("holding watchdog in Duel Arena fight pen"))
-            .count(),
-        1,
-        "entering the hold is logged once: {logs:?}"
+        logs[0],
+        "watchdog: holding recovery in a Duel Arena fight pen; the recovery anchor is outside the pen"
     );
 
     slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(20));
@@ -1976,6 +1974,95 @@ fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
 
 #[cfg(feature = "load")]
 #[test]
+fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+
+    let now = Instant::now();
+    let inside_pen = (3340, 3250, 0);
+    let settled = [crate::shim::InteractReq::LoopSettled];
+    slot.note_game_packet_tick(now);
+    slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
+    for seconds in (5..=crate::watchdog::WEDGE.as_secs()).step_by(5) {
+        let tick_at = now + Duration::from_secs(seconds);
+        slot.note_game_packet_tick(tick_at);
+        let action = slot.feed_watchdog(tick_at, Some(inside_pen), &[], false, true, &[]);
+        if seconds == crate::watchdog::WEDGE.as_secs() {
+            assert_eq!(action, crate::watchdog::WatchdogAction::RequestAnchor);
+        }
+    }
+
+    let anchor = crate::watchdog::Tile {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    };
+    let anchor_reply = [crate::shim::InteractReq::RecoveryAnchor {
+        x: anchor.x,
+        z: anchor.z,
+        level: anchor.level,
+    }];
+    let held_at = now + crate::watchdog::WEDGE + Duration::from_secs(1);
+    slot.note_game_packet_tick(held_at);
+    assert_eq!(
+        slot.feed_watchdog(held_at, Some(inside_pen), &[], false, true, &anchor_reply),
+        crate::watchdog::WatchdogAction::HoldInFightPen
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    let frozen_at = held_at + Duration::from_secs(1);
+    slot.note_game_packet_tick(frozen_at);
+    assert_eq!(
+        slot.feed_watchdog(frozen_at, Some(inside_pen), &[], true, true, &[]),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+
+    let thawed_at = held_at + Duration::from_secs(2);
+    slot.note_game_packet_tick(thawed_at);
+    assert_eq!(
+        slot.feed_watchdog(thawed_at, Some(inside_pen), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    let reset_at = held_at + Duration::from_secs(3);
+    assert_eq!(
+        slot.watchdog.on_session_reset(reset_at),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
+        let tick_at = reset_at + Duration::from_secs(seconds);
+        slot.note_game_packet_tick(tick_at);
+        slot.feed_watchdog(tick_at, Some(inside_pen), &[], false, true, &[]);
+    }
+    let stalled_at = reset_at + crate::watchdog::HARD_STALL;
+    slot.note_game_packet_tick(stalled_at);
+    assert_eq!(
+        slot.feed_watchdog(stalled_at, Some(inside_pen), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::Restart {
+            reason: crate::watchdog::RestartReason::Stall,
+        },
+        "a held fight-pen recovery does not disable the hard-stall restart"
+    );
+    assert!(slot.watchdog().last_recovery().is_none());
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
 fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
     let mut slot = SlotScript::new();
     slot.start_load(
@@ -1994,14 +2081,35 @@ fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
         slot.feed_watchdog(now, Some(here), &[], false, true, &[]),
         crate::watchdog::WatchdogAction::None
     );
+    let outside_anchor = [crate::shim::InteractReq::RecoveryAnchor {
+        x: 3220,
+        z: 3274,
+        level: 0,
+    }];
     for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
         let tick_at = now + Duration::from_secs(seconds);
         slot.note_game_packet_tick(tick_at);
-        let action = slot.feed_watchdog(tick_at, Some(here), &[], false, true, &[]);
+        let lifecycle: &[crate::shim::InteractReq] =
+            if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
+                &outside_anchor
+            } else {
+                &[]
+            };
+        let action = slot.feed_watchdog(tick_at, Some(here), &[], false, true, lifecycle);
         if seconds == crate::watchdog::SCHEDULER_WARN.as_secs() {
             assert_eq!(action, crate::watchdog::WatchdogAction::WarnHungLoop);
         } else if seconds == crate::watchdog::WEDGE.as_secs() {
             assert_eq!(action, crate::watchdog::WatchdogAction::RequestAnchor);
+        } else if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
+            assert_eq!(
+                action,
+                crate::watchdog::WatchdogAction::ArmWalk {
+                    x: 3220,
+                    z: 3274,
+                    level: 0,
+                },
+                "outside-pen anchor replies must reach normal recovery, not be held"
+            );
         } else {
             assert_eq!(action, crate::watchdog::WatchdogAction::None);
         }

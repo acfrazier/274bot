@@ -136,11 +136,6 @@ pub(crate) fn pen_at(tile: Tile) -> Option<usize> {
     })
 }
 
-/// Classify a world tile using the frozen Duel Arena fight-pen table.
-pub(crate) fn fight_pen_index(x: i32, z: i32, level: i32) -> Option<usize> {
-    pen_at(Tile { x, z, level })
-}
-
 /// Frozen upstream `inDuelChallengeArea`, excluding every fight pen.
 fn in_challenge_area(tile: Tile) -> bool {
     tile.level == 0
