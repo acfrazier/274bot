@@ -1557,6 +1557,8 @@ fn step_bank_action<D: Driver>(
     // Open also waits while a bank component is up but not yet loaded.
     // Once Withdraw-X answered, keep it latched until its inventory delta
     // arrives; never submit the same count twice.
+    // Wear's own bank close is not progress: keep it latched until its obj
+    // state changes or the bounded step wait expires.
     let in_flight = pending
         .progress
         .flight
@@ -1762,15 +1764,19 @@ fn arm_access_fallback(
 }
 
 impl BankFetchFlight {
-    /// The bank session and `step`'s own target a send is judged against.
+    /// The target and, except for Wear, the bank session a send is judged against.
     fn of(snapshot: &GameSnapshot, step: &BankStep) -> Self {
         let target = match *step {
             BankStep::Withdraw { id, .. }
             | BankStep::WithdrawX { id }
-            | BankStep::WithdrawXAmount { id, .. }
-            | BankStep::Wear { id } => FlightTarget::Obj {
+            | BankStep::WithdrawXAmount { id, .. } => FlightTarget::Obj {
                 id,
                 carried: backpack_count(snapshot, id),
+                worn: wearing(snapshot, id),
+            },
+            BankStep::Wear { id } => FlightTarget::Wear {
+                id,
+                carried: inventory_count(snapshot, id),
                 worn: wearing(snapshot, id),
             },
             BankStep::Open | BankStep::Close | BankStep::Walk { .. } => FlightTarget::Bank,
@@ -1782,16 +1788,21 @@ impl BankFetchFlight {
         }
     }
 
-    /// Whether `snapshot` still shows the latched bank session and target,
-    /// so the send is still in flight. Compares in place, without a
-    /// per-pump copy.
+    /// Whether `snapshot` still shows this send's target. Wear ignores the
+    /// bank-session change caused by its own close. Compares in place,
+    /// without a per-pump copy.
     fn matches(&self, snapshot: &GameSnapshot) -> bool {
-        self.bank_gen == snapshot.bank_session_generation()
-            && self.bank_com == snapshot.bank_component_id()
+        let bank_matches = matches!(&self.target, FlightTarget::Wear { .. })
+            || (self.bank_gen == snapshot.bank_session_generation()
+                && self.bank_com == snapshot.bank_component_id());
+        bank_matches
             && match &self.target {
                 FlightTarget::Bank => true,
-                &FlightTarget::Obj { id, carried, worn } => {
-                    backpack_count(snapshot, id) == carried && wearing(snapshot, id) == worn
+                FlightTarget::Obj { id, carried, worn } => {
+                    backpack_count(snapshot, *id) == *carried && wearing(snapshot, *id) == *worn
+                }
+                FlightTarget::Wear { id, carried, worn } => {
+                    inventory_count(snapshot, *id) == *carried && wearing(snapshot, *id) == *worn
                 }
             }
     }
@@ -1819,6 +1830,16 @@ fn backpack_count(snapshot: &GameSnapshot, id: i32) -> i32 {
     backpack(snapshot)
         .filter(|&(got, _)| got == id)
         .fold(0, |total, (_, n)| total.saturating_add(n))
+}
+
+/// The inv-tab rows targeted by `Interactions::wear`. These remain the
+/// carried-item observation while the bank-side panel is rebuilt or closed.
+fn inventory_count(snapshot: &GameSnapshot, id: i32) -> i32 {
+    snapshot
+        .inventory()
+        .iter()
+        .filter(|item| item.def.id == id && item.count >= 1)
+        .fold(0, |total, item| total.saturating_add(item.count))
 }
 
 fn worn(snapshot: &GameSnapshot) -> impl Iterator<Item = i32> + '_ {
