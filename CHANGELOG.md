@@ -34,6 +34,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   or deadline, so one line is enough to diagnose a report.
 - A watchdog restart names what the Gatherer was waiting for, and every
   pending observation wait shows that reason on the status line.
+- Bank trips on a slow computer or a laggy server no longer fail with "bank
+  transfer did not settle" or "bank unavailable". Opening, depositing,
+  withdrawing and closing each wait for a set number of game ticks and at
+  least the matching time before giving up, and a bank that doesn't open or
+  close is tried again a few times. Teller banks (such as the Mage Arena)
+  get time to finish their conversation before the bank opens.
 
 ### Random-event guardian
 
