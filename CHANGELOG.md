@@ -48,6 +48,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Host
+
+- When this computer can't keep up with the bots it's running, the panel, the
+  TUI and the log say so: how many bots are falling behind, by how much, and
+  whether render-all is on, with a suggestion to run fewer bots or turn
+  render-all off. The warning clears once the computer has kept up for 30
+  seconds. A slow script, a slow network or a quiet game server doesn't
+  trigger it. On macOS and Windows a few other stalls (such as memory being
+  paged back in) can also count, and a bot that's idle between game updates
+  may be missed.
+
 ### Login
 
 - Loading many bots logs them in one at a time, a little over a second

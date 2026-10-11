@@ -2516,3 +2516,82 @@ fn session_memory_override_is_the_effective_mode_not_a_permanent_notice() {
         "the session override is both the handshake and desired mode"
     );
 }
+
+fn capacity_log() -> Vec<(Level, String)> {
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|f| f.min_level = Level::Debug);
+    crate::log::global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .filter(|e| e.message.starts_with("Host "))
+        .map(|e| (e.level, e.message.to_string()))
+        .collect()
+}
+
+#[test]
+fn host_capacity_transitions_log_once_and_rebuild_the_line_only_on_change() {
+    use crate::capacity::RenderPolicyLabel;
+    use host::{CapacityEval, CapacityWarning};
+    crate::log::global();
+    let before = capacity_log().len();
+    let mut s = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    let warn = |late| {
+        CapacityEval::Warn(CapacityWarning::new(
+            late,
+            71,
+            8,
+            Some(Duration::from_millis(1730)),
+            Some(Duration::from_millis(970)),
+            RenderPolicyLabel::Headless,
+        ))
+    };
+    let line = |late| {
+        format!(
+            "Host is falling behind: {late} of 71 bots late (p95 delay 1.73s, 0.97 s/tick, \
+             render headless). Run fewer bots."
+        )
+    };
+
+    let generation = s.capacity_generation();
+    s.apply_capacity(warn(17));
+    assert_eq!(s.capacity_notice().unwrap().notice_text(), line(17));
+    let shown = s.capacity_generation();
+    assert_ne!(shown, generation);
+    let text = s.capacity_notice().unwrap().notice_text().as_ptr();
+    s.apply_capacity(warn(17));
+    assert_eq!(s.capacity_generation(), shown, "same figures: no rebuild");
+    assert_eq!(s.capacity_notice().unwrap().notice_text().as_ptr(), text);
+    s.apply_capacity(warn(18));
+    assert_eq!(s.capacity_notice().unwrap().notice_text(), line(18));
+    assert_ne!(s.capacity_generation(), shown);
+
+    // Warn -> Silence -> Clear: hidden once, no second clear line.
+    s.apply_capacity(CapacityEval::Silence);
+    assert!(s.capacity_notice().is_none());
+    s.apply_capacity(CapacityEval::Clear);
+    // Clear -> Warn -> Clear.
+    s.apply_capacity(warn(17));
+    s.apply_capacity(CapacityEval::Clear);
+    assert!(s.capacity_notice().is_none());
+    // Warn, then the play goes away: the next evaluate clears and logs.
+    s.apply_capacity(warn(17));
+    let now = Instant::now();
+    s.refresh_capacity(now);
+    assert!(s.capacity_notice().is_none());
+    assert_eq!(s.capacity_due, Some(now + CAPACITY_EVAL_EVERY));
+
+    let hidden = "Host warning hidden: no game packets for 10 s, so the game server is quiet, \
+                  not this machine";
+    let back = "Host is keeping up again";
+    assert_eq!(
+        capacity_log()[before..],
+        [
+            (Level::Warn, line(17)),
+            (Level::Info, hidden.to_string()),
+            (Level::Warn, line(17)),
+            (Level::Info, back.to_string()),
+            (Level::Warn, line(17)),
+            (Level::Info, back.to_string()),
+        ]
+    );
+}

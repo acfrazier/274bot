@@ -1534,6 +1534,7 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
             ui.text_colored(TEXT_DIM, crate::build_info::build_line());
             ui.set_item_tooltip(crate::build_info::build_tooltip());
             banner(ui, session, progress);
+            capacity_banner(ui, session);
             login_logout_row(ui, session);
             walkto_button(ui, session);
             slot_config_row(ui, session);
@@ -1668,6 +1669,12 @@ fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
     ui.same_line_with_spacing(0.0, 0.0);
     ui.text_disabled(format!("{}] {:>3}%", text.empty, text.percent));
     ui.text_disabled(text.caption);
+}
+
+fn capacity_banner(ui: &Ui, session: &Session) {
+    if let Some(notice) = session.core.capacity_notice() {
+        ui.text_colored(WARN, notice.notice_text());
+    }
 }
 
 fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {

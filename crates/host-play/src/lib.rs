@@ -300,9 +300,17 @@ pub struct Play {
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.
     wakes: HashMap<String, SlotWake>,
+    /// Host-capacity registry: each slot thread registers its own record
+    /// once and writes only that record per service.
+    capacity: Arc<host::CapacityMonitor>,
 }
 
 impl Play {
+    /// Host-capacity registry the operator session evaluates at UI cadence.
+    pub fn capacity(&self) -> &host::CapacityMonitor {
+        &self.capacity
+    }
+
     /// Applies to new manual and compiled-native walks; compat wiring is unchanged.
     pub fn set_walk_globals(&self, globals: WalkGlobals) {
         *self.walk_globals.lock().unwrap() = globals;
