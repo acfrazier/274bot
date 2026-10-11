@@ -1700,6 +1700,7 @@ impl TuiSession {
                 script::registry_index_path(root).display()
             ));
         }
+        self.scripts.mark_catalog_scanned(root);
         let n = self
             .scripts
             .js

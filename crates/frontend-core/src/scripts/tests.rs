@@ -3202,6 +3202,49 @@ fn marked_start_missing_card_reports_each_skip_as_grants_land() {
     }
 }
 
+#[test]
+fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
+    let mut f = fixture("assigned-catalog-missing", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    let scripts = root.join("src/bot/scripts");
+    let present_dir = scripts.join("PresentBot");
+    std::fs::create_dir_all(&present_dir).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import PresentBot from './PresentBot/PresentBot.js';\n\
+         ScriptRegistry.register({ name: 'PresentBot', create: () => new PresentBot() });\n",
+    )
+    .unwrap();
+    std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
+
+    f.scripts.fill_catalog_once(Some(&root));
+    let present = f
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "PresentBot")
+        .expect("catalog root loaded its present card");
+    let mut assignment = present.assignment();
+    assignment.identity = "MissingBot".into();
+    assignment.display_name = "MissingBot".into();
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", assignment));
+    f.core.flush_writes();
+
+    let error = f
+        .scripts
+        .start_profile(&mut f.core, "alice", Some(&root))
+        .expect_err("a card absent from the loaded catalog must be refused");
+    assert!(
+        error.contains(&format!("catalog at {} was scanned", root.display()))
+            && error.contains("MissingBot")
+            && error.contains("missing"),
+        "{error}"
+    );
+    assert_eq!(start_accepted(&f, "alice"), 0);
+    assert_ne!(f.state("alice"), script::RunState::Running);
+}
+
 /// A member removed while waiting for a marked Start is named as skipped
 /// and the frontend never dispatches a Start for it.
 #[test]
