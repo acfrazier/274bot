@@ -165,7 +165,11 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
         (reconnected.login_lowmem, reconnected.desired_lowmem),
         (true, false)
     );
-    assert_eq!(relog, (18, 0), "clean Logout then Log in applies the queue");
+    assert_eq!(
+        relog,
+        (16, 0),
+        "clean Logout then Log in is a fresh login and applies the queue"
+    );
     assert!(dirty.differs());
     assert!(!dirty.can_relog());
     assert!(

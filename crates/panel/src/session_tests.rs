@@ -6830,7 +6830,7 @@ fn queue_for_tracks_each_named_row_independent_of_focus() {
         },
     ]);
     s.core.poll_host();
-    let place = |position, total| Some(frontend_core::QueuePlace { position, total });
+    let place = |position, total| Some(frontend_core::QueuePlace::new(position, total));
     assert_eq!(s.queue_for("alice"), place(2, 3));
     assert_eq!(s.queue_for("bob"), place(1, 2));
 

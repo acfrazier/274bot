@@ -149,10 +149,7 @@ impl StartAdmit {
             .queue
             .iter()
             .position(|entry| entry.profile == profile)?;
-        Some(QueuePlace {
-            position: (index as u32) + 1,
-            total: self.queue.len() as u32,
-        })
+        Some(QueuePlace::new((index as u32) + 1, self.queue.len() as u32))
     }
 
     /// Whether the fleet overlay is stale. Consuming the flag is the idle

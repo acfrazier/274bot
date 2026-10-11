@@ -3,7 +3,10 @@
 //! The armed route's remaining tiles are painted by the client's 3D renderer
 //! and on the pack map, so this overlay draws only the queue card belonging
 //! to the bot shown in each Image. The place itself comes from the shared
-//! fleet row ([`QueuePlace`]); only the rs2b0t card copy lives here.
+//! fleet row ([`QueuePlace`]), and so does the head's reason for waiting;
+//! only the rs2b0t card copy lives here.
+
+use std::time::Instant;
 
 use dear_imgui_rs::Ui;
 use frontend_core::QueuePlace;
@@ -14,9 +17,10 @@ use crate::theme::{scale_px, ACCENT};
 const QUEUE_CARD_TITLE: &str = "AUTO-LOGIN QUEUE";
 
 /// Amber queue-card lines for one slot's FIFO place: title, `k of n`,
-/// bots ahead. Empty when the slot is not queued, so the card disappears
-/// the moment the grant lands (`logging in…`).
-fn queue_card_lines(queue: Option<QueuePlace>) -> Vec<String> {
+/// bots ahead, and at the head the host's reason for waiting (`wait`,
+/// from [`QueuePlace::write_wait`]). Empty when the slot is not queued, so
+/// the card disappears the moment the grant lands (`logging in…`).
+fn queue_card_lines(queue: Option<QueuePlace>, wait: &str) -> Vec<String> {
     let Some(place) = queue else {
         return Vec::new();
     };
@@ -24,7 +28,11 @@ fn queue_card_lines(queue: Option<QueuePlace>) -> Vec<String> {
         1 => "1 bot in front".to_string(),
         n => format!("{n} bots in front"),
     };
-    vec![QUEUE_CARD_TITLE.to_string(), place.to_string(), ahead]
+    let mut lines = vec![QUEUE_CARD_TITLE.to_string(), place.to_string(), ahead];
+    if !wait.is_empty() {
+        lines.push(wait.to_string());
+    }
+    lines
 }
 
 /// Horizontal/vertical pad inside the queue card border (equal L/R and T/B).
@@ -88,17 +96,23 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
 /// Queue card over one bot's Image. No-op when that bot is not queued, so
 /// the card disappears the moment the grant lands.
 pub fn draw_queue_card_for(ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2]) {
-    let lines = queue_card_lines(queue);
+    let mut wait = String::new();
+    if let Some(place) = queue {
+        place.write_wait(&mut wait, Instant::now());
+    }
+    let lines = queue_card_lines(queue, &wait);
     if !lines.is_empty() {
         draw_queue_card(ui, min, &lines);
     }
 }
 
 /// Cached queue-card state for the bot shown by this overlay. The card must
-/// appear immediately on enqueue, so it is cached on the FIFO place, not a
-/// timer.
+/// appear immediately on enqueue, so it is cached on the FIFO place and the
+/// head's wait text (whose countdown changes once a second), not a timer.
 pub struct PathOverlay {
     queue: Option<QueuePlace>,
+    wait: String,
+    wait_scratch: String,
     queue_lines: Vec<String>,
 }
 
@@ -106,6 +120,8 @@ impl PathOverlay {
     pub fn new() -> Self {
         Self {
             queue: None,
+            wait: String::new(),
+            wait_scratch: String::new(),
             queue_lines: Vec::new(),
         }
     }
@@ -120,9 +136,14 @@ impl PathOverlay {
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
     pub fn frame(&mut self, ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2], _size: [f32; 2]) {
-        if queue != self.queue {
+        self.wait_scratch.clear();
+        if let Some(place) = queue {
+            place.write_wait(&mut self.wait_scratch, Instant::now());
+        }
+        if queue != self.queue || self.wait_scratch != self.wait {
             self.queue = queue;
-            self.queue_lines = queue_card_lines(queue);
+            std::mem::swap(&mut self.wait, &mut self.wait_scratch);
+            self.queue_lines = queue_card_lines(queue, &self.wait);
         }
         if !self.queue_lines.is_empty() {
             draw_queue_card(ui, min, &self.queue_lines);
@@ -147,18 +168,60 @@ mod tests {
     use crate::session::Session;
 
     fn place(position: u32, total: u32) -> Option<QueuePlace> {
-        Some(QueuePlace { position, total })
+        Some(QueuePlace::new(position, total))
     }
 
     #[test]
     fn queue_card_lines_match_rs2b0t_copy() {
-        assert_eq!(queue_card_lines(None), Vec::<String>::new());
-        let lines = queue_card_lines(place(1, 2));
+        assert_eq!(queue_card_lines(None, ""), Vec::<String>::new());
+        let lines = queue_card_lines(place(1, 2), "");
         assert_eq!(lines[0], "AUTO-LOGIN QUEUE");
         assert_eq!(lines[1], "1 of 2");
         assert_eq!(lines[2], "0 bots in front");
-        let lines = queue_card_lines(place(2, 2));
+        assert_eq!(lines.len(), 3);
+        let lines = queue_card_lines(place(2, 2), "");
         assert_eq!(lines[2], "1 bot in front");
+    }
+
+    /// The head's card says why "0 bots in front" is still waiting, and
+    /// its countdown moves without a new place.
+    #[test]
+    fn head_card_names_its_blocker_and_counts_down() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let head = |blocker| {
+            QueuePlace::of(&host_play::SlotStatus {
+                queue_position: 1,
+                queue_total: 4,
+                queue_blocker: Some(blocker),
+                ..host_play::SlotStatus::default()
+            })
+        };
+        let mut overlay = PathOverlay::new();
+        ui.window("##overlay-head-test").build(|| {
+            overlay.frame(
+                ui,
+                head(host::login_queue::AdmitBlocker::Handshake),
+                [10.0, 10.0],
+                [90.0, 90.0],
+            );
+            assert_eq!(overlay.queue_lines[2], "0 bots in front");
+            assert_eq!(overlay.queue_lines[3], "another bot is logging in");
+            let cooldown = head(host::login_queue::AdmitBlocker::ServerHold {
+                until: std::time::Instant::now() + std::time::Duration::from_secs(20),
+            });
+            overlay.frame(ui, cooldown, [10.0, 10.0], [90.0, 90.0]);
+            assert_eq!(
+                overlay.queue_lines[3],
+                "server: too many login attempts, next try in 20 s"
+            );
+        });
+        ctx.render();
     }
 
     #[test]
@@ -189,7 +252,7 @@ mod tests {
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let lines = queue_card_lines(place(1, 2));
+        let lines = queue_card_lines(place(1, 2), "");
         let (content_w, line_h, box_w, box_h) = queue_card_metrics(ui, &lines);
         assert!(content_w > 0.0, "title must measure wider than zero");
         let pad = crate::theme::scale_px(ui, QUEUE_CARD_PAD * 2.0);
@@ -229,8 +292,8 @@ mod tests {
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let short = queue_card_lines(place(1, 2));
-        let long = queue_card_lines(place(12, 49));
+        let short = queue_card_lines(place(1, 2), "");
+        let long = queue_card_lines(place(12, 49), "");
         let (w_short, _, box_short, _) = queue_card_metrics(ui, &short);
         let (w_long, _, box_long, _) = queue_card_metrics(ui, &long);
         let pad = crate::theme::scale_px(ui, QUEUE_CARD_PAD * 2.0);

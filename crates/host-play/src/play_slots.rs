@@ -25,8 +25,8 @@ use crate::memory;
 use crate::play_bootstrap::{bot_client_config, PlayConnection};
 use crate::play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
-    granted_permit_world_is_current, login_and_acknowledge_permit, login_retry_wait,
-    on_login_success, publish_login_latched_from_arm, refresh_slot_world_preference,
+    granted_permit_world_is_current, login_and_acknowledge_permit, on_login_success,
+    plan_login_retry, publish_login_latched_from_arm, refresh_slot_world_preference,
     should_handshake, sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
     wait_for_transfer_response, GrantedReservation, PermitWait, QueuePlaceRetirement,
     SharedLoginQueue, SlotArm,
@@ -1163,30 +1163,34 @@ fn spawn_slot_thread(
                                 continue;
                             }
                             record_login_error(&slot_statuses, &username, &e);
-                            let decision = world_round.as_mut().map(|round| {
-                                let count = connection.profile().and_then(|p| p.public_worlds())
-                                    .expect("bound public worlds").worlds.len();
-                                round.on_login_error(e.code, count)
-                            });
-                            match decision {
-                                Some(public_worlds::WorldErrorStep::SwitchNow) => {
-                                    world_dirty = true;
-                                    key_refreshed = false;
-                                    continue;
-                                }
-                                Some(public_worlds::WorldErrorStep::SwitchAfterWait) => {
-                                    world_dirty = true;
-                                    key_refreshed = false;
-                                }
-                                _ => {}
+                            let worlds = connection.profile().and_then(|p| p.public_worlds());
+                            let plan = plan_login_retry(
+                                &e,
+                                world_round.as_mut().map(|round| {
+                                    (round, &**worlds.expect("bound public worlds"))
+                                }),
+                                (&client.config.host, client.config.port),
+                                &mut backoff,
+                                rand_core::RngCore::next_u32(&mut rand_core::OsRng),
+                            );
+                            if let Some(receipt) = plan.world_full {
+                                host_log!(Category::Login, Level::Warn, "{receipt}");
                             }
+                            if plan.switch_world {
+                                world_dirty = true;
+                                key_refreshed = false;
+                            }
+                            // Auto world rotation: straight back into the
+                            // paced queue for the next world.
+                            let Some(retry) = plan.wait else {
+                                continue;
+                            };
                             if world_round.is_some()
                                 && public_worlds::refresh_after_login_error(e.code, &mut key_refreshed)
                             {
                                 refresh_key = true;
                                 world_dirty = true;
                             }
-                            let retry = login_retry_wait(&mut backoff, e.code);
                             host_log!(
                                 Category::Login,
                                 Level::Info,

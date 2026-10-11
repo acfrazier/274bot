@@ -44,6 +44,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Login
+
+- Loading many bots no longer sends a burst of logins at the server. Bots
+  log in one at a time, at least 1.2 seconds apart, still in the order they
+  became ready and with the focused bot first. The server's limit on logins
+  from one address still applies: after 29 logins in a row, the next bot
+  waits until a minute has passed since the last one.
+- The bot at the front of the login queue now says what it's waiting for
+  and for how long, in the panel's status line and game-view card and in the
+  TUI: for example "another bot is logging in" or "login rate cooldown (29
+  attempts), next try in 41 s", instead of only "0 bots in front".
+- When a login can't reach the server, each retry waits longer than the last
+  (from about 5 seconds up to a minute, varied a little per bot so they don't
+  all retry together) instead of every 5 seconds. The error says where the
+  connection failed and the system's reason (for example "connect: Connection
+  refused"), instead of "code -1".
+- "This world is full" now logs which world and server refused, whether the
+  bot's world is Auto or chosen, and when it tries next. A bot on Auto tries
+  the other worlds straight away and waits only after every world was full; a
+  bot with a chosen world stays on it. Both wait longer after each refusal,
+  up to a minute.
+- After you log a bot out, its next login is a fresh login, as in the
+  original game client, also when you changed its world in between. A
+  dropped connection still reconnects to the running session.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
