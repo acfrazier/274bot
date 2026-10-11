@@ -61,7 +61,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   middle of its work. There it also counts other stalls the bot didn't
   choose, such as the system paging memory back in, and it can't see the
   wait for a CPU after a game packet wakes an idle bot. A bot's own slow
-  script doesn't count, nor do bots that are logging in or paused, or whose
+  script doesn't count, nor does a bot waiting on a slow network or server
+  to take what it sends, nor do bots that are logging in or paused, or whose
   script has heard nothing from the game server for 10 s.
 
 ### Login

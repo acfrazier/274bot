@@ -205,7 +205,8 @@ fn time_off_the_cpu_is_wall_minus_cpu_minus_own_waits() {
     };
     // A 20 ms frame on an idle machine: 5 ms work, 15 ms sleep.
     close(bot.frame(15, 0, 5, 0), 0);
-    // Its own 2 s of work (a slow compiled tick): not off the CPU.
+    // Its own work (a slow compiled tick), 700 ms or 2 s: not off the CPU.
+    close(bot.frame(0, 0, 700, 0), 0);
     close(bot.frame(0, 0, 2000, 0), 0);
     // A 2 s idle park that ran to its bound: the bot's own wait.
     close(bot.frame(2000, 0, 1, 0), 0);
@@ -659,17 +660,24 @@ fn spin(wall: Duration) {
     }
 }
 
-/// The real Linux clock: blocking on other work (a slow script tick runs on
-/// its isolate thread) is not run-queue wait; being kept off a busy CPU is.
+/// The real Linux clock: a sleep (a slot blocked on other work, like a slow
+/// script tick on its isolate thread) is not run-queue wait; being kept off
+/// a busy CPU is. Load can only add wait after the sleep, so each check
+/// holds on a busy machine too.
 #[cfg(target_os = "linux")]
 #[test]
 fn run_queue_wait_sees_starvation_and_not_own_work() {
     std::thread::spawn(|| {
         let stat = RunQueueStat::open().expect("schedstat");
+        let start = Instant::now();
         let before = stat.waited().unwrap();
         std::thread::sleep(Duration::from_millis(700));
-        let own = stat.waited().unwrap().saturating_sub(before);
-        assert!(own < CALM, "a 700 ms own wait counted {own:?}");
+        let waited = stat.waited().unwrap().saturating_sub(before);
+        let runnable = start.elapsed().saturating_sub(Duration::from_millis(700));
+        assert!(
+            waited <= runnable + Duration::from_millis(1),
+            "a 700 ms sleep counted {waited:?} of run-queue wait; the thread was awake only {runnable:?}"
+        );
 
         let before = stat.waited().unwrap();
         spin_behind_hogs(Duration::from_secs(1));
@@ -684,8 +692,10 @@ fn run_queue_wait_sees_starvation_and_not_own_work() {
 }
 
 /// The real thread CPU clock (`CLOCK_THREAD_CPUTIME_ID`, the same call
-/// macOS makes): the bot's own CPU work and its own reported waits are not
-/// time off the CPU; being kept off a busy CPU mid-tick is.
+/// macOS makes) wired to the recorder: whatever else the machine is doing,
+/// the bot's own CPU work and its own reported waits are subtracted from
+/// the wall time, and being kept off a busy CPU mid-tick is counted. (The
+/// exact arithmetic is `time_off_the_cpu_is_wall_minus_cpu_minus_own_waits`.)
 #[cfg(target_os = "linux")]
 #[test]
 fn thread_cpu_clock_sees_starvation_and_not_own_work() {
@@ -699,17 +709,31 @@ fn thread_cpu_clock_sees_starvation_and_not_own_work() {
             overshoot: Duration::ZERO,
             ticks: 0,
         };
-        rec.begin(Instant::now(), 0);
-        spin(Duration::from_millis(700));
-        let own = rec.record(ended(Instant::now(), Duration::ZERO));
-        assert!(own < CALM, "700 ms of own work counted {own:?}");
+        let start = Instant::now();
+        rec.begin(start, 0);
+        // 700 ms of CPU, however long the machine takes to give it.
+        let cpu_start = thread_cpu_time().unwrap();
+        while thread_cpu_time().unwrap() - cpu_start < Duration::from_millis(700) {
+            std::hint::spin_loop();
+        }
+        let end = Instant::now();
+        let own = rec.record(ended(end, Duration::ZERO));
+        let wall = end - start;
+        assert!(
+            own <= wall.saturating_sub(Duration::from_millis(700)),
+            "700 ms of own CPU in {wall:?} counted {own:?} off the CPU"
+        );
 
+        // A park, reported as the loop's own wait for all of its wall time.
         let parked = Instant::now();
         std::thread::sleep(Duration::from_millis(700));
         let woke = Instant::now();
-        let slept = (woke - parked).min(Duration::from_millis(700));
-        let own_wait = rec.record(ended(woke, slept));
-        assert!(own_wait < CALM, "a 700 ms park counted {own_wait:?}");
+        let own_wait = rec.record(ended(woke, woke - parked));
+        assert!(
+            own_wait <= parked - end,
+            "a 700 ms park counted {own_wait:?}, more than the {:?} around it",
+            parked - end
+        );
 
         spin_behind_hogs(Duration::from_secs(1));
         let starved = rec.record(ended(Instant::now(), Duration::ZERO));

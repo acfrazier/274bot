@@ -4121,7 +4121,7 @@ fn capacity_warning_is_on_the_panel_banner() {
             Some(std::time::Duration::from_millis(900)),
             frontend_core::RenderPolicyLabel::RenderAll,
         ));
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let drawn = DrawnText::default();
     ctx.set_clipboard_backend(drawn.clone());
     ctx.prepare_frame(
