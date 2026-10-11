@@ -26,9 +26,11 @@ pub const CATALOG_CORE_TAG: &str = "CATALOG_CORE";
 pub const PAIRED_CORE_TAG: &str = "PAIRED_CORE";
 pub const EXTERNAL_LOADER_TAG: &str = "EXTERNAL_LOADER";
 /// Maximum pre-Start wait for the Flax pair fixture to reach successful relog
-/// and staged readiness. The 120s bound includes the host's 60s retry for
-/// login response 5 plus one further bounded window for the engine's async
-/// logout-save release; it does not extend the live proof deadline.
+/// and staged readiness. The host paces a same-world clean relog from its exit,
+/// then retries response 5 at 5s intervals within a 30s release budget, subject
+/// to shared admission limits (`play_login.rs`, `clean_release_admission_at`
+/// and `defer_clean_release_at`). Generic fallback still waits 60s. The 120s
+/// fixture bound includes that fallback; it does not extend the live proof deadline.
 pub const PAIR_FIXTURE_SETUP_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Split the original Flax live wall-clock ceiling into fixture setup and

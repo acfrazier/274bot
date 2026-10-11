@@ -1251,12 +1251,12 @@ fn relog_release_concurrent_bot_is_not_stalled() {
             ));
         }
     }
-    for (index, name) in names.iter().enumerate() {
-        receipts[index].passed = receipts[index].failures.is_empty()
-            && receipts[index].initial_ready_latency_s.is_some()
-            && receipts[index].offworld_to_login_request_s.is_some()
-            && receipts[index].relog_ready_latency_s.is_some()
-            && receipts[index].initial_session != receipts[index].relog_session;
+    for receipt in &mut receipts {
+        receipt.passed = receipt.failures.is_empty()
+            && receipt.initial_ready_latency_s.is_some()
+            && receipt.offworld_to_login_request_s.is_some()
+            && receipt.relog_ready_latency_s.is_some()
+            && receipt.initial_session != receipt.relog_session;
     }
 
     let primary_login_delay_s = primary_login_requested_at
