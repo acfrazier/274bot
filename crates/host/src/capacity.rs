@@ -17,12 +17,23 @@
 //!   so a 2 s script tick on an idle machine adds nothing. A timer or
 //!   packet wake that waits for a busy CPU, and preemption in the middle of
 //!   a tick, add all of it, on the 20 ms frame path and the idle park alike.
-//! - Elsewhere (macOS, Windows, or a Linux kernel without schedstat): how
-//!   far past its chosen deadline a timed wait returned (the 20 ms frame
-//!   sleep or the park bound). Own work is excluded by construction (a
-//!   frame that overran its 20 ms does not sleep, so it has no deadline to
-//!   miss). Preemption inside a tick and a packet wake that is late but
-//!   still before the park bound are not seen there.
+//! - macOS and Windows (and Linux without schedstat): time **off the CPU**
+//!   between two services: wall time, minus the thread's own CPU time
+//!   (`CLOCK_THREAD_CPUTIME_ID` / `GetThreadTimes`), minus the loop's own
+//!   timed waits up to their deadlines (the 20 ms frame sleep, the park),
+//!   minus waits the slot brackets with [`off_cpu_wait`]. What is left is
+//!   time the thread could have run and didn't: a late timer wake and
+//!   preemption in the middle of a tick, on both paths. The slot never
+//!   waits for its script isolate, and its per-frame locks are held only
+//!   briefly by other threads; GPU set-up, the one long block inside a
+//!   service, is bracketed. Unlike run-queue wait, though, it keeps any
+//!   blocking that is not bracketed: a page-in, or the client's shared GPU
+//!   scene lock when many bots render. A packet wake that waited for a CPU
+//!   before the park bound is inside the park, so it is not seen.
+//! - Without a thread CPU clock: how far past its deadline a timed wait
+//!   returned. Own work is excluded by construction (a frame that overran
+//!   its 20 ms does not sleep, so it has no deadline to miss); preemption
+//!   inside a tick is not seen.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
@@ -47,10 +58,16 @@ pub const MIN_LATE_BOTS: usize = 3;
 /// Late bots as a percentage of active bots, with [`MIN_LATE_BOTS`] as floor.
 pub const LATE_BOT_PERCENT: usize = 10;
 
-/// Delays of [`CALM`] or more each slot keeps. A bot can have at most about
-/// `WINDOW / CALM` of them in a window, and only [`MIN_LATE_SERVICES`] late
-/// ones decide whether it counts.
-const RING: usize = 16;
+/// Delays of [`CALM`] or more each slot keeps, for the p95 and the calm
+/// timer. Each delay is time the thread spent waiting between its previous
+/// service and this one, so the waits of successive services never
+/// overlap: all but the oldest of the delays inside a window lie inside it,
+/// and at most `WINDOW / CALM + 1` (34) fit. The ring holds every one.
+const RING: usize = (WINDOW_MS / CALM.as_millis() as u64) as usize + 1;
+/// Delays of [`LATE`] or more each slot keeps, apart from [`RING`], so no
+/// shorter delay ever pushes one out: the newest [`MIN_LATE_SERVICES`] are
+/// all a bot's count needs.
+const LATES: usize = MIN_LATE_SERVICES as usize;
 /// Low bits of a packed sample: delay ms (or tick count).
 const LOW_BITS: u32 = 24;
 const LOW_MASK: u64 = (1 << LOW_BITS) - 1;
@@ -60,7 +77,6 @@ const SHOWN_STEP_MS: u64 = 10;
 
 const WINDOW_MS: u64 = WINDOW.as_millis() as u64;
 const CLEAR_AFTER_MS: u64 = CLEAR_AFTER.as_millis() as u64;
-const LATE_MS: u64 = LATE.as_millis() as u64;
 
 /// Whether this bot counts toward the fleet threshold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,10 +214,16 @@ pub enum CapacityEval {
 /// One slot's record, written only by its own slot thread.
 struct SlotCapacity {
     class: AtomicU8,
-    /// `(at_ms + 1) << 24 | delay_ms`; 0 is empty.
+    /// `(at_ms + 1) << 24 | delay_ms` per delay of [`CALM`] or more; 0 is
+    /// empty.
     samples: [AtomicU64; RING],
+    /// The same, per delay of [`LATE`] or more.
+    lates: [AtomicU64; LATES],
     /// `(at_ms + 1) << 24 | ticks mod 2^24` at the newest game tick; 0 none.
     tick: AtomicU64,
+    /// Every counted service's delay, for live receipts.
+    #[cfg(feature = "test-support")]
+    receipt: Mutex<std::collections::VecDeque<(u64, u64)>>,
 }
 
 impl SlotCapacity {
@@ -209,12 +231,26 @@ impl SlotCapacity {
         Self {
             class: AtomicU8::new(ServiceClass::Parked as u8),
             samples: std::array::from_fn(|_| AtomicU64::new(0)),
+            lates: std::array::from_fn(|_| AtomicU64::new(0)),
             tick: AtomicU64::new(0),
+            #[cfg(feature = "test-support")]
+            receipt: Mutex::default(),
         }
     }
 
     fn class(&self) -> ServiceClass {
         ServiceClass::from_u8(self.class.load(Ordering::Relaxed))
+    }
+
+    fn clear(&self) {
+        for cell in self.samples.iter().chain(&self.lates) {
+            cell.store(0, Ordering::Relaxed);
+        }
+        #[cfg(feature = "test-support")]
+        self.receipt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
@@ -226,41 +262,140 @@ fn unpack(packed: u64) -> Option<(u64, u64)> {
     (packed != 0).then(|| ((packed >> LOW_BITS) - 1, packed & LOW_MASK))
 }
 
-/// Where a slot's scheduling delay comes from.
-enum WaitSource {
+/// What a slot reads at each service to find its scheduling delay.
+enum Clock {
     /// Cumulative run-queue wait of this thread.
     #[cfg(target_os = "linux")]
     RunQueue(RunQueueStat),
-    /// The slot loop's timed-wait overshoot.
+    /// This thread's CPU time: the delay is the time off the CPU.
+    ThreadCpu,
+    /// None: the delay is the slot loop's timed-wait overshoot.
     Overshoot,
     /// A test's cumulative run-queue wait.
     #[cfg(test)]
-    Injected(std::rc::Rc<std::cell::Cell<Duration>>),
+    InjectedWait(std::rc::Rc<std::cell::Cell<Duration>>),
+    /// A test's thread CPU time.
+    #[cfg(test)]
+    InjectedCpu(std::rc::Rc<std::cell::Cell<Duration>>),
 }
 
-impl WaitSource {
-    /// Run-queue wait where the kernel keeps it; overshoot elsewhere. Call
-    /// on the slot thread (the Linux file is that thread's).
+/// One reading of a [`Clock`].
+enum Reading {
+    /// Cumulative run-queue wait.
+    Waited(Duration),
+    /// Cumulative CPU time of the thread.
+    Cpu(Duration),
+    /// Nothing to read: use the overshoot.
+    None,
+}
+
+#[cfg(feature = "test-support")]
+static FORCE_OFF_CPU: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Slot threads bound after this measure time off the CPU (the macOS and
+/// Windows measure) even where Linux keeps run-queue wait, so that measure
+/// runs live on Linux. Test builds only.
+#[cfg(feature = "test-support")]
+pub fn force_off_cpu_measure() {
+    FORCE_OFF_CPU.store(true, Ordering::Relaxed);
+}
+
+impl Clock {
+    /// Run-queue wait where the kernel keeps it; else the thread's CPU
+    /// time; else nothing. Call on the slot thread (both are that
+    /// thread's).
     fn for_this_thread() -> Self {
+        #[cfg(feature = "test-support")]
+        let forced = FORCE_OFF_CPU.load(Ordering::Relaxed);
+        #[cfg(not(feature = "test-support"))]
+        let forced = false;
         #[cfg(target_os = "linux")]
-        if let Some(stat) = RunQueueStat::open() {
-            log_source_once("run-queue wait (Linux schedstat)");
-            return Self::RunQueue(stat);
+        if !forced {
+            if let Some(stat) = RunQueueStat::open() {
+                log_source_once("run-queue wait (Linux schedstat)");
+                return Self::RunQueue(stat);
+            }
+        }
+        if thread_cpu_time().is_some() {
+            log_source_once(if forced {
+                "time off the CPU (thread CPU clock; forced by a test)"
+            } else {
+                "time off the CPU (thread CPU clock)"
+            });
+            return Self::ThreadCpu;
         }
         log_source_once("timed-wake overshoot");
         Self::Overshoot
     }
 
-    /// Cumulative run-queue wait; `None` means use the overshoot.
-    fn waited(&self) -> Option<Duration> {
+    fn read(&self) -> Reading {
+        let cpu = |time: Option<Duration>| time.map_or(Reading::None, Reading::Cpu);
         match self {
             #[cfg(target_os = "linux")]
-            Self::RunQueue(stat) => stat.waited(),
-            Self::Overshoot => None,
+            Self::RunQueue(stat) => stat.waited().map_or(Reading::None, Reading::Waited),
+            Self::ThreadCpu => cpu(thread_cpu_time()),
+            Self::Overshoot => Reading::None,
             #[cfg(test)]
-            Self::Injected(total) => Some(total.get()),
+            Self::InjectedWait(total) => Reading::Waited(total.get()),
+            #[cfg(test)]
+            Self::InjectedCpu(total) => cpu(Some(total.get())),
         }
     }
+}
+
+/// Time off the CPU: the `wall` time between two services that the thread
+/// neither ran (`cpu`) nor spent in waits of its own (`own_waits`).
+fn off_cpu(wall: Duration, cpu: Duration, own_waits: Duration) -> Duration {
+    wall.saturating_sub(cpu).saturating_sub(own_waits)
+}
+
+/// CPU time this thread has run (user + system).
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn thread_cpu_time() -> Option<Duration> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid out pointer; the clock id is a constant.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    (rc == 0).then(|| {
+        Duration::new(
+            u64::try_from(ts.tv_sec).unwrap_or(0),
+            u32::try_from(ts.tv_nsec).unwrap_or(0),
+        )
+    })
+}
+
+/// CPU time this thread has run (kernel + user, 100 ns units).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn thread_cpu_time() -> Option<Duration> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the pseudo-handle names this thread and needs no closing; the
+    // four out pointers are valid.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+    (ok != 0).then(|| Duration::from_nanos((ticks(kernel) + ticks(user)).saturating_mul(100)))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn thread_cpu_time() -> Option<Duration> {
+    None
 }
 
 fn log_source_once(source: &str) {
@@ -319,32 +454,53 @@ fn parse_schedstat(bytes: &[u8]) -> Option<[u64; 3]> {
     Some([fields.next()??, fields.next()??, fields.next()??])
 }
 
+/// One slot-loop service, as the loop saw it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Service {
+    /// When the loop resumed for it: the sample's time.
+    pub(crate) at: Instant,
+    /// When its tick returned.
+    pub(crate) end: Instant,
+    /// Wall time in the loop's own timed waits since the previous service
+    /// (the frame sleep, the park), each counted up to its deadline.
+    pub(crate) slept: Duration,
+    /// How far past those deadlines the waits returned.
+    pub(crate) overshoot: Duration,
+    /// The client's cumulative `PLAYER_INFO` count.
+    pub(crate) ticks: u64,
+}
+
 /// The slot thread's writer: its own [`SlotCapacity`] plus the state only
 /// this thread reads. Dropping it unregisters the slot.
 struct SlotRecorder {
     monitor: Arc<CapacityMonitor>,
     slot: Arc<SlotCapacity>,
-    source: WaitSource,
+    clock: Clock,
     class: ServiceClass,
     /// The previous service was Active: the delay since then counts only
     /// when that one and this one both were.
     counted: bool,
-    /// Cumulative run-queue wait at the previous service.
-    waited: Option<Duration>,
+    /// When the previous service ended, and the clock's reading then.
+    mark: Option<(Instant, Duration)>,
+    /// Time off the CPU inside [`off_cpu_wait`] since the previous service.
+    bracketed: Duration,
     cursor: usize,
+    late_cursor: usize,
     ticks: u64,
 }
 
 impl SlotRecorder {
-    fn new(monitor: &Arc<CapacityMonitor>, source: WaitSource) -> Self {
+    fn new(monitor: &Arc<CapacityMonitor>, clock: Clock) -> Self {
         Self {
             monitor: Arc::clone(monitor),
             slot: monitor.register(),
-            source,
+            clock,
             class: ServiceClass::Parked,
             counted: false,
-            waited: None,
+            mark: None,
+            bracketed: Duration::ZERO,
             cursor: 0,
+            late_cursor: 0,
             ticks: 0,
         }
     }
@@ -357,53 +513,87 @@ impl SlotRecorder {
             return;
         }
         if self.class == ServiceClass::Active {
-            for cell in &self.slot.samples {
-                cell.store(0, Ordering::Relaxed);
-            }
+            self.slot.clear();
         }
         self.class = class;
         self.counted = false;
         self.slot.class.store(class as u8, Ordering::Relaxed);
     }
 
-    /// The slot loop starts (after login): re-baseline, count nothing until
-    /// observe reports Active twice in a row.
-    fn begin(&mut self, ticks: u64) {
+    /// The slot loop starts at `at` (after login): re-baseline, count
+    /// nothing until observe reports Active twice in a row.
+    fn begin(&mut self, at: Instant, ticks: u64) {
         self.set_class(ServiceClass::Parked);
         self.counted = false;
-        self.waited = self.source.waited();
+        self.mark = match self.clock.read() {
+            Reading::Waited(total) | Reading::Cpu(total) => Some((at, total)),
+            Reading::None => None,
+        };
+        self.bracketed = Duration::ZERO;
         self.ticks = ticks;
     }
 
-    /// One service at `at`. `overshoot` is how far past its timed deadline
-    /// the loop resumed (used only without a run-queue clock); `ticks` is
-    /// the client's cumulative `PLAYER_INFO` count.
-    fn record(&mut self, at: Instant, overshoot: Duration, ticks: u64) {
-        let delay = match self.source.waited() {
-            Some(total) => {
-                let delay = self
-                    .waited
-                    .map_or(Duration::ZERO, |prev| total.saturating_sub(prev));
-                self.waited = Some(total);
-                delay
-            }
-            None => overshoot,
+    /// Scheduling delay since the previous service (zero for the first).
+    fn delay(&mut self, service: &Service) -> Duration {
+        let bracketed = std::mem::take(&mut self.bracketed);
+        let (reading, delay) = match self.clock.read() {
+            Reading::Waited(total) => (
+                Some(total),
+                self.mark
+                    .map_or(Duration::ZERO, |(_, prev)| total.saturating_sub(prev)),
+            ),
+            Reading::Cpu(total) => (
+                Some(total),
+                self.mark.map_or(Duration::ZERO, |(prev_end, prev)| {
+                    off_cpu(
+                        service.end.saturating_duration_since(prev_end),
+                        total.saturating_sub(prev),
+                        service.slept + bracketed,
+                    )
+                }),
+            ),
+            Reading::None => (None, service.overshoot),
         };
+        self.mark = reading.map(|total| (service.end, total));
+        delay
+    }
+
+    /// One service; returns its delay.
+    fn record(&mut self, service: Service) -> Duration {
+        let delay = self.delay(&service);
         let active = self.class == ServiceClass::Active;
-        if active && self.counted && delay >= CALM {
+        if active && self.counted {
+            let at_ms = self.monitor.ms(service.at);
             let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
-            self.slot.samples[self.cursor]
-                .store(pack(self.monitor.ms(at), delay_ms), Ordering::Relaxed);
-            self.cursor = (self.cursor + 1) % RING;
+            #[cfg(feature = "test-support")]
+            {
+                let mut receipt = self.slot.receipt.lock().unwrap_or_else(|e| e.into_inner());
+                while receipt
+                    .front()
+                    .is_some_and(|&(at, _)| at_ms.saturating_sub(at) > WINDOW_MS)
+                {
+                    receipt.pop_front();
+                }
+                receipt.push_back((at_ms, delay_ms));
+            }
+            if delay >= CALM {
+                self.slot.samples[self.cursor].store(pack(at_ms, delay_ms), Ordering::Relaxed);
+                self.cursor = (self.cursor + 1) % RING;
+            }
+            if delay >= LATE {
+                self.slot.lates[self.late_cursor].store(pack(at_ms, delay_ms), Ordering::Relaxed);
+                self.late_cursor = (self.late_cursor + 1) % LATES;
+            }
         }
         self.counted = active;
-        if ticks != self.ticks {
-            self.ticks = ticks;
+        if service.ticks != self.ticks {
+            self.ticks = service.ticks;
             self.slot.tick.store(
-                pack(self.monitor.ms(at), ticks & LOW_MASK),
+                pack(self.monitor.ms(service.at), service.ticks & LOW_MASK),
                 Ordering::Relaxed,
             );
         }
+        delay
     }
 }
 
@@ -417,29 +607,66 @@ thread_local! {
     static RECORDER: RefCell<Option<SlotRecorder>> = const { RefCell::new(None) };
 }
 
-fn with_recorder(f: impl FnOnce(&mut SlotRecorder)) {
-    RECORDER.with(|cell| {
-        if let Some(recorder) = cell.borrow_mut().as_mut() {
-            f(recorder);
-        }
-    });
+fn with_recorder<T>(f: impl FnOnce(&mut SlotRecorder) -> T) -> Option<T> {
+    RECORDER.with(|cell| cell.borrow_mut().as_mut().map(f))
+}
+
+/// This slot's CPU time, when it measures time off the CPU.
+fn recorder_cpu() -> Option<Duration> {
+    with_recorder(|recorder| match recorder.clock.read() {
+        Reading::Cpu(total) => Some(total),
+        Reading::Waited(_) | Reading::None => None,
+    })
+    .flatten()
+}
+
+/// Run `wait`, a call the slot thread knows can block on the OS or another
+/// thread for a long time (GPU initialisation), and keep the time it spent
+/// off the CPU there out of this slot's scheduling delay. Only the
+/// time-off-the-CPU measure needs it: run-queue wait never counts
+/// blocking, and timed-wake overshoot doesn't look inside a tick.
+pub(crate) fn off_cpu_wait<R>(wait: impl FnOnce() -> R) -> R {
+    let Some(cpu_before) = recorder_cpu() else {
+        return wait();
+    };
+    let start = Instant::now();
+    let out = wait();
+    let wall = start.elapsed();
+    if let Some(cpu_after) = recorder_cpu() {
+        with_recorder(|recorder| {
+            recorder.bracketed +=
+                off_cpu(wall, cpu_after.saturating_sub(cpu_before), Duration::ZERO);
+        });
+    }
+    out
 }
 
 /// Register this slot thread with a play's monitor (once, at thread start).
 pub fn bind_capacity(monitor: &Arc<CapacityMonitor>) {
-    let recorder = SlotRecorder::new(monitor, WaitSource::for_this_thread());
+    let recorder = SlotRecorder::new(monitor, Clock::for_this_thread());
     RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
 }
 
-/// Bind this thread with an injected run-queue clock (`Some`) or the
-/// overshoot fallback (`None`).
+/// A test's stand-in for the slot thread's clock.
 #[cfg(test)]
-pub(crate) fn bind_capacity_for_test(
-    monitor: &Arc<CapacityMonitor>,
-    waited: Option<std::rc::Rc<std::cell::Cell<Duration>>>,
-) {
-    let source = waited.map_or(WaitSource::Overshoot, WaitSource::Injected);
-    let recorder = SlotRecorder::new(monitor, source);
+pub(crate) enum TestClock {
+    /// No clock: the loop's overshoot.
+    Overshoot,
+    /// Cumulative run-queue wait.
+    Waited(std::rc::Rc<std::cell::Cell<Duration>>),
+    /// Cumulative thread CPU time.
+    Cpu(std::rc::Rc<std::cell::Cell<Duration>>),
+}
+
+/// Bind this thread with a test's clock.
+#[cfg(test)]
+pub(crate) fn bind_capacity_for_test(monitor: &Arc<CapacityMonitor>, clock: TestClock) {
+    let clock = match clock {
+        TestClock::Overshoot => Clock::Overshoot,
+        TestClock::Waited(total) => Clock::InjectedWait(total),
+        TestClock::Cpu(total) => Clock::InjectedCpu(total),
+    };
+    let recorder = SlotRecorder::new(monitor, clock);
     RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
 }
 
@@ -455,15 +682,30 @@ pub fn set_service_class(class: ServiceClass) {
 }
 
 pub(crate) fn begin_services(ticks: u64) {
-    with_recorder(|recorder| recorder.begin(ticks));
+    with_recorder(|recorder| recorder.begin(Instant::now(), ticks));
 }
 
 pub(crate) fn end_services() {
     with_recorder(|recorder| recorder.set_class(ServiceClass::Parked));
 }
 
-pub(crate) fn record_service(at: Instant, overshoot: Duration, ticks: u64) {
-    with_recorder(|recorder| recorder.record(at, overshoot, ticks));
+pub(crate) fn record_service(service: Service) {
+    with_recorder(|recorder| recorder.record(service));
+}
+
+/// One active bot's delay per counted service over the last [`WINDOW`],
+/// for live receipts.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServiceDelays {
+    /// Counted services in the window.
+    pub services: usize,
+    /// Of those, delayed [`LATE`] or more.
+    pub late: usize,
+    /// Nearest-rank 95th percentile delay.
+    pub p95: Duration,
+    /// Longest delay.
+    pub max: Duration,
 }
 
 /// Per-play registry of slot records and the warning's hysteresis.
@@ -581,6 +823,36 @@ impl CapacityMonitor {
         delays
     }
 
+    /// Each active bot's delay per counted service over the last
+    /// [`WINDOW`], for live receipts: the same delays the warning reads,
+    /// short ones included.
+    #[cfg(feature = "test-support")]
+    pub fn service_delays(&self, now: Instant) -> Vec<ServiceDelays> {
+        const LATE_MS: u64 = LATE.as_millis() as u64;
+        let now_ms = self.ms(now);
+        self.lock()
+            .slots
+            .iter()
+            .filter(|entry| entry.slot.class() == ServiceClass::Active)
+            .filter_map(|entry| {
+                let receipt = entry.slot.receipt.lock().unwrap_or_else(|e| e.into_inner());
+                let mut delays: Vec<u64> = receipt
+                    .iter()
+                    .filter(|&&(at, _)| now_ms.saturating_sub(at) <= WINDOW_MS)
+                    .map(|&(_, delay)| delay)
+                    .collect();
+                delays.sort_unstable();
+                let max = *delays.last()?;
+                Some(ServiceDelays {
+                    services: delays.len(),
+                    late: delays.iter().filter(|&&delay| delay >= LATE_MS).count(),
+                    p95: Duration::from_millis(delays[(delays.len() * 95).div_ceil(100) - 1]),
+                    max: Duration::from_millis(max),
+                })
+            })
+            .collect()
+    }
+
     /// Decide whether to show the warning. Call at UI cadence; `render` is
     /// display-only.
     pub fn evaluate(&self, now: Instant, render: RenderPolicyLabel) -> CapacityEval {
@@ -610,7 +882,6 @@ impl CapacityMonitor {
                 }
             }
             active += 1;
-            let mut lates = 0u32;
             for cell in &entry.slot.samples {
                 let Some((at, delay_ms)) = unpack(cell.load(Ordering::Relaxed)) else {
                     continue;
@@ -618,15 +889,18 @@ impl CapacityMonitor {
                 if last_unrest.is_none_or(|newest| at > newest) {
                     *last_unrest = Some(at);
                 }
-                if now_ms.saturating_sub(at) > WINDOW_MS {
-                    continue;
-                }
-                delays.push(delay_ms);
-                if delay_ms >= LATE_MS {
-                    lates += 1;
+                if now_ms.saturating_sub(at) <= WINDOW_MS {
+                    delays.push(delay_ms);
                 }
             }
-            if lates >= MIN_LATE_SERVICES {
+            let lates = entry
+                .slot
+                .lates
+                .iter()
+                .filter_map(|cell| unpack(cell.load(Ordering::Relaxed)))
+                .filter(|&(at, _)| now_ms.saturating_sub(at) <= WINDOW_MS)
+                .count();
+            if lates >= LATES {
                 late_bots += 1;
             }
             if let Some(period) = entry.tick_period(now_ms) {

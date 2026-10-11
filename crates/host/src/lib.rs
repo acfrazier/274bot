@@ -30,6 +30,8 @@ pub use capacity::{
     bind_capacity, set_service_class, unbind_capacity, CapacityEval, CapacityMonitor,
     CapacityWarning, RenderPolicyLabel, ServiceClass,
 };
+#[cfg(feature = "test-support")]
+pub use capacity::{force_off_cpu_measure, ServiceDelays};
 pub use random::{
     detect, CooldownMap, DetectedRandom, Guardian, RandomClaim, RandomKind, RandomStatus,
 };
@@ -296,6 +298,9 @@ impl Host {
         // so re-polling it would busy-spin; skip the socket until a tick
         // consumes bytes again.
         let mut socket_stalled = false;
+        // The loop's own timed waits since the previous service, each up to
+        // its deadline: not time the host kept the bot waiting.
+        let mut slept = Duration::ZERO;
         capacity::begin_services(client.gens.player_info);
         loop {
             if probe(client) {
@@ -316,15 +321,23 @@ impl Host {
                     &mut observe,
                     Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
                 );
-                capacity::record_service(start, overshoot, client.gens.player_info);
+                let end = Instant::now();
+                capacity::record_service(capacity::Service {
+                    at: start,
+                    end,
+                    slept: std::mem::take(&mut slept),
+                    overshoot,
+                    ticks: client.gens.player_info,
+                });
                 busy = new_busy;
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
                 // (slow picture, extra idle). If the tick overruns, skip sleep:
                 // with no timed wake there is no overshoot to measure, so the
                 // slot's own slow work never reads as host lateness.
-                if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
+                if let Some(rest) = FRAME_MS.checked_sub(end - start) {
                     thread::sleep(rest);
+                    slept += rest;
                     slot.next_wake = Some(start + FRAME_MS);
                 }
                 continue;
@@ -345,6 +358,7 @@ impl Host {
             let slept_over = wake_overshoot(slot.next_wake.take(), parked);
             let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
             let now = Instant::now();
+            slept += now.saturating_duration_since(parked).min(timeout);
             let overshoot = slept_over + wake_overshoot(Some(parked + timeout), now);
             let (new_busy, _) = Self::client_tick(
                 client,
@@ -356,7 +370,13 @@ impl Host {
                 &mut observe,
                 Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
             );
-            capacity::record_service(now, overshoot, client.gens.player_info);
+            capacity::record_service(capacity::Service {
+                at: now,
+                end: Instant::now(),
+                slept: std::mem::take(&mut slept),
+                overshoot,
+                ticks: client.gens.player_info,
+            });
             busy = new_busy;
             if stream_bytes(client) != before {
                 socket_stalled = false;
@@ -626,8 +646,9 @@ impl Host {
                 // selects, `Renderer::backend_kind` reports). The
                 // preference is process-wide and idempotent, so the
                 // first paint of any slot opts the process in;
-                // `BOT_CPU=1` forces the CPU fidelity path.
-                Renderer::new_prefer(client.config.lowmem, !want_cpu)
+                // `BOT_CPU=1` forces the CPU fidelity path. GPU set-up
+                // blocks on the driver: not time the host kept us waiting.
+                capacity::off_cpu_wait(|| Renderer::new_prefer(client.config.lowmem, !want_cpu))
             });
             // `mainredraw` is the fidelity seam: it runs the `check_minimap`
             // render half (loading splash + minimap image) and
@@ -825,8 +846,8 @@ fn rearm_after_head_drop(client: &mut Client, draw_off_edge: bool, backend_flip:
 }
 
 /// How far past a timed wait's deadline the thread resumed (zero when
-/// there was no timed wait). The capacity fallback where the OS has no
-/// per-thread run-queue clock.
+/// there was no timed wait). The capacity measure where the OS has neither
+/// a run-queue nor a thread CPU clock.
 fn wake_overshoot(deadline: Option<Instant>, now: Instant) -> Duration {
     deadline.map_or(Duration::ZERO, |deadline| {
         now.saturating_duration_since(deadline)

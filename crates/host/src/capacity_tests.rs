@@ -6,6 +6,17 @@ fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
 
+/// A service at `at` with no time in the loop's own waits.
+fn svc(at: Instant, overshoot: Duration, ticks: u64) -> Service {
+    Service {
+        at,
+        end: at,
+        slept: Duration::ZERO,
+        overshoot,
+        ticks,
+    }
+}
+
 /// A monitor and a test origin 20 s after its epoch (room for older samples).
 fn monitor() -> (Arc<CapacityMonitor>, Instant) {
     let mon = Arc::new(CapacityMonitor::new());
@@ -24,10 +35,10 @@ impl Bot {
     /// Logged in and observed Active once (calm), so later services count.
     fn active(mon: &Arc<CapacityMonitor>, at: Instant) -> Self {
         let waited = Rc::new(Cell::new(Duration::ZERO));
-        let mut rec = SlotRecorder::new(mon, WaitSource::Injected(Rc::clone(&waited)));
-        rec.begin(0);
+        let mut rec = SlotRecorder::new(mon, Clock::InjectedWait(Rc::clone(&waited)));
+        rec.begin(at, 0);
         rec.set_class(ServiceClass::Active);
-        rec.record(at, Duration::ZERO, 0);
+        rec.record(svc(at, Duration::ZERO, 0));
         Self {
             rec,
             waited,
@@ -38,7 +49,7 @@ impl Bot {
     /// One service at `at` after `wait_ms` of run-queue wait.
     fn service(&mut self, at: Instant, wait_ms: u64) {
         self.waited.set(self.waited.get() + ms(wait_ms));
-        self.rec.record(at, Duration::ZERO, self.ticks);
+        self.rec.record(svc(at, Duration::ZERO, self.ticks));
     }
 
     /// `n` services 200 ms apart from `from`, each kept 700 ms off the CPU.
@@ -95,11 +106,11 @@ fn a_bots_own_slow_work_on_an_idle_machine_is_not_late() {
     );
     // Without a run-queue clock, a frame that overran its 20 ms has no
     // timed wake to miss: the loop passes zero overshoot.
-    let mut rec = SlotRecorder::new(&mon, WaitSource::Overshoot);
-    rec.begin(0);
+    let mut rec = SlotRecorder::new(&mon, Clock::Overshoot);
+    rec.begin(t0, 0);
     rec.set_class(ServiceClass::Active);
     for step in 0..5u64 {
-        rec.record(t0 + Duration::from_secs(2 * step), Duration::ZERO, 0);
+        rec.record(svc(t0 + Duration::from_secs(2 * step), Duration::ZERO, 0));
     }
     assert!(rec
         .slot
@@ -128,19 +139,122 @@ fn without_a_run_queue_clock_a_late_timed_wake_counts() {
     let (mon, t0) = monitor();
     let mut recs: Vec<SlotRecorder> = (0..3)
         .map(|_| {
-            let mut rec = SlotRecorder::new(&mon, WaitSource::Overshoot);
-            rec.begin(0);
+            let mut rec = SlotRecorder::new(&mon, Clock::Overshoot);
+            rec.begin(t0, 0);
             rec.set_class(ServiceClass::Active);
-            rec.record(t0, Duration::ZERO, 0);
+            rec.record(svc(t0, Duration::ZERO, 0));
             rec
         })
         .collect();
     for step in 1..=3u64 {
         for rec in &mut recs {
-            rec.record(t0 + ms(700 * step), ms(650), 0);
+            rec.record(svc(t0 + ms(700 * step), ms(650), 0));
         }
     }
     assert_eq!(warning(eval(&mon, t0 + ms(2200))).late_bots(), 3);
+}
+
+/// A slot measuring time off the CPU through an injected thread CPU clock,
+/// as on macOS and Windows.
+struct CpuBot {
+    rec: SlotRecorder,
+    cpu: Rc<Cell<Duration>>,
+    end: Instant,
+}
+
+impl CpuBot {
+    /// Logged in and observed Active once, its previous service ending at
+    /// `at`.
+    fn active(mon: &Arc<CapacityMonitor>, at: Instant) -> Self {
+        let cpu = Rc::new(Cell::new(Duration::ZERO));
+        let mut rec = SlotRecorder::new(mon, Clock::InjectedCpu(Rc::clone(&cpu)));
+        rec.begin(at, 0);
+        rec.set_class(ServiceClass::Active);
+        rec.record(svc(at, Duration::ZERO, 0));
+        Self { rec, cpu, end: at }
+    }
+
+    /// The loop sleeps `slept` up to its deadline, resumes `late` after
+    /// it, then runs `own` of its own work and is kept `preempted` off the
+    /// CPU inside the tick. Returns the delay it measured.
+    fn frame(&mut self, slept: u64, late: u64, own: u64, preempted: u64) -> Duration {
+        let at = self.end + ms(slept + late);
+        self.end = at + ms(own + preempted);
+        // The sleep and the wake cost a little CPU of their own.
+        self.cpu
+            .set(self.cpu.get() + ms(own) + Duration::from_micros(30));
+        self.rec.record(Service {
+            at,
+            end: self.end,
+            slept: ms(slept),
+            overshoot: ms(late),
+            ticks: 0,
+        })
+    }
+}
+
+#[test]
+fn time_off_the_cpu_is_wall_minus_cpu_minus_own_waits() {
+    let (mon, t0) = monitor();
+    let mut bot = CpuBot::active(&mon, t0);
+    let close = |delay: Duration, want: u64| {
+        assert!(
+            delay.abs_diff(ms(want)) <= ms(1),
+            "{delay:?} is not about {want} ms"
+        );
+    };
+    // A 20 ms frame on an idle machine: 5 ms work, 15 ms sleep.
+    close(bot.frame(15, 0, 5, 0), 0);
+    // Its own 2 s of work (a slow compiled tick): not off the CPU.
+    close(bot.frame(0, 0, 2000, 0), 0);
+    // A 2 s idle park that ran to its bound: the bot's own wait.
+    close(bot.frame(2000, 0, 1, 0), 0);
+    // Preempted 700 ms in the middle of a busy frame.
+    close(bot.frame(15, 0, 5, 700), 700);
+    // The timer fired on time, the CPU came 650 ms later.
+    close(bot.frame(15, 650, 5, 0), 650);
+    // Both, on one service.
+    close(bot.frame(15, 300, 5, 400), 700);
+    // A CPU clock ahead of the wall clock never underflows.
+    assert_eq!(off_cpu(ms(10), ms(20), ms(5)), Duration::ZERO);
+}
+
+#[test]
+fn busy_bots_preempted_mid_frame_are_late_their_own_work_is_not() {
+    let (mon, t0) = monitor();
+    let mut starved: Vec<CpuBot> = (0..3).map(|_| CpuBot::active(&mon, t0)).collect();
+    let mut working: Vec<CpuBot> = (0..3).map(|_| CpuBot::active(&mon, t0)).collect();
+    for _ in 0..3 {
+        for bot in &mut starved {
+            // Frames that overran their 20 ms: no sleep, so no timed wake
+            // to miss. Only time off the CPU sees the 650 ms preemption.
+            assert!(bot.frame(0, 0, 25, 650) >= LATE);
+        }
+        for bot in &mut working {
+            bot.frame(0, 0, 675, 0);
+        }
+    }
+    let w = warning(eval(&mon, t0 + ms(3000)));
+    assert_eq!((w.late_bots(), w.active_bots()), (3, 6));
+
+    // The same overran frames measured by timed-wake overshoot alone
+    // (R2's macOS/Windows measure) show nothing.
+    let (mon, t0) = monitor();
+    let mut recs: Vec<SlotRecorder> = (0..3)
+        .map(|_| {
+            let mut rec = SlotRecorder::new(&mon, Clock::Overshoot);
+            rec.begin(t0, 0);
+            rec.set_class(ServiceClass::Active);
+            rec.record(svc(t0, Duration::ZERO, 0));
+            rec
+        })
+        .collect();
+    for step in 1..=3u64 {
+        for rec in &mut recs {
+            rec.record(svc(t0 + ms(675 * step), Duration::ZERO, 0));
+        }
+    }
+    assert_eq!(eval(&mon, t0 + ms(3000)), CapacityEval::Clear);
 }
 
 #[test]
@@ -181,6 +295,65 @@ fn two_late_services_do_not_count_a_bot_three_do() {
     assert!(is_warn(eval(&mon, t0 + ms(500))));
 }
 
+/// R2 review counterexample (M1): delays of 300–599 ms must not push
+/// qualifying lates still inside the window out of the count. Each bot
+/// waits 600 ms, ten times 300 ms, 600 ms, ten times 300 ms, 600 ms (7.8 s
+/// of waiting, 20 ms of its own work per service), all inside one window.
+#[test]
+fn delays_under_late_do_not_push_out_late_ones_in_the_window() {
+    let (mon, t0) = monitor();
+    let mut bots: Vec<Bot> = (0..3).map(|_| Bot::active(&mon, t0)).collect();
+    let mut waits = vec![600u64];
+    for _ in 0..2 {
+        waits.extend([300; 10]);
+        waits.push(600);
+    }
+    let (mut at, last) = (t0, waits.len() - 1);
+    let mut next_eval = t0 + Duration::from_secs(1);
+    for (i, wait) in waits.into_iter().enumerate() {
+        at += ms(wait + 20);
+        for bot in &mut bots {
+            bot.service(at, wait);
+        }
+        // The evaluator runs once a second, never at the third late.
+        if i < last && at >= next_eval {
+            assert!(!is_warn(eval(&mon, at)), "fewer than 3 lates so far");
+            next_eval += Duration::from_secs(1);
+        }
+    }
+    assert!(at - t0 < WINDOW, "every service is inside one window");
+    let w = warning(eval(&mon, at));
+    assert_eq!((w.late_bots(), w.active_bots()), (3, 3));
+}
+
+/// Every delay of [`CALM`] or more inside the window feeds the p95. Back
+/// to back, at most `WINDOW / CALM + 1` (34) of them fit in a window.
+#[test]
+fn p95_keeps_every_unsettled_delay_in_a_full_window() {
+    let (mon, t0) = monitor();
+    let mut bots: Vec<Bot> = (0..3).map(|_| Bot::active(&mon, t0)).collect();
+    // 3 × 900 ms then 25 × 300 ms, back to back: 28 per bot, the last 27
+    // waited 9.3 s together.
+    let waits: Vec<u64> = [900; 3].into_iter().chain([300; 25]).collect();
+    let mut at = t0;
+    for wait in waits {
+        at += ms(wait);
+        for bot in &mut bots {
+            bot.service(at, wait);
+        }
+    }
+    assert_eq!(mon.recorded_delays().len(), 3 * 28);
+    // 84 delays: 75 of 300 ms, 9 of 900 ms; nearest rank 80 is 900 ms.
+    assert_eq!(warning(eval(&mon, at)).p95_delay(), Some(ms(900)));
+    // A window's worth of 300 ms waits back to back: all 34 are kept.
+    let (mon, t0) = monitor();
+    let mut bot = Bot::active(&mon, t0);
+    for i in 1..=34u64 {
+        bot.service(t0 + ms(300 * i), 300);
+    }
+    assert_eq!(mon.recorded_delays(), vec![300; 34]);
+}
+
 #[test]
 fn waits_while_parked_paused_or_logging_in_do_not_count_once_active() {
     let (mon, t0) = monitor();
@@ -200,7 +373,7 @@ fn waits_while_parked_paused_or_logging_in_do_not_count_once_active() {
     // A fresh slot loop (after login) re-baselines and skips its first
     // service too.
     let mut fresh = Bot::active(&mon, t0);
-    fresh.rec.begin(0);
+    fresh.rec.begin(t0 + ms(840), 0);
     fresh.waited.set(fresh.waited.get() + ms(5000));
     fresh.class(ServiceClass::Active);
     fresh.service(t0 + ms(850), 900);
@@ -400,15 +573,40 @@ fn per_bot_memory_is_small() {
          thread-local SlotRecorder {recorder} B, total {} B per bot",
         shared + entry + recorder
     );
-    assert!(shared + entry + recorder <= 320);
+    assert!(shared + entry + recorder <= 512);
 }
 
-/// The real Linux clock: blocking on other work (a slow script tick runs on
-/// its isolate thread) is not run-queue wait; being kept off a busy CPU is.
-#[cfg(target_os = "linux")]
+/// Live receipts read every counted service's delay, short ones too.
+#[cfg(feature = "test-support")]
 #[test]
+fn receipts_give_each_bots_max_and_p95_per_service() {
+    let (mon, t0) = monitor();
+    let mut bot = Bot::active(&mon, t0 - Duration::from_secs(12));
+    bot.service(t0 - Duration::from_secs(11), 5000);
+    for i in 1..=19u64 {
+        bot.service(t0 + ms(20 * i), 10);
+    }
+    bot.service(t0 + ms(500), 700);
+    let mut paused = Bot::active(&mon, t0);
+    paused.service(t0 + ms(100), 700);
+    paused.class(ServiceClass::Paused);
+    assert_eq!(
+        mon.service_delays(t0 + ms(600)),
+        [ServiceDelays {
+            services: 20,
+            late: 1,
+            p95: ms(10),
+            max: ms(700),
+        }],
+        "the 5 s wait is older than the window; a paused bot is left out"
+    );
+}
+
+/// Spin on this thread for `wall` behind four busy threads pinned to its
+/// CPU, at the lowest priority, so it gets the CPU only now and then.
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
-fn run_queue_wait_sees_starvation_and_not_own_work() {
+fn spin_behind_hogs(wall: Duration) {
     use std::sync::atomic::AtomicBool;
 
     fn pin(cpu: usize) {
@@ -423,6 +621,49 @@ fn run_queue_wait_sees_starvation_and_not_own_work() {
         }
     }
 
+    // SAFETY: sched_getcpu has no preconditions.
+    let cpu = usize::try_from(unsafe { libc::sched_getcpu() }).unwrap();
+    pin(cpu);
+    let stop = Arc::new(AtomicBool::new(false));
+    let hogs: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                pin(cpu);
+                while !stop.load(Ordering::Relaxed) {
+                    std::hint::spin_loop();
+                }
+            })
+        })
+        .collect();
+    // SAFETY: lowering this thread's own priority needs no privilege.
+    unsafe {
+        let tid = libc::gettid();
+        assert_eq!(
+            libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19),
+            0
+        );
+    }
+    spin(wall);
+    stop.store(true, Ordering::Relaxed);
+    for hog in hogs {
+        hog.join().unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn spin(wall: Duration) {
+    let start = Instant::now();
+    while start.elapsed() < wall {
+        std::hint::spin_loop();
+    }
+}
+
+/// The real Linux clock: blocking on other work (a slow script tick runs on
+/// its isolate thread) is not run-queue wait; being kept off a busy CPU is.
+#[cfg(target_os = "linux")]
+#[test]
+fn run_queue_wait_sees_starvation_and_not_own_work() {
     std::thread::spawn(|| {
         let stat = RunQueueStat::open().expect("schedstat");
         let before = stat.waited().unwrap();
@@ -430,42 +671,51 @@ fn run_queue_wait_sees_starvation_and_not_own_work() {
         let own = stat.waited().unwrap().saturating_sub(before);
         assert!(own < CALM, "a 700 ms own wait counted {own:?}");
 
-        // SAFETY: sched_getcpu has no preconditions.
-        let cpu = usize::try_from(unsafe { libc::sched_getcpu() }).unwrap();
-        pin(cpu);
-        let stop = Arc::new(AtomicBool::new(false));
-        let hogs: Vec<_> = (0..4)
-            .map(|_| {
-                let stop = Arc::clone(&stop);
-                std::thread::spawn(move || {
-                    pin(cpu);
-                    while !stop.load(Ordering::Relaxed) {
-                        std::hint::spin_loop();
-                    }
-                })
-            })
-            .collect();
-        // SAFETY: lowering this thread's own priority needs no privilege.
-        unsafe {
-            let tid = libc::gettid();
-            assert_eq!(
-                libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19),
-                0
-            );
-        }
         let before = stat.waited().unwrap();
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(1) {
-            std::hint::spin_loop();
-        }
+        spin_behind_hogs(Duration::from_secs(1));
         let starved = stat.waited().unwrap().saturating_sub(before);
-        stop.store(true, Ordering::Relaxed);
-        for hog in hogs {
-            hog.join().unwrap();
-        }
         assert!(
             starved >= LATE,
             "1 s behind four hogs waited only {starved:?}"
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+/// The real thread CPU clock (`CLOCK_THREAD_CPUTIME_ID`, the same call
+/// macOS makes): the bot's own CPU work and its own reported waits are not
+/// time off the CPU; being kept off a busy CPU mid-tick is.
+#[cfg(target_os = "linux")]
+#[test]
+fn thread_cpu_clock_sees_starvation_and_not_own_work() {
+    std::thread::spawn(|| {
+        let mon = Arc::new(CapacityMonitor::new());
+        let mut rec = SlotRecorder::new(&mon, Clock::ThreadCpu);
+        let ended = |end: Instant, slept: Duration| Service {
+            at: end,
+            end,
+            slept,
+            overshoot: Duration::ZERO,
+            ticks: 0,
+        };
+        rec.begin(Instant::now(), 0);
+        spin(Duration::from_millis(700));
+        let own = rec.record(ended(Instant::now(), Duration::ZERO));
+        assert!(own < CALM, "700 ms of own work counted {own:?}");
+
+        let parked = Instant::now();
+        std::thread::sleep(Duration::from_millis(700));
+        let woke = Instant::now();
+        let slept = (woke - parked).min(Duration::from_millis(700));
+        let own_wait = rec.record(ended(woke, slept));
+        assert!(own_wait < CALM, "a 700 ms park counted {own_wait:?}");
+
+        spin_behind_hogs(Duration::from_secs(1));
+        let starved = rec.record(ended(Instant::now(), Duration::ZERO));
+        assert!(
+            starved >= LATE,
+            "1 s behind four hogs was off the CPU only {starved:?}"
         );
     })
     .join()
