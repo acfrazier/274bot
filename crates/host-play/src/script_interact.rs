@@ -117,6 +117,7 @@ fn already_following(
     request_id: u64,
     key: (WorldTile, i32, bool, bool, bool),
     exclusions: &ScriptRouteExclusions,
+    compat_tile_intent: bool,
 ) -> bool {
     request_id != 0
         && navs.lock().unwrap().get(name).is_some_and(|bot| {
@@ -126,6 +127,7 @@ fn already_following(
                         (to, radius, teleports, wilderness, bank_fetch) == key
                     },
                 )
+                && bot.route_compat_tile_intent == compat_tile_intent
                 && bot.requested_exclusions.as_deref().map_or(
                     exclusions.avoid_wire.is_empty() && exclusions.cross.is_empty(),
                     |requested| {
@@ -425,7 +427,7 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions) {
+                if already_following(navs, name, request_id, key, &exclusions, false) {
                     continue;
                 }
                 let arm = ScriptWalkArm {
@@ -461,6 +463,7 @@ where
                 z,
                 level,
                 radius,
+                compat_tile_intent,
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
@@ -489,7 +492,7 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions) {
+                if already_following(navs, name, request_id, key, &exclusions, compat_tile_intent) {
                     continue;
                 }
                 let arm = ScriptWalkArm {
@@ -501,7 +504,15 @@ where
                     bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_route_in_snapshot_avoiding(
-                    snapshot, x, z, level, opts, radius, request_id, exclusions,
+                    snapshot,
+                    x,
+                    z,
+                    level,
+                    opts,
+                    radius,
+                    request_id,
+                    compat_tile_intent,
+                    exclusions,
                 );
                 if queued {
                     record_script_act(

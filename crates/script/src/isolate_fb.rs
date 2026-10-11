@@ -4436,6 +4436,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 z: row.z(),
                 level: row.level(),
                 radius: row.index().unwrap_or(0),
+                compat_tile_intent: row.compat_tile_intent(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
@@ -5160,6 +5161,7 @@ fn interact_off<'b>(
             z,
             level,
             radius,
+            compat_tile_intent,
             request_id,
             allow_wilderness,
             allow_bank_fetch,
@@ -5169,6 +5171,9 @@ fn interact_off<'b>(
             table.add_z(*z);
             table.add_level(*level);
             table.add_index(*radius);
+            if *compat_tile_intent {
+                table.add_compat_tile_intent(true);
+            }
             if *request_id != 0 {
                 table.add_request_id(*request_id);
             }
@@ -6944,6 +6949,7 @@ pub(crate) mod tests {
                 z: 3286,
                 level: 0,
                 radius: 3,
+                compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
@@ -6991,6 +6997,7 @@ pub(crate) mod tests {
                 z: 3222,
                 level: 0,
                 radius: 2,
+                compat_tile_intent: true,
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_bank_fetch: true,

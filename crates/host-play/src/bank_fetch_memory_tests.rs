@@ -708,6 +708,7 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
         bank: rows.to_vec(),
         live_candidates: None,
         exclusions: None,
+        compat_tile_intent: false,
         completion: Default::default(),
     };
     for rows in [&[][..], &[(KNIFE, 20)][..], &[(COINS, 3)][..]] {
@@ -771,6 +772,7 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
                 z: 4,
                 level: 0,
                 radius: 1,
+                compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: true,

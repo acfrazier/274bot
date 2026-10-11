@@ -761,6 +761,50 @@ impl Walk {
         cross: Vec<String>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
+        Self::begin_with_intent(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            avoid,
+            cross,
+            false,
+            cx,
+        )
+    }
+
+    /// Compat `Traversal` walks preserve a walkable requested tile as route end.
+    pub(crate) fn begin_compat_avoiding(
+        dest: WorldTile,
+        radius: i32,
+        timeout_ms: u64,
+        allow_teleports: bool,
+        avoid: Vec<InspectAvoidWire>,
+        cross: Vec<String>,
+        cx: &mut Cx<'_>,
+    ) -> Result<Self, bool> {
+        Self::begin_with_intent(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            avoid,
+            cross,
+            true,
+            cx,
+        )
+    }
+
+    fn begin_with_intent(
+        dest: WorldTile,
+        radius: i32,
+        timeout_ms: u64,
+        allow_teleports: bool,
+        avoid: Vec<InspectAvoidWire>,
+        cross: Vec<String>,
+        compat_tile_intent: bool,
+        cx: &mut Cx<'_>,
+    ) -> Result<Self, bool> {
         if here().is_none() {
             return Err(false);
         }
@@ -786,7 +830,7 @@ impl Walk {
             radius,
             allow_teleports,
         };
-        cx.emit(walk.request(avoid, cross));
+        cx.emit(walk.request(avoid, cross, compat_tile_intent));
         cx.clock().arm(timeout_ms);
         Ok(walk)
     }
@@ -818,8 +862,13 @@ impl Walk {
         cx.emit(self.release());
     }
 
-    /// The native walk this wait is for.
-    fn request(&self, avoid: Vec<InspectAvoidWire>, cross: Vec<String>) -> InteractReq {
+    /// The host walk this wait is for.
+    fn request(
+        &self,
+        avoid: Vec<InspectAvoidWire>,
+        cross: Vec<String>,
+        compat_tile_intent: bool,
+    ) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
         if self.radius > 0 {
             InteractReq::WalkNear {
@@ -827,6 +876,7 @@ impl Walk {
                 z,
                 level,
                 radius: self.radius,
+                compat_tile_intent,
                 allow_teleports: self.allow_teleports,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
@@ -1184,7 +1234,7 @@ impl Resilient {
     fn kick_walk(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         let allow_teleports = self.allow_teleports
             && here().is_some_and(|me| teleport_span_allows(self.teleport_min_span, me, self.dest));
-        match Walk::begin_avoiding(
+        match Walk::begin_compat_avoiding(
             self.dest,
             self.radius,
             self.timeout_ms,
@@ -3420,6 +3470,7 @@ pub(crate) mod tests {
                 x: 2,
                 z: 0,
                 radius: 1,
+                compat_tile_intent: false,
                 ..
             }] => {}
             other => {

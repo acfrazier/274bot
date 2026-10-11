@@ -6,6 +6,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ## [Unreleased] — 0.2.0.2
 
 ### Scripts
+- rs2b0t scripts that walk to a reachable tile with a radius now aim for that
+  tile instead of picking a nearby substitute, helping bots meeting at a spot
+  end up close enough to trade.
 
 - The current rs2b0t Duel Arena script loads again: the duel API offers the
   challenge-area check that newer catalogs use.

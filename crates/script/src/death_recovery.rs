@@ -269,6 +269,7 @@ impl Family for DeathRecovery {
                         z: anchor.z,
                         level: anchor.level,
                         radius: self.radius,
+                        compat_tile_intent: false,
                         allow_teleports: false,
                         allow_wilderness: true,
                         allow_bank_fetch: true,

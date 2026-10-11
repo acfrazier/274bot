@@ -125,6 +125,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             z,
             level,
             radius,
+            compat_tile_intent: _,
             allow_teleports,
             allow_wilderness,
             allow_bank_fetch,

@@ -3099,6 +3099,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
             z: 0,
             level: 0,
             radius: 1,
+            compat_tile_intent: false,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -3565,6 +3566,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
+        compat_tile_intent: false,
         completion: Default::default(),
     };
     let (area, _) = request.calculate();

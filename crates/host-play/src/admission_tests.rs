@@ -2124,6 +2124,7 @@ fn real_squire_walk(
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
+        compat_tile_intent: false,
         completion: Default::default(),
     };
     (to, opts.zones, request.calculate_admitted().0)
