@@ -1905,6 +1905,7 @@ impl SlotScript {
         self.watchdog.stamp_game_packet_tick(now);
     }
 
+    #[cfg(feature = "load")]
     fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
         let pen_index = |tile: WatchdogTile| {
             crate::duel::pen_at(crate::observed::Tile {
@@ -1919,6 +1920,7 @@ impl SlotScript {
         Some(player_pen) != pen_index(anchor)
     }
 
+    #[cfg(feature = "load")]
     fn hold_fight_pen_recovery_if_needed(
         &mut self,
         player: Option<WatchdogTile>,
@@ -1965,6 +1967,7 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
+        #[cfg(feature = "load")]
         if self.load_active() {
             if let (Some(anchor), Some((x, z, level))) =
                 (self.watchdog.held_fight_pen_anchor(), here)
@@ -1997,6 +2000,7 @@ impl SlotScript {
         }
         if let Some(reply) = anchor_reply {
             let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
+            #[cfg(feature = "load")]
             if let Some(action) = self.hold_fight_pen_recovery_if_needed(player, reply) {
                 return action;
             }
