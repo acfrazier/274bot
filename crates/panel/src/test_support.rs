@@ -104,9 +104,10 @@ pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
 /// context would load it at its first frame and write it back when dropped,
 /// so one test's window, dock and table settings (a Fleet column width at
 /// another font scale, for one) changed the layout the next test, and the
-/// next run, measured. Tests create contexts here, never with
-/// `Context::create()` (`no_test_creates_an_ini_backed_context` enforces it).
+/// next run, measured. Tests create contexts here; `crates/panel/clippy.toml`
+/// disallows `Context::create()` everywhere else.
 pub(crate) fn imgui_context() -> dear_imgui_rs::Context {
+    #[expect(clippy::disallowed_methods, reason = "the one sanctioned test context")]
     let mut ctx = dear_imgui_rs::Context::create();
     ctx.set_ini_filename::<PathBuf>(None)
         .expect("clearing the ini file name cannot fail");
@@ -282,37 +283,5 @@ fn test_contexts_have_no_ini_file() {
     assert!(
         ctx.io().ini_filename().is_none(),
         "a test context must not read or write imgui.ini"
-    );
-}
-
-/// One test's persisted Fleet table widths (saved at another font scale)
-/// moved the last column of the next test's table a pixel past its window.
-/// No test source creates a context that would read or write `imgui.ini`:
-/// they go through [`imgui_context`]. `window.rs` (the product) sets its own
-/// ini policy; this file is the helper.
-#[test]
-fn no_test_creates_an_ini_backed_context() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(&src).expect("read the panel source directory") {
-        let path = entry.expect("source directory entry").path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if path.extension().is_none_or(|e| e != "rs")
-            || name == "window.rs"
-            || name == "test_support.rs"
-        {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).expect("read a panel source file");
-        for (index, line) in text.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("");
-            if code.contains("Context::create(") {
-                offenders.push(format!("{name}:{}", index + 1));
-            }
-        }
-    }
-    assert!(
-        offenders.is_empty(),
-        "use test_support::imgui_context() instead of Context::create(): {offenders:?}"
     );
 }

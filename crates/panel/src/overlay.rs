@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn head_card_names_its_blocker_and_counts_down() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),

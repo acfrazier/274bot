@@ -53,6 +53,10 @@ impl ApplicationHandler for ImeFrame {
                 )
                 .expect("hidden IME test window"),
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "integration test outside test_support; clears the ini on the next line"
+        )]
         let mut context = imgui::Context::create();
         let _ = context.set_ini_filename(None::<String>);
         // Exact platform bring-up used by AppWindow::finish: new -> attach Locked(1) -> install.
