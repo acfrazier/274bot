@@ -160,7 +160,7 @@ impl TuiApp {
                 script_status_label(
                     self.script_state,
                     self.focused_detail()
-                        .and_then(|detail| detail.native_status.as_deref())
+                        .and_then(|detail| detail.native_status())
                 )
             )
         };
