@@ -9186,6 +9186,7 @@ impl<'a> Interact<'a> {
   pub const VT_SETTINGS: ::flatbuffers::VOffsetT = 84;
   pub const VT_CROSS: ::flatbuffers::VOffsetT = 86;
   pub const VT_COMBAT: ::flatbuffers::VOffsetT = 88;
+  pub const VT_COMPAT_TILE_INTENT: ::flatbuffers::VOffsetT = 90;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -9232,6 +9233,7 @@ impl<'a> Interact<'a> {
     builder.add_z(args.z);
     builder.add_x(args.x);
     if let Some(x) = args.op { builder.add_op(x); }
+    builder.add_compat_tile_intent(args.compat_tile_intent);
     builder.add_run_energy_kind(args.run_energy_kind);
     builder.add_run_auto_kind(args.run_auto_kind);
     builder.add_run_policy_clear(args.run_policy_clear);
@@ -9545,6 +9547,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CombatFight>>(Interact::VT_COMBAT, None)}
   }
+  #[inline]
+  pub fn compat_tile_intent(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_COMPAT_TILE_INTENT, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -9596,6 +9605,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SettingRow>>>>("settings", Self::VT_SETTINGS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("cross", Self::VT_CROSS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
+     .visit_field::<bool>("compat_tile_intent", Self::VT_COMPAT_TILE_INTENT, false)?
      .finish();
     Ok(())
   }
@@ -9644,6 +9654,7 @@ pub struct InteractArgs<'a> {
     pub settings: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>>>,
     pub cross: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
     pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
+    pub compat_tile_intent: bool,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -9692,6 +9703,7 @@ impl<'a> Default for InteractArgs<'a> {
       settings: None,
       cross: None,
       combat: None,
+      compat_tile_intent: false,
     }
   }
 }
@@ -9874,6 +9886,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CombatFight>>(Interact::VT_COMBAT, combat);
   }
   #[inline]
+  pub fn add_compat_tile_intent(&mut self, compat_tile_intent: bool) {
+    self.fbb_.push_slot::<bool>(Interact::VT_COMPAT_TILE_INTENT, compat_tile_intent, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -9934,6 +9950,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("settings", &self.settings());
       ds.field("cross", &self.cross());
       ds.field("combat", &self.combat());
+      ds.field("compat_tile_intent", &self.compat_tile_intent());
       ds.finish()
   }
 }

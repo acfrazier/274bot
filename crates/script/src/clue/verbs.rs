@@ -30,6 +30,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             z: i32_field(step, "z")?,
             level: i32_field(step, "level")?,
             radius: i32_field(step, "radius")?,
+            compat_tile_intent: false,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,

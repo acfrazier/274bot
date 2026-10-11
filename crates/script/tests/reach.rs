@@ -251,6 +251,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
             z: 5,
             level: 0,
             radius: 3,
+            compat_tile_intent: true,
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,

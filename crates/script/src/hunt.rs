@@ -758,6 +758,7 @@ impl<K: Kind> Hunt<K> {
                 z,
                 level,
                 radius,
+                compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: world,
                 allow_bank_fetch: world,

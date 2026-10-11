@@ -56,13 +56,17 @@ pub enum InteractReq {
         #[serde(default)]
         cross: Vec<String>,
     },
-    /// Packed navigation to a reachable tile within the requested radius.
+    /// Packed near-tile navigation; compat tile requests preserve the requested
+    /// walkable tile as their route end while using radius only for arrival.
     #[serde(rename = "walk-near")]
     WalkNear {
         x: i32,
         z: i32,
         level: i32,
         radius: i32,
+        /// Compat tile walks route to the requested walkable tile; radius only governs arrival.
+        #[serde(default)]
+        compat_tile_intent: bool,
         #[serde(default)]
         allow_teleports: bool,
         #[serde(default)]
