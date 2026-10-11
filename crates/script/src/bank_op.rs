@@ -70,6 +70,8 @@ pub(crate) struct BankView {
     side: i32,
     /// The scene's login mark ([`Scene::login_mark`]).
     login: u64,
+    /// The latest packet-derived game tick posted to the observation scene.
+    tick: u64,
     op_seq: u64,
     op_result: bool,
     x_seq: u64,
@@ -87,6 +89,7 @@ impl BankView {
             generation: session.bank_generation().unwrap_or(0),
             side: session.side_modal_id().unwrap_or(-1),
             login: scene.login_mark(),
+            tick: scene.tick().unwrap_or(0),
             op_seq: session.bank_op_result_seq().unwrap_or(0),
             op_result: session.bank_op_result().unwrap_or(false),
             x_seq: session.withdraw_x_result_seq().unwrap_or(0),
@@ -568,16 +571,25 @@ pub(crate) fn is_safe_integer(n: f64) -> bool {
 pub(crate) struct Closing {
     baseline: CloseBaseline,
     login: u64,
+    started_tick: u64,
+    timeout: Option<Duration>,
 }
 
 impl Closing {
-    /// Send the Close with `deadline` as its wait bound. `None` when the
-    /// bank is already shut: the close is true with no verb.
-    pub(crate) fn begin(view: &BankView, deadline: Duration, cx: &mut Cx<'_>) -> Option<Self> {
+    /// Send one Close. The default bound counts observed ticks while the
+    /// bank remains open; `None` when already shut means no verb is needed.
+    pub(crate) fn begin(
+        view: &BankView,
+        timeout: Option<Duration>,
+        cx: &mut Cx<'_>,
+    ) -> Option<Self> {
         if ops::close_begin(view.open).is_some() {
             return None;
         }
-        cx.clock().arm(millis(deadline));
+        if let Some(timeout) = timeout {
+            cx.clock().arm(millis(timeout));
+        }
+        let started_tick = view.tick;
         cx.emit(InteractReq::Close);
         Some(Self {
             baseline: CloseBaseline {
@@ -585,9 +597,10 @@ impl Closing {
                 side: view.side,
             },
             login: view.login,
+            started_tick,
+            timeout,
         })
     }
-
     pub(crate) fn poll(&self, view: &BankView, cx: &mut Cx<'_>) -> Option<bool> {
         match ops::close_progress(
             view.open,
@@ -595,7 +608,12 @@ impl Closing {
             view.generation,
             self.baseline,
             view.login == self.login,
-            cx.clock().bound_reached(),
+            if self.timeout.is_some() {
+                cx.clock().bound_reached()
+            } else {
+                view.open
+                    && view.tick.saturating_sub(self.started_tick) >= TRANSFER_OBSERVED_TICK_LIMIT
+            },
         ) {
             CloseScan::Complete | CloseScan::AlreadyShut => Some(true),
             CloseScan::SessionReplaced | CloseScan::TimedOut => Some(false),
@@ -612,23 +630,25 @@ pub(crate) struct CloseArgs {
 }
 
 impl CloseArgs {
-    /// The caller's `timeoutMs` is the wait bound (a negative or non-finite
-    /// one is already reached); omitted is [`ops::CLOSE_BOUND`].
-    fn deadline(&self) -> Duration {
-        let explicit = match &self.timeout_ms {
+    /// An explicit `timeoutMs` is a millisecond bound; a negative or
+    /// non-finite value expires immediately. Omission waits eight observed
+    /// ticks for the bank to shut, then lets the close session settle.
+    fn timeout(&self) -> Option<Duration> {
+        match &self.timeout_ms {
             Value::Null => None,
             value => {
                 let ms = js_number(value);
                 // Float-to-int `as` saturates; NaN is 0.
-                Some(if ms > 0.0 { ms as u64 } else { 0 })
+                Some(Duration::from_millis(if ms > 0.0 { ms as u64 } else { 0 }))
             }
-        };
-        ops::close_deadline(explicit)
+        }
     }
 }
 
 /// Frozen `Bank.close(timeoutMs)`: already shut is true with no verb; else
-/// one Close, true once the posted bank acknowledged it inside the bound.
+/// the main bank must shut, the side root release and a newer session appear.
+/// By default, eight observed ticks bound waiting for the bank to shut;
+/// explicit `timeoutMs` remains a millisecond limit.
 pub(crate) struct BankClose(Closing);
 
 impl Family for BankClose {
@@ -642,7 +662,7 @@ impl Family for BankClose {
         if view.open && busy() {
             return Begin::Done(false);
         }
-        match Closing::begin(&view, args.deadline(), cx) {
+        match Closing::begin(&view, args.timeout(), cx) {
             Some(closing) => Begin::Run(Self(closing)),
             None => Begin::Done(true),
         }
@@ -1558,12 +1578,13 @@ mod tests {
         });
     }
 
-    /// P-close (compat): already shut is true with no verb. One Close is
-    /// true only once the bank is shut, the old side root released and the
-    /// session generation newer; main shut with the old side still up is
-    /// not done. An omitted bound is 4 s, an explicit `timeoutMs` is the
-    /// bound either way, a reopened or logged-out session is false, and a
-    /// close during another transfer is false.
+    /// P-close (compat): an already-shut bank is true with no verb. A sent
+    /// Close is true once the main bank shuts, the old side root is released
+    /// and a newer session appears. The default bound expires after eight
+    /// observed ticks while the bank remains open; after it shuts, the side
+    /// root and session may still settle. An explicit `timeoutMs` remains a
+    /// hard millisecond bound; a reopened or logged-out session is false, as
+    /// is a close while another transfer is in flight.
     #[test]
     fn p_close_waits_for_the_acknowledged_close_inside_its_bound() {
         reset();
@@ -1582,24 +1603,44 @@ mod tests {
         assert_eq!(drain(), vec![InteractReq::Close]);
         post_close(2, false, SIDE_ROOT, 4);
         assert_eq!(settled(handle), Take::Pending, "main shut, side held");
-        post_close(3, false, -1, 3);
+        post_close(9, false, SIDE_ROOT, 4);
         assert_eq!(
             settled(handle),
             Take::Pending,
-            "no generation acknowledgement"
+            "a shut bank may still be releasing its side root after eight ticks"
         );
-        post_close(4, false, -1, 4);
+        post_close(10, false, -1, 3);
+        assert_eq!(
+            settled(handle),
+            Take::Pending,
+            "the session generation may still be settling"
+        );
+        post_close(11, false, -1, 4);
         assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
 
-        // Bounds: omitted 4 s, explicit 1.5 s fails while open, 8 s may
-        // still succeed after 4 s.
+        // The default timeout uses observed ticks, not host wall time.
+        reset();
+        post_close(1, true, SIDE_ROOT, 3);
+        let Started::Running(handle) = start_close(Value::Null) else {
+            panic!("an open bank closes");
+        };
+        let _ = drain();
+        machine::age(handle, 60_000);
+        post_close(8, true, SIDE_ROOT, 3);
+        assert_eq!(
+            settled(handle),
+            Take::Pending,
+            "seven observed ticks remain inside the default bound"
+        );
+        post_close(9, true, SIDE_ROOT, 3);
+        assert_eq!(
+            settled(handle),
+            Take::Settled(Outcome::Done(json!(false))),
+            "an unanswered close expires on the eighth observed tick"
+        );
+
+        // Explicit timeoutMs remains a wall-clock bound.
         for (timeout, aged, expect) in [
-            (Value::Null, 3_900, Take::Pending),
-            (
-                Value::Null,
-                4_000,
-                Take::Settled(Outcome::Done(json!(false))),
-            ),
             (
                 json!(1500),
                 1_500,

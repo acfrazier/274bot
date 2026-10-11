@@ -19,8 +19,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - A script waiting inside a Duel Arena fight pen is no longer restarted over and
   over trying to walk back to the lobby (the pen's walls make that impossible);
   the watchdog waits until the bot leaves the pen.
-- On Linux with recent processors, running several bots no longer crashes the
-  whole program when a second bot starts or restarts a script.
 
 ### Gatherer
 
@@ -36,6 +34,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   or deadline, so one line is enough to diagnose a report.
 - A watchdog restart names what the Gatherer was waiting for, and every
   pending observation wait shows that reason on the status line.
+- Bank trips on a slow computer or a laggy server no longer fail with "bank
+  transfer did not settle" or "bank unavailable". Opening, depositing,
+  withdrawing and closing each wait for a set number of game ticks and at
+  least the matching time before giving up, and a bank that doesn't open or
+  close is tried again a few times. Teller banks (such as the Mage Arena)
+  get time to finish their conversation before the bank opens.
 
 ### Random-event guardian
 
@@ -56,6 +60,60 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   stalls. A bot's own slow script doesn't count, nor do bots that are logging
   in or paused, or whose script has heard nothing from the game server for
   10 s.
+
+### Panel
+
+- The Fleet window is tidier. Its button labels no longer end in "…", its
+  table columns share the window's width instead of scrolling sideways, its
+  buttons and column checkboxes wrap on a narrow window, and "Sort:" is a
+  full-width drop-down.
+- Grid now shows the resource readout (bots, CPU, RAM, traffic) in the
+  right-hand panel, where the rail's card isn't on screen.
+- The rail's mark checkbox says "mark for Fleet actions" on servers that don't
+  allow Debug (the public worlds), and still mentions Debug actions where it
+  exists.
+- The "Render all wall members?" warning has a "Don't show again" button,
+  enabled once "I understand" is ticked. It does what OK does and remembers
+  the choice, so unchecking "only render selected" later applies at once. OK
+  alone still asks again next launch, and "only render selected" still starts
+  on at every launch.
+- "sidecar 50 fps" and "focused 50 fps" are remembered between launches. A
+  bot that isn't drawing doesn't run at 50 fps because of them.
+- WalkTo's Send window opens on screen and is sized to its list of bots, and
+  the "Walk n bots" count follows the marked bots from the rail, Grid and
+  Fleet while WalkTo is open.
+- The Status card shows what the selected bot's script is doing and why it
+  waits: its phase, and the reason when the script is parked. A Quester that
+  finds no step for its stage parks and shows `no step for stage`. A bot that
+  runs no script shows no script rows; a script refusal still showing after
+  its run stopped keeps its rows.
+
+### TUI
+
+- The status pane shows the script's phase and park reason on the same rows
+  as the panel. Those rows appear only while a script runs or a script
+  refusal is still showing.
+
+### Walking
+
+- When a one-time walk overrides danger routing and the bot's poison status is
+  unknown, the panel, TUI and log now say "Poison status is unknown until the
+  bot can track it" instead of a paragraph about internal planning.
+
+### Connection
+
+- A bot on a WebSocket world no longer disconnects and reconnects when its
+  connection is briefly congested.
+
+## [0.2.0.1.1] — 2026-10-11 — Beta 1 Linux patch
+
+This patch is for Linux only. macOS and Windows aren't affected and stay on
+0.2.0.1.
+
+### Scripts
+
+- On Linux with recent processors, running several bots no longer crashes the
+  whole program when a second bot starts or restarts a script.
 
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
