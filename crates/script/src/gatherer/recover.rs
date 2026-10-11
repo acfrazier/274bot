@@ -91,6 +91,7 @@ impl Gatherer {
             return;
         }
         if self.fence.sealed {
+            self.set_event("waiting for the next tick");
             return;
         }
         if let Some(revision) = self.apply_pending(false) {
@@ -167,7 +168,9 @@ impl Gatherer {
             }
             5 => {
                 self.return_to_resources(tick);
-                self.set_event("returning after death");
+                if matches!(self.active, Active::Walk(_)) {
+                    self.set_event("returning after death");
+                }
             }
             _ => unreachable!("invalid retained Gatherer recovery step"),
         }

@@ -20,6 +20,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   over trying to walk back to the lobby (the pen's walls make that impossible);
   the watchdog waits until the bot leaves the pen.
 
+### Gatherer
+
+- After a bank trip or a death, a resource cooldown no longer stops the
+  bot with "return failed". It waits until the exclusion ends, then walks
+  back and keeps gathering.
+- When a fishing hazard appears, the bot steps to a nearby tile it can
+  actually reach from where it stands. If every nearby tile is blocked
+  and the hazard is temporary, it waits instead of stopping with "walk
+  failed".
+- Blocked, waiting and resource-unavailable log lines name the method, work
+  area, the bot's tile when it planned the return, and the rejection reason
+  or deadline, so one line is enough to diagnose a report.
+- A watchdog restart names what the Gatherer was waiting for, and every
+  pending observation wait shows that reason on the status line.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
