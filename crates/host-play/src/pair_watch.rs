@@ -25,10 +25,10 @@ struct SlotReady {
 }
 
 enum PairRuntimeWitness {
-    Air(AirPairWitness),
-    Mule(MulePairWitness),
-    Flax(FlaxPairWitness),
-    Duel(DuelPairWitness),
+    Air(Box<AirPairWitness>),
+    Mule(Box<MulePairWitness>),
+    Flax(Box<FlaxPairWitness>),
+    Duel(Box<DuelPairWitness>),
 }
 
 #[derive(Default)]
@@ -43,7 +43,7 @@ enum PairWatchState {
     Running {
         a_account: String,
         b_account: String,
-        witness: Box<PairRuntimeWitness>,
+        witness: PairRuntimeWitness,
         duel_weapon_id: i32,
     },
     Qualified {
@@ -190,7 +190,7 @@ impl PairWatch {
                         *state = PairWatchState::Running {
                             a_account: account_a.to_string(),
                             b_account: account_b.to_string(),
-                            witness: Box::new(witness),
+                            witness,
                             duel_weapon_id: a.weapon_id,
                         };
                         Ok(())
@@ -284,13 +284,13 @@ impl PairWatch {
                 witness,
                 duel_weapon_id,
             } if a_account == account || b_account == account => {
-                let case = match &**witness {
+                let case = match witness {
                     PairRuntimeWitness::Air(_) => PairCase::Air,
                     PairRuntimeWitness::Mule(_) => PairCase::Mule,
                     PairRuntimeWitness::Flax(_) => PairCase::Flax,
                     PairRuntimeWitness::Duel(_) => PairCase::Duel,
                 };
-                let peer = match &**witness {
+                let peer = match witness {
                     PairRuntimeWitness::Duel(pair) if a_account == account => {
                         pair.a.partner.clone()
                     }
@@ -504,7 +504,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             };
             air_prepared_current(AirRole::Master, &a.account, &a_obs)?;
             air_prepared_current(AirRole::Runner, &b.account, &b_obs)?;
-            Ok(PairRuntimeWitness::Air(AirPairWitness {
+            Ok(PairRuntimeWitness::Air(Box::new(AirPairWitness {
                 master: AirSlotRecord::new(
                     AirRole::Master,
                     a.account.clone(),
@@ -521,7 +521,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b_settings,
                     b_obs,
                 ),
-            }))
+            })))
         }
         PairCase::Mule => {
             let Some(a_obs) = a.latest_air.clone() else {
@@ -532,7 +532,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             };
             mule_prepared_current(MuleRole::Crafter, &a.account, &a_obs)?;
             mule_prepared_current(MuleRole::Mule, &b.account, &b_obs)?;
-            Ok(PairRuntimeWitness::Mule(MulePairWitness {
+            Ok(PairRuntimeWitness::Mule(Box::new(MulePairWitness {
                 crafter: MuleSlotRecord::new(
                     MuleRole::Crafter,
                     a.account.clone(),
@@ -549,7 +549,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b_settings,
                     b_obs,
                 ),
-            }))
+            })))
         }
         PairCase::Flax => {
             let Some(a_obs) = a.latest_flax.clone() else {
@@ -560,7 +560,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             };
             flax_prepared_current(FlaxRole::Runner, &a.account, &a_obs)?;
             flax_prepared_current(FlaxRole::Spinner, &b.account, &b_obs)?;
-            Ok(PairRuntimeWitness::Flax(FlaxPairWitness {
+            Ok(PairRuntimeWitness::Flax(Box::new(FlaxPairWitness {
                 runner: FlaxSlotRecord::new(
                     FlaxRole::Runner,
                     a.account.clone(),
@@ -577,7 +577,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b_settings,
                     b_obs,
                 ),
-            }))
+            })))
         }
         PairCase::Duel => {
             let Some(a_obs) = a.latest_duel.clone() else {
@@ -588,7 +588,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             };
             duel_prepared_current(&a.account, &a_obs)?;
             duel_prepared_current(&b.account, &b_obs)?;
-            Ok(PairRuntimeWitness::Duel(DuelPairWitness {
+            Ok(PairRuntimeWitness::Duel(Box::new(DuelPairWitness {
                 a: DuelSlotRecord::new(
                     a.account.clone(),
                     a.account.clone(),
@@ -603,7 +603,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b_settings,
                     b_obs,
                 ),
-            }))
+            })))
         }
     }
 }
@@ -693,7 +693,7 @@ fn observe_air_locked(
                     evidence: Some(runtime_evidence(&witness)),
                 }
             } else {
-                match &mut *witness {
+                match &mut witness {
                     PairRuntimeWitness::Air(pair) if a_account == account => {
                         pair.master.observe(observation);
                     }
@@ -752,7 +752,7 @@ fn observe_flax_locked(
                     evidence: Some(runtime_evidence(&witness)),
                 }
             } else {
-                if let PairRuntimeWitness::Flax(pair) = &mut *witness {
+                if let PairRuntimeWitness::Flax(pair) = &mut witness {
                     if a_account == account {
                         pair.runner.observe(observation);
                     } else {
@@ -807,7 +807,7 @@ fn observe_duel_locked(
                     evidence: Some(runtime_evidence(&witness)),
                 }
             } else {
-                if let PairRuntimeWitness::Duel(pair) = &mut *witness {
+                if let PairRuntimeWitness::Duel(pair) = &mut witness {
                     if a_account == account {
                         pair.a.observe(observation);
                     } else {
@@ -867,6 +867,16 @@ fn runtime_evidence(witness: &PairRuntimeWitness) -> Value {
             "case": PairCase::Flax,
             "supported": pair.qualify_supported().ok(),
             "full": pair.qualify_full_cycle().ok(),
+            "frozen_script_delivery_callback": {
+                "baseline_source": "confirm_time_fallback_without_explicit_pre_offer_baseline",
+                "message_authoritative": false,
+                "delivery_evidence": if pair.qualify_supported().is_ok() {
+                    "confirmed_by_bilateral_pair_observations"
+                } else {
+                    "unproven_by_bilateral_pair_observations"
+                },
+                "explanation": "The frozen FlaxRunner passes an inventory metric without a pre-offer baseline; the helper samples at confirm after offered flax has left the pack, so its zero post-close delta can report closed_without_delivering even when this independent witness confirms delivery."
+            },
             "runner": pair.runner,
             "spinner": pair.spinner,
         }),

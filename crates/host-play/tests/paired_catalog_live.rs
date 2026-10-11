@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::{self, WEARPOS_RIGHTHAND};
 use api::interact::{self, Interactions, SendResult};
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{GameSnapshot, TradeView, WorldTile};
 use client::io::ClientRevision;
 use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
@@ -2573,6 +2573,7 @@ mod tests {
             crafting_xp: xp,
             flax,
             bow_string: string,
+            trade_session_generation: 1,
             ..FlaxObservation::default()
         }
     }
@@ -2606,32 +2607,42 @@ mod tests {
                 spinner_base,
             ),
         };
+        pair.runner.observe(flax_obs("runner", 24, 0, 0));
         pair.runner.observe(with_flax_trade(
-            flax_obs("runner", 24, 0, 0),
+            flax_obs("runner", 0, 0, 0),
             "spinner",
             true,
             false,
+            24,
+            0,
         ));
         pair.runner.observe(with_flax_trade(
-            flax_obs("runner", 24, 0, 0),
+            flax_obs("runner", 0, 0, 0),
             "spinner",
             false,
             true,
+            0,
+            0,
         ));
         pair.spinner.observe(with_flax_trade(
             flax_obs("spinner", 0, 0, 0),
             "runner",
             true,
             false,
+            0,
+            24,
         ));
         pair.spinner.observe(with_flax_trade(
             flax_obs("spinner", 0, 0, 0),
             "runner",
             false,
             true,
+            0,
+            0,
         ));
         pair.runner.observe(flax_obs("runner", 0, 0, 0));
         pair.spinner.observe(flax_obs("spinner", 24, 0, 0));
+
         pair
     }
 
@@ -2640,13 +2651,94 @@ mod tests {
         partner: &str,
         offer: bool,
         confirm: bool,
+        mine: i32,
+        theirs: i32,
     ) -> FlaxObservation {
         observation.trade_offer_open = offer;
         observation.trade_confirm_open = confirm;
         observation.trade_partner = Some(partner.into());
+        observation.trade_accept_id = if offer {
+            3420
+        } else if confirm {
+            3546
+        } else {
+            -1
+        };
+        observation.trade_mine_flax = mine;
+        observation.trade_theirs_flax = theirs;
+        observation.trade_interface_generation = if offer {
+            1
+        } else if confirm {
+            3
+        } else {
+            4
+        };
+        observation.trade_modal_generation = observation.trade_interface_generation;
+        observation.trade_inventory_generation = 1;
+        observation.trade_my_offer_packet_generation = Some(1);
+        observation.trade_their_offer_packet_generation = Some(1);
+        observation.trade_my_offer_available = offer || confirm;
+        observation.trade_their_offer_available = offer || confirm;
+        observation.trade_my_offer_stopped = false;
+        observation.trade_their_offer_stopped = false;
         observation
     }
 
+    #[test]
+    fn flax_snapshot_adapter_preserves_trade_provenance_and_container_availability() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tick(117);
+        let trade = TradeView {
+            offer_open: true,
+            partner: Some("spinner".into()),
+            accept_component_id: 3420,
+            interface_generation: 41,
+            modal_generation: 12,
+            my_offer_packet_generation: Some(73),
+            their_offer_packet_generation: Some(74),
+            inventory_generation: 73,
+            session_generation: 5,
+            my_offer_available: true,
+            their_offer_available: true,
+            ..Default::default()
+        };
+        snapshot.seed_trade(trade);
+        let observation = FlaxObservation::from_snapshot(&snapshot);
+        assert_eq!(observation.tick, 117);
+        assert_eq!(observation.trade_partner.as_deref(), Some("spinner"));
+        assert_eq!(observation.trade_accept_id, 3420);
+        assert_eq!(observation.trade_interface_generation, 41);
+        assert_eq!(observation.trade_modal_generation, 12);
+        assert_eq!(observation.trade_inventory_generation, 73);
+        assert_eq!(observation.trade_session_generation, 5);
+        assert_eq!(observation.trade_my_offer_packet_generation, Some(73));
+        assert_eq!(observation.trade_their_offer_packet_generation, Some(74));
+        assert!(observation.trade_my_offer_available);
+        assert!(observation.trade_their_offer_available);
+        assert!(!observation.trade_my_offer_stopped);
+        assert!(!observation.trade_their_offer_stopped);
+
+        let absent = FlaxObservation::from_snapshot(&GameSnapshot::new());
+        assert!(!absent.trade_my_offer_available);
+        assert!(!absent.trade_their_offer_available);
+        assert_eq!(absent.trade_my_offer_packet_generation, None);
+        assert_eq!(absent.trade_their_offer_packet_generation, None);
+        assert_eq!(absent.trade_session_generation, 0);
+        let mut stopped_snapshot = GameSnapshot::new();
+        let stopped_trade = TradeView {
+            my_offer_packet_generation: Some(74),
+            their_offer_packet_generation: Some(75),
+            my_offer_stopped: true,
+            their_offer_stopped: true,
+            ..Default::default()
+        };
+        stopped_snapshot.seed_trade(stopped_trade);
+        let stopped = FlaxObservation::from_snapshot(&stopped_snapshot);
+        assert!(!stopped.trade_my_offer_available);
+        assert!(!stopped.trade_their_offer_available);
+        assert!(stopped.trade_my_offer_stopped);
+        assert!(stopped.trade_their_offer_stopped);
+    }
     #[test]
     fn flax_rejects_wrong_partner() {
         let mut pair = flax_pair();

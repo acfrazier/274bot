@@ -320,6 +320,38 @@ next to the terminal line. The paired proofs (`nature_crafter_air`,
 `mule_crafter_air`, `flax_runner`, `duel_arena`) refuse to run without the
 pair gate.
 
+The flax pair witness distinguishes an offer being staged from a completed
+delivery. Offered flax has already left the runner's pack before the confirm
+screen, so that inventory change alone is not a delivery receipt. A transient
+offer-to-confirm modal gap can cross a player-update tick; continuation requires
+fresh offer provenance, the same named counterpart and session, and matching
+independent delivery observations from both actors. The content's explicit
+stop-transmit handoff may advance each captured offer-container generation
+once; an intervening content mutation or missing source is not that handoff.
+Unrelated inventory updates cannot refresh an offer's provenance. Replacement offers,
+refunds, stale observations and one-sided completion cannot qualify. The
+bank/deposit/return and second-delivery predicates remain ordered after the
+first proven delivery.
+
+The frozen FlaxRunner omits the trade helper's pre-offer `baseline` callback.
+Its confirm-time inventory baseline can therefore be zero both before and
+after a successful delivery, producing the script log “trade closed without
+delivering flax.” The pair receipt explains this callback limitation and
+reports whether independent bilateral observations prove delivery; it does
+not rewrite the script log, change the callback contract, or waive a real
+non-delivery failure.
+
+The TUI's flax-pair live receipt also prints `LIVE_TIMING`, separating
+`setup_elapsed_ms` from `script_elapsed_ms` (null until shared Start is
+dispatched). Flax Start waits for the spinner companion's observed relog,
+fresh scene and inventory tab, and completed fixture preparation—not merely
+an old ready snapshot. Setup has its own 120-second bound, clamped by the
+original core deadline, and expires as a named setup failure. Login response
+5 retains the host's normal backoff while the engine finishes logout; it
+does not bypass the readiness barrier. The original 180-second flax core
+ceiling is still armed once at live setup and is never reset at Start:
+late readiness can therefore still fail with incomplete script work.
+
 ## Path-backed Quester qualification
 
 New quest fixtures use `scenario::quester::quester_stage(QuesterStage { ... })`.

@@ -394,7 +394,10 @@ pub struct PuzzleBoardView<'a> {
     pub items: &'a [ItemView],
 }
 
-/// The trade ifaces' state and the four trade containers.
+/// The trade ifaces' state and the four trade containers. Generations stamp the
+/// source projection that produced these rows; availability distinguishes an
+/// observed container with a transmitting inventory source from an unavailable
+/// source.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TradeView {
     pub offer_open: bool,
@@ -407,6 +410,26 @@ pub struct TradeView {
     pub accept_component_id: i32,
     /// Decline button on the open trade root (-1 when absent).
     pub decline_component_id: i32,
+    /// Interface generation that produced this cached trade projection.
+    pub interface_generation: u64,
+    /// Global inventory-family generation at the time this projection was built.
+    pub inventory_generation: u64,
+    /// Generation of the main-modal open/close packet stream.
+    pub modal_generation: u64,
+    /// Client session generation that produced this cached projection.
+    pub session_generation: u64,
+    /// Last inventory-packet generation for the local offer component.
+    pub my_offer_packet_generation: Option<u64>,
+    /// Last inventory-packet generation for the counterpart offer component.
+    pub their_offer_packet_generation: Option<u64>,
+    /// Whether the local offer container has a transmitting packet source.
+    pub my_offer_available: bool,
+    /// Whether the counterpart offer container has a transmitting packet source.
+    pub their_offer_available: bool,
+    /// An explicit stop-transmit was observed while the local component exists.
+    pub my_offer_stopped: bool,
+    /// An explicit stop-transmit was observed while the counterpart exists.
+    pub their_offer_stopped: bool,
 }
 
 impl Default for TradeView {
@@ -420,6 +443,16 @@ impl Default for TradeView {
             partner: None,
             accept_component_id: -1,
             decline_component_id: -1,
+            interface_generation: 0,
+            inventory_generation: 0,
+            modal_generation: 0,
+            session_generation: 0,
+            my_offer_packet_generation: None,
+            their_offer_packet_generation: None,
+            my_offer_stopped: false,
+            their_offer_stopped: false,
+            my_offer_available: false,
+            their_offer_available: false,
         }
     }
 }

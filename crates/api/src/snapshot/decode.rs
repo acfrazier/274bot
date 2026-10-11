@@ -640,19 +640,29 @@ impl GameSnapshot {
         if !self.trade_gate.moved(client, self.inv_session_current) {
             return false;
         }
-        let my_offer =
-            inv_items(client, TRADEMAIN_INV, ItemContainer::TradeMyOffer).unwrap_or_default();
-        let their_offer = inv_items(client, TRADEMAIN_OTHER_INV, ItemContainer::TradeTheirOffer)
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|mut item| {
-                        item.action_family = ItemActionFamily::None;
-                        item
-                    })
-                    .collect()
+        let my_offer = inv_items(client, TRADEMAIN_INV, ItemContainer::TradeMyOffer);
+        let my_offer_packet_state = client.inventory_packet_state(TRADEMAIN_INV);
+        let my_offer_packet_generation = my_offer_packet_state.map(|state| state.generation);
+        let my_offer_available =
+            my_offer.is_some() && my_offer_packet_state.is_some_and(|state| state.transmitting);
+        let my_offer_stopped =
+            my_offer.is_some() && my_offer_packet_state.is_some_and(|state| !state.transmitting);
+        let my_offer = my_offer.unwrap_or_default();
+        let their_offer = inv_items(client, TRADEMAIN_OTHER_INV, ItemContainer::TradeTheirOffer);
+        let their_offer_packet_state = client.inventory_packet_state(TRADEMAIN_OTHER_INV);
+        let their_offer_packet_generation = their_offer_packet_state.map(|state| state.generation);
+        let their_offer_available = their_offer.is_some()
+            && their_offer_packet_state.is_some_and(|state| state.transmitting);
+        let their_offer_stopped = their_offer.is_some()
+            && their_offer_packet_state.is_some_and(|state| !state.transmitting);
+        let their_offer = their_offer
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut item| {
+                item.action_family = ItemActionFamily::None;
+                item
             })
-            .unwrap_or_default();
+            .collect();
         let side_pack =
             inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
         let (accept_component_id, decline_component_id) = trade_controls(client);
@@ -665,6 +675,16 @@ impl GameSnapshot {
             partner: trade_partner(client),
             accept_component_id,
             decline_component_id,
+            interface_generation: client.gens.iface,
+            inventory_generation: client.gens.inv,
+            modal_generation: client.main_modal_packet_state().generation,
+            session_generation: client.gens.session,
+            my_offer_packet_generation,
+            their_offer_packet_generation,
+            my_offer_stopped,
+            their_offer_stopped,
+            my_offer_available,
+            their_offer_available,
         };
         true
     }

@@ -150,6 +150,16 @@ pub struct FlaxObservation {
     pub trade_accept_id: i32,
     pub trade_mine_flax: i32,
     pub trade_theirs_flax: i32,
+    pub trade_interface_generation: u64,
+    pub trade_modal_generation: u64,
+    pub trade_inventory_generation: u64,
+    pub trade_session_generation: u64,
+    pub trade_my_offer_packet_generation: Option<u64>,
+    pub trade_their_offer_packet_generation: Option<u64>,
+    pub trade_my_offer_available: bool,
+    pub trade_their_offer_available: bool,
+    pub trade_my_offer_stopped: bool,
+    pub trade_their_offer_stopped: bool,
 }
 
 impl FlaxObservation {
@@ -182,6 +192,16 @@ impl FlaxObservation {
             trade_accept_id: trade.accept_component_id,
             trade_mine_flax: count_id(&trade.my_offer, FLAX_ID),
             trade_theirs_flax: count_id(&trade.their_offer, FLAX_ID),
+            trade_interface_generation: trade.interface_generation,
+            trade_modal_generation: trade.modal_generation,
+            trade_inventory_generation: trade.inventory_generation,
+            trade_session_generation: trade.session_generation,
+            trade_my_offer_packet_generation: trade.my_offer_packet_generation,
+            trade_their_offer_packet_generation: trade.their_offer_packet_generation,
+            trade_my_offer_available: trade.my_offer_available,
+            trade_their_offer_available: trade.their_offer_available,
+            trade_my_offer_stopped: trade.my_offer_stopped,
+            trade_their_offer_stopped: trade.their_offer_stopped,
         }
     }
 
@@ -214,20 +234,37 @@ pub struct FlaxSlotRecord {
     pub latest: Option<FlaxObservation>,
     pub post_start: u32,
     pub mixed_identity: bool,
+    pub identity_unverified: bool,
+    pub session_mismatch: bool,
     pub saw_offer_with_partner: bool,
     pub saw_confirm_with_partner: bool,
     pub saw_wrong_partner: bool,
     pub transferred_out: i32,
     pub transferred_in: i32,
     pub partner_transfer_events: u32,
+    pub exchange_outcomes: Vec<i32>,
+    pub exchange_incomes: Vec<i32>,
     pub exchange_stage: FlaxExchangeStage,
+    pub local_offer_sequence: u64,
+    pub active_episode_id: Option<u64>,
     pub episode_qty: i32,
+    pub episode_offer_qty: i32,
+    pub episode_offer_my_inventory_floor: Option<u64>,
+    pub episode_offer_their_inventory_floor: Option<u64>,
+    pub episode_offer_my_inventory_generation: Option<u64>,
+    pub episode_offer_their_inventory_generation: Option<u64>,
+    pub episode_offer_modal_generation: Option<u64>,
+    pub episode_offer_tick: Option<u32>,
+    pub episode_offer_accept_id: Option<i32>,
+    pub episode_flax_after_offer: Option<i32>,
     pub confirm_gap_tick: Option<u32>,
     pub transfer_close_tick: Option<u32>,
     pub second_delivery_before_bank_return: bool,
     pub second_delivery_after_bank_return: bool,
     pub saw_bank_open_loaded: bool,
     pub saw_bank_at_seers: bool,
+    pub physical_string_deposit_observed: bool,
+    pub bank_deposit_unlinked_to_first_transfer: bool,
     pub deposited_strings: bool,
     pub returned_to_meet: bool,
     pub string_from_script: i32,
@@ -254,20 +291,37 @@ impl FlaxSlotRecord {
             latest: None,
             post_start: 0,
             mixed_identity: false,
+            identity_unverified: false,
+            session_mismatch: false,
             saw_offer_with_partner: false,
             saw_confirm_with_partner: false,
             saw_wrong_partner: false,
             transferred_out: 0,
             transferred_in: 0,
             partner_transfer_events: 0,
+            exchange_outcomes: Vec::new(),
+            exchange_incomes: Vec::new(),
             exchange_stage: FlaxExchangeStage::Offer,
+            local_offer_sequence: 0,
+            active_episode_id: None,
             episode_qty: 0,
+            episode_offer_qty: 0,
+            episode_offer_my_inventory_floor: None,
+            episode_offer_their_inventory_floor: None,
+            episode_offer_my_inventory_generation: None,
+            episode_offer_their_inventory_generation: None,
+            episode_offer_modal_generation: None,
+            episode_offer_tick: None,
+            episode_offer_accept_id: None,
+            episode_flax_after_offer: None,
             confirm_gap_tick: None,
             transfer_close_tick: None,
             second_delivery_before_bank_return: false,
             second_delivery_after_bank_return: false,
             saw_bank_open_loaded: false,
             saw_bank_at_seers: false,
+            physical_string_deposit_observed: false,
+            bank_deposit_unlinked_to_first_transfer: false,
             deposited_strings: false,
             returned_to_meet: false,
             string_from_script: 0,
@@ -277,29 +331,170 @@ impl FlaxSlotRecord {
     }
 
     fn drop_episode(&mut self) {
+        self.active_episode_id = None;
         self.episode_qty = 0;
+        self.episode_offer_qty = 0;
+        self.episode_offer_my_inventory_floor = None;
+        self.episode_offer_their_inventory_floor = None;
+        self.episode_offer_my_inventory_generation = None;
+        self.episode_offer_their_inventory_generation = None;
+        self.episode_offer_modal_generation = None;
+        self.episode_offer_accept_id = None;
+        self.episode_offer_tick = None;
+        self.episode_flax_after_offer = None;
         self.confirm_gap_tick = None;
         self.transfer_close_tick = None;
         self.exchange_stage = FlaxExchangeStage::Offer;
     }
 
-    fn bind_episode(&mut self, observation: &FlaxObservation) {
-        let mine_stale = self.latest.as_ref().is_some_and(|prev| {
-            !prev.trade_offer_open
-                && prev.trade_mine_flax == observation.trade_mine_flax
-                && observation.trade_mine_flax > 0
-        });
-        let authoritative_mine = observation.trade_offer_open && !mine_stale;
-        self.episode_qty = observation.flax
-            + if authoritative_mine {
-                observation.trade_mine_flax
-            } else {
-                0
-            };
+    fn bind_episode(
+        &mut self,
+        observation: &FlaxObservation,
+        previous_flax: i32,
+        previous_my_offer_packet_generation: Option<u64>,
+        previous_their_offer_packet_generation: Option<u64>,
+    ) {
+        self.active_episode_id = Some(self.local_offer_sequence);
+        self.episode_qty = previous_flax;
+        self.episode_offer_qty = 0;
+        self.episode_offer_my_inventory_floor = previous_my_offer_packet_generation;
+        self.episode_offer_their_inventory_floor = previous_their_offer_packet_generation;
+        self.episode_offer_my_inventory_generation = None;
+        self.episode_offer_their_inventory_generation = None;
+        self.episode_offer_modal_generation = Some(observation.trade_modal_generation);
+        self.episode_offer_accept_id =
+            (observation.trade_accept_id >= 0).then_some(observation.trade_accept_id);
+        self.episode_offer_tick = Some(observation.tick);
+        self.episode_flax_after_offer = None;
         self.confirm_gap_tick = None;
         self.transfer_close_tick = None;
         self.saw_offer_with_partner = true;
         self.exchange_stage = FlaxExchangeStage::Confirm;
+    }
+
+    fn capture_offer_contents(&mut self, observation: &FlaxObservation) -> bool {
+        if !observation.trade_my_offer_available || !observation.trade_their_offer_available {
+            return true;
+        }
+        let (quantity, other_quantity) = match self.role {
+            FlaxRole::Runner => (observation.trade_mine_flax, observation.trade_theirs_flax),
+            FlaxRole::Spinner => (observation.trade_theirs_flax, observation.trade_mine_flax),
+        };
+        if quantity <= 0 {
+            return other_quantity == 0;
+        }
+        let (Some(my_generation), Some(their_generation), Some(offer_modal_generation)) = (
+            observation.trade_my_offer_packet_generation,
+            observation.trade_their_offer_packet_generation,
+            self.episode_offer_modal_generation,
+        ) else {
+            return false;
+        };
+        if my_generation <= self.episode_offer_my_inventory_floor.unwrap_or(0)
+            || their_generation <= self.episode_offer_their_inventory_floor.unwrap_or(0)
+            || observation.trade_modal_generation != offer_modal_generation
+            || other_quantity != 0
+        {
+            return false;
+        }
+        if self.episode_offer_qty > 0 && self.episode_offer_qty != quantity {
+            return false;
+        }
+        let pack_before_offer = match self.role {
+            FlaxRole::Runner => observation.flax + quantity,
+            FlaxRole::Spinner => observation.flax,
+        };
+        if pack_before_offer != self.episode_qty {
+            return false;
+        }
+        self.episode_offer_qty = quantity;
+        self.episode_offer_my_inventory_generation = Some(my_generation);
+        self.episode_offer_their_inventory_generation = Some(their_generation);
+        self.episode_flax_after_offer = Some(observation.flax);
+        true
+    }
+    fn offer_packet_state_matches(
+        captured_generation: u64,
+        current_generation: Option<u64>,
+        available: bool,
+        stopped: bool,
+    ) -> bool {
+        if current_generation == Some(captured_generation) {
+            return available && !stopped;
+        }
+        captured_generation.checked_add(1) == current_generation && stopped && !available
+    }
+
+    fn offer_packet_states_still_belong(&self, observation: &FlaxObservation) -> bool {
+        let (Some(my_generation), Some(their_generation)) = (
+            self.episode_offer_my_inventory_generation,
+            self.episode_offer_their_inventory_generation,
+        ) else {
+            return false;
+        };
+        Self::offer_packet_state_matches(
+            my_generation,
+            observation.trade_my_offer_packet_generation,
+            observation.trade_my_offer_available,
+            observation.trade_my_offer_stopped,
+        ) && Self::offer_packet_state_matches(
+            their_generation,
+            observation.trade_their_offer_packet_generation,
+            observation.trade_their_offer_available,
+            observation.trade_their_offer_stopped,
+        )
+    }
+
+    fn gap_still_belongs_to_episode(&self, observation: &FlaxObservation) -> bool {
+        let (Some(offer_modal_generation), Some(flax_after_offer)) = (
+            self.episode_offer_modal_generation,
+            self.episode_flax_after_offer,
+        ) else {
+            return false;
+        };
+        if self.episode_offer_qty <= 0
+            || observation.flax != flax_after_offer
+            || !self.offer_packet_states_still_belong(observation)
+            || observation
+                .trade_modal_generation
+                .checked_sub(offer_modal_generation)
+                .is_none_or(|delta| delta > 1)
+        {
+            return false;
+        }
+        self.confirm_gap_tick.is_none_or(|gap_tick| {
+            observation.tick >= gap_tick && observation.tick.saturating_sub(gap_tick) <= 1
+        })
+    }
+
+    fn confirm_belongs_to_episode(&self, observation: &FlaxObservation) -> bool {
+        let (
+            Some(offer_modal_generation),
+            Some(offer_accept_id),
+            Some(offer_tick),
+            Some(flax_after_offer),
+        ) = (
+            self.episode_offer_modal_generation,
+            self.episode_offer_accept_id,
+            self.episode_offer_tick,
+            self.episode_flax_after_offer,
+        )
+        else {
+            return false;
+        };
+        self.episode_offer_qty > 0
+            && observation.tick >= offer_tick
+            && observation
+                .trade_modal_generation
+                .checked_sub(offer_modal_generation)
+                .is_some_and(|delta| (1..=2).contains(&delta))
+            && self.offer_packet_states_still_belong(observation)
+            && observation.trade_accept_id >= 0
+            && observation.trade_accept_id != offer_accept_id
+            && observation.flax == flax_after_offer
+            && self.confirm_gap_tick.is_none_or(|gap_tick| {
+                observation.tick >= gap_tick && observation.tick.saturating_sub(gap_tick) <= 1
+            })
     }
 
     fn partnerless_confirm(observation: &FlaxObservation) -> bool {
@@ -312,28 +507,49 @@ impl FlaxSlotRecord {
 
     pub fn observe(&mut self, observation: FlaxObservation) {
         self.post_start = self.post_start.saturating_add(1);
-        if observation
+        let identity_ok = observation
             .player
             .as_deref()
-            .is_some_and(|player| !account_identity_eq(player, &self.expected_player))
-        {
+            .is_some_and(|player| account_identity_eq(player, &self.expected_player));
+        if observation.player.is_none() {
+            self.identity_unverified = true;
+        } else if !identity_ok {
             self.mixed_identity = true;
         }
-        let prev_flax = self
-            .latest
-            .as_ref()
-            .map(|row| row.flax)
-            .unwrap_or(self.baseline.flax);
-        let prev_string = self
-            .latest
-            .as_ref()
-            .map(|row| row.bow_string)
-            .unwrap_or(self.baseline.bow_string);
-        let prev_xp = self
-            .latest
-            .as_ref()
-            .map(|row| row.crafting_xp)
-            .unwrap_or(self.baseline.crafting_xp);
+        let session_ok =
+            observation.trade_session_generation == self.baseline.trade_session_generation;
+        if !session_ok || !observation.ingame || observation.scene_state != 2 {
+            self.session_mismatch = true;
+        }
+        let continuity_ok =
+            identity_ok && session_ok && observation.ingame && observation.scene_state == 2;
+        let (
+            prev_flax,
+            prev_string,
+            prev_xp,
+            prev_trade_modal_generation,
+            prev_my_offer_packet_generation,
+            prev_their_offer_packet_generation,
+        ) = self.latest.as_ref().map_or(
+            (
+                self.baseline.flax,
+                self.baseline.bow_string,
+                self.baseline.crafting_xp,
+                self.baseline.trade_modal_generation,
+                self.baseline.trade_my_offer_packet_generation,
+                self.baseline.trade_their_offer_packet_generation,
+            ),
+            |row| {
+                (
+                    row.flax,
+                    row.bow_string,
+                    row.crafting_xp,
+                    row.trade_modal_generation,
+                    row.trade_my_offer_packet_generation,
+                    row.trade_their_offer_packet_generation,
+                )
+            },
+        );
         let flax_out = (prev_flax - observation.flax).max(0);
         let string_out = (prev_string - observation.bow_string).max(0);
         let named_partner = observation
@@ -353,56 +569,73 @@ impl FlaxSlotRecord {
                 .as_ref()
                 .is_none_or(|prev| !prev.trade_offer_open);
         let stage_before = self.exchange_stage;
-        if self.saw_wrong_partner {
+        if self.saw_wrong_partner || !continuity_ok {
             self.drop_episode();
         } else if offer_rising {
-            // A new offer ends the old episode even before its partner is known.
+            // Every newly observed offer invalidates the previous local episode.
             self.drop_episode();
-            if named_partner {
-                self.bind_episode(&observation);
+            self.local_offer_sequence = self.local_offer_sequence.saturating_add(1);
+            if named_partner
+                && observation.trade_modal_generation > prev_trade_modal_generation
+                && observation.trade_accept_id >= 0
+            {
+                self.bind_episode(
+                    &observation,
+                    prev_flax,
+                    prev_my_offer_packet_generation,
+                    prev_their_offer_packet_generation,
+                );
+                if !self.capture_offer_contents(&observation) {
+                    self.drop_episode();
+                }
             }
         } else {
             match self.exchange_stage {
                 FlaxExchangeStage::Offer => {}
                 FlaxExchangeStage::Confirm => {
-                    if Self::partnerless_confirm(&observation) {
+                    if Self::partnerless_confirm(&observation)
+                        || (observation.trade_active() && !named_partner)
+                    {
                         self.drop_episode();
-                    } else if observation.trade_confirm_open && named_partner {
-                        match self.confirm_gap_tick {
-                            None => {
-                                self.saw_confirm_with_partner = true;
-                                self.exchange_stage = FlaxExchangeStage::Transfer;
-                            }
-                            Some(tick) if tick == observation.tick => {
-                                self.saw_confirm_with_partner = true;
-                                self.exchange_stage = FlaxExchangeStage::Transfer;
-                            }
-                            Some(_) => self.drop_episode(),
+                    } else if observation.trade_offer_open {
+                        if !named_partner || !self.capture_offer_contents(&observation) {
+                            self.drop_episode();
                         }
-                    } else if !observation.trade_active() {
-                        match self.confirm_gap_tick {
-                            None => self.confirm_gap_tick = Some(observation.tick),
-                            Some(tick) if tick == observation.tick => {}
-                            Some(_) => self.drop_episode(),
+                    } else if observation.trade_confirm_open {
+                        if named_partner && self.confirm_belongs_to_episode(&observation) {
+                            self.saw_confirm_with_partner = true;
+                            self.exchange_stage = FlaxExchangeStage::Transfer;
+                        } else {
+                            self.drop_episode();
                         }
+                    } else if !self.gap_still_belongs_to_episode(&observation) {
+                        self.drop_episode();
+                    } else if self.confirm_gap_tick.is_none() {
+                        self.confirm_gap_tick = Some(observation.tick);
                     }
                 }
                 FlaxExchangeStage::Transfer => {
-                    if !observation.trade_active() {
-                        if self.transfer_close_tick.is_none() {
-                            self.transfer_close_tick = Some(observation.tick);
+                    if observation.trade_active() {
+                        if !named_partner || observation.trade_offer_open {
+                            self.drop_episode();
                         }
+                    } else if self.transfer_close_tick.is_none() {
+                        self.transfer_close_tick = Some(observation.tick);
+                    }
+                    if !observation.trade_active()
+                        && self.exchange_stage == FlaxExchangeStage::Transfer
+                    {
                         if self.transfer_close_tick != Some(observation.tick) {
                             self.drop_episode();
                         } else {
                             let at_meet = near(observation.tile, FLAX_MEET, 8);
-                            let flax_out = (self.episode_qty - observation.flax).max(0);
-                            let flax_in = (observation.flax - self.episode_qty).max(0);
+                            let transfer_qty = match self.role {
+                                FlaxRole::Runner => (self.episode_qty - observation.flax).max(0),
+                                FlaxRole::Spinner => (observation.flax - self.episode_qty).max(0),
+                            };
                             let completed = at_meet
-                                && match self.role {
-                                    FlaxRole::Runner => flax_out > 0,
-                                    FlaxRole::Spinner => flax_in > 0,
-                                };
+                                && self.episode_offer_qty > 0
+                                && transfer_qty == self.episode_offer_qty;
                             if completed {
                                 if self.role == FlaxRole::Spinner
                                     && self.partner_transfer_events == 1
@@ -413,8 +646,16 @@ impl FlaxSlotRecord {
                                         self.second_delivery_before_bank_return = true;
                                     }
                                 }
-                                self.transferred_out += flax_out;
-                                self.transferred_in += flax_in;
+                                match self.role {
+                                    FlaxRole::Runner => {
+                                        self.transferred_out += transfer_qty;
+                                        self.exchange_outcomes.push(transfer_qty);
+                                    }
+                                    FlaxRole::Spinner => {
+                                        self.transferred_in += transfer_qty;
+                                        self.exchange_incomes.push(transfer_qty);
+                                    }
+                                }
                                 self.partner_transfer_events =
                                     self.partner_transfer_events.saturating_add(1);
                                 self.drop_episode();
@@ -442,6 +683,12 @@ impl FlaxSlotRecord {
             self.saw_bank_open_loaded = true;
             if near(observation.tile, FLAX_BANK, 8) {
                 self.saw_bank_at_seers = true;
+                if string_out > 0 {
+                    self.physical_string_deposit_observed = true;
+                    if self.partner_transfer_events == 0 {
+                        self.bank_deposit_unlinked_to_first_transfer = true;
+                    }
+                }
             }
         }
         if self.role == FlaxRole::Spinner
@@ -484,16 +731,36 @@ fn debug_trade_edge_flax(
             || prev.trade_confirm_open != observation.trade_confirm_open
             || prev.trade_partner != observation.trade_partner
             || prev.trade_accept_id != observation.trade_accept_id
+            || prev.trade_modal_generation != observation.trade_modal_generation
+            || prev.trade_my_offer_packet_generation != observation.trade_my_offer_packet_generation
+            || prev.trade_their_offer_packet_generation
+                != observation.trade_their_offer_packet_generation
+            || prev.trade_my_offer_available != observation.trade_my_offer_available
+            || prev.trade_their_offer_available != observation.trade_their_offer_available
+            || prev.trade_my_offer_stopped != observation.trade_my_offer_stopped
+            || prev.trade_their_offer_stopped != observation.trade_their_offer_stopped
+            || prev.trade_mine_flax != observation.trade_mine_flax
+            || prev.trade_theirs_flax != observation.trade_theirs_flax
             || stage_before != stage_after
     });
     if changed {
         eprintln!(
-            "PAIR_TRADE_EDGE actor={actor} tick={} offer={} confirm={} partner={} accept_id={} held_flax={} held_string={} stage={stage_before:?}->{stage_after:?}",
+            "PAIR_TRADE_EDGE actor={actor} tick={} offer={} confirm={} partner={} accept_id={} modal_gen={} inv_gen={} my_gen={:?} their_gen={:?} my_available={} their_available={} my_stopped={} their_stopped={} offer_mine={} offer_theirs={} held_flax={} held_string={} stage={stage_before:?}->{stage_after:?}",
             observation.tick,
             observation.trade_offer_open,
             observation.trade_confirm_open,
             observation.trade_partner.as_deref().unwrap_or("<none>"),
             observation.trade_accept_id,
+            observation.trade_modal_generation,
+            observation.trade_inventory_generation,
+            observation.trade_my_offer_packet_generation,
+            observation.trade_their_offer_packet_generation,
+            observation.trade_my_offer_available,
+            observation.trade_their_offer_available,
+            observation.trade_my_offer_stopped,
+            observation.trade_their_offer_stopped,
+            observation.trade_mine_flax,
+            observation.trade_theirs_flax,
             observation.flax,
             observation.bow_string,
         );
@@ -526,6 +793,27 @@ impl FlaxPairWitness {
         if self.spinner.transferred_in <= 0 {
             return Err("missing conservation: spinner did not receive flax 1779".into());
         }
+        if self.runner.exchange_outcomes.len() != self.spinner.exchange_incomes.len() {
+            return Err(format!(
+                "missing conservation: runner has {} bound deliveries, spinner has {}",
+                self.runner.exchange_outcomes.len(),
+                self.spinner.exchange_incomes.len()
+            ));
+        }
+        for (index, (sent, received)) in self
+            .runner
+            .exchange_outcomes
+            .iter()
+            .zip(&self.spinner.exchange_incomes)
+            .enumerate()
+        {
+            if sent != received {
+                return Err(format!(
+                    "missing conservation: exchange {} runner sent {sent} flax 1779, spinner received {received}",
+                    index + 1
+                ));
+            }
+        }
         if self.runner.transferred_out != self.spinner.transferred_in {
             return Err(format!(
                 "missing conservation: runner sent {} flax 1779, spinner received {}",
@@ -536,6 +824,9 @@ impl FlaxPairWitness {
     }
 
     pub fn qualify_full_cycle(&self) -> Result<FlaxClaim, String> {
+        if self.spinner.bank_deposit_unlinked_to_first_transfer && !self.spinner.deposited_strings {
+            return Err("bank observed but unlinked prior transfer: spinner physically deposited strings at Seers before a bilateral flax delivery was proven".into());
+        }
         self.qualify_supported()?;
         if self.spinner.second_delivery_before_bank_return {
             return Err("no further work for full-cycle claims: second delivery occurred before spinner bank deposit/return".into());
@@ -552,12 +843,15 @@ impl FlaxPairWitness {
                     .into(),
             );
         }
+        if !self.spinner.saw_bank_at_seers {
+            return Err("no physical bank observation: spinner never opened a loaded bank at Seers after the first spin".into());
+        }
         if !self.spinner.deposited_strings
             || !self.spinner.saw_bank_open_loaded
-            || !self.spinner.saw_bank_at_seers
+            || !self.spinner.physical_string_deposit_observed
         {
             return Err(
-                "no actual bank restock: spinner never deposited strings at Seers after the first spin"
+                "bank observed but no linked string deposit: spinner did not physically deposit spun strings at Seers after the first transfer"
                     .into(),
             );
         }
@@ -585,6 +879,17 @@ impl FlaxPairWitness {
         }
         if self.runner.mixed_identity || self.spinner.mixed_identity {
             return Err("mixed identities: published player did not match the minted slot".into());
+        }
+        if self.runner.identity_unverified || self.spinner.identity_unverified {
+            return Err(
+                "stale identity: local player identity was absent during pair observations".into(),
+            );
+        }
+        if self.runner.session_mismatch || self.spinner.session_mismatch {
+            return Err(
+                "stale session identity: pair observations crossed the prepared client session"
+                    .into(),
+            );
         }
         if self.runner.post_start == 0 || self.spinner.post_start == 0 {
             return Err("queued-only success: no post-Start observations".into());
