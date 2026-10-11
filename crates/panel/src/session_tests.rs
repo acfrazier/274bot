@@ -3427,7 +3427,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     s.open_walkto_for_marked();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut label_after_frame = |s: &mut Session| {
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
@@ -6970,7 +6970,7 @@ fn queue_for_tracks_each_named_row_independent_of_focus() {
         },
     ]);
     s.core.poll_host();
-    let place = |position, total| Some(frontend_core::QueuePlace { position, total });
+    let place = |position, total| Some(frontend_core::QueuePlace::new(position, total));
     assert_eq!(s.queue_for("alice"), place(2, 3));
     assert_eq!(s.queue_for("bob"), place(1, 2));
 
