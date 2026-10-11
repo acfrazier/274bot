@@ -5819,9 +5819,10 @@ fn compat_radius_does_not_fall_back_when_the_walkable_anchor_is_unreachable() {
         })),
     };
     assert!(request.world.collision.walkable(target));
-    assert_eq!(request.targets(), vec![target]);
+    let (outcome, targets) = request.calculate();
+    assert_eq!(targets, vec![target]);
     assert!(
-        matches!(request.calculate().0, RouteOutcome::NoPath),
+        matches!(outcome, RouteOutcome::NoPath),
         "an excluded walkable destination must not succeed via a radius fallback"
     );
 }
@@ -24057,20 +24058,24 @@ export default class T extends LoopingBot {{
             PostedWalkOutcome::default(),
         ));
         iso.on_game_tick(1);
+        assert!(iso.probe("__started").unwrap().as_bool().unwrap());
         let emitted = iso.drain_interacts();
         let batch = script::isolate_fb::encode_interact_batch(&emitted);
         let requests = script::isolate_fb::decode_interact_batch(&batch).expect("walk batch");
-        assert!(matches!(
-            requests.as_slice(),
-            [script::shim::InteractReq::WalkNear {
-                x: 10,
-                z: 10,
-                level: 0,
-                radius: 2,
-                compat_tile_intent: true,
-                ..
-            }]
-        ));
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [script::shim::InteractReq::WalkNear {
+                    x: 10,
+                    z: 10,
+                    level: 0,
+                    radius: 2,
+                    compat_tile_intent: true,
+                    ..
+                }]
+            ),
+            "{name} emitted {requests:?}"
+        );
 
         let mut client = nav_client();
         let mut snapshot = GameSnapshot::new();
