@@ -50,7 +50,7 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
     let profile = options
         .resolve(None)
         .expect("profile resolve")
-        .bind()
+        .bind_runtime()
         .expect("profile bind");
     assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(profile.client().game_host(), "127.0.0.1");
@@ -654,6 +654,108 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     panic!("guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent}");
 }
 
+fn lamp_total(snapshot: &GameSnapshot) -> i32 {
+    snapshot.inv_count(LAMP_OBJ)
+}
+
+/// `(xp, base)` of the client's skill named `skill`: the same string the
+/// vault `lamp_skill` and the xplamp buttons carry.
+fn skill_stat(snapshot: &GameSnapshot, skill: &str) -> Option<(i32, i32)> {
+    snapshot
+        .stats()
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(skill))
+        .map(|s| (s.xp, s.base))
+}
+
+/// Two genie lamps in one stack, lamp auto on for a non-default skill, and
+/// the settings never touched: both lamps must be redeemed for that skill
+/// and the guardian must release its hold, with no toggle in between.
+fn run_guardian_lamp_pair(
+    template: Arc<SharedClientTemplate>,
+    profile: Arc<host_play::ServerProfile>,
+) {
+    const SKILL: &str = "attack";
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("lp{}{}", profile.revision().as_i32(), serial % 10_000_000);
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .expect("prepare selected client");
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    assert!(
+        interact::cheat(&mut client, "give macro_genilamp 2").is_sent(),
+        "local give command refused"
+    );
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(30),
+        "lamp-stack-of-two",
+        |snapshot| lamp_total(snapshot) == 2,
+    );
+    let (xp_before, _) = skill_stat(&snapshot, SKILL).expect("attack stat baseline");
+    let settings = ProfileSettings {
+        random_events: true,
+        lamp_auto: true,
+        lamp_skill: SKILL.into(),
+        ..Default::default()
+    };
+    let mut guardian = Guardian::new();
+    let end = Instant::now() + Duration::from_secs(240);
+    let mut lamps_last = lamp_total(&snapshot);
+    let mut was_open = false;
+    let mut opens = 0;
+    let mut hold_seen = false;
+    while Instant::now() < end {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let status = guardian.tick(&mut client, &snapshot, &settings, now_ms, None);
+        let open = snapshot.modals().main == LAMP_IF_ROOT;
+        if open && !was_open {
+            opens += 1;
+        }
+        was_open = open;
+        hold_seen |= status.hold && status.ours;
+        let lamps = lamp_total(&snapshot);
+        let xp = skill_stat(&snapshot, SKILL).map(|(xp, _)| xp);
+        if lamps != lamps_last {
+            lamps_last = lamps;
+            println!(
+                "{}",
+                json!({"phase": "lamp-count", "lamps": lamps, "interface_opens": opens, "xp": xp, "hold": status.hold, "ours": status.ours})
+            );
+        }
+        if lamps == 0 && opens >= 2 && xp.is_some_and(|xp| xp > xp_before) && !status.hold {
+            println!(
+                "PASS: guardian_lamp_pair: {}",
+                json!({"skill": SKILL, "xp_before": xp_before, "xp_after": xp, "interface_opens": opens, "hold_seen": hold_seen, "lamps_after": lamps})
+            );
+            if client.ingame {
+                client.logout();
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if client.ingame {
+        client.logout();
+    }
+    panic!(
+        "guardian_lamp_pair incomplete: lamps={} interface_opens={opens} xp_before={xp_before} xp={:?} hold_seen={hold_seen}",
+        lamp_total(&snapshot),
+        skill_stat(&snapshot, SKILL).map(|(xp, _)| xp)
+    );
+}
+
 fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
     let in_maze = |tile: Option<(i32, i32, i32)>| {
         tile.and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
@@ -748,12 +850,18 @@ fn world_boundary_live() {
         let case = required("WORLD_CASE");
         assert!(matches!(
             case.as_str(),
-            "nav_full" | "nav_door" | "guardian_lamp" | "guardian_maze" | "bank_return"
+            "nav_full"
+                | "nav_door"
+                | "guardian_lamp"
+                | "guardian_lamp_pair"
+                | "guardian_maze"
+                | "bank_return"
         ));
         let (profile, template) = selected();
         match case.as_str() {
             "nav_full" | "nav_door" => run_nav(&case, template, profile),
             "guardian_lamp" => run_guardian(template, profile),
+            "guardian_lamp_pair" => run_guardian_lamp_pair(template, profile),
             "guardian_maze" => run_guardian_maze(template, profile),
             "bank_return" => run_bank_return(template, profile),
             _ => unreachable!(),

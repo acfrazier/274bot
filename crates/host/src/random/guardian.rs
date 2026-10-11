@@ -115,8 +115,9 @@ pub struct Guardian {
     box_answer_count: Option<i32>,
     /// Lamp: Rub went out — do not Rub again until the skill IF closes.
     lamp_rubbed: bool,
-    /// Lamp: Rub attempts sent this redemption (first plus bounded
-    /// re-Rubs, [`MAX_LAMP_RUBS`] cap).
+    /// Lamp: Rub attempts sent in the current episode (re-Rubs after a
+    /// missed skill IF, [`MAX_LAMP_RUBS`] cap; reset when a pause starts a
+    /// new episode and when the redemption resolves).
     lamp_rubs: u32,
     /// Lamp: the skill button went out — the next tick on the IF presses
     /// confirm (2831).
@@ -135,9 +136,18 @@ pub struct Guardian {
     /// Lamp: ticks the current phase has waited without progress
     /// ([`MAX_LAMP_WAIT`] cap).
     lamp_wait: u32,
-    /// Lamp: the redemption failed with the lamp still held — no act and
-    /// no hold (the status row still detects it) until the lamp leaves the
-    /// pack or `lamp_auto` is switched off.
+    /// Lamp: the lamp count when Confirm went out. One unstacked lamp
+    /// leaves the pack per redemption, so the consume is a drop below this
+    /// baseline; a sibling lamp left in the pack does not block it.
+    lamp_confirm_count: Option<i32>,
+    /// Lamp: fresh ticks left in a pause before the next Rub. Inert while
+    /// it counts down (no act, no hold, no `ours`), so the script runs
+    /// between Rub attempts.
+    lamp_park: u32,
+    /// Lamp: the redemption failed after Confirm (or the skill is
+    /// unclickable) with the lamp still held — no act and no hold (the
+    /// status row still detects it) until the lamp leaves the pack or
+    /// `lamp_auto` is switched off. Confirm is never replayed.
     lamp_stalled: bool,
     /// Box: Open went out — do not Open again until the cube IF closes
     /// and the answer is consumed.
@@ -192,6 +202,8 @@ impl Guardian {
             lamp_reward: None,
             lamp_dialog: 0,
             lamp_wait: 0,
+            lamp_confirm_count: None,
+            lamp_park: 0,
             lamp_stalled: false,
             box_opened: false,
             maze: None,
@@ -329,17 +341,23 @@ impl Guardian {
                 .as_ref()
                 .is_some_and(|event| event.kind == RandomKind::LostTool);
 
-        // A stalled redemption unlocks on the two operator-visible state
-        // changes: the lamp left the pack, or lamp auto went off (the next
-        // auto-on redemption starts clean).
-        if self.lamp_stalled && (!lamp_held(snap) || !settings.lamp_auto) {
+        // A pause counts down once per game tick; the Rub resumes when it
+        // reaches zero.
+        if fresh {
+            self.lamp_park = self.lamp_park.saturating_sub(1);
+        }
+        // A stalled or paused redemption unlocks on the two operator-visible
+        // state changes: the lamp left the pack, or lamp auto went off (the
+        // next auto-on redemption starts clean).
+        if (self.lamp_stalled || self.lamp_park > 0) && (!lamp_held(snap) || !settings.lamp_auto) {
             self.clear_lamp();
         }
         // An inert lamp is detect-only: `lamp_auto` off, or a redemption
-        // that already gave up. No act, no hold, no `ours` — the script
-        // must not stay frozen behind a lamp the host will not redeem.
+        // that gave up or is paused between Rubs. No act, no hold, no `ours`
+        // — the script must not stay frozen behind a lamp the host is not
+        // driving right now.
         let inert_lamp = ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp)
-            && (!settings.lamp_auto || self.lamp_stalled);
+            && (!settings.lamp_auto || self.lamp_inert());
         if inert_lamp {
             // Drop a previous auto-on latch the moment the operator
             // turns lamp auto off with the lamp still in inv, or the
@@ -386,11 +404,11 @@ impl Guardian {
         self.pin_plant_event(snap, &mut ev);
         self.last_tick = tick;
 
-        // `act` may have stalled the redemption just above: a lamp the
-        // host has given up on is inert in the same tick, so the script's
-        // `EventSignal.pending` (hold OR ours) clears immediately.
+        // `act` may have paused or stalled the redemption just above: a lamp
+        // the host is not driving this tick is inert in the same tick, so the
+        // script's `EventSignal.pending` (hold OR ours) clears immediately.
         let inert_lamp = inert_lamp
-            || (self.lamp_stalled && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp));
+            || (self.lamp_inert() && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp));
         let inert_tool = inert_tool
             || (self.tool_stalled
                 && ev
@@ -1124,14 +1142,18 @@ impl Guardian {
     /// Lamp auto-use, driven to a real redemption: Rub (held op 1,
     /// `opheld1`), wait for the skill IF (2808), press the vault
     /// `lamp_skill` button, then Confirm (2831) — after which the server
-    /// runs `xplamp_confirm`: it closes the IF, consumes the lamp,
-    /// `stat_advance`s the chosen skill and opens the award `mesbox`. Only
-    /// the observed reward with that dialogue drained releases the hold; a
-    /// Rub whose skill IF never opens re-resolves and re-Rubs from a fresh
-    /// snapshot ([`MAX_LAMP_RUBS`] attempts — a resolving script burial can
-    /// shift the lamp out from under the first Rub), while a refused
-    /// Confirm or an unknown skill still gives up instead of replaying.
-    /// `lamp_auto` off keeps the 0.1.2 behavior (detect, no op, no hold).
+    /// runs `xplamp_confirm`: it closes the IF, consumes ONE lamp,
+    /// `stat_advance`s the chosen skill and opens the award `mesbox`. A
+    /// redemption completes on the count drop below the Confirm-tick count,
+    /// the observed reward and the drained award dialogue; the next lamp in
+    /// the pack then gets its own Rub. A Rub whose skill IF never opens is
+    /// paused and re-Rubbed from a fresh snapshot (a resolving script burial
+    /// can shift the lamp out from under the Rub); after [`MAX_LAMP_RUBS`]
+    /// misses the episode pauses for [`LAMP_STALL_COOLDOWN`] and starts over.
+    /// A refused Confirm (lamp still held) or an unknown skill latches the
+    /// lamp until it leaves the pack or `lamp_auto` goes off. Confirm is
+    /// never replayed. `lamp_auto` off keeps the 0.1.2 behavior (detect, no
+    /// op, no hold).
     fn step_lamp<D: Driver>(
         &mut self,
         driver: &mut D,
@@ -1148,7 +1170,7 @@ impl Guardian {
         let lamp_here = lamp_held(snap);
         if self.lamp_confirmed {
             // Confirm is out: the redemption is in flight.
-            self.step_lamp_redeem(driver, snap, settings, lamp_here);
+            self.step_lamp_redeem(driver, snap, settings);
             return;
         }
         if !lamp_here {
@@ -1184,6 +1206,7 @@ impl Guardian {
             self.lamp_dialog = 0;
             self.lamp_wait = 0;
             self.lamp_confirmed = true;
+            self.lamp_confirm_count = Some(lamp_count(snap));
             press(driver, LAMP_IF_CONFIRM);
             return;
         }
@@ -1196,11 +1219,9 @@ impl Guardian {
                     // The Rub may have hit a stale slot (a script burial
                     // resolving after the snapshot it was built from
                     // compacts the pack and shifts the lamp, so the server
-                    // ignores the op and no IF opens): re-resolve and
-                    // re-Rub from the next fresh snapshot instead of giving
-                    // up. The pack has settled by then (the hold froze the
-                    // script), so retries are progressively safer. Confirm
-                    // is never replayed.
+                    // ignores the op and no IF opens). Pause, then re-resolve
+                    // and re-Rub from a fresh snapshot. Confirm is never
+                    // replayed.
                     api::host_log!(
                         Category::RandomEvent,
                         Level::Info,
@@ -1208,15 +1229,17 @@ impl Guardian {
                         self.lamp_rubs + 1,
                         MAX_LAMP_RUBS,
                     );
-                    self.lamp_rubbed = false;
-                    self.lamp_wait = 0;
+                    self.pause_lamp(LAMP_RETRY_COOLDOWN);
                 } else {
                     api::host_log!(
                         Category::RandomEvent,
                         Level::Warn,
-                        "lamp: the skill interface never opened; giving up"
+                        "lamp: the skill interface never opened in {} rubs; pausing {} ticks",
+                        MAX_LAMP_RUBS,
+                        LAMP_STALL_COOLDOWN,
                     );
-                    self.stall_lamp();
+                    self.lamp_rubs = 0;
+                    self.pause_lamp(LAMP_STALL_COOLDOWN);
                 }
             }
             return;
@@ -1236,25 +1259,30 @@ impl Guardian {
         }
     }
 
-    /// The post-Confirm half of [`Guardian::step_lamp`]. The reward is
-    /// witnessed by the chosen skill's stat advance (`stat_advance`, read
-    /// against the Confirm-tick baseline) and the award dialogue drained;
-    /// the lamp leaving the pack alone is not completion. Nothing here
-    /// replays a confirmation or drains a dialogue the Confirm did not
-    /// open.
+    /// The post-Confirm half of [`Guardian::step_lamp`]. The redemption is
+    /// complete when the pack count dropped below the Confirm-tick count
+    /// (one lamp consumed), the chosen skill's stat advanced past the
+    /// Confirm-tick baseline, and the award dialogue drained. The lamp
+    /// leaving the pack alone is not completion, and a sibling lamp still in
+    /// the pack does not block it: a completed redemption clears the per-lamp
+    /// state so the next lamp is rubbed. Nothing here replays a confirmation
+    /// or drains a dialogue the Confirm did not open.
     fn step_lamp_redeem<D: Driver>(
         &mut self,
         driver: &mut D,
         snap: &GameSnapshot,
         settings: &ProfileSettings,
-        lamp_here: bool,
     ) {
+        let consumed = self
+            .lamp_confirm_count
+            .is_some_and(|before| lamp_count(snap) < before);
         let rewarded = reward_landed(snap, &settings.lamp_skill, self.lamp_reward);
         let chat = chat_is_open(snap);
-        if !lamp_here {
+        if consumed {
             if rewarded && !chat {
                 // Consumed, awarded and the award dialogue drained: the
-                // redemption is real — release the hold.
+                // redemption is real. Release the hold; the next lamp, if
+                // any, starts from a fresh Rub.
                 self.clear_lamp();
                 self.acting = false;
                 return;
@@ -1269,11 +1297,23 @@ impl Guardian {
             }
         }
         self.lamp_wait += 1;
-        if self.lamp_wait > MAX_LAMP_WAIT {
-            // The lamp is still held (Confirm did not take: the IF stayed
-            // open / the selection was refused) or the reward never
-            // arrived. Give up without replaying Confirm; the stall latch
-            // keeps a fresh Rub from starting while the lamp is held.
+        if self.lamp_wait <= MAX_LAMP_WAIT {
+            return;
+        }
+        if consumed {
+            // The lamp is gone; its reward or award dialogue never showed.
+            // Nothing is left to protect, so release without latching: a
+            // sibling lamp still in the pack is rubbed next.
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "lamp: the reward never completed; releasing the hold"
+            );
+            self.clear_lamp();
+            self.acting = false;
+        } else {
+            // Confirm did not take: the lamp is still held and the IF stayed
+            // open or the selection was refused. Latch without replaying.
             api::host_log!(
                 Category::RandomEvent,
                 Level::Warn,
@@ -1289,10 +1329,29 @@ impl Guardian {
         self.lamp_rubs = 0;
         self.lamp_skill_sent = false;
         self.lamp_confirmed = false;
+        self.lamp_confirm_count = None;
         self.lamp_reward = None;
         self.lamp_dialog = 0;
         self.lamp_wait = 0;
+        self.lamp_park = 0;
         self.lamp_stalled = false;
+    }
+
+    /// Pause the Rub flow for `ticks` fresh ticks: the lamp is inert while
+    /// the pause counts down, so the script runs between attempts. The
+    /// episode counter `lamp_rubs` survives the pause; the caller resets it
+    /// when a new episode starts.
+    fn pause_lamp(&mut self, ticks: u32) {
+        self.lamp_rubbed = false;
+        self.lamp_wait = 0;
+        self.lamp_park = ticks;
+        self.acting = false;
+    }
+
+    /// A stalled redemption or a paused Rub: detected, but not acted on or
+    /// held until it resolves.
+    fn lamp_inert(&self) -> bool {
+        self.lamp_stalled || self.lamp_park > 0
     }
 
     /// Give up on this lamp: release the hold, keep the latch that stops

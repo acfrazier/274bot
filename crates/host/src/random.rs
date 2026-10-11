@@ -526,9 +526,14 @@ fn lamp_skill_button(skill: &str) -> Option<i32> {
         .map(|i| LAMP_IF_FIRST + i as i32)
 }
 
+/// Genie lamps held: the stacked count of obj 2528 across the inventory.
+fn lamp_count(snap: &GameSnapshot) -> i32 {
+    snap.inv_count(LAMP_OBJ)
+}
+
 /// Whether the pack holds the genie lamp (obj 2528).
 fn lamp_held(snap: &GameSnapshot) -> bool {
-    snap.inventory().iter().any(|i| i.def.id == LAMP_OBJ)
+    lamp_count(snap) > 0
 }
 
 /// The client's stat slot named `skill` (the client's own skill names,
@@ -767,12 +772,25 @@ const MAX_CONTINUES: u32 = 25;
 /// settles the whole flow within a tick or two.
 const MAX_LAMP_WAIT: u32 = 8;
 
-/// Lamp: Rub attempts per redemption (the first plus bounded re-Rubs). A
-/// Rub built from a snapshot that a resolving script burial invalidates
-/// hits a stale slot and the server opens no IF; the pack has settled by
-/// the retry (the hold froze the script), so re-resolving and re-Rubbing
+/// Lamp: Rub attempts per episode (the first plus bounded re-Rubs). A Rub
+/// built from a snapshot that a resolving script burial invalidates hits a
+/// stale slot and the server opens no IF. The lamp is paused between Rubs
+/// (the script runs and settles the pack), so re-resolving and re-Rubbing
 /// recovers a transient miss. Confirm is never replayed.
 const MAX_LAMP_RUBS: u32 = 3;
+
+/// Lamp: fresh ticks the guardian leaves a lamp alone after a Rub whose
+/// skill IF never opened, before it Rubs again. The `opheld1` handler opens
+/// the IF on the Rub's own server tick, so an unopened IF means the Rub
+/// missed (a resolving script burial moved the lamp's pack slot). The pause
+/// lets the script finish settling the pack; Confirm is never replayed.
+const LAMP_RETRY_COOLDOWN: u32 = 20;
+
+/// Lamp: fresh ticks the guardian leaves a lamp alone once a whole episode
+/// of [`MAX_LAMP_RUBS`] Rubs missed (one minute of 600 ms game ticks). A
+/// burial script that keeps the lamp's slot moving settles inside this
+/// window; after it the episode starts over with a fresh Rub.
+const LAMP_STALL_COOLDOWN: u32 = 100;
 
 /// Lamp: award-dialogue continues before the redemption is given up
 /// (`xplamp_confirm`'s `mesbox` award is a single page).
