@@ -1276,9 +1276,13 @@ fn game_window_flags() -> WindowFlags {
 fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui.window(title).flags(game_window_flags()).build(|| {
         let avail = ui.content_region_avail();
+        let grid = !state.session.walkto_open && state.session.multibox && state.session.wall.grid;
+        if !grid {
+            state.queue_cards.clear();
+        }
         if state.session.walkto_open {
             picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
-        } else if state.session.multibox && state.session.wall.grid {
+        } else if grid {
             grid_pane(ui, gpu, state, avail);
         } else {
             game_pane(ui, gpu, state, avail);
@@ -1399,6 +1403,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     state.sync_fleet();
     if state.fleet.is_empty() {
+        state.queue_cards.clear();
         ui.text_disabled("no wall members");
         state.paint.release_canvas(gpu);
         return;
@@ -1511,6 +1516,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             state.session.select(name);
         }
     }
+    state.queue_cards.end_frame();
     state.fleet = rows;
     state.fleet_labels = labels;
 }

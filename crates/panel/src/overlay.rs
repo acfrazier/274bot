@@ -132,11 +132,20 @@ impl QueueCard {
     }
 }
 
-/// Queue cards over the Grid's Images: one cached card per queued bot,
-/// dropped when that bot leaves the queue.
+/// Queue cards over the Grid's Images: one cached card per queued bot whose
+/// Image the Grid draws. A card goes when its bot leaves the queue, and at
+/// the end of a Grid frame that did not draw it (the bot was removed, its
+/// preview closed); leaving Grid drops them all.
 #[derive(Default)]
 pub struct QueueCards {
-    cards: HashMap<String, QueueCard>,
+    cards: HashMap<String, GridCard>,
+}
+
+#[derive(Default)]
+struct GridCard {
+    card: QueueCard,
+    /// Drawn since the last [`QueueCards::end_frame`].
+    drawn: bool,
 }
 
 impl QueueCards {
@@ -146,6 +155,16 @@ impl QueueCards {
         if let Some(card) = self.update(name, queue, Instant::now()) {
             card.draw(ui, min);
         }
+    }
+
+    /// End of a Grid frame: drop the cards it did not draw.
+    pub fn end_frame(&mut self) {
+        self.cards.retain(|_, grid| std::mem::take(&mut grid.drawn));
+    }
+
+    /// Drop every card (the Grid is not shown).
+    pub fn clear(&mut self) {
+        self.cards.clear();
     }
 
     /// `name`'s card brought up to `queue`, or `None` (and no card kept)
@@ -161,11 +180,12 @@ impl QueueCards {
             return None;
         }
         if !self.cards.contains_key(name) {
-            self.cards.insert(name.to_owned(), QueueCard::default());
+            self.cards.insert(name.to_owned(), GridCard::default());
         }
-        let card = self.cards.get_mut(name).expect("inserted above");
-        card.update(queue, now);
-        Some(card)
+        let grid = self.cards.get_mut(name).expect("inserted above");
+        grid.drawn = true;
+        grid.card.update(queue, now);
+        Some(&grid.card)
     }
 }
 
@@ -270,8 +290,9 @@ mod tests {
     }
 
     /// Grid cards are cached per bot: steady frames rebuild nothing, a
-    /// countdown that moves rebuilds that bot's lines, and a bot that leaves
-    /// the queue drops its card.
+    /// countdown that moves rebuilds that bot's lines, a bot that leaves
+    /// the queue drops its card, and so does a bot the Grid no longer draws
+    /// (removed from the wall while queued).
     #[test]
     fn grid_cards_rebuild_only_when_their_text_changes() {
         use std::time::{Duration, Instant};
@@ -308,6 +329,7 @@ mod tests {
             );
             assert_eq!(lines(&mut cards, "alice", head, now).0, head_ptr);
             assert_eq!(lines(&mut cards, "bob", behind, now).0, behind_ptr);
+            cards.end_frame();
         }
 
         let tick = start + Duration::from_secs(1);
@@ -325,6 +347,19 @@ mod tests {
             "a granted bot drops its card"
         );
         assert!(cards.cards.contains_key("bob"));
+        cards.end_frame();
+
+        // Bob is removed while still queued: the next Grid frame draws only
+        // carol, and bob's card goes at its end.
+        lines(&mut cards, "carol", place(3, 3), tick);
+        cards.end_frame();
+        assert!(
+            !cards.cards.contains_key("bob"),
+            "a removed bot drops its card"
+        );
+        assert!(cards.cards.contains_key("carol"));
+        cards.clear();
+        assert!(cards.cards.is_empty(), "leaving Grid drops every card");
     }
 
     #[test]
