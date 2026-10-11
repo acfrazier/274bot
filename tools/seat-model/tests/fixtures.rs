@@ -1259,3 +1259,211 @@ fn chosen_encoder_prioritizes_releases_and_preserves_gameplay_order() {
         ]
     );
 }
+
+#[test]
+fn chosen_history_expired_is_distinct_from_revoked() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let completed = fixture.admitted(None, Class::Capability, 0);
+    fixture.apply(Step::Complete(completed));
+    fixture.apply(Step::Page);
+    fixture.apply(Step::Watermark);
+    for index in 0..65 {
+        let revoked = fixture.admitted(None, Class::Capability, (index + 1) as u8);
+        fixture.apply(Step::Revoke {
+            of: revoked,
+            trigger: Trigger::HostRevoke,
+        });
+        fixture.apply(Step::Page);
+        fixture.apply(Step::Watermark);
+    }
+    let child = fixture.start(Some(completed), None, Class::Capability, 100, 0, 0);
+    fixture.apply(Step::Admit(child));
+    fixture.apply(Step::Emit {
+        of: Some(completed),
+        release: false,
+    });
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
+
+    let trace = expect_chosen_pass(&fixture);
+    assert!(trace.final_state.history_floor() > completed);
+    assert_eq!(trace.final_state.outcome(completed), Some(Outcome::Done));
+    assert_eq!(
+        trace.final_state.outcome(child),
+        Some(Outcome::Refused(Refusal::HistoryExpired))
+    );
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.dropped(), 1);
+}
+
+#[test]
+fn chosen_session_foreground_drops_capability_root_rows() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let root = fixture.admitted(None, Class::Capability, 1);
+    fixture.apply(Step::Emit {
+        of: Some(root),
+        release: false,
+    });
+    let session = fixture.admitted(None, Class::Session, 2);
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
+    fixture.apply(Step::Emit {
+        of: Some(root),
+        release: false,
+    });
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.live(), 2);
+    assert!(trace.final_state.entry(root).is_some());
+    assert!(trace.final_state.entry(session).is_some());
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.dropped(), 2);
+
+    let mut reverse = Fixture::new(Bounds::production());
+    let _session = reverse.admitted(None, Class::Session, 3);
+    let root = reverse.start(None, None, Class::Capability, 4, 0, 0);
+    reverse.apply(Step::Admit(root));
+    let trace = expect_chosen_pass(&reverse);
+    assert_eq!(
+        trace.final_state.outcome(root),
+        Some(Outcome::Refused(Refusal::Busy))
+    );
+}
+
+#[test]
+fn chosen_session_capture_drops_rows_after_foreground_handoff() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let first = fixture.admitted(None, Class::Session, 1);
+    fixture.apply(Step::Emit {
+        of: Some(first),
+        release: false,
+    });
+    fixture.apply(Step::Complete(first));
+    let second = fixture.admitted(None, Class::Session, 2);
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.outcome(first), Some(Outcome::Done));
+    assert!(trace.final_state.entry(second).is_some());
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.dropped(), 1);
+}
+
+#[test]
+fn chosen_held_tick_discards_rows_without_settling_live_entries() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let live = fixture.admitted(None, Class::Capability, 1);
+    fixture.apply(Step::Emit {
+        of: Some(live),
+        release: false,
+    });
+    fixture.apply(Step::Emit {
+        of: Some(live),
+        release: false,
+    });
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Emit {
+        of: Some(live),
+        release: false,
+    });
+    fixture.apply(Step::HeldTick);
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.dropped(), 3);
+    assert_eq!(trace.final_state.live(), 1);
+    assert!(trace.final_state.entry(live).is_some());
+    assert_eq!(trace.final_state.outcome(live), None);
+    assert_eq!(trace.final_state.dispatched(), 0);
+}
+
+#[test]
+fn chosen_kept_reconnect_preserves_undelivered_release() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let walking = fixture.admitted(None, Class::Capability, 1);
+    fixture.apply(Step::Emit {
+        of: Some(walking),
+        release: false,
+    });
+    fixture.apply(Step::Emit {
+        of: Some(walking),
+        release: true,
+    });
+    fixture.apply(Step::Reconnect { keep: true });
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.live(), 1);
+    assert!(trace.final_state.entry(walking).is_some());
+    assert_eq!(trace.final_state.release_dispatched(), 1);
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.dropped(), 1);
+}
+
+#[test]
+fn chosen_release_cap_keeps_two_singleton_slots_beyond_walking_owners() {
+    let mut fixture = Fixture::new(Bounds::production());
+    for _ in 0..16 {
+        let walking = fixture.mirror(None, None);
+        fixture.apply(Step::Emit {
+            of: Some(walking),
+            release: true,
+        });
+    }
+    fixture.apply(Step::Emit {
+        of: None,
+        release: true,
+    });
+    fixture.apply(Step::Emit {
+        of: Some(0),
+        release: true,
+    });
+    for _ in 0..300 {
+        fixture.apply(Step::Emit {
+            of: None,
+            release: false,
+        });
+    }
+    fixture.apply(Step::Take);
+    let encoded = fixture.trace(Rules::Chosen);
+    assert_eq!(
+        encoded
+            .final_state
+            .encoded_rows()
+            .iter()
+            .filter(|(_, release)| *release)
+            .count(),
+        18
+    );
+    fixture.apply(Step::Dispatch);
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.release_dispatched(), 18);
+    assert_eq!(trace.final_state.dispatched(), 141);
+    assert_eq!(trace.final_state.dropped(), 159);
+}
+
+#[test]
+fn chosen_pending_cancel_records_intent_at_cancel_event() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let pending = fixture.start(None, None, Class::Capability, 1, 0, 0);
+    assert!(
+        fixture
+            .builder
+            .apply(&Step::Cancel {
+                of: pending,
+                throw: true,
+            })
+            .is_err()
+    );
+    fixture.apply(Step::Cancel {
+        of: pending,
+        throw: false,
+    });
+    fixture.apply(Step::Controls);
+    fixture.apply(Step::Admit(pending));
+    let trace = expect_chosen_pass(&fixture);
+    assert!(trace.final_state.entry(pending).is_none());
+    assert_eq!(
+        trace.final_state.outcome(pending),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+}
