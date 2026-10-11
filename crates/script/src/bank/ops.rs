@@ -11,12 +11,9 @@ use crate::observed::ItemRow;
 use crate::shim::InteractReq;
 use api::snapshot::ItemView;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Bank transfers wait this many distinct fresh observed ticks before expiring.
 pub const TRANSFER_OBSERVED_TICK_LIMIT: u64 = 8;
-/// Default wall-clock bound for a bank close when the caller omits one.
-pub const CLOSE_BOUND: Duration = Duration::from_secs(4);
 /// Frozen wait for a usable side backpack before an until-empty deposit fails.
 pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 /// Frozen `for (let guard = 0; guard < 32; guard++)` deposit rounds.
@@ -718,11 +715,6 @@ pub fn deposit_capacity_next<R: BankRow>(
 }
 
 // --- close -----------------------------------------------------------------
-
-/// The caller's explicit bound, else [`CLOSE_BOUND`].
-pub fn close_deadline(timeout_ms: Option<u64>) -> Duration {
-    timeout_ms.map_or(CLOSE_BOUND, Duration::from_millis)
-}
 
 /// The bank session and side root seen when the Close verb was sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

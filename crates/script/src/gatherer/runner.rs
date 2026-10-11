@@ -1390,6 +1390,14 @@ impl Gatherer {
                 Poll::Ready(Ok(())) => {
                     self.advance_trip(TripStep::Deposit);
                 }
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if matches!(
+                        message.as_ref(),
+                        "bank did not open" | "bank item table unavailable"
+                    ) =>
+                {
+                    self.begin_trip(tick);
+                }
                 Poll::Ready(Err(error)) => {
                     self.fail("bank-unavailable", format!("bank open failed: {error:?}"));
                 }
@@ -1444,6 +1452,16 @@ impl Gatherer {
                     }
                     self.needs_validate = true;
                     self.set_event("bank closed; validating equipment");
+                }
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "bank did not close"
+                        && tick
+                            .cx
+                            .snapshot()
+                            .bank_session()
+                            .is_some_and(|session| session.value.open) =>
+                {
+                    self.begin_close(tick);
                 }
                 Poll::Ready(Err(error)) => {
                     self.action_failure(error);
@@ -2664,6 +2682,124 @@ mod tests {
             ledger.as_ref().unwrap().outbox.is_empty(),
             "starting Close does not issue the close operation until a later poll"
         );
+    }
+
+    #[test]
+    fn gatherer_retries_timed_out_bank_open_in_place() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
+            stand_tile: bank_tile,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        gatherer.trip = TripStep::Open;
+        gatherer.selected_bank = Some(SelectedBank {
+            bank_index: 0,
+            access_tile: bank_tile,
+            kind: PickKind::Reachable,
+            access: Some(Arc::clone(&access)),
+        });
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Open(
+                tick.actions
+                    .begin::<bank::Open>(
+                        bank::OpenArgs {
+                            access: Arc::clone(&access),
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap(),
+            );
+        });
+        with_tick(&fixture.snapshot, &mut ledger, 9, |tick| {
+            gatherer.poll_active(tick)
+        });
+
+        assert!(gatherer.failure.is_none());
+        assert_eq!(gatherer.trip, TripStep::Open);
+        assert!(gatherer.selected_bank.as_ref().unwrap().access.is_some());
+        assert!(
+            matches!(gatherer.active, Active::Open(_)),
+            "a timed-out open retries without reselecting the bank"
+        );
+    }
+
+    #[test]
+    fn gatherer_retries_timed_out_close_while_bank_remains_open() {
+        use crate::quester::families::tests::with_tick;
+        let mut fixture = BaitFixture::new();
+        fixture
+            .snapshot
+            .seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.trip = TripStep::Close;
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.active =
+                Active::Close(tick.actions.begin::<bank::Close>((), &mut tick.cx).unwrap());
+            gatherer.poll_active(tick);
+        });
+        with_tick(&fixture.snapshot, &mut ledger, 9, |tick| {
+            gatherer.poll_active(tick)
+        });
+
+        assert!(gatherer.failure.is_none());
+        assert_eq!(gatherer.trip, TripStep::Close);
+        assert!(
+            matches!(gatherer.active, Active::Close(_)),
+            "a bank that stayed open gets another close attempt"
+        );
+    }
+
+    #[test]
+    fn gatherer_waits_for_a_shut_bank_side_root_to_settle() {
+        use crate::quester::families::tests::with_tick;
+        let mut fixture = BaitFixture::new();
+        fixture
+            .snapshot
+            .seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let side = fixture.snapshot.modals().side;
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.trip = TripStep::Close;
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.active =
+                Active::Close(tick.actions.begin::<bank::Close>((), &mut tick.cx).unwrap());
+            gatherer.poll_active(tick);
+        });
+        fixture
+            .snapshot
+            .seed_bank_observation(-1, 1, None, Vec::new());
+        fixture.snapshot.seed_side_modal(side);
+        for tick_number in [2, 9] {
+            with_tick(&fixture.snapshot, &mut ledger, tick_number, |tick| {
+                tick.cx.active_now = std::time::Duration::from_secs(60);
+                gatherer.poll_active(tick);
+            });
+            assert!(gatherer.failure.is_none());
+            assert!(matches!(gatherer.active, Active::Close(_)));
+        }
+
+        fixture.snapshot.seed_side_modal(-1);
+        with_tick(&fixture.snapshot, &mut ledger, 10, |tick| {
+            gatherer.poll_active(tick)
+        });
+        assert!(gatherer.failure.is_none());
+        assert_eq!(gatherer.trip, TripStep::Validate);
     }
 
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the

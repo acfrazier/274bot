@@ -20,7 +20,9 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-const OPEN_BOUND: Duration = Duration::from_secs(12);
+/// Wall-clock wait for a deposit whose side-view snapshot has not posted.
+/// Separate from the observed-tick bounds for opening and closing the bank.
+const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
 
 #[derive(Clone)]
 pub struct BankSelector {
@@ -292,6 +294,7 @@ enum Phase {
     AwaitClose {
         baseline: CloseBaseline,
         run: api::selected::RunKey,
+        started_tick: u64,
     },
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -308,14 +311,15 @@ struct DepositLogState {
     trace: Arc<BankDepositTrace>,
     last_observation: Option<DepositObservationKey>,
     last_logged_tick: u64,
+    dispatch_evidence: Option<EvidenceStamp>,
 }
 
 pub struct BankMachine {
     request: BankRequest,
     phase: Phase,
     deadline: Duration,
-    /// Fixed opening bound, separate from the per-step `deadline` armed by dialogue.
-    open_deadline: Duration,
+    /// Tick when this open attempt began; wall-clock delays do not expire it.
+    open_started_tick: u64,
     session: u64,
     deposits: u8,
     withdraw_index: usize,
@@ -472,12 +476,14 @@ impl NativeMachine for BankMachine {
             }
             _ => {}
         }
-        let open_deadline = cx.active_now().saturating_add(OPEN_BOUND);
+        let open_started_tick = cx.evidence().tick;
         Ok(Self {
             request,
             phase: Phase::Open,
-            deadline: open_deadline,
-            open_deadline,
+            deadline: cx
+                .active_now()
+                .saturating_add(Duration::from_millis(DEPOSIT_SIDE_VIEW_WAIT_MS)),
+            open_started_tick,
             session: 0,
             deposits: 0,
             withdraw_index: 0,
@@ -509,13 +515,13 @@ impl NativeMachine for BankMachine {
                         std::task::ready!(crate::native::defer_budget(
                             cx.emit(InteractReq::Close)
                         ))?;
-                        self.deadline = cx.active_now().saturating_add(ops::close_deadline(None));
                         self.phase = Phase::AwaitClose {
                             baseline: CloseBaseline {
                                 generation: session.generation,
                                 side: session.side,
                             },
                             run,
+                            started_tick: cx.evidence().tick,
                         };
                         return Poll::Pending;
                     }
@@ -547,7 +553,9 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::AwaitOpen { first_target: None };
                         continue;
                     }
-                    if cx.active_now() >= self.open_deadline {
+                    if cx.evidence().tick.saturating_sub(self.open_started_tick)
+                        >= ops::TRANSFER_OBSERVED_TICK_LIMIT
+                    {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank did not open",
                         ))));
@@ -694,7 +702,12 @@ impl NativeMachine for BankMachine {
                     first_target,
                 } => {
                     if dialogue == AccessDialogue::Object
-                        && cx.active_now() >= self.open_deadline
+                        && !cx
+                            .snapshot()
+                            .bank_session()
+                            .is_some_and(|session| session.value.open)
+                        && cx.evidence().tick.saturating_sub(self.open_started_tick)
+                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
                         && cx.snapshot().bank().is_none()
                     {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -736,6 +749,15 @@ impl NativeMachine for BankMachine {
                             return Poll::Pending;
                         }
                         npc::Step::Note(npc::Note::Unloaded) => {
+                            if cx
+                                .snapshot()
+                                .bank_session()
+                                .is_some_and(|session| session.value.open)
+                            {
+                                self.object_dialogue_finished |= dialogue == AccessDialogue::Object;
+                                self.phase = Phase::AwaitOpen { first_target };
+                                continue;
+                            }
                             let message = if dialogue == AccessDialogue::Teller {
                                 "bank teller opened without a loaded item list"
                             } else {
@@ -786,14 +808,8 @@ impl NativeMachine for BankMachine {
                                 ))));
                             }
                             if snapshot.bank().is_none() {
-                                let message = if dialogue == AccessDialogue::Teller {
-                                    "bank teller opened without a loaded item list"
-                                } else {
-                                    "bank object opened without a loaded item list"
-                                };
-                                return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    message,
-                                ))));
+                                self.phase = Phase::AwaitOpen { first_target };
+                                continue;
                             }
                             self.session = session.value.generation;
                             self.note_fresh_session(cx);
@@ -812,7 +828,13 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
-                    if cx.active_now() >= self.open_deadline {
+                    if !cx
+                        .snapshot()
+                        .bank_session()
+                        .is_some_and(|session| session.value.open)
+                        && cx.evidence().tick.saturating_sub(self.open_started_tick)
+                            >= ops::TRANSFER_OBSERVED_TICK_LIMIT
+                    {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank item table unavailable",
                         ))));
@@ -1239,6 +1261,7 @@ impl NativeMachine for BankMachine {
                                     last_observation: None,
                                     last_logged_tick: trace.click_tick,
                                     trace: Arc::clone(&trace),
+                                    dispatch_evidence: None,
                                 }));
                                 self.deposits += 1;
                                 self.view_armed = false;
@@ -1349,7 +1372,11 @@ impl NativeMachine for BankMachine {
                     }
                     return Poll::Pending;
                 }
-                Phase::AwaitClose { baseline, run } => {
+                Phase::AwaitClose {
+                    baseline,
+                    run,
+                    started_tick,
+                } => {
                     let session = cx.snapshot().bank_session().map(|s| s.value);
                     // Logged out: no session to read; the replaced login
                     // settles it whatever the other facts say.
@@ -1360,7 +1387,9 @@ impl NativeMachine for BankMachine {
                         session.map_or(baseline.generation, |s| s.generation),
                         baseline,
                         same_login,
-                        cx.active_now() >= self.deadline,
+                        session.is_some_and(|session| session.open)
+                            && cx.evidence().tick.saturating_sub(started_tick)
+                                >= ops::TRANSFER_OBSERVED_TICK_LIMIT,
                     ) {
                         CloseScan::Complete | CloseScan::AlreadyShut => {
                             return Poll::Ready(Ok(self.receipt(true)));
@@ -1590,6 +1619,20 @@ impl BankMachine {
         item_id: i32,
         evidence: EvidenceStamp,
     ) -> Result<bool, ActionError> {
+        let dispatched = {
+            let Some(state) = self.deposit_log.as_mut() else {
+                return Ok(false);
+            };
+            if let Some(evidence) = state.dispatch_evidence {
+                evidence
+            } else {
+                let Some(receipt) = cx.interaction_receipt(state.request).copied() else {
+                    return Ok(false);
+                };
+                state.dispatch_evidence = Some(receipt.evidence);
+                receipt.evidence
+            }
+        };
         let stamp = cx.evidence();
         let snapshot = cx.snapshot();
         let pack = snapshot.inventory().map(|rows| rows.value);
@@ -1623,7 +1666,7 @@ impl BankMachine {
         };
         let moved = main_now.is_some_and(|now| now < before);
         let timed_out =
-            stamp.tick.saturating_sub(evidence.tick) >= ops::TRANSFER_OBSERVED_TICK_LIMIT;
+            stamp.tick.saturating_sub(dispatched.tick) >= ops::TRANSFER_OBSERVED_TICK_LIMIT;
         let click_main_revision = self
             .deposit_log
             .as_ref()
@@ -2554,7 +2597,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_object_stuck_continue_modal_fails_at_open_deadline() {
+    fn catalog_object_stuck_continue_modal_fails_at_eight_observed_ticks() {
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -2608,17 +2651,16 @@ mod tests {
             HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
-        for tick_number in [7, 12, 17] {
-            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
-                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
-            });
-            assert!(matches!(
-                acknowledge(&mut ledger, tick_number),
-                HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
-            ));
-        }
+        let tick_number = 8;
+        with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, tick_number),
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+        ));
 
-        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 9, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -2669,14 +2711,14 @@ mod tests {
 
         snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
         snapshot.seed_chat_options(Vec::new(), -1);
-        for tick_number in [2, 7, 12, 17] {
+        for tick_number in [2, 8] {
             with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
                 assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
             });
             assert!(ledger.as_ref().unwrap().outbox.is_empty());
         }
 
-        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 9, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -2688,7 +2730,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_open_first_missing_locs_respects_open_deadline() {
+    fn catalog_open_first_missing_locs_respects_observed_tick_limit() {
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
             x: bank.tile.x - 1,
@@ -2734,7 +2776,7 @@ mod tests {
 
         let mut missing_locs = GameSnapshot::new();
         missing_locs.seed_ingame(1);
-        let result = with_tick(&missing_locs, &mut ledger, 21, |tick| {
+        let result = with_tick(&missing_locs, &mut ledger, 9, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -2952,7 +2994,7 @@ mod tests {
     }
 
     #[test]
-    fn native_teller_access_rejects_an_open_bank_without_loaded_stock() {
+    fn native_teller_access_waits_for_loaded_stock_after_session_opens() {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_bank_observation(10, 1, None, Vec::new());
@@ -2969,9 +3011,18 @@ mod tests {
         let result = with_tick(&snapshot, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
+        assert!(
+            result.is_pending(),
+            "an open bank session may still be loading its item table"
+        );
+
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
         assert!(matches!(
             result,
-            Poll::Ready(Err(ActionError::Unavailable(_)))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -4117,7 +4168,7 @@ mod tests {
     /// P-close (native): already shut is true with no verb. A Close is done
     /// only once the bank is shut, its old side root released and the
     /// session generation newer; main shut with the side still up keeps
-    /// waiting. A reopened session or the 4 s bound fails it.
+    /// waiting. A reopened session or eight still-open observed ticks fails it.
     #[test]
     fn close_settles_on_the_acknowledged_close_not_the_main_root() {
         let open = || {
@@ -4183,14 +4234,14 @@ mod tests {
             Poll::Ready(Err(ActionError::Failed(_)))
         ));
 
-        // Still open at the 4 s bound (tick 1 + 4 s is tick 8 at 600 ms).
+        // The close dispatch was observed at tick 1; allow eight newer ticks.
         let snapshot = open();
         let mut ledger = None;
         let (handle, _) = begin_bank(&snapshot, &mut ledger, close());
         let _ = acknowledge(&mut ledger, 1);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 7).is_pending());
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 8).is_pending());
         assert!(matches!(
-            poll_at(&snapshot, &mut ledger, &handle, 8),
+            poll_at(&snapshot, &mut ledger, &handle, 9),
             Poll::Ready(Err(ActionError::Failed(_)))
         ));
     }
@@ -4602,5 +4653,210 @@ mod tests {
                 ));
             },
         );
+    }
+    #[test]
+    fn slow_host_keeps_waiting_for_an_open_bank_session() {
+        let stand = WorldTile {
+            x: 3208,
+            z: 3220,
+            level: 2,
+        };
+        let bank = NamedBank::new("Test bank", stand);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: stand,
+            kind: AccessKind::Booth,
+            stand_op: 1,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2213,
+            "Bank booth",
+            "Use-quickly",
+            stand,
+            0,
+        )]);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        let opening = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_secs(30);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            opening.is_pending(),
+            "a slow host must keep waiting while the bank session is open"
+        );
+
+        snapshot.seed_bank_observation(10, 2, Some(Vec::new()), Vec::new());
+        let opened = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_secs(60);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            opened,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+    }
+
+    #[test]
+    fn slow_host_keeps_waiting_for_a_bank_close_to_release_its_side_root() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let side = snapshot.modals().side;
+        let mut ledger = None;
+        let (handle, started) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(BankAction::Close, false),
+        );
+        assert!(started.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Close)
+        ));
+
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        snapshot.seed_side_modal(side);
+        let closing = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_secs(20);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            closing.is_pending(),
+            "one observed server tick must not expire because the host was slow"
+        );
+
+        let still_closing = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.cx.active_now = Duration::from_secs(40);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            still_closing.is_pending(),
+            "the shut bank may still be releasing its side root after eight ticks"
+        );
+
+        snapshot.seed_side_modal(-1);
+        let closed = with_tick(&snapshot, &mut ledger, 10, |tick| {
+            tick.cx.active_now = Duration::from_secs(50);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            closed,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+    }
+
+    #[test]
+    fn deposit_timeout_ignores_ticks_drained_before_dispatch() {
+        let item_id = 314;
+        let side = row_with(
+            item(item_id, "Ore", 1, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(item_id, "Ore", 1, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![side]);
+        let mut ledger = None;
+        let (handle, sent) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id: item_id,
+                        name: Arc::from("Ore"),
+                    },
+                },
+                false,
+            ),
+        );
+        assert!(sent.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 20),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == item_id
+        ));
+
+        let before_server_opportunity = with_tick(&snapshot, &mut ledger, 20, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            before_server_opportunity.is_pending(),
+            "ticks queued before dispatch are not server opportunities"
+        );
+
+        snapshot.seed_inventory(Vec::new(), 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 21, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+    }
+
+    #[test]
+    fn deposit_without_a_server_response_times_out_after_eight_post_dispatch_ticks() {
+        let item_id = 314;
+        let side = row_with(
+            item(item_id, "Ore", 1, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(item_id, "Ore", 1, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![side]);
+        let mut ledger = None;
+        let (handle, sent) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id: item_id,
+                        name: Arc::from("Ore"),
+                    },
+                },
+                false,
+            ),
+        );
+        assert!(sent.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == item_id
+        ));
+
+        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 10, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank transfer did not settle"
+        ));
     }
 }
