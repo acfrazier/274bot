@@ -764,7 +764,7 @@ mod tests {
     #[test]
     fn paint_window_shows_title_and_lines_over_the_chatbox() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint(Some("BoneBurier"), &["a row", "second row"]);
         prepare_frame(&mut ctx);
@@ -793,7 +793,7 @@ mod tests {
     #[test]
     fn paint_window_hides_without_a_paint() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         prepare_frame(&mut ctx);
         {
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn collapse_click_hides_body_and_shrinks_to_title_height() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint(Some("BoneBurier"), &["a row", "second row"]);
         // The title row spans the chatbox top strip: hover it, then press.
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn advertised_button_is_a_real_control_and_collapsed_hides_it() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint_with_button(Some("NatureCrafter"), &["status"], "gobank", "Go bank");
         prepare_frame(&mut ctx);
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn canvas_dirty_rect_maps_native_and_half_blit() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = canvas_banner();
         prepare_frame(&mut ctx);
@@ -983,7 +983,7 @@ mod tests {
     #[test]
     fn canvas_only_frame_does_not_populate_chatbox() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = canvas_banner();
         prepare_frame(&mut ctx);
@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn structured_plus_canvas_keeps_chatbox_out_of_applet_dest() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let mut p = paint(Some("BoneBurier"), &["a row"]);
         p.canvas = canvas_banner().canvas;
@@ -1109,7 +1109,7 @@ mod tests {
             return;
         };
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let mut gpu = RecordingGpu::new(device, queue);
         let p = canvas_banner();
@@ -1192,7 +1192,7 @@ mod tests {
     #[test]
     fn structured_paint_hit_targets_scale_with_grid_cell() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint_with_button(Some("NatureCrafter"), &["status"], "gobank", "Go bank");
         prepare_frame(&mut ctx);
@@ -1308,7 +1308,7 @@ mod tests {
     #[test]
     fn strip_status_brand_label_rects_disjoint_native_and_half_grid() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         for status in ["ok", "banking supplies run"] {
             for (min, size) in [([10.0, 20.0], [765.0, 503.0]), ([0.0, 0.0], [382.5, 251.5])] {
                 let mut overlay = PaintOverlay::new();
@@ -1341,7 +1341,7 @@ mod tests {
     #[test]
     fn strip_chrome_click_maps_scaled_hit_to_paint_select() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = jive_strip_paint("ok");
         let half = [382.5_f32, 251.5];
@@ -1402,7 +1402,7 @@ mod tests {
     #[test]
     fn collapse_hit_strip_scales_with_grid_cell() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint(Some("BoneBurier"), &["a row"]);
         let half = [382.5_f32, 251.5];
@@ -1454,7 +1454,7 @@ mod tests {
             return;
         };
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let mut gpu = RecordingGpu::new(device, queue);
         let mut p = paint(None, &[]);

@@ -94,7 +94,7 @@ fn shifted_event_adapter_leaves_numpad_punctuation_to_backend() {
 fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     let mut captured = Vec::new();
@@ -147,7 +147,7 @@ fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
 fn native_colon_burst_survives_shift_release_before_imgui_frame() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     let g = WinitKey::Character("g".into());
@@ -206,7 +206,7 @@ fn native_colon_burst_survives_shift_release_before_imgui_frame() {
 fn native_capture_release_keeps_press_character_after_shift_up() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     let semicolon = WinitKey::Character(";".into());
@@ -225,7 +225,7 @@ fn native_capture_release_keeps_press_character_after_shift_up() {
 fn native_capture_discard_does_not_replay_after_capture_off() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
@@ -277,7 +277,7 @@ fn down_up(ch: u8) -> [(bool, i32); 2] {
 fn native_capture_same_frame_letter_space_letter_keeps_order() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     tap_character(ctx.io_mut(), "a");
     tap_named(ctx.io_mut(), NamedKey::Space);
@@ -300,7 +300,7 @@ fn native_capture_same_frame_letter_space_letter_keeps_order() {
 fn native_give_bones_25_burst_keeps_spaces_in_order() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     ctx.io_mut().add_key_event(Key::LeftShift, true);
@@ -345,7 +345,7 @@ fn native_give_bones_25_burst_keeps_spaces_in_order() {
 fn native_capture_same_frame_backspace_and_enter_keep_order() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     tap_character(ctx.io_mut(), "a");
     tap_named(ctx.io_mut(), NamedKey::Backspace);
@@ -364,7 +364,7 @@ fn native_capture_same_frame_backspace_and_enter_keep_order() {
 fn native_capture_named_enter_uses_native_event_queue() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let enter = WinitKey::Named(NamedKey::Enter);
     add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Standard, true);
@@ -377,7 +377,7 @@ fn native_capture_named_enter_uses_native_event_queue() {
 fn native_capture_space_character_and_named_are_both_space() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     tap_character(ctx.io_mut(), " ");
     tap_named(ctx.io_mut(), NamedKey::Space);
@@ -392,7 +392,7 @@ fn native_capture_space_character_and_named_are_both_space() {
 fn native_capture_leaves_numpad_enter_unqueued() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let enter = WinitKey::Named(NamedKey::Enter);
     add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Numpad, true);
@@ -409,7 +409,7 @@ fn native_capture_leaves_numpad_enter_unqueued() {
 fn native_capture_empty_discard_keeps_drained_press_character() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let colon = WinitKey::Character(":".into());
     let semicolon = WinitKey::Character(";".into());
@@ -430,7 +430,7 @@ fn native_capture_empty_discard_keeps_drained_press_character() {
 fn native_capture_leaves_numpad_punctuation_unqueued() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let plus = WinitKey::Character("+".into());
     add_shifted_key_event(ctx.io_mut(), &plus, KeyLocation::Numpad, true);
@@ -630,7 +630,7 @@ fn native_type_hi_enter(io: &mut dear_imgui_rs::Io) {
 fn focused_panel_text_field_does_not_forward_keys_to_client() {
     let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let _ = ctx.set_ini_filename(None::<String>);
     let mut buf = String::new();
@@ -656,7 +656,7 @@ fn focused_panel_text_field_does_not_forward_keys_to_client() {
     drop(ctx);
 
     discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let mut capture = KeyCapture::new();
     let _ = ctx.set_ini_filename(None::<String>);
     native_type_hi_enter(ctx.io_mut());
@@ -726,7 +726,7 @@ struct OwnershipProbe {
 impl OwnershipProbe {
     fn new() -> Self {
         discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.set_ini_filename(None::<String>).unwrap();
         let input = host::SlotInput::new();
         input.set_enabled(true);

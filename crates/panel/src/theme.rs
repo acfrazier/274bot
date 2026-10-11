@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn apply_amber_honours_chrome_accent() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let chrome = ChromeColors {
             accent: "#00FF00".into(),
             ..Default::default()
