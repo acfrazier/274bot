@@ -112,8 +112,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### TUI
 
-- Load+login all leaves the bot you're watching selected. If none is
-  selected, it shows one of the loaded bots.
+- Load+login all with no bot selected now selects one of the loaded bots.
 - The status pane shows the script's phase and park reason on the same rows
   as the panel. Those rows appear only while a script runs or a script
   refusal is still showing.

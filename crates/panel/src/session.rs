@@ -3228,7 +3228,7 @@ impl Session {
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
         let last = crate::ui_state::load().last_focus;
-        if let Some(name) = crate::ui_state::pick_focus(&names, last.as_deref()) {
+        if let Some(name) = frontend_core::pick_focus(&names, last.as_deref()) {
             self.pick_profile(&name);
         }
     }
@@ -4384,8 +4384,7 @@ impl Session {
                 } else {
                     None
                 };
-                if let Some(name) =
-                    crate::ui_state::pick_focus(self.core.members(), last.as_deref())
+                if let Some(name) = frontend_core::pick_focus(self.core.members(), last.as_deref())
                 {
                     self.select(&name);
                 }
