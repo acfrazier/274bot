@@ -10,6 +10,8 @@ The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start /
 
 A lot of 274bot comes straight from that work. The interface is modelled on rs2b0t's, drawn with ImGui instead of Electron; our quest Paths started from its AIOQuester; and parts of our game data come from it (MIT, © 2026 N64Jive; details in [NOTICE.md](NOTICE.md)). Thank you to **[everyone who has contributed to rs2b0t](https://github.com/rs2b2t/rs2b0t/graphs/contributors)**.
 
+The Quester also owes a lot to Liza Carvelli's Questionable, a quest-automation plugin for [Dalamud](https://github.com/goatcorp/Dalamud): authored quest routes a whole fleet can run start to finish.
+
 It also stands on **[Lost City](https://github.com/LostCityRS)**, the open 2004-era engine, content and client work every server and client here descends from, and on the **[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust)** Rust client our bot-host client is built from.
 
 ## What 0.2.0 does

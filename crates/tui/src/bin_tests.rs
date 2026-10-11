@@ -725,6 +725,93 @@ fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fail
 }
 
 #[test]
+fn pair_fixture_setup_deadline_is_named_and_reports_split_elapsed_time() {
+    let mut session = TuiSession::new(dummy_options());
+    session.live_name = Some("flax_runner".into());
+    let started = Instant::now() - Duration::from_secs(121);
+    let deadline = started + Duration::from_secs(180);
+    *session.live_timing.lock().unwrap() = Some(LiveTiming::new(started, Some(deadline)));
+
+    let (code, lines) = session.live_status();
+    assert_eq!(code, Some(1));
+    assert!(
+        lines.iter().any(
+            |line| matches!(line, ProofLine::Stderr(text) if text.contains("FAIL: live flax_runner setup:"))
+        ),
+        "{lines:?}"
+    );
+    let timing = lines
+        .iter()
+        .find_map(|line| match line {
+            ProofLine::Stderr(text) => text
+                .strip_prefix("LIVE_TIMING: script_flax_runner ")
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok()),
+            _ => None,
+        })
+        .expect("setup timeout must include its timing receipt");
+    assert!(
+        timing["setup_elapsed_ms"]
+            .as_u64()
+            .is_some_and(|ms| ms >= 120_000),
+        "{timing}"
+    );
+    assert_eq!(timing["script_elapsed_ms"], serde_json::Value::Null);
+}
+
+#[test]
+fn pair_script_elapsed_starts_only_after_both_catalog_slots_start() {
+    let started = Instant::now();
+    let mut timing = Some(LiveTiming::new(
+        started,
+        Some(started + Duration::from_secs(180)),
+    ));
+    let mut pending = vec![
+        PendingCatalogStart::load(
+            "runner",
+            String::new(),
+            script::LoadShape::Reject,
+            None,
+            Vec::new(),
+            Vec::new(),
+        ),
+        PendingCatalogStart::load(
+            "spinner",
+            String::new(),
+            script::LoadShape::Reject,
+            None,
+            Vec::new(),
+            Vec::new(),
+        ),
+    ];
+    let accepted = live_start::StartScriptPump::Continue;
+    mark_live_script_start(&mut timing, &pending, true, &accepted, started);
+    assert!(!timing.as_ref().unwrap().script_started());
+
+    pending[0].started = true;
+    mark_live_script_start(
+        &mut timing,
+        &pending,
+        true,
+        &accepted,
+        started + Duration::from_secs(4),
+    );
+    assert!(!timing.as_ref().unwrap().script_started());
+
+    pending[1].started = true;
+    let start = started + Duration::from_secs(7);
+    mark_live_script_start(&mut timing, &pending, true, &accepted, start);
+    let timing = timing.unwrap();
+    assert_eq!(
+        timing.setup_elapsed(start + Duration::from_secs(1)),
+        Duration::from_secs(7)
+    );
+    assert_eq!(
+        timing.script_elapsed(start + Duration::from_secs(1)),
+        Some(Duration::from_secs(1))
+    );
+}
+
+#[test]
 fn only_the_witness_a_live_run_armed_decides_it() {
     // A catalog witness no live run armed, already failed at its Start.
     let play = empty_play();

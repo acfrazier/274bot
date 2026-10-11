@@ -876,24 +876,27 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             }
         }
         PairPrepStage::WaitRelog => {
-            // The live hosted-title pump normally delivers an off-world
-            // observe. The session-generation edge remains the fallback when
-            // ownership moves directly into a queued handshake before that
-            // frame is observed. last_login_reconnect may already be true from
-            // an earlier grant and must not admit stale pre-logout scene2.
-            if pair_relog_seen(
+            // The 289 engine retries pending `player_logout` saves every
+            // 15s (`engine/src/engine/World.ts:795-803`) and rejects a login
+            // while that save is pending (`World.ts:812-821`). The host honors
+            // response 5 with its 60s retry (`crates/host-play/src/play_login.rs:
+            // 1093-1109`), so sending logout or sleeping is not release evidence.
+            // Require the successful new session to publish scene2 and the
+            // inventory tab before seeding.
+            let logout_observed = pair_relog_seen(
                 slot.logout_sent,
                 slot.saw_logout,
                 snap.ingame(),
                 slot.logout_session,
                 c.gens.session,
-            ) {
+            );
+            if logout_observed {
                 slot.saw_logout = true;
                 if !snap.ingame() {
                     return;
                 }
             }
-            if slot.saw_logout && snap.ingame() && snap.scene_state() == 2 && inv_tab {
+            if pair_relog_ready(slot.saw_logout, snap.ingame(), snap.scene_state(), inv_tab) {
                 if matches!(slot.kind, PairCompanionKind::DuelPeer) {
                     slot.stage = PairPrepStage::ReseedTutorial;
                 } else {
@@ -1223,6 +1226,10 @@ fn pair_relog_seen(
     saw_logout || !ingame || (logout_sent && session != logout_session)
 }
 
+fn pair_relog_ready(saw_logout: bool, ingame: bool, scene_state: i32, inv_tab: bool) -> bool {
+    saw_logout && ingame && scene_state == 2 && inv_tab
+}
+
 fn pair_near(snap: &GameSnapshot, dest: WorldTile, radius: i32) -> bool {
     snap.tile().is_some_and(|(x, z, level)| {
         level == dest.level && (x - dest.x).abs() <= radius && (z - dest.z).abs() <= radius
@@ -1368,6 +1375,16 @@ fn pair_companion(kind: PairCompanionKind) -> Companion {
         profile: 1,
         per_frame: {
             let mut slot = PairCompanionSlot::new(kind);
+            Box::new(move |c| pair_companion_frame(c, &mut slot))
+        },
+    }
+}
+fn pair_prep_companion(kind: PairCompanionKind, prep_barrier: PairPrepBarrier) -> Companion {
+    Companion {
+        profile: 1,
+        per_frame: {
+            let mut slot = PairCompanionSlot::new(kind);
+            slot.prep_barrier = Some(prep_barrier);
             Box::new(move |c| pair_companion_frame(c, &mut slot))
         },
     }
@@ -1586,6 +1603,7 @@ pub(crate) fn mule_crafter_air_scenario() -> Scenario {
 /// the meet. First flax pack is picked after shared Start.
 pub(crate) fn flax_runner_scenario() -> Scenario {
     let field = FLAX_FIELD;
+    let prep_barrier = PairPrepBarrier::new(1);
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name: "seed empty Flax runner pack at the field before Start",
@@ -1625,13 +1643,28 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
+    let prep_wait = prep_barrier.clone();
+    steps.push(Step {
+        name: "wait for spinner successful relog and fixture readiness before Start",
+        kind: StepKind::Await {
+            evidence: "flax_spinner_relogged_and_prepared_before_start",
+            ready: Box::new(move |_| prep_wait.all_ready()),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 600,
+        },
+    });
     steps.push(start_catalog_step());
     Scenario {
         name: "flax_runner",
         seed: pair_fleet_seed(),
         steps,
         proof: Proof::Stat { id: 16, min: 0 },
-        companions: vec![pair_companion(PairCompanionKind::FlaxSpinner)],
+        companions: vec![pair_prep_companion(
+            PairCompanionKind::FlaxSpinner,
+            prep_barrier,
+        )],
         settings: pair_watch_settings("flax_runner", "FlaxRunner"),
     }
 }
@@ -2105,7 +2138,8 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
 
 #[cfg(test)]
 mod prep_barrier_tests {
-    use super::{post_seed_scene_ready, PairPrepBarrier};
+    use super::{flax_runner_scenario, pair_relog_ready, post_seed_scene_ready, PairPrepBarrier};
+    use crate::StepKind;
 
     #[test]
     fn fleet_start_waits_for_every_companion_fixture() {
@@ -2116,6 +2150,48 @@ mod prep_barrier_tests {
         assert!(!barrier.all_ready());
         barrier.mark_ready(2);
         assert!(barrier.all_ready());
+    }
+
+    #[test]
+    fn flax_spinner_is_not_ready_until_relogin_scene_and_inventory_tab_are_fresh() {
+        let barrier = PairPrepBarrier::new(1);
+        for (saw_logout, ingame, scene_state, inv_tab) in [
+            (false, true, 2, true),
+            (true, false, 2, true),
+            (true, true, 1, true),
+            (true, true, 2, false),
+        ] {
+            if pair_relog_ready(saw_logout, ingame, scene_state, inv_tab) {
+                barrier.mark_ready(1);
+            }
+            assert!(!barrier.all_ready());
+        }
+        if pair_relog_ready(true, true, 2, true) {
+            barrier.mark_ready(1);
+        }
+        assert!(barrier.all_ready());
+    }
+
+    #[test]
+    fn flax_runner_waits_for_spinner_fixture_before_shared_start() {
+        let scenario = flax_runner_scenario();
+        let ready = scenario
+            .steps
+            .iter()
+            .position(|step| {
+                matches!(
+                    &step.kind,
+                    StepKind::Await { evidence, .. }
+                        if *evidence == "flax_spinner_relogged_and_prepared_before_start"
+                )
+            })
+            .expect("spinner fixture readiness step");
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(&step.kind, StepKind::StartScript))
+            .expect("shared Start step");
+        assert!(ready < start, "fixture readiness must precede shared Start");
     }
 
     #[test]

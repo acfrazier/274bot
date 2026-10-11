@@ -1,9 +1,21 @@
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use api::snapshot::{Family, GameSnapshot};
+use client::client::{Client, ClientConfig};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
+use client::config::ObjType;
+use client::io::{Packet, ServerProt};
+
+use host_play::live_gate::{
+    pair_core_gate, pair_core_record, CoreGate, LiveTiming, PAIR_FIXTURE_SETUP_DEADLINE,
+};
 use host_play::paired_core::{
     pair_settings, AirClaim, AirExchangeStage, AirObservation, AirPairWitness, AirRole,
-    AirSlotRecord, DuelObservation, FlaxExchangeStage, FlaxObservation, FlaxRole, FlaxSlotRecord,
-    MuleClaim, MuleExchangeStage, MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PairWatch,
-    PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR, FALADOR_EAST, FLAX_FIELD,
-    FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
+    AirSlotRecord, DuelObservation, FlaxExchangeStage, FlaxObservation, FlaxPairWitness, FlaxRole,
+    FlaxSlotRecord, MuleClaim, MuleExchangeStage, MulePairWitness, MuleRole, MuleSlotRecord,
+    PairCase, PairWatch, PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR,
+    FALADOR_EAST, FLAX_BANK, FLAX_FIELD, FLAX_ID, FLAX_MEET, FLAX_WHEEL, MULE_TRADE_CAP, TRADE_CAP,
 };
 
 fn air_ready(player: &str, role: AirRole) -> AirObservation {
@@ -39,6 +51,11 @@ fn flax_ready(player: &str, role: FlaxRole) -> FlaxObservation {
             FlaxRole::Runner => 1,
             FlaxRole::Spinner => 10,
         },
+        crafting_xp: match role {
+            FlaxRole::Runner => 0,
+            FlaxRole::Spinner => 1154,
+        },
+        trade_session_generation: 1,
         ..FlaxObservation::default()
     }
 }
@@ -114,76 +131,9 @@ fn wrong_counterpart_and_first_transfer_cannot_qualify_full_cycle() {
 
 #[test]
 fn flax_full_cycle_caches_one_receipt() {
-    let watch = PairWatch::default();
-    watch.configure(PairCase::Flax, "runner", "spinner");
-    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
-    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
-    watch.begin_shared_start("runner", "spinner").unwrap();
+    let watch = flax_replay_full_cycle(FlaxReplayTrace::fd2());
+    assert_flax_full_cycle_receipt(&watch, "fd2");
 
-    let mut runner = flax_ready("runner", FlaxRole::Runner);
-    let mut spinner = flax_ready("spinner", FlaxRole::Spinner);
-    runner.tick = 1;
-    spinner.tick = 1;
-    runner.tile = Some(FLAX_MEET);
-    spinner.tile = Some(FLAX_MEET);
-    runner.flax = 24;
-    runner.trade_offer_open = true;
-    runner.trade_partner = Some("spinner".into());
-    spinner.trade_offer_open = true;
-    spinner.trade_partner = Some("runner".into());
-    watch.observe_flax("runner", runner.clone(), false);
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    runner.trade_offer_open = false;
-    runner.trade_confirm_open = true;
-    spinner.trade_offer_open = false;
-    spinner.trade_confirm_open = true;
-    watch.observe_flax("runner", runner.clone(), false);
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    runner.trade_confirm_open = false;
-    spinner.trade_confirm_open = false;
-    runner.flax = 0;
-    spinner.flax = 24;
-    watch.observe_flax("runner", runner.clone(), false);
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    spinner.flax = 0;
-    spinner.bow_string = 24;
-    spinner.crafting_xp = 15;
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    spinner.bank_open = true;
-    spinner.bank_loaded = true;
-    spinner.tile = Some(host_play::paired_core::FLAX_BANK);
-    spinner.bow_string = 0;
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    spinner.bank_open = false;
-    spinner.tile = Some(FLAX_MEET);
-    watch.observe_flax("spinner", spinner.clone(), false);
-
-    runner.flax = 24;
-    runner.trade_offer_open = true;
-    runner.trade_partner = Some("spinner".into());
-    spinner.trade_offer_open = true;
-    spinner.trade_partner = Some("runner".into());
-    watch.observe_flax("runner", runner.clone(), false);
-    watch.observe_flax("spinner", spinner.clone(), false);
-    runner.trade_offer_open = false;
-    runner.trade_confirm_open = true;
-    spinner.trade_offer_open = false;
-    spinner.trade_confirm_open = true;
-    watch.observe_flax("runner", runner.clone(), false);
-    watch.observe_flax("spinner", spinner.clone(), false);
-    runner.trade_confirm_open = false;
-    spinner.trade_confirm_open = false;
-    runner.flax = 0;
-    spinner.flax = 24;
-    watch.observe_flax("runner", runner, false);
-    watch.observe_flax("spinner", spinner, false);
-
-    assert_eq!(watch.status(), PairWatchStatus::Qualified);
     let first = watch.qualify().expect("full flax cycle qualifies");
     let second = watch.qualify().expect("terminal receipt remains cached");
     assert!(std::sync::Arc::ptr_eq(&first, &second));
@@ -754,14 +704,22 @@ fn flax_slot(role: FlaxRole) -> FlaxSlotRecord {
         FlaxRole::Runner => ("runner", "spinner"),
         FlaxRole::Spinner => ("spinner", "runner"),
     };
-    FlaxSlotRecord::new(
+    let mut slot = FlaxSlotRecord::new(
         role,
         account.into(),
         account.into(),
         partner.into(),
         serde_json::Map::new(),
         flax_ready(account, role),
-    )
+    );
+    let mut after_start = flax_ready(account, role);
+    after_start.tick = 1;
+    after_start.tile = Some(FLAX_MEET);
+    if role == FlaxRole::Runner {
+        after_start.flax = FLAX_LOAD;
+    }
+    slot.observe(after_start);
+    slot
 }
 
 #[allow(clippy::too_many_arguments)] // trade fixture packs role/tick/item counts
@@ -788,37 +746,115 @@ fn flax_trade(
         trade_partner: partner.map(str::to_string),
         trade_accept_id: accept,
         trade_mine_flax: mine,
+        trade_interface_generation: if offer {
+            1
+        } else if confirm {
+            3
+        } else {
+            2
+        },
+        trade_modal_generation: if offer {
+            1
+        } else if confirm {
+            3
+        } else {
+            2
+        },
+        trade_inventory_generation: 1,
+        trade_my_offer_packet_generation: Some(1),
+        trade_their_offer_packet_generation: Some(1),
+        trade_my_offer_available: offer || confirm,
+        trade_their_offer_available: offer || confirm,
         ..flax_ready(player, role)
     }
 }
 
-fn flax_offer(role: FlaxRole, tick: u32, flax: i32, mine: i32) -> FlaxObservation {
+fn flax_offer_with_qty(
+    role: FlaxRole,
+    tick: u32,
+    held_before: i32,
+    quantity: i32,
+    interface_generation: u64,
+    inventory_generation: u64,
+) -> FlaxObservation {
     let partner = match role {
         FlaxRole::Runner => "spinner",
         FlaxRole::Spinner => "runner",
     };
-    flax_trade(
+    let held_after_staging = match role {
+        FlaxRole::Runner => held_before - quantity,
+        FlaxRole::Spinner => held_before,
+    };
+    let mut observation = flax_trade(
         role,
         tick,
-        flax,
+        held_after_staging,
         true,
         false,
         Some(partner),
         TRADE_OFFER_ACCEPT,
-        mine,
-    )
+        if role == FlaxRole::Runner {
+            quantity
+        } else {
+            0
+        },
+    );
+    observation.trade_theirs_flax = if role == FlaxRole::Spinner {
+        quantity
+    } else {
+        0
+    };
+    observation.trade_interface_generation = interface_generation;
+    observation.trade_modal_generation = interface_generation;
+    observation.trade_my_offer_packet_generation = Some(inventory_generation);
+    observation.trade_their_offer_packet_generation = Some(inventory_generation);
+    observation.trade_inventory_generation = inventory_generation;
+    observation.trade_my_offer_available = true;
+    observation.trade_their_offer_available = true;
+    observation
+}
+
+fn flax_offer(role: FlaxRole, tick: u32, flax: i32, mine: i32) -> FlaxObservation {
+    match role {
+        FlaxRole::Runner => {
+            let held_before = if mine > 0 { flax + mine } else { flax };
+            let quantity = if mine > 0 { mine } else { flax };
+            flax_offer_with_qty(role, tick, held_before, quantity, tick as u64, tick as u64)
+        }
+        FlaxRole::Spinner => flax_offer_with_qty(
+            role,
+            tick,
+            flax,
+            if mine > 0 { mine } else { FLAX_LOAD },
+            tick as u64,
+            tick as u64,
+        ),
+    }
 }
 
 fn flax_inactive(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
-    flax_trade(role, tick, flax, false, false, None, -1, 0)
+    let mut observation = flax_trade(role, tick, flax, false, false, None, -1, 0);
+    observation.trade_interface_generation = tick as u64;
+    observation.trade_inventory_generation = tick.saturating_sub(1) as u64;
+    observation.trade_modal_generation = tick as u64;
+    observation.trade_my_offer_packet_generation = Some(tick.saturating_sub(1) as u64);
+    observation.trade_their_offer_packet_generation = Some(tick.saturating_sub(1) as u64);
+    observation.trade_my_offer_available = true;
+    observation.trade_their_offer_available = true;
+    observation
 }
 
-fn flax_confirm(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
+fn flax_confirm_with_qty(
+    role: FlaxRole,
+    tick: u32,
+    flax: i32,
+    inventory_generation: u64,
+) -> FlaxObservation {
     let partner = match role {
         FlaxRole::Runner => "spinner",
         FlaxRole::Spinner => "runner",
     };
-    flax_trade(
+    let mut observation = flax_trade(
         role,
         tick,
         flax,
@@ -827,11 +863,972 @@ fn flax_confirm(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
         Some(partner),
         TRADE_CONFIRM_ACCEPT,
         0,
-    )
+    );
+    observation.trade_interface_generation = tick as u64;
+    observation.trade_modal_generation = tick as u64 + 1;
+    observation.trade_my_offer_packet_generation = Some(inventory_generation);
+    observation.trade_their_offer_packet_generation = Some(inventory_generation);
+    observation.trade_inventory_generation = inventory_generation;
+    observation.trade_my_offer_available = true;
+    observation.trade_their_offer_available = true;
+    observation
+}
+
+fn flax_confirm(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
+    let held = match role {
+        FlaxRole::Runner => flax.saturating_sub(FLAX_LOAD),
+        FlaxRole::Spinner => flax,
+    };
+    flax_confirm_with_qty(role, tick, held, tick.saturating_sub(1) as u64)
 }
 
 fn flax_close(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
-    flax_trade(role, tick, flax, false, false, None, -1, 0)
+    let mut observation = flax_trade(role, tick, flax, false, false, None, -1, 0);
+    observation.trade_interface_generation = tick as u64;
+    observation.trade_modal_generation = tick as u64;
+    observation.trade_inventory_generation = tick as u64;
+    observation
+}
+
+struct FlaxTradeEngine {
+    client: Client,
+    snapshot: GameSnapshot,
+}
+
+impl FlaxTradeEngine {
+    fn new(partner: &str) -> Self {
+        const TRADEMAIN: i32 = 3323;
+        const TRADECONFIRM: i32 = 3443;
+        const TRADEMY: i32 = 3415;
+        const TRADETHEIR: i32 = 3416;
+        const TRADEPARTNER: i32 = 3417;
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.gens.session = 1;
+        let cache = Arc::get_mut(&mut client.cache).expect("test client has a unique cache");
+        cache.objs.resize(FLAX_ID as usize + 1, ObjType::default());
+        cache.objs[FLAX_ID as usize] = ObjType {
+            id: FLAX_ID,
+            name: "Flax".into(),
+            ..Default::default()
+        };
+
+        client.set_iface(
+            TRADEMAIN as usize,
+            IfType {
+                id: TRADEMAIN,
+                layer_id: TRADEMAIN,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![TRADEMY, TRADETHEIR, TRADEPARTNER, 3420, 3422]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            TRADECONFIRM as usize,
+            IfType {
+                id: TRADECONFIRM,
+                layer_id: TRADECONFIRM,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![3546, 3548]),
+                ..Default::default()
+            },
+        );
+        for component in [TRADEMY, TRADETHEIR] {
+            client.set_iface(
+                component as usize,
+                IfType {
+                    id: component,
+                    layer_id: TRADEMAIN,
+                    r#type: ComponentType::TYPE_INV,
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component as usize,
+                IfTypeMut {
+                    link_obj_type: Some(vec![0]),
+                    link_obj_number: Some(vec![0]),
+                    ..Default::default()
+                },
+            );
+        }
+        client.set_iface(
+            TRADEPARTNER as usize,
+            IfType {
+                id: TRADEPARTNER,
+                layer_id: TRADEMAIN,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            TRADEPARTNER as usize,
+            IfTypeMut {
+                text: format!("Trading With: {partner}"),
+                ..Default::default()
+            },
+        );
+        for (component, layer, button_type) in [
+            (3420, TRADEMAIN, ButtonType::BUTTON_OK),
+            (3422, TRADEMAIN, ButtonType::BUTTON_CLOSE),
+            (3546, TRADECONFIRM, ButtonType::BUTTON_OK),
+            (3548, TRADECONFIRM, ButtonType::BUTTON_CLOSE),
+        ] {
+            client.set_iface(
+                component,
+                IfType {
+                    id: component as i32,
+                    layer_id: layer,
+                    r#type: ComponentType::TYPE_RECT,
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component,
+                IfTypeMut {
+                    button_type,
+                    ..Default::default()
+                },
+            );
+        }
+        Self {
+            client,
+            snapshot: GameSnapshot::new(),
+        }
+    }
+
+    fn dispatch(&mut self, opcode: i32, payload: Vec<u8>) {
+        self.client.handle_packet(opcode, &mut Packet::new(payload));
+    }
+
+    fn open_offer(&mut self, my_flax: i32, their_flax: i32) {
+        self.dispatch(ServerProt::IF_OPENMAIN, vec![12, 251]);
+        self.dispatch(
+            ServerProt::UPDATE_INV_FULL,
+            flax_inventory_packet(3415, my_flax),
+        );
+        self.dispatch(
+            ServerProt::UPDATE_INV_FULL,
+            flax_inventory_packet(3416, their_flax),
+        );
+    }
+
+    fn update_my_offer(&mut self, quantity: i32) {
+        self.dispatch(
+            ServerProt::UPDATE_INV_FULL,
+            flax_inventory_packet(3415, quantity),
+        );
+    }
+
+    fn stop_offer_containers(&mut self) {
+        for component in [3415, 3416] {
+            self.dispatch(
+                ServerProt::UPDATE_INV_STOP_TRANSMIT,
+                vec![(component >> 8) as u8, component as u8],
+            );
+        }
+    }
+
+    fn open_confirm(&mut self) {
+        self.dispatch(ServerProt::IF_OPENMAIN, vec![13, 115]);
+    }
+
+    fn remove_my_offer_component(&mut self) {
+        Arc::make_mut(&mut self.client.ifaces)[3415] = None;
+    }
+
+    fn close(&mut self) {
+        self.dispatch(ServerProt::IF_CLOSE, Vec::new());
+    }
+
+    fn observation(&mut self, player: &str, tick: u32, flax: i32) -> FlaxObservation {
+        assert!(
+            self.snapshot.rebuild_family(&self.client, Family::Trade),
+            "trade packet changes rebuild through the API snapshot adapter"
+        );
+        let mut observation = FlaxObservation::from_snapshot(&self.snapshot);
+        observation.ingame = true;
+        observation.scene_state = 2;
+        observation.inventory_tab_available = true;
+        observation.player = Some(player.into());
+        observation.tile = Some(FLAX_MEET);
+        observation.tick = tick;
+        observation.flax = flax;
+        observation.crafting = if player == "runner" { 1 } else { 10 };
+        observation.crafting_xp = if player == "runner" { 0 } else { 1154 };
+        observation
+    }
+}
+
+fn flax_inventory_packet(component: i32, quantity: i32) -> Vec<u8> {
+    let mut packet = vec![(component >> 8) as u8, component as u8];
+    if quantity > 0 {
+        let item = FLAX_ID + 1;
+        packet.extend_from_slice(&[1, (item >> 8) as u8, item as u8, quantity as u8]);
+    } else {
+        packet.push(0);
+    }
+    packet
+}
+
+fn flax_observe_real_trade_offers(
+    watch: &PairWatch,
+) -> (FlaxTradeEngine, FlaxTradeEngine, FlaxObservation) {
+    let mut runner = FlaxTradeEngine::new("spinner");
+    runner.open_offer(FLAX_LOAD, 0);
+    let mut spinner = FlaxTradeEngine::new("runner");
+    spinner.open_offer(0, FLAX_LOAD);
+    let runner_offer = runner.observation("runner", 2, 0);
+    let spinner_offer = spinner.observation("spinner", 2, 0);
+    watch.observe_flax("runner", runner_offer.clone(), false);
+    watch.observe_flax("spinner", spinner_offer, false);
+    (runner, spinner, runner_offer)
+}
+#[derive(Clone, Copy)]
+struct FlaxReplayExchange {
+    runner_offer_tick: u32,
+    runner_contents_tick: u32,
+    runner_gaps: [Option<u32>; 2],
+    runner_confirm_tick: u32,
+    runner_close_tick: u32,
+    spinner_offer_tick: u32,
+    spinner_contents_tick: u32,
+    spinner_gaps: [Option<u32>; 2],
+    spinner_confirm_tick: u32,
+    spinner_close_tick: u32,
+    interface_floor: u64,
+    inventory_floor: u64,
+    contents_inventory_generation: u64,
+    close_inventory_generation: u64,
+}
+
+// Reduced actor-local timelines transcribed from LEDGER-0202's
+// COMPAT-WALK-TARGET observations-fd{1,2,3}.json and live-diag.md.
+// The old captures did not record packet/modal generations: the generation
+// values below are explicit synthetic continuity inputs, not recovered evidence.
+// Adapter tests separately exercise their derivation from client packet state.
+#[derive(Clone, Copy)]
+struct FlaxReplayTrace {
+    name: &'static str,
+    first: FlaxReplayExchange,
+    second: FlaxReplayExchange,
+    first_string_tick: u32,
+    first_string_xp: i32,
+    full_strings_tick: u32,
+    full_strings_xp: i32,
+    full_xp_tick: u32,
+    bank_open_tick: u32,
+    bank_deposit_tick: u32,
+    bank_close_tick: u32,
+    return_tick: u32,
+}
+
+impl FlaxReplayTrace {
+    fn fd2() -> Self {
+        Self {
+            name: "fd2",
+            first: FlaxReplayExchange {
+                runner_offer_tick: 104,
+                runner_contents_tick: 106,
+                runner_gaps: [Some(108), None],
+                runner_confirm_tick: 108,
+                runner_close_tick: 111,
+                spinner_offer_tick: 107,
+                spinner_contents_tick: 109,
+                spinner_gaps: [Some(111), None],
+                spinner_confirm_tick: 111,
+                spinner_close_tick: 114,
+                interface_floor: 0,
+                inventory_floor: 0,
+                contents_inventory_generation: 1,
+                close_inventory_generation: 2,
+            },
+            second: FlaxReplayExchange {
+                runner_offer_tick: 256,
+                runner_contents_tick: 256,
+                runner_gaps: [Some(260), None],
+                runner_confirm_tick: 260,
+                runner_close_tick: 263,
+                spinner_offer_tick: 259,
+                spinner_contents_tick: 259,
+                spinner_gaps: [Some(263), None],
+                spinner_confirm_tick: 263,
+                spinner_close_tick: 266,
+                interface_floor: 4,
+                inventory_floor: 2,
+                contents_inventory_generation: 3,
+                close_inventory_generation: 4,
+            },
+            first_string_tick: 133,
+            first_string_xp: 1154,
+            full_strings_tick: 216,
+            full_strings_xp: 1559,
+            full_xp_tick: 217,
+            bank_open_tick: 241,
+            bank_deposit_tick: 242,
+            bank_close_tick: 243,
+            return_tick: 251,
+        }
+    }
+
+    fn cw2() -> Self {
+        Self {
+            name: "cw2",
+            first: FlaxReplayExchange {
+                runner_offer_tick: 109,
+                runner_contents_tick: 109,
+                runner_gaps: [Some(112), Some(113)],
+                runner_confirm_tick: 113,
+                runner_close_tick: 116,
+                spinner_offer_tick: 113,
+                spinner_contents_tick: 113,
+                spinner_gaps: [Some(117), None],
+                spinner_confirm_tick: 117,
+                spinner_close_tick: 120,
+                interface_floor: 0,
+                inventory_floor: 0,
+                contents_inventory_generation: 1,
+                close_inventory_generation: 2,
+            },
+            second: FlaxReplayExchange {
+                runner_offer_tick: 262,
+                runner_contents_tick: 262,
+                runner_gaps: [Some(266), None],
+                runner_confirm_tick: 266,
+                runner_close_tick: 269,
+                spinner_offer_tick: 266,
+                spinner_contents_tick: 266,
+                spinner_gaps: [Some(270), None],
+                spinner_confirm_tick: 270,
+                spinner_close_tick: 273,
+                interface_floor: 4,
+                inventory_floor: 2,
+                contents_inventory_generation: 3,
+                close_inventory_generation: 4,
+            },
+            // cw2 records aggregate conversion and bank receipts, but no
+            // per-row ticks for those observations; these markers preserve
+            // only their observed order between the two trade sequences.
+            first_string_tick: 133,
+            first_string_xp: 1154,
+            full_strings_tick: 216,
+            full_strings_xp: 1559,
+            full_xp_tick: 217,
+            bank_open_tick: 249,
+            bank_deposit_tick: 250,
+            bank_close_tick: 251,
+            return_tick: 265,
+        }
+    }
+
+    fn fd1() -> Self {
+        Self {
+            name: "fd1",
+            first: FlaxReplayExchange {
+                runner_offer_tick: 108,
+                runner_contents_tick: 111,
+                runner_gaps: [Some(111), Some(112)],
+                runner_confirm_tick: 112,
+                runner_close_tick: 115,
+                spinner_offer_tick: 112,
+                spinner_contents_tick: 115,
+                spinner_gaps: [Some(115), None],
+                spinner_confirm_tick: 116,
+                spinner_close_tick: 119,
+                interface_floor: 0,
+                inventory_floor: 0,
+                contents_inventory_generation: 1,
+                close_inventory_generation: 2,
+            },
+            second: FlaxReplayExchange {
+                runner_offer_tick: 262,
+                runner_contents_tick: 262,
+                runner_gaps: [Some(266), None],
+                runner_confirm_tick: 266,
+                runner_close_tick: 269,
+                spinner_offer_tick: 266,
+                spinner_contents_tick: 266,
+                spinner_gaps: [Some(270), None],
+                spinner_confirm_tick: 270,
+                spinner_close_tick: 273,
+                interface_floor: 4,
+                inventory_floor: 2,
+                contents_inventory_generation: 3,
+                close_inventory_generation: 4,
+            },
+            first_string_tick: 140,
+            first_string_xp: 1169,
+            full_strings_tick: 223,
+            full_strings_xp: 1559,
+            full_xp_tick: 224,
+            bank_open_tick: 248,
+            bank_deposit_tick: 249,
+            bank_close_tick: 250,
+            return_tick: 258,
+        }
+    }
+
+    fn fd3() -> Self {
+        Self {
+            name: "fd3",
+            first: FlaxReplayExchange {
+                runner_offer_tick: 108,
+                runner_contents_tick: 111,
+                runner_gaps: [Some(111), Some(112)],
+                runner_confirm_tick: 112,
+                runner_close_tick: 115,
+                spinner_offer_tick: 112,
+                spinner_contents_tick: 115,
+                spinner_gaps: [Some(115), Some(116)],
+                spinner_confirm_tick: 116,
+                spinner_close_tick: 119,
+                interface_floor: 0,
+                inventory_floor: 0,
+                contents_inventory_generation: 1,
+                close_inventory_generation: 2,
+            },
+            second: FlaxReplayExchange {
+                runner_offer_tick: 260,
+                runner_contents_tick: 260,
+                runner_gaps: [Some(264), None],
+                runner_confirm_tick: 264,
+                runner_close_tick: 267,
+                spinner_offer_tick: 264,
+                spinner_contents_tick: 264,
+                spinner_gaps: [Some(268), None],
+                spinner_confirm_tick: 268,
+                spinner_close_tick: 271,
+                interface_floor: 4,
+                inventory_floor: 2,
+                contents_inventory_generation: 3,
+                close_inventory_generation: 4,
+            },
+            first_string_tick: 140,
+            first_string_xp: 1169,
+            full_strings_tick: 223,
+            full_strings_xp: 1559,
+            full_xp_tick: 224,
+            bank_open_tick: 248,
+            bank_deposit_tick: 249,
+            bank_close_tick: 250,
+            return_tick: 258,
+        }
+    }
+}
+
+fn flax_replay_started_watch() -> PairWatch {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
+    watch.begin_shared_start("runner", "spinner").unwrap();
+    watch
+}
+
+fn flax_pair_watch_with_picked_pack() -> PairWatch {
+    let watch = flax_replay_started_watch();
+    let mut runner = flax_ready("runner", FlaxRole::Runner);
+    runner.tick = 1;
+    runner.flax = FLAX_LOAD;
+    runner.tile = Some(FLAX_MEET);
+    watch.observe_flax("runner", runner, false);
+    let mut spinner = flax_ready("spinner", FlaxRole::Spinner);
+    spinner.tick = 1;
+    spinner.tile = Some(FLAX_MEET);
+    watch.observe_flax("spinner", spinner, false);
+    watch
+}
+
+#[allow(clippy::too_many_arguments)] // replay row keeps tick, counts and provenance explicit
+fn flax_replay_observation(
+    role: FlaxRole,
+    tick: u32,
+    flax: i32,
+    bow_string: i32,
+    crafting_xp: i32,
+    tile: (i32, i32, i32),
+    interface_generation: u64,
+    inventory_generation: u64,
+) -> FlaxObservation {
+    let player = match role {
+        FlaxRole::Runner => "runner",
+        FlaxRole::Spinner => "spinner",
+    };
+    let mut observation = flax_ready(player, role);
+    observation.tick = tick;
+    observation.flax = flax;
+    observation.bow_string = bow_string;
+    observation.crafting_xp = crafting_xp;
+    observation.tile = Some(tile);
+    observation.trade_interface_generation = interface_generation;
+    observation.trade_modal_generation = interface_generation;
+    observation.trade_inventory_generation = inventory_generation;
+    observation
+}
+
+#[allow(clippy::too_many_arguments)] // actor-local replay includes both roles' item baselines
+fn flax_replay_actor_stage(
+    watch: &PairWatch,
+    exchange: FlaxReplayExchange,
+    role: FlaxRole,
+    runner_quantity: i32,
+    spinner_quantity: i32,
+    spinner_flax_before: i32,
+    spinner_strings: i32,
+    spinner_xp: i32,
+) {
+    let (offer_tick, contents_tick) = match role {
+        FlaxRole::Runner => (exchange.runner_offer_tick, exchange.runner_contents_tick),
+        FlaxRole::Spinner => (exchange.spinner_offer_tick, exchange.spinner_contents_tick),
+    };
+    let (player, partner, held_before, strings, xp) = match role {
+        FlaxRole::Runner => ("runner", "spinner", runner_quantity, 0, 0),
+        FlaxRole::Spinner => (
+            "spinner",
+            "runner",
+            spinner_flax_before,
+            spinner_strings,
+            spinner_xp,
+        ),
+    };
+    let pre_offer = flax_replay_observation(
+        role,
+        offer_tick,
+        held_before,
+        strings,
+        xp,
+        FLAX_MEET,
+        exchange.interface_floor,
+        exchange.inventory_floor,
+    );
+    watch.observe_flax(player, pre_offer, false);
+
+    let mut offer = flax_replay_observation(
+        role,
+        offer_tick,
+        held_before,
+        strings,
+        xp,
+        FLAX_MEET,
+        exchange.interface_floor + 1,
+        exchange.inventory_floor,
+    );
+    offer.trade_offer_open = true;
+    offer.trade_partner = Some(partner.into());
+    offer.trade_accept_id = TRADE_OFFER_ACCEPT;
+    watch.observe_flax(player, offer, false);
+
+    let staged_flax = match role {
+        FlaxRole::Runner => held_before - runner_quantity,
+        FlaxRole::Spinner => spinner_flax_before,
+    };
+    let mut contents = flax_replay_observation(
+        role,
+        contents_tick,
+        staged_flax,
+        strings,
+        xp,
+        FLAX_MEET,
+        exchange.interface_floor + 2,
+        exchange.contents_inventory_generation,
+    );
+    contents.trade_modal_generation = exchange.interface_floor + 1;
+    contents.trade_my_offer_packet_generation = Some(exchange.contents_inventory_generation);
+    contents.trade_their_offer_packet_generation = Some(exchange.contents_inventory_generation);
+    contents.trade_offer_open = true;
+    contents.trade_partner = Some(partner.into());
+    contents.trade_accept_id = TRADE_OFFER_ACCEPT;
+    contents.trade_mine_flax = if role == FlaxRole::Runner {
+        runner_quantity
+    } else {
+        0
+    };
+    contents.trade_theirs_flax = if role == FlaxRole::Spinner {
+        spinner_quantity
+    } else {
+        0
+    };
+    contents.trade_my_offer_available = true;
+    contents.trade_their_offer_available = true;
+    watch.observe_flax(player, contents, false);
+}
+
+#[allow(clippy::too_many_arguments)] // actor-local replay includes delivery/cancellation outcome
+fn flax_replay_actor_finish(
+    watch: &PairWatch,
+    exchange: FlaxReplayExchange,
+    role: FlaxRole,
+    runner_quantity: i32,
+    spinner_quantity: i32,
+    spinner_flax_before: i32,
+    spinner_strings: i32,
+    spinner_xp: i32,
+    confirm_and_deliver: bool,
+) {
+    let (player, partner, gaps, confirm_tick, close_tick) = match role {
+        FlaxRole::Runner => (
+            "runner",
+            "spinner",
+            exchange.runner_gaps,
+            exchange.runner_confirm_tick,
+            exchange.runner_close_tick,
+        ),
+        FlaxRole::Spinner => (
+            "spinner",
+            "runner",
+            exchange.spinner_gaps,
+            exchange.spinner_confirm_tick,
+            exchange.spinner_close_tick,
+        ),
+    };
+    let staged_flax = match role {
+        FlaxRole::Runner => 0,
+        FlaxRole::Spinner => spinner_flax_before,
+    };
+    let strings = if role == FlaxRole::Spinner {
+        spinner_strings
+    } else {
+        0
+    };
+    let xp = if role == FlaxRole::Spinner {
+        spinner_xp
+    } else {
+        0
+    };
+    let content_interface = exchange.interface_floor + 2;
+    let mut saw_gap = false;
+    let cancelled_flax = match role {
+        FlaxRole::Runner => runner_quantity,
+        FlaxRole::Spinner => spinner_flax_before,
+    };
+    let inventory_generation = if confirm_and_deliver {
+        exchange.contents_inventory_generation
+    } else {
+        exchange.contents_inventory_generation + 1
+    };
+    for tick in gaps.into_iter().flatten() {
+        saw_gap = true;
+        let mut gap = flax_replay_observation(
+            role,
+            tick,
+            if confirm_and_deliver {
+                staged_flax
+            } else {
+                cancelled_flax
+            },
+            strings,
+            xp,
+            FLAX_MEET,
+            content_interface,
+            inventory_generation,
+        );
+        gap.trade_my_offer_packet_generation = Some(exchange.contents_inventory_generation);
+        gap.trade_their_offer_packet_generation = Some(exchange.contents_inventory_generation);
+        gap.trade_my_offer_available = true;
+        gap.trade_their_offer_available = true;
+        watch.observe_flax(player, gap, false);
+    }
+
+    let accepted_flax = if confirm_and_deliver {
+        staged_flax
+    } else {
+        if !saw_gap {
+            let mut refund = flax_replay_observation(
+                role,
+                confirm_tick.saturating_sub(1),
+                cancelled_flax,
+                strings,
+                xp,
+                FLAX_MEET,
+                content_interface,
+                inventory_generation,
+            );
+            refund.trade_my_offer_packet_generation = Some(exchange.contents_inventory_generation);
+            refund.trade_their_offer_packet_generation =
+                Some(exchange.contents_inventory_generation);
+            refund.trade_my_offer_available = true;
+            refund.trade_their_offer_available = true;
+            watch.observe_flax(player, refund, false);
+        }
+        cancelled_flax
+    };
+
+    let mut confirm = flax_replay_observation(
+        role,
+        confirm_tick,
+        accepted_flax,
+        strings,
+        xp,
+        FLAX_MEET,
+        exchange.interface_floor + 3,
+        inventory_generation,
+    );
+    confirm.trade_confirm_open = true;
+    confirm.trade_partner = Some(partner.into());
+    confirm.trade_accept_id = TRADE_CONFIRM_ACCEPT;
+    confirm.trade_my_offer_packet_generation = Some(exchange.contents_inventory_generation);
+    confirm.trade_their_offer_packet_generation = Some(exchange.contents_inventory_generation);
+    confirm.trade_my_offer_available = true;
+    confirm.trade_their_offer_available = true;
+    watch.observe_flax(player, confirm, false);
+
+    let delivered_flax = if confirm_and_deliver {
+        match role {
+            FlaxRole::Runner => 0,
+            FlaxRole::Spinner => spinner_flax_before + spinner_quantity,
+        }
+    } else {
+        accepted_flax
+    };
+    let close_inventory_generation = if confirm_and_deliver {
+        exchange.close_inventory_generation
+    } else {
+        inventory_generation + 1
+    };
+    let close = flax_replay_observation(
+        role,
+        close_tick,
+        delivered_flax,
+        strings,
+        xp,
+        FLAX_MEET,
+        exchange.interface_floor + 4,
+        close_inventory_generation,
+    );
+    watch.observe_flax(player, close.clone(), false);
+    // Duplicate close frames are common; they cannot create a second event.
+    watch.observe_flax(player, close, false);
+}
+
+fn flax_replay_exchange(
+    watch: &PairWatch,
+    exchange: FlaxReplayExchange,
+    runner_quantity: i32,
+    spinner_quantity: i32,
+    spinner_flax_before: i32,
+    spinner_strings: i32,
+    spinner_xp: i32,
+) {
+    flax_replay_actor_stage(
+        watch,
+        exchange,
+        FlaxRole::Runner,
+        runner_quantity,
+        spinner_quantity,
+        spinner_flax_before,
+        spinner_strings,
+        spinner_xp,
+    );
+    flax_replay_actor_stage(
+        watch,
+        exchange,
+        FlaxRole::Spinner,
+        runner_quantity,
+        spinner_quantity,
+        spinner_flax_before,
+        spinner_strings,
+        spinner_xp,
+    );
+    flax_replay_actor_finish(
+        watch,
+        exchange,
+        FlaxRole::Runner,
+        runner_quantity,
+        spinner_quantity,
+        spinner_flax_before,
+        spinner_strings,
+        spinner_xp,
+        true,
+    );
+    flax_replay_actor_finish(
+        watch,
+        exchange,
+        FlaxRole::Spinner,
+        runner_quantity,
+        spinner_quantity,
+        spinner_flax_before,
+        spinner_strings,
+        spinner_xp,
+        true,
+    );
+}
+
+fn flax_replay_first_exchange(watch: &PairWatch, trace: FlaxReplayTrace) {
+    flax_replay_exchange(watch, trace.first, FLAX_LOAD, FLAX_LOAD, 0, 0, 1154);
+}
+
+fn flax_replay_finish_cycle(watch: &PairWatch, trace: FlaxReplayTrace) {
+    watch.observe_flax(
+        "spinner",
+        flax_replay_observation(
+            FlaxRole::Spinner,
+            trace.first_string_tick,
+            27,
+            1,
+            trace.first_string_xp,
+            FLAX_WHEEL,
+            4,
+            2,
+        ),
+        false,
+    );
+    watch.observe_flax(
+        "spinner",
+        flax_replay_observation(
+            FlaxRole::Spinner,
+            trace.full_strings_tick,
+            0,
+            FLAX_LOAD,
+            trace.full_strings_xp,
+            FLAX_WHEEL,
+            4,
+            2,
+        ),
+        false,
+    );
+    watch.observe_flax(
+        "spinner",
+        flax_replay_observation(
+            FlaxRole::Spinner,
+            trace.full_xp_tick,
+            0,
+            FLAX_LOAD,
+            1574,
+            FLAX_WHEEL,
+            4,
+            2,
+        ),
+        false,
+    );
+
+    let mut bank_open = flax_replay_observation(
+        FlaxRole::Spinner,
+        trace.bank_open_tick,
+        0,
+        FLAX_LOAD,
+        1574,
+        FLAX_BANK,
+        4,
+        2,
+    );
+    bank_open.bank_open = true;
+    bank_open.bank_loaded = true;
+    bank_open.bank_session_generation = 1;
+    watch.observe_flax("spinner", bank_open, false);
+
+    let mut deposit = flax_replay_observation(
+        FlaxRole::Spinner,
+        trace.bank_deposit_tick,
+        0,
+        0,
+        1574,
+        FLAX_BANK,
+        4,
+        2,
+    );
+    deposit.bank_open = true;
+    deposit.bank_loaded = true;
+    deposit.bank_session_generation = 1;
+    deposit.bank_string = FLAX_LOAD;
+    watch.observe_flax("spinner", deposit, false);
+
+    let mut bank_close = flax_replay_observation(
+        FlaxRole::Spinner,
+        trace.bank_close_tick,
+        0,
+        0,
+        1574,
+        FLAX_BANK,
+        4,
+        2,
+    );
+    bank_close.bank_session_generation = 1;
+    bank_close.bank_string = FLAX_LOAD;
+    watch.observe_flax("spinner", bank_close, false);
+
+    let mut returned = flax_replay_observation(
+        FlaxRole::Spinner,
+        trace.return_tick,
+        0,
+        0,
+        1574,
+        FLAX_MEET,
+        4,
+        2,
+    );
+    returned.bank_session_generation = 1;
+    returned.bank_string = FLAX_LOAD;
+    watch.observe_flax("spinner", returned, false);
+
+    flax_replay_exchange(watch, trace.second, FLAX_LOAD, FLAX_LOAD, 0, 0, 1574);
+}
+
+fn flax_replay_full_cycle(trace: FlaxReplayTrace) -> PairWatch {
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    flax_replay_finish_cycle(&watch, trace);
+    watch
+}
+
+fn assert_flax_full_cycle_receipt(watch: &PairWatch, name: &str) {
+    assert_eq!(watch.status(), PairWatchStatus::Qualified, "{name}");
+    let receipt = watch.qualify().expect("full flax receipt");
+    assert_eq!(receipt["supported"], "first-flax-transfer", "{name}");
+    assert_eq!(receipt["full"], "spin-bank-second-delivery", "{name}");
+    assert_eq!(receipt["runner"]["transferred_out"], 56, "{name}");
+    assert_eq!(receipt["spinner"]["transferred_in"], 56, "{name}");
+    assert_eq!(receipt["runner"]["partner_transfer_events"], 2, "{name}");
+    assert_eq!(receipt["spinner"]["partner_transfer_events"], 2, "{name}");
+    assert_eq!(
+        receipt["runner"]["exchange_outcomes"],
+        serde_json::json!([28, 28]),
+        "{name}"
+    );
+    assert_eq!(
+        receipt["spinner"]["exchange_incomes"],
+        serde_json::json!([28, 28]),
+        "{name}"
+    );
+    assert_eq!(receipt["spinner"]["string_from_script"], 28, "{name}");
+    assert_eq!(receipt["spinner"]["xp_from_script"], 420, "{name}");
+    assert_eq!(
+        receipt["spinner"]["physical_string_deposit_observed"], true,
+        "{name}"
+    );
+    assert_eq!(receipt["spinner"]["deposited_strings"], true, "{name}");
+    assert_eq!(receipt["spinner"]["returned_to_meet"], true, "{name}");
+    assert_eq!(
+        receipt["spinner"]["second_delivery_after_bank_return"], true,
+        "{name}"
+    );
+}
+
+fn flax_replay_cancelled_exchange(watch: &PairWatch, trace: FlaxReplayTrace) {
+    for role in [FlaxRole::Runner, FlaxRole::Spinner] {
+        flax_replay_actor_finish(
+            watch,
+            trace.first,
+            role,
+            FLAX_LOAD,
+            FLAX_LOAD,
+            0,
+            0,
+            1154,
+            false,
+        );
+    }
+}
+
+fn flax_replay_staged_exchange(watch: &PairWatch, trace: FlaxReplayTrace) {
+    for role in [FlaxRole::Runner, FlaxRole::Spinner] {
+        flax_replay_actor_stage(watch, trace.first, role, FLAX_LOAD, FLAX_LOAD, 0, 0, 1154);
+    }
 }
 
 fn mule_baseline(role: MuleRole) -> AirObservation {
@@ -985,17 +1982,17 @@ fn assert_mule_no_transfer(crafter: &MuleSlotRecord, mule: &MuleSlotRecord, conf
 }
 
 fn flax_gap_close(runner: &mut FlaxSlotRecord, spinner: &mut FlaxSlotRecord) {
-    runner.observe(flax_offer(FlaxRole::Runner, 94, FLAX_LOAD, 0));
-    spinner.observe(flax_offer(FlaxRole::Spinner, 94, 0, 0));
-    runner.observe(flax_inactive(FlaxRole::Runner, 98, 0));
-    spinner.observe(flax_inactive(FlaxRole::Spinner, 98, 0));
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_inactive(FlaxRole::Runner, 2, 0));
+    spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
     assert_eq!(runner.partner_transfer_events, 0);
     assert_eq!(spinner.partner_transfer_events, 0);
     assert!(!runner.saw_confirm_with_partner);
-    runner.observe(flax_confirm(FlaxRole::Runner, 98, 0));
-    spinner.observe(flax_confirm(FlaxRole::Spinner, 98, 0));
-    runner.observe(flax_close(FlaxRole::Runner, 100, 0));
-    spinner.observe(flax_close(FlaxRole::Spinner, 100, FLAX_LOAD));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
 }
 
 fn mule_gap_close(crafter: &mut MuleSlotRecord, mule: &mut MuleSlotRecord) {
@@ -1062,7 +2059,7 @@ fn flax_repeated_offer_does_not_rebind_or_count_window_staging() {
     runner.observe(flax_offer(FlaxRole::Runner, 1, 0, FLAX_LOAD));
     spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
     assert_eq!(runner.exchange_stage, FlaxExchangeStage::Confirm);
-    runner.observe(flax_confirm(FlaxRole::Runner, 2, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
     spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
     runner.observe(flax_close(FlaxRole::Runner, 3, 0));
     spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
@@ -1091,12 +2088,14 @@ fn flax_gap_then_new_offer_rebinds_and_does_not_count_old() {
     let mut spinner = flax_slot(FlaxRole::Spinner);
     runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
     spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
-    runner.observe(flax_inactive(FlaxRole::Runner, 2, FLAX_LOAD));
+    // The first staged load is cancelled/refunded; a new 20-flax offer must
+    // bind against the held pack and fresh generations, not inherit old data.
+    runner.observe(flax_inactive(FlaxRole::Runner, 2, 20));
     spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
-    runner.observe(flax_offer(FlaxRole::Runner, 3, 20, 0));
-    spinner.observe(flax_offer(FlaxRole::Spinner, 3, 0, 0));
-    runner.observe(flax_confirm(FlaxRole::Runner, 4, 20));
-    spinner.observe(flax_confirm(FlaxRole::Spinner, 4, 0));
+    runner.observe(flax_offer_with_qty(FlaxRole::Runner, 3, 20, 20, 3, 3));
+    spinner.observe(flax_offer_with_qty(FlaxRole::Spinner, 3, 0, 20, 3, 3));
+    runner.observe(flax_confirm_with_qty(FlaxRole::Runner, 4, 0, 3));
+    spinner.observe(flax_confirm_with_qty(FlaxRole::Spinner, 4, 0, 3));
     runner.observe(flax_close(FlaxRole::Runner, 5, 0));
     spinner.observe(flax_close(FlaxRole::Spinner, 5, 20));
     assert_flax_transfer(&runner, &spinner, 1, 20);
@@ -1127,7 +2126,7 @@ fn flax_skipped_offer_later_confirm_drops_without_latch() {
     spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
     runner.observe(flax_inactive(FlaxRole::Runner, 2, 0));
     spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
-    runner.observe(flax_confirm(FlaxRole::Runner, 3, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 3, FLAX_LOAD));
     spinner.observe(flax_confirm(FlaxRole::Spinner, 3, 0));
     runner.observe(flax_close(FlaxRole::Runner, 4, 0));
     spinner.observe(flax_close(FlaxRole::Spinner, 4, FLAX_LOAD));
@@ -1403,15 +2402,26 @@ fn flax_new_offer_frame_does_not_count_old_episode() {
     let mut spinner = flax_slot(FlaxRole::Spinner);
     runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
     spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
-    runner.observe(flax_confirm(FlaxRole::Runner, 2, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
     spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_replay_observation(
+        FlaxRole::Runner,
+        3,
+        20,
+        0,
+        0,
+        FLAX_MEET,
+        2,
+        2,
+    ));
     runner.observe(flax_offer(FlaxRole::Runner, 3, 0, 20));
-    spinner.observe(flax_offer(FlaxRole::Spinner, 3, 0, 0));
+    // The replacement modal is newer than the previous confirm (generation 3).
+    spinner.observe(flax_offer_with_qty(FlaxRole::Spinner, 3, 0, 20, 4, 3));
     assert_eq!(runner.partner_transfer_events, 0);
     assert_eq!(spinner.partner_transfer_events, 0);
     assert_eq!(runner.exchange_stage, FlaxExchangeStage::Confirm);
-    runner.observe(flax_confirm(FlaxRole::Runner, 4, 0));
-    spinner.observe(flax_confirm(FlaxRole::Spinner, 4, 0));
+    runner.observe(flax_confirm_with_qty(FlaxRole::Runner, 4, 0, 3));
+    spinner.observe(flax_confirm_with_qty(FlaxRole::Spinner, 4, 0, 3));
     runner.observe(flax_close(FlaxRole::Runner, 5, 0));
     spinner.observe(flax_close(FlaxRole::Spinner, 5, 20));
     assert_flax_transfer(&runner, &spinner, 1, 20);
@@ -1474,27 +2484,9 @@ fn flax_and_mule_session_boundary_after_start_is_terminal() {
 
 #[test]
 fn flax_gap_transfer_does_not_qualify_without_further_cycle() {
-    let watch = PairWatch::default();
-    watch.configure(PairCase::Flax, "runner", "spinner");
-    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
-    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
-    watch.begin_shared_start("runner", "spinner").unwrap();
-    watch.observe_flax(
-        "runner",
-        flax_offer(FlaxRole::Runner, 94, FLAX_LOAD, 0),
-        false,
-    );
-    watch.observe_flax("spinner", flax_offer(FlaxRole::Spinner, 94, 0, 0), false);
-    watch.observe_flax("runner", flax_inactive(FlaxRole::Runner, 98, 0), false);
-    watch.observe_flax("spinner", flax_inactive(FlaxRole::Spinner, 98, 0), false);
-    watch.observe_flax("runner", flax_confirm(FlaxRole::Runner, 98, 0), false);
-    watch.observe_flax("spinner", flax_confirm(FlaxRole::Spinner, 98, 0), false);
-    watch.observe_flax("runner", flax_close(FlaxRole::Runner, 100, 0), false);
-    watch.observe_flax(
-        "spinner",
-        flax_close(FlaxRole::Spinner, 100, FLAX_LOAD),
-        false,
-    );
+    let trace = FlaxReplayTrace::fd2();
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
     let error = watch.qualify().unwrap_err();
     assert!(
         error.contains("no further work")
@@ -1514,6 +2506,629 @@ fn flax_gap_transfer_does_not_qualify_without_further_cycle() {
     );
     assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
     assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+}
+
+#[test]
+fn flax_live_cw2_asymmetric_gap_replays_full_cycle() {
+    let trace = FlaxReplayTrace::cw2();
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    let first = watch.evidence();
+    assert_eq!(
+        first["witness"]["runner"]["transferred_out"], 28,
+        "{}",
+        trace.name
+    );
+    assert_eq!(
+        first["witness"]["spinner"]["transferred_in"], 28,
+        "{}",
+        trace.name
+    );
+    assert_eq!(
+        first["witness"]["runner"]["partner_transfer_events"], 1,
+        "{}",
+        trace.name
+    );
+    assert_eq!(
+        first["witness"]["spinner"]["partner_transfer_events"], 1,
+        "{}",
+        trace.name
+    );
+    assert_eq!(watch.status(), PairWatchStatus::Running);
+
+    flax_replay_finish_cycle(&watch, trace);
+    assert_flax_full_cycle_receipt(&watch, trace.name);
+}
+
+#[test]
+fn flax_live_fd1_fd3_gaps_link_first_delivery_to_bank_and_return() {
+    for trace in [FlaxReplayTrace::fd1(), FlaxReplayTrace::fd3()] {
+        let watch = flax_replay_started_watch();
+        flax_replay_first_exchange(&watch, trace);
+        let first = watch.evidence();
+        assert_eq!(
+            first["witness"]["runner"]["transferred_out"], 28,
+            "{}",
+            trace.name
+        );
+        assert_eq!(
+            first["witness"]["spinner"]["transferred_in"], 28,
+            "{}",
+            trace.name
+        );
+
+        flax_replay_finish_cycle(&watch, trace);
+        assert_flax_full_cycle_receipt(&watch, trace.name);
+    }
+}
+
+#[test]
+fn flax_scene_loading_between_exchanges_is_not_a_session_change() {
+    let trace = FlaxReplayTrace::fd2();
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    let mut loading = flax_replay_observation(
+        FlaxRole::Runner,
+        trace.first.runner_close_tick + 1,
+        0,
+        0,
+        0,
+        FLAX_MEET,
+        4,
+        2,
+    );
+    loading.scene_state = 1;
+    watch.observe_flax("runner", loading, false);
+    assert_eq!(
+        watch.evidence()["witness"]["runner"]["session_mismatch"],
+        false
+    );
+    flax_replay_finish_cycle(&watch, trace);
+    assert_flax_full_cycle_receipt(&watch, "same-session scene rebuild");
+}
+
+#[test]
+fn flax_live_prompt_replay_uses_original_deadline_and_cached_receipt() {
+    let trace = FlaxReplayTrace::fd2();
+    let setup_started = Instant::now();
+    let core_deadline = setup_started + Duration::from_secs(180);
+    let mut timing = LiveTiming::new(setup_started, Some(core_deadline));
+    assert_eq!(
+        timing.setup_deadline(PAIR_FIXTURE_SETUP_DEADLINE),
+        setup_started + PAIR_FIXTURE_SETUP_DEADLINE
+    );
+    timing.mark_script_started(setup_started + Duration::from_secs(2));
+    timing.mark_script_started(setup_started + Duration::from_secs(30));
+    assert_eq!(timing.setup_elapsed(core_deadline), Duration::from_secs(2));
+    assert_eq!(
+        timing.script_elapsed(core_deadline),
+        Some(Duration::from_secs(178))
+    );
+
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    assert!(matches!(
+        pair_core_gate(
+            Some(&watch),
+            Some(core_deadline),
+            setup_started + Duration::from_secs(179)
+        ),
+        CoreGate::Pending
+    ));
+    flax_replay_finish_cycle(&watch, trace);
+
+    let gate = pair_core_gate(Some(&watch), Some(core_deadline), core_deadline);
+    assert!(matches!(&gate, CoreGate::Qualified(None)));
+    let text = pair_core_record(Some(&watch), &gate).expect("cached pair receipt");
+    let receipt: serde_json::Value = serde_json::from_str(&text).expect("serialized pair receipt");
+    assert_eq!(receipt["supported"], "first-flax-transfer");
+    assert_eq!(receipt["full"], "spin-bank-second-delivery");
+    assert_flax_full_cycle_receipt(&watch, trace.name);
+}
+
+#[test]
+fn flax_live_late_setup_fails_at_unchanged_deadline() {
+    let trace = FlaxReplayTrace::fd2();
+    let setup_started = Instant::now();
+    let core_deadline = setup_started + Duration::from_secs(180);
+    let mut timing = LiveTiming::new(setup_started, Some(core_deadline));
+    assert_eq!(
+        timing.setup_deadline(PAIR_FIXTURE_SETUP_DEADLINE),
+        setup_started + PAIR_FIXTURE_SETUP_DEADLINE
+    );
+    assert!(timing.setup_expired(
+        PAIR_FIXTURE_SETUP_DEADLINE,
+        setup_started + PAIR_FIXTURE_SETUP_DEADLINE
+    ));
+    let script_started = setup_started + Duration::from_secs(119);
+    assert!(!timing.setup_expired(PAIR_FIXTURE_SETUP_DEADLINE, script_started));
+    timing.mark_script_started(script_started);
+    assert!(!timing.setup_expired(
+        PAIR_FIXTURE_SETUP_DEADLINE,
+        setup_started + PAIR_FIXTURE_SETUP_DEADLINE
+    ));
+    assert_eq!(
+        timing.setup_elapsed(core_deadline),
+        Duration::from_secs(119)
+    );
+
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    assert_eq!(watch.status(), PairWatchStatus::Running);
+    assert!(matches!(
+        pair_core_gate(
+            Some(&watch),
+            Some(core_deadline),
+            setup_started + Duration::from_secs(179)
+        ),
+        CoreGate::Pending
+    ));
+    let gate = pair_core_gate(Some(&watch), Some(core_deadline), core_deadline);
+    let CoreGate::Failed(error) = gate else {
+        panic!("incomplete late cycle must fail at the original core deadline: {gate:?}");
+    };
+    assert!(error.contains("before the headed deadline"), "{error}");
+    assert_eq!(core_deadline, setup_started + Duration::from_secs(180));
+    assert_eq!(
+        timing.script_elapsed(core_deadline),
+        Some(Duration::from_secs(61))
+    );
+    assert_eq!(watch.status(), PairWatchStatus::Running);
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["deposited_strings"], false);
+}
+
+#[test]
+fn flax_pair_watch_rejects_staging_cancelled_refund_and_one_sided_confirmation() {
+    let trace = FlaxReplayTrace::fd2();
+    let staged = flax_replay_started_watch();
+    flax_replay_staged_exchange(&staged, trace);
+    let staged_evidence = staged.evidence();
+    assert_eq!(staged_evidence["witness"]["runner"]["transferred_out"], 0);
+    assert_eq!(staged_evidence["witness"]["spinner"]["transferred_in"], 0);
+    assert_eq!(
+        staged_evidence["witness"]["runner"]["partner_transfer_events"],
+        0
+    );
+    assert_eq!(
+        staged_evidence["witness"]["spinner"]["partner_transfer_events"],
+        0
+    );
+
+    let cancelled = flax_replay_started_watch();
+    flax_replay_staged_exchange(&cancelled, trace);
+    flax_replay_cancelled_exchange(&cancelled, trace);
+    let cancelled_evidence = cancelled.evidence();
+    assert_eq!(
+        cancelled_evidence["witness"]["runner"]["partner_transfer_events"],
+        0
+    );
+    assert_eq!(
+        cancelled_evidence["witness"]["spinner"]["partner_transfer_events"],
+        0
+    );
+    assert!(cancelled.qualify().is_err());
+
+    let one_sided = flax_replay_started_watch();
+    flax_replay_staged_exchange(&one_sided, trace);
+    flax_replay_actor_finish(
+        &one_sided,
+        trace.first,
+        FlaxRole::Runner,
+        FLAX_LOAD,
+        FLAX_LOAD,
+        0,
+        0,
+        1154,
+        true,
+    );
+    flax_replay_actor_finish(
+        &one_sided,
+        trace.first,
+        FlaxRole::Spinner,
+        FLAX_LOAD,
+        FLAX_LOAD,
+        0,
+        0,
+        1154,
+        false,
+    );
+    let one_sided_evidence = one_sided.evidence();
+    assert_eq!(
+        one_sided_evidence["witness"]["runner"]["transferred_out"],
+        28
+    );
+    assert_eq!(
+        one_sided_evidence["witness"]["spinner"]["transferred_in"],
+        0
+    );
+    assert_eq!(
+        one_sided_evidence["witness"]["runner"]["partner_transfer_events"],
+        1
+    );
+    assert_eq!(
+        one_sided_evidence["witness"]["spinner"]["partner_transfer_events"],
+        0
+    );
+    assert!(one_sided.qualify().is_err());
+}
+
+#[test]
+fn flax_unavailable_or_stale_offer_contents_cannot_prove_delivery() {
+    for unavailable in [true, false] {
+        let mut runner = flax_slot(FlaxRole::Runner);
+        let mut spinner = flax_slot(FlaxRole::Spinner);
+        let mut runner_offer = if unavailable {
+            flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0)
+        } else {
+            flax_offer_with_qty(FlaxRole::Runner, 1, FLAX_LOAD, FLAX_LOAD, 1, 0)
+        };
+        let mut spinner_offer = if unavailable {
+            flax_offer(FlaxRole::Spinner, 1, 0, 0)
+        } else {
+            flax_offer_with_qty(FlaxRole::Spinner, 1, 0, FLAX_LOAD, 1, 0)
+        };
+        if unavailable {
+            runner_offer.trade_my_offer_available = false;
+            runner_offer.trade_their_offer_available = false;
+            spinner_offer.trade_my_offer_available = false;
+            spinner_offer.trade_their_offer_available = false;
+        }
+        runner.observe(runner_offer);
+        spinner.observe(spinner_offer);
+        runner.observe(flax_confirm_with_qty(FlaxRole::Runner, 2, 0, 1));
+        spinner.observe(flax_confirm_with_qty(FlaxRole::Spinner, 2, 0, 1));
+        runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+        spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
+
+        assert_flax_no_transfer(&runner, &spinner, false);
+        let pair = FlaxPairWitness { runner, spinner };
+        assert!(pair.qualify_supported().is_err());
+    }
+}
+
+#[test]
+fn flax_pair_watch_rejects_old_offer_packets_after_unrelated_inventory_update() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    let mut runner_baseline = flax_ready("runner", FlaxRole::Runner);
+    runner_baseline.trade_inventory_generation = 10;
+    runner_baseline.trade_my_offer_packet_generation = Some(4);
+    runner_baseline.trade_their_offer_packet_generation = Some(9);
+    runner_baseline.trade_my_offer_available = true;
+    runner_baseline.trade_their_offer_available = true;
+    let mut spinner_baseline = flax_ready("spinner", FlaxRole::Spinner);
+    spinner_baseline.trade_inventory_generation = 10;
+    spinner_baseline.trade_my_offer_packet_generation = Some(6);
+    spinner_baseline.trade_their_offer_packet_generation = Some(8);
+    spinner_baseline.trade_my_offer_available = true;
+    spinner_baseline.trade_their_offer_available = true;
+    watch.observe_flax("runner", runner_baseline.clone(), false);
+    watch.observe_flax("spinner", spinner_baseline.clone(), false);
+    watch.begin_shared_start("runner", "spinner").unwrap();
+
+    let mut runner_after_start = runner_baseline.clone();
+    runner_after_start.tick = 1;
+    runner_after_start.flax = FLAX_LOAD;
+    let mut spinner_after_start = spinner_baseline.clone();
+    spinner_after_start.tick = 1;
+    watch.observe_flax("runner", runner_after_start.clone(), false);
+    watch.observe_flax("spinner", spinner_after_start, false);
+
+    let mut runner_unrelated_update = runner_after_start;
+    runner_unrelated_update.tick = 2;
+    runner_unrelated_update.trade_inventory_generation = 11;
+    let mut spinner_unrelated_update = spinner_baseline;
+    spinner_unrelated_update.tick = 2;
+    spinner_unrelated_update.trade_inventory_generation = 11;
+    watch.observe_flax("runner", runner_unrelated_update, false);
+    watch.observe_flax("spinner", spinner_unrelated_update, false);
+
+    let mut runner_offer = flax_offer_with_qty(FlaxRole::Runner, 3, FLAX_LOAD, FLAX_LOAD, 1, 11);
+    runner_offer.trade_my_offer_packet_generation = Some(4);
+    runner_offer.trade_their_offer_packet_generation = Some(9);
+    let mut spinner_offer = flax_offer_with_qty(FlaxRole::Spinner, 3, 0, FLAX_LOAD, 1, 11);
+    spinner_offer.trade_my_offer_packet_generation = Some(6);
+    spinner_offer.trade_their_offer_packet_generation = Some(8);
+    watch.observe_flax("runner", runner_offer, false);
+    watch.observe_flax("spinner", spinner_offer, false);
+
+    watch.observe_flax(
+        "runner",
+        flax_confirm_with_qty(FlaxRole::Runner, 4, 0, 11),
+        false,
+    );
+    watch.observe_flax(
+        "spinner",
+        flax_confirm_with_qty(FlaxRole::Spinner, 4, 0, 11),
+        false,
+    );
+    watch.observe_flax("runner", flax_close(FlaxRole::Runner, 5, 0), false);
+    watch.observe_flax(
+        "spinner",
+        flax_close(FlaxRole::Spinner, 5, FLAX_LOAD),
+        false,
+    );
+
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["transferred_out"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["transferred_in"], 0);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+    assert!(watch.qualify().is_err());
+}
+
+// po1.log: runner ticks 107/109/110/111 and spinner 111/113/114/115.
+// Both empty packets precede modal-open; only the contributing side updates.
+fn flax_packet_order_receipt(
+    stale_counteroffer: bool,
+    stale_contribution: bool,
+) -> serde_json::Value {
+    let watch = flax_pair_watch_with_picked_pack();
+    for (player, partner, role) in [
+        ("runner", "spinner", FlaxRole::Runner),
+        ("spinner", "runner", FlaxRole::Spinner),
+    ] {
+        let mut engine = FlaxTradeEngine::new(partner);
+        let contributing = if role == FlaxRole::Runner { 3415 } else { 3416 };
+        let counter = if role == FlaxRole::Runner { 3416 } else { 3415 };
+        let held_before = if role == FlaxRole::Runner {
+            FLAX_LOAD
+        } else {
+            0
+        };
+        engine.open_offer(0, 0);
+        if stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, FLAX_LOAD),
+            );
+        }
+        if stale_counteroffer {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(counter, 1),
+            );
+        }
+        watch.observe_flax(player, engine.observation(player, 2, held_before), false);
+        engine.close();
+        watch.observe_flax(player, engine.observation(player, 3, held_before), false);
+
+        if !stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, 0),
+            );
+        }
+        if !stale_counteroffer {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(counter, 0),
+            );
+        }
+        watch.observe_flax(player, engine.observation(player, 4, held_before), false);
+        engine.dispatch(ServerProt::IF_OPENMAIN, vec![12, 251]);
+        let held_at_open = if stale_contribution { 0 } else { held_before };
+        watch.observe_flax(player, engine.observation(player, 4, held_at_open), false);
+        if !stale_contribution {
+            engine.dispatch(
+                ServerProt::UPDATE_INV_FULL,
+                flax_inventory_packet(contributing, FLAX_LOAD),
+            );
+            watch.observe_flax(player, engine.observation(player, 5, 0), false);
+        }
+        engine.stop_offer_containers();
+        watch.observe_flax(player, engine.observation(player, 6, 0), false);
+        engine.close();
+        watch.observe_flax(player, engine.observation(player, 7, 0), false);
+        engine.open_confirm();
+        watch.observe_flax(player, engine.observation(player, 8, 0), false);
+        engine.close();
+        let received = if role == FlaxRole::Spinner {
+            FLAX_LOAD
+        } else {
+            0
+        };
+        watch.observe_flax(player, engine.observation(player, 9, received), false);
+    }
+    watch.evidence()
+}
+
+#[test]
+fn flax_preopen_empty_packets_then_fresh_contribution_prove_delivery() {
+    let evidence = flax_packet_order_receipt(false, false);
+    assert_eq!(evidence["witness"]["runner"]["transferred_out"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["spinner"]["transferred_in"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+}
+
+#[test]
+fn flax_stale_positive_counteroffer_from_previous_episode_is_refused() {
+    let evidence = flax_packet_order_receipt(true, false);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+}
+
+#[test]
+fn flax_unchanged_contributing_container_from_previous_episode_is_refused() {
+    let evidence = flax_packet_order_receipt(false, true);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+}
+
+#[test]
+fn flax_pair_watch_accepts_real_stop_transmit_handoff_before_confirm() {
+    let watch = flax_pair_watch_with_picked_pack();
+    let (mut runner, mut spinner, runner_offer) = flax_observe_real_trade_offers(&watch);
+
+    assert_eq!(runner_offer.trade_my_offer_packet_generation, Some(1));
+    assert_eq!(runner_offer.trade_their_offer_packet_generation, Some(1));
+    assert!(runner_offer.trade_my_offer_available);
+    assert!(runner_offer.trade_their_offer_available);
+    assert_eq!(runner_offer.trade_mine_flax, FLAX_LOAD);
+    assert_eq!(runner_offer.trade_theirs_flax, 0);
+
+    runner.stop_offer_containers();
+    spinner.stop_offer_containers();
+    runner.open_confirm();
+    spinner.open_confirm();
+    let runner_confirm = runner.observation("runner", 3, 0);
+    let spinner_confirm = spinner.observation("spinner", 3, 0);
+    assert_eq!(runner_confirm.trade_modal_generation, 2);
+    assert_eq!(runner_confirm.trade_my_offer_packet_generation, Some(2));
+    assert_eq!(runner_confirm.trade_their_offer_packet_generation, Some(2));
+    assert!(!runner_confirm.trade_my_offer_available);
+    assert!(!runner_confirm.trade_their_offer_available);
+    assert!(runner_confirm.trade_my_offer_stopped);
+    assert!(runner_confirm.trade_their_offer_stopped);
+    watch.observe_flax("runner", runner_confirm, false);
+    watch.observe_flax("spinner", spinner_confirm, false);
+
+    runner.close();
+    spinner.close();
+    watch.observe_flax("runner", runner.observation("runner", 4, 0), false);
+    watch.observe_flax(
+        "spinner",
+        spinner.observation("spinner", 4, FLAX_LOAD),
+        false,
+    );
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["transferred_out"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["spinner"]["transferred_in"], FLAX_LOAD);
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+}
+
+#[test]
+fn flax_pair_watch_rejects_content_mutation_followed_by_stop_transmit() {
+    let watch = flax_pair_watch_with_picked_pack();
+    let (mut runner, mut spinner, _) = flax_observe_real_trade_offers(&watch);
+
+    runner.update_my_offer(FLAX_LOAD - 1);
+    assert_eq!(
+        runner.observation("runner", 3, 0).trade_mine_flax,
+        FLAX_LOAD - 1
+    );
+    runner.stop_offer_containers();
+    spinner.stop_offer_containers();
+    runner.open_confirm();
+    spinner.open_confirm();
+    let runner_confirm = runner.observation("runner", 3, 0);
+    assert_eq!(runner_confirm.trade_my_offer_packet_generation, Some(3));
+    assert!(runner_confirm.trade_my_offer_stopped);
+    watch.observe_flax("runner", runner_confirm, false);
+    watch.observe_flax("spinner", spinner.observation("spinner", 3, 0), false);
+
+    runner.close();
+    spinner.close();
+    watch.observe_flax("runner", runner.observation("runner", 4, 0), false);
+    watch.observe_flax("spinner", spinner.observation("spinner", 4, 0), false);
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+    assert!(watch.qualify().is_err());
+}
+
+#[test]
+fn flax_pair_watch_rejects_missing_offer_source_at_confirm() {
+    let watch = flax_pair_watch_with_picked_pack();
+    let (mut runner, mut spinner, _) = flax_observe_real_trade_offers(&watch);
+
+    runner.remove_my_offer_component();
+    runner.open_confirm();
+    spinner.open_confirm();
+    let runner_confirm = runner.observation("runner", 3, 0);
+    assert_eq!(runner_confirm.trade_my_offer_packet_generation, Some(1));
+    assert!(!runner_confirm.trade_my_offer_available);
+    assert!(!runner_confirm.trade_my_offer_stopped);
+    watch.observe_flax("runner", runner_confirm, false);
+    watch.observe_flax("spinner", spinner.observation("spinner", 3, 0), false);
+
+    runner.close();
+    spinner.close();
+    watch.observe_flax("runner", runner.observation("runner", 4, 0), false);
+    watch.observe_flax("spinner", spinner.observation("spinner", 4, 0), false);
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 0);
+    assert!(watch.qualify().is_err());
+}
+
+#[test]
+fn flax_changed_identity_or_trade_session_drops_pending_episode() {
+    for changed_session in [false, true] {
+        let trace = FlaxReplayTrace::fd2();
+        let watch = flax_replay_started_watch();
+        flax_replay_staged_exchange(&watch, trace);
+        let mut broken = flax_replay_observation(FlaxRole::Runner, 107, 0, 0, 0, FLAX_MEET, 2, 1);
+        if changed_session {
+            broken.trade_session_generation = 2;
+        } else {
+            broken.player = Some("replacement".into());
+        }
+        watch.observe_flax("runner", broken, false);
+        flax_replay_actor_finish(
+            &watch,
+            trace.first,
+            FlaxRole::Runner,
+            FLAX_LOAD,
+            FLAX_LOAD,
+            0,
+            0,
+            1154,
+            true,
+        );
+        flax_replay_actor_finish(
+            &watch,
+            trace.first,
+            FlaxRole::Spinner,
+            FLAX_LOAD,
+            FLAX_LOAD,
+            0,
+            0,
+            1154,
+            true,
+        );
+        let evidence = watch.evidence();
+        assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 0);
+        assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+        let error = watch.qualify().unwrap_err();
+        if changed_session {
+            assert!(error.contains("stale session"), "{error}");
+        } else {
+            assert!(error.contains("mixed identities"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn flax_offsetting_exchange_mismatches_fail_per_delivery_conservation() {
+    let trace = FlaxReplayTrace::fd1();
+    let watch = flax_replay_started_watch();
+    flax_replay_exchange(&watch, trace.first, 28, 27, 0, 0, 1154);
+    watch.observe_flax(
+        "spinner",
+        flax_replay_observation(FlaxRole::Spinner, 200, 0, 27, 1559, FLAX_WHEEL, 4, 2),
+        false,
+    );
+    flax_replay_exchange(&watch, trace.second, 27, 28, 0, 27, 1559);
+
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["runner"]["transferred_out"], 55);
+    assert_eq!(evidence["witness"]["spinner"]["transferred_in"], 55);
+    assert_eq!(
+        evidence["witness"]["runner"]["exchange_outcomes"],
+        serde_json::json!([28, 27])
+    );
+    assert_eq!(
+        evidence["witness"]["spinner"]["exchange_incomes"],
+        serde_json::json!([27, 28])
+    );
+    let error = watch.qualify().unwrap_err();
+    assert!(error.contains("exchange 1"), "{error}");
 }
 
 #[test]
@@ -1602,13 +3217,14 @@ fn flax_partnerless_new_offer_invalidates_previous_episode() {
             runner.observe(flax_close(FlaxRole::Runner, 6, 0));
             spinner.observe(flax_close(FlaxRole::Spinner, 6, FLAX_LOAD));
             assert_flax_no_transfer(&runner, &spinner, confirmed);
-            // A separate, fully observed named offer still starts fresh.
-            runner.observe(flax_offer(FlaxRole::Runner, 7, FLAX_LOAD, 0));
-            spinner.observe(flax_offer(FlaxRole::Spinner, 7, 0, 0));
-            runner.observe(flax_confirm(FlaxRole::Runner, 8, FLAX_LOAD));
-            spinner.observe(flax_confirm(FlaxRole::Spinner, 8, 0));
-            runner.observe(flax_close(FlaxRole::Runner, 9, 0));
-            spinner.observe(flax_close(FlaxRole::Spinner, 9, FLAX_LOAD));
+            runner.observe(flax_inactive(FlaxRole::Runner, 7, FLAX_LOAD));
+            spinner.observe(flax_inactive(FlaxRole::Spinner, 7, 0));
+            runner.observe(flax_offer(FlaxRole::Runner, 8, FLAX_LOAD, 0));
+            spinner.observe(flax_offer(FlaxRole::Spinner, 8, 0, 0));
+            runner.observe(flax_confirm(FlaxRole::Runner, 9, FLAX_LOAD));
+            spinner.observe(flax_confirm(FlaxRole::Spinner, 9, 0));
+            runner.observe(flax_close(FlaxRole::Runner, 10, 0));
+            spinner.observe(flax_close(FlaxRole::Spinner, 10, FLAX_LOAD));
             assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
         }
     }

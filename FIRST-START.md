@@ -194,6 +194,8 @@ interface is modelled on rs2b0t's (drawn with ImGui instead of Electron), it
 keeps rs2b0t's script API so the rs2b0t catalog runs here, our quest Paths
 started from its AIOQuester, and parts of our game data come from it. Thank you
 to [everyone who has contributed to rs2b0t](https://github.com/rs2b2t/rs2b0t/graphs/contributors).
+The Quester also owes a lot to Liza Carvelli's Questionable plugin for
+[Dalamud](https://github.com/goatcorp/Dalamud).
 It also builds on [Lost City](https://github.com/LostCityRS) and the
 [Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust) client. Licenses
 are in NOTICE.md.

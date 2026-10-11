@@ -357,6 +357,20 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(record["sha256"], release.sha256_file(package / name))
                 self.assertEqual(record["bytes"], (package / name).stat().st_size)
 
+    def test_release_notes_get_the_credits_footer_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            notes = root / "notes.md"
+            notes.write_text("## 0.2.0.2\n\n- Fixed things.\n")
+            footer = release.NOTES_FOOTER.read_text().strip()
+
+            composed = release.compose_release_notes(notes, root / "out.md").read_text()
+            again = release.compose_release_notes(root / "out.md", root / "out.md").read_text()
+
+            self.assertTrue(composed.startswith("## 0.2.0.2\n\n- Fixed things.\n\n"))
+            self.assertEqual(composed.count(footer), 1)
+            self.assertEqual(again, composed)
+
     def test_archive_verifier_checks_exact_manifest_membership(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

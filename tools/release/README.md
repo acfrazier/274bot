@@ -120,6 +120,10 @@ python3 tools/release/release.py verify \
   --commit "$COMMIT" --platform all --artifact-dir "$ARTIFACTS"
 ```
 
+Finalize appends the credits footer (`tools/release/notes-footer.md`) to the
+release notes once and writes the result to `$WORK/$COMMIT/RELEASE-NOTES.md`.
+That file is what ships in every package; use it as the GitHub release body too.
+
 Finalization first refuses a tag that is neither the Cargo version nor a
 numeric patch tag beginning with that version (for example, version `0.2.0`
 may finalize as `0.2.0.1`). It also requires the staged manifest's version and

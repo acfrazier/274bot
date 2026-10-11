@@ -2620,6 +2620,7 @@ fn side_tabs_report_available_active_visible_and_widgets() {
 #[test]
 fn trade_view_reads_offer_confirm_and_containers() {
     let mut c = client_with_npc();
+    c.gens.session = 7;
     plant_obj(&mut c, 3, "Coins");
     plant_obj(&mut c, 5, "Lobster");
     plant_obj(&mut c, 6, "Bones");
@@ -2727,10 +2728,14 @@ fn trade_view_reads_offer_confirm_and_containers() {
         },
     );
 
-    c.main_modal_id = 3323;
+    let mut my_offer_full = Packet::new(vec![13, 87, 1, 0, 4, 1]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut my_offer_full);
+    let mut their_offer_full = Packet::new(vec![13, 88, 1, 0, 6, 3]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut their_offer_full);
+    let mut open = Packet::new(vec![12, 251]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
 
     let mut snap = GameSnapshot::new();
-    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
     assert!(snap.rebuild_family(&c, Family::Trade));
 
     let t = snap.trade();
@@ -2753,13 +2758,45 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert_eq!(t.side_pack[0].container, ItemContainer::TradeSidePack);
     assert_eq!(t.side_pack[0].def.id, 6);
     assert_eq!(t.side_pack[0].count, 2);
+    assert!(t.my_offer_available);
+    assert!(t.their_offer_available);
+    assert_eq!(t.my_offer_packet_generation, Some(1));
+    assert_eq!(t.their_offer_packet_generation, Some(1));
+    assert_eq!(t.modal_generation, 1);
+    assert_eq!(t.session_generation, 7);
     assert_eq!(t.side_pack[0].actions[0].as_deref(), Some("Offer"));
+    let initial_inventory_generation = t.inventory_generation;
+    let mut unrelated_full = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut unrelated_full);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_ne!(
+        snap.trade().inventory_generation,
+        initial_inventory_generation
+    );
+    assert_eq!(snap.trade().my_offer_packet_generation, Some(1));
+    assert_eq!(snap.trade().their_offer_packet_generation, Some(1));
+    assert!(snap.trade().my_offer_available);
+    assert!(snap.trade().their_offer_available);
+    assert!(!snap.trade().my_offer_stopped);
+    assert!(!snap.trade().their_offer_stopped);
+
+    let mut my_offer_stop = Packet::new(vec![13, 87]);
+    c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut my_offer_stop);
+    let mut their_offer_stop = Packet::new(vec![13, 88]);
+    c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut their_offer_stop);
 
     // The confirm screen is a different main modal.
-    c.main_modal_id = 3443;
-    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    let mut confirm_open = Packet::new(vec![13, 115]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut confirm_open);
     assert!(snap.rebuild_family(&c, Family::Trade));
     assert!(snap.trade().confirm_open);
+    assert_eq!(snap.trade().modal_generation, 2);
+    assert!(!snap.trade().my_offer_available);
+    assert!(!snap.trade().their_offer_available);
+    assert_eq!(snap.trade().my_offer_packet_generation, Some(2));
+    assert_eq!(snap.trade().their_offer_packet_generation, Some(2));
+    assert!(snap.trade().my_offer_stopped);
+    assert!(snap.trade().their_offer_stopped);
     assert!(!snap.trade().offer_open);
 
     // A partner label with no prefix keeps the raw name.
@@ -2779,6 +2816,14 @@ fn trade_view_reads_offer_confirm_and_containers() {
     c.bump_gens(ServerProt::IF_SETTEXT);
     assert!(snap.rebuild_family(&c, Family::Trade));
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
+    Arc::make_mut(&mut c.ifaces)[3415] = None;
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert!(!snap.trade().my_offer_available);
+    assert!(!snap.trade().their_offer_available);
+    assert!(!snap.trade().my_offer_stopped);
+    assert!(snap.trade().their_offer_stopped);
+    assert_eq!(snap.trade().session_generation, 7);
 }
 
 /// Native trade controls are a rectangle and a separate, non-clickable text
