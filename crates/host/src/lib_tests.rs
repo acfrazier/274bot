@@ -2,7 +2,7 @@ use super::*;
 use api::interact::RUN_ORB_IFACE;
 use client::dash3d::TerrainOverlayShape;
 use client::io::ClientProt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
 /// Force the wgpu backend's process-wide init to fail so every
@@ -14,14 +14,30 @@ use std::time::Instant;
 /// constructs one.
 static FORCE_CPU_BACKEND: OnceLock<()> = OnceLock::new();
 
-// `BOT_CPU` is a process-wide override. Keep the one test that mutates it
-// isolated from tests that assert per-slot CPU preferences.
-static BOT_CPU_ENV_LOCK: Mutex<()> = Mutex::new(());
-fn force_cpu_backend() {
+/// `BOT_CPU` is a process-wide override, and `client_frame` reads it every
+/// tick: a drawing slot whose answer changes between two ticks rebuilds its
+/// head and repaints at once (a backend flip). So the two tests that set or
+/// clear it hold the write side while every other test that runs frames
+/// holds the read side (through [`force_cpu_backend`]); otherwise a test's
+/// watch-rate paint counts moved whenever one of them ran beside it.
+static BOT_CPU_ENV: RwLock<()> = RwLock::new(());
+
+fn bot_cpu_env_write() -> RwLockWriteGuard<'static, ()> {
+    BOT_CPU_ENV.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn init_cpu_backend() {
     FORCE_CPU_BACKEND.get_or_init(|| {
         std::env::set_var("R274_TEST_FORCE_NO_GPU", "1");
         Renderer::set_prefer_gpu(true);
     });
+}
+
+/// [`init_cpu_backend`] plus the shared side of the `BOT_CPU` lock: keep
+/// the returned guard for the whole test (`let _cpu = ...`).
+fn force_cpu_backend() -> RwLockReadGuard<'static, ()> {
+    init_cpu_backend();
+    BOT_CPU_ENV.read().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn cfg() -> ClientConfig {
@@ -1081,7 +1097,7 @@ fn client_frame_consumes_script_mouse_with_capture_off() {
 
 #[test]
 fn client_frame_skips_frame_store_when_draw_off() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1171,7 +1187,7 @@ fn draw_off_logout_edge_constructs_no_renderer_and_publishes_no_frame() {
 
 #[test]
 fn draw_off_drops_renderer_draw_on_reattaches() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1196,7 +1212,7 @@ fn draw_off_drops_renderer_draw_on_reattaches() {
 /// mailbox so a `FrameOutput::Texture` cannot outlive `frame_texture`.
 #[test]
 fn draw_off_drains_the_frame_mailbox_before_dropping_the_head() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1229,7 +1245,7 @@ fn draw_off_drains_the_frame_mailbox_before_dropping_the_head() {
 /// next attach restores the mesh without a rebuild.
 #[test]
 fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1345,8 +1361,8 @@ fn backend_flip_rearms_share_light_without_dropping_overlay() {
 
 #[test]
 fn prefer_cpu_rebuilds_renderer_not_client() {
-    let _env_lock = BOT_CPU_ENV_LOCK.lock().unwrap();
-    force_cpu_backend();
+    let _env_lock = bot_cpu_env_write();
+    init_cpu_backend();
     // The per-slot toggle must not inherit a process-wide `BOT_CPU` (a
     // `BOT_CPU=1` env would force CPU on the first paint, so the flip
     // could never rebuild): clear it for the toggle, then restore.
@@ -1392,8 +1408,8 @@ fn prefer_cpu_rebuilds_renderer_not_client() {
 
 #[test]
 fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
-    let _env_lock = BOT_CPU_ENV_LOCK.lock();
-    force_cpu_backend();
+    let _env_lock = bot_cpu_env_write();
+    init_cpu_backend();
     let prev = std::env::var("BOT_CPU").ok();
     std::env::set_var("BOT_CPU", "1");
     let mut c = prepare_client(
@@ -1422,7 +1438,7 @@ fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
 
 #[test]
 fn next_login_memory_mode_rebuilds_the_renderer() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1468,7 +1484,7 @@ fn client_frame_keeps_loop_counters_slot_local() {
 
 #[test]
 fn client_frame_draw_on_paints_this_tick() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1486,7 +1502,7 @@ fn client_frame_draw_on_paints_this_tick() {
 
 #[test]
 fn mainredraw_runs_check_minimap_on_a_paint_tick() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1623,7 +1639,7 @@ fn idle_observe_wire_reaches_socket_on_the_next_frame_without_parking() {
 
 #[test]
 fn client_tick_observe_runs_before_the_frame_paint() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1825,7 +1841,7 @@ fn captured_title_paints_only_on_flame_deadline() {
 
 #[test]
 fn watch_rate_title_catches_up_flames_without_extra_paints() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1835,6 +1851,12 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
     );
     let buf = FrameBuf::new();
     let mut slot = SlotLoop::new();
+    // The paint cadence is measured on a pinned clock: how long a loaded
+    // machine takes to run a tick (the first one builds the renderer) must
+    // not decide whether the next tick is "a second later". The real sleep
+    // below only gives the flame animation its own elapsed time to catch up.
+    let t0 = Instant::now();
+    slot.pacing_now = Some(t0);
     let mut sends = 0u32;
     let inp = SlotInput::new();
     c.set_draw(true);
@@ -1866,6 +1888,7 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
     );
     assert_eq!(buf.generation(), 1, "watch title stays at one fps");
 
+    slot.pacing_now = Some(t0 + Duration::from_secs(1) + Duration::from_millis(50));
     thread::sleep(Duration::from_secs(1) + Duration::from_millis(50));
     Host::client_frame(
         &mut c,
@@ -1891,7 +1914,7 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
 
 #[test]
 fn watch_only_paints_first_tick_then_once_per_second() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1901,6 +1924,10 @@ fn watch_only_paints_first_tick_then_once_per_second() {
     );
     let buf = FrameBuf::new();
     let mut slot = SlotLoop::new();
+    // Pinned pacing clock: the ticks' own run time must not decide how much
+    // "time" passed between them.
+    let t0 = Instant::now();
+    slot.pacing_now = Some(t0);
     let mut sends = 0u32;
     c.set_draw(true);
     c.ingame = true;
@@ -1911,14 +1938,14 @@ fn watch_only_paints_first_tick_then_once_per_second() {
     // repaint before a wall-clock second elapses.
     Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
     assert_eq!(buf.generation(), 1);
-    thread::sleep(Duration::from_secs(1) + Duration::from_millis(50));
+    slot.pacing_now = Some(t0 + Duration::from_secs(1) + Duration::from_millis(50));
     Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
     assert_eq!(buf.generation(), 2, "watch-only repaints after 1 s");
 }
 
 #[test]
 fn full_rate_paints_every_tick_after_scene_ready() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1980,7 +2007,7 @@ fn full_rate_paints_every_tick_after_scene_ready() {
 
 #[test]
 fn loading_scene_paints_every_tick_for_tv_static() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -2006,7 +2033,7 @@ fn loading_scene_paints_every_tick_for_tv_static() {
 
 #[test]
 fn capture_draw_copies_every_tick() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -2057,7 +2084,7 @@ fn title_button_click(tx: &std::sync::mpsc::Sender<InputEv>) {
 
 #[test]
 fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -2072,6 +2099,11 @@ fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
     let (tx, rx) = std::sync::mpsc::channel();
     inp.connect_rx(rx);
     let mut wait = TitleWait::new(Some(Arc::clone(&inp)), Some(Arc::clone(&buf)));
+    // The wait's cadence runs on a pinned clock: how long a loaded machine
+    // takes to paint the first frame must not decide whether the next call
+    // is already due.
+    let t0 = Instant::now();
+    wait.slot.pacing_now = Some(t0);
 
     let next = wait.frame(&mut c, "alice", |_| {});
     assert_eq!(buf.generation(), 1, "the waiting title paints at once");
@@ -2081,14 +2113,14 @@ fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
     assert_eq!(c.loop_cycle, cycle, "no frame runs before it is due");
 
     title_button_click(&tx);
-    thread::sleep(TITLE_FLAME_FRAME_TIME);
+    wait.slot.pacing_now = Some(t0 + TITLE_FLAME_FRAME_TIME);
     let mut applied = false;
     wait.frame(&mut c, "alice", |c| applied = c.take_title_login_request());
     assert!(applied, "input reaches the waiting title as it arrives");
     assert_eq!(buf.generation(), 2, "flames advance during the wait");
 
     title_button_click(&tx);
-    thread::sleep(FRAME_MS);
+    wait.slot.pacing_now = Some(t0 + TITLE_FLAME_FRAME_TIME + FRAME_MS);
     wait.frame(&mut c, "alice", |_| {});
     assert!(
         !c.take_title_login_request(),
@@ -2098,7 +2130,7 @@ fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
 
 #[test]
 fn title_wait_keeps_draw_off_and_watch_titles_on_their_parks() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
         1,
@@ -2234,7 +2266,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
 
 #[test]
 fn focused_slot_keeps_the_twenty_ms_cadence() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let (mirror, seen) = seen();
     let stop = Arc::new(AtomicBool::new(false));
     let stop2 = Arc::clone(&stop);
@@ -2349,7 +2381,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
 
 #[test]
 fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let (wake, park) = crate::slot_io::wake_channel();
     let (mirror, seen) = seen();
     let buf = FrameBuf::new();
@@ -2480,7 +2512,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
 
 #[test]
 fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
-    force_cpu_backend();
+    let _cpu = force_cpu_backend();
     let (wake, park) = crate::slot_io::wake_channel();
     let (mirror, seen) = seen();
     let inp = SlotInput::new();

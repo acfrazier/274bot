@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn overlay_skips_queue_card_when_not_queued() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn queue_card_metrics_use_measured_width_with_equal_padding() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn queue_card_metrics_track_longer_k_of_n_counts() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
