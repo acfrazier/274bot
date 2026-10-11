@@ -148,7 +148,8 @@ pub struct SlotArm {
     pub world: Arc<parking_lot::Mutex<Option<u16>>>,
     pub(super) world_generation: AtomicU64,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
-    /// is 16; after a grant this is true.
+    /// is 16; after a grant this is true; a session exit sets it to whether
+    /// the client kept its world ([`Client::session_resumable`]).
     pub reconnect: Arc<AtomicBool>,
     /// The observed session exit, shared with the memory notice. Operator
     /// login intent alone must not turn a dirty reconnect into a clean login.
@@ -936,13 +937,16 @@ pub(super) fn tick_flags(
     if let Some(reason) = client.take_session_exit_reason() {
         let clean = matches!(reason, SessionExitReason::ServerLogout { .. });
         arm.last_exit_clean.store(clean, Ordering::Relaxed);
-        if clean {
-            // The server logged the player out (operator logout, world
-            // change, idle): the original client logs in fresh from the
-            // title (`Client.java:6657`, `login(.., false)`); only a lost
-            // connection reconnects (`Client.java:6162`, `login(.., true)`).
-            arm.reconnect.store(false, Ordering::Relaxed);
-        }
+        // The original client reconnects (`login(.., true)`, `Client.java:
+        // 6162`) only from `lostCon`, which keeps the map. Every logout —
+        // the server's (operator logout, world change, idle), a T1/T2
+        // protocol error (`Client.ts:7380-7394`), a connection lost while a
+        // logout is pending — clears it and returns to the title, whose next
+        // login is fresh (`Client.java:6657`, `login(.., false)`). A reconnect
+        // into a cleared map gets the server's same-zone rebuild, which the
+        // client skips: an empty world.
+        arm.reconnect
+            .store(client.session_resumable(), Ordering::Relaxed);
         match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.
