@@ -3255,7 +3255,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         .map(|row| {
             (
                 row.name.as_str(),
-                row.checked,
+                row.checked(&s.fleet_selection),
                 match row.status {
                     WalkSlotStatus::Eligible(_) => None,
                     WalkSlotStatus::Excluded(reason) => Some(reason),
@@ -3384,11 +3384,151 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         .walk_send
         .rows()
         .iter()
-        .map(|row| (row.name.as_str(), row.checked))
+        .map(|row| (row.name.as_str(), row.checked(&s.fleet_selection)))
         .collect();
     assert_eq!(checked, [("alice", true), ("bob", false)]);
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
     assert_eq!(s.fleet_selection.len(), 1, "a mark is never added");
+}
+
+/// WalkTo's Send keeps no selection of its own: the Walk button's count reads
+/// the shared marked-bots set every frame, so a mark made in the rail, Grid or
+/// Fleet while the picker is open shows at once, without pressing Send.
+#[test]
+fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _statics = crate::picker::lock_nav_statics();
+    let mut s = session_with_vault("walk-live-count.vault", &["alice", "bob"]);
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses = s.core.play().unwrap().statuses();
+    for name in ["alice", "bob"] {
+        s.core.fleet_mut().add(name);
+    }
+    let (alice, bob) = (s.fleet_identity("alice"), s.fleet_identity("bob"));
+    s.fleet_selection.set(alice, true);
+    s.open_walkto_for_marked();
+    assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
+
+    let mut ctx = dear_imgui_rs::Context::create();
+    let mut label_after_frame = |s: &mut Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let mut open = true;
+            let mut map = crate::walk_map::WalkMapRenderer::new();
+            crate::picker::picker_map_window(ctx.frame(), s, &world, &mut open, None, &mut map);
+        }
+        ctx.render();
+        s.walk_send.walk_label().to_string()
+    };
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+    // Another surface marks bob; Send was not pressed and the list was not
+    // rebuilt.
+    s.fleet_selection.set(bob, true);
+    assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
+    s.fleet_selection.set(alice, false);
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+    s.fleet_selection.clear();
+    assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
+}
+
+/// The 50 fps choices are saved when changed and restored at the next launch;
+/// a preferences file without them behaves as it did before they were saved
+/// (sidecar off, focused on).
+#[test]
+fn fifty_fps_choices_are_saved_and_restored() {
+    let fresh = Session::new();
+    {
+        let f = fresh.focus.lock().unwrap();
+        assert!(!f.sidecar_50, "a missing key: sidecar off");
+        assert!(f.focused_50, "a missing key: focused on, as before");
+    }
+    let mut s = Session::new();
+    s.set_sidecar_50(true);
+    s.set_focused_50(false);
+    let saved = crate::ui_state::load();
+    assert!(
+        saved.sidecar_50 && !saved.focused_50,
+        "written to the preferences"
+    );
+
+    let next = Session::new();
+    {
+        let f = next.focus.lock().unwrap();
+        assert!(f.sidecar_50, "the next launch restores sidecar 50 fps");
+        assert!(!f.focused_50, "and focused 50 fps off");
+    }
+}
+
+/// A restored 50 fps setting adds no work for a slot that isn't drawing: with
+/// only-render-selected on (every launch), the rail and Grid members stay at
+/// the watch cadence, and with the renderer off nothing runs at 50 Hz.
+#[test]
+fn restored_50_fps_costs_nothing_for_slots_that_do_not_draw() {
+    crate::ui_state::save(&crate::ui_state::PanelUiState {
+        sidecar_50: true,
+        focused_50: true,
+        ..Default::default()
+    });
+    let mut s = Session::new();
+    let inputs: Vec<_> = ["a", "b", "c"]
+        .into_iter()
+        .map(|name| {
+            let input = SlotInput::new();
+            s.core.insert_slot_io(
+                name,
+                SlotIo {
+                    input: Arc::clone(&input),
+                    pixels: FrameBuf::new(),
+                },
+            );
+            input
+        })
+        .collect();
+    {
+        let mut f = s.focus.lock().unwrap();
+        assert!(f.sidecar_50 && f.focused_50, "both restored");
+        assert!(f.only_render_selected, "starts on at every launch");
+        f.focused = Some("a".into());
+        f.wall_open = true;
+        f.wall = vec!["b".into(), "c".into()];
+        f.renderer_by = std::collections::HashMap::from([("b".into(), true), ("c".into(), true)]);
+    }
+    s.sync_sidecar_cadence();
+    assert!(
+        inputs[0].full_rate(),
+        "the focused, drawing bot uses its setting"
+    );
+    assert!(
+        !inputs[1].full_rate() && !inputs[2].full_rate(),
+        "hidden by only-render-selected: no 50 Hz work"
+    );
+    s.focus.lock().unwrap().renderer = false;
+    s.sync_sidecar_cadence();
+    assert!(
+        inputs.iter().all(|input| !input.full_rate()),
+        "renderer off: nothing paces at 50 Hz"
+    );
 }
 
 #[test]

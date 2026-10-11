@@ -228,6 +228,59 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(shown.contains("modals") && shown.contains("0"));
 }
 
+/// A parked Quester shows its script phase and the reason it waits on the
+/// status card; a slot with no script shows neither row.
+#[test]
+fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
+    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "action_state",
+                label: "Action",
+                value: StatusValue::Text(Arc::from("blocked")),
+            },
+            StatusField {
+                key: "block_reason",
+                label: "Blocked",
+                value: StatusValue::Text(Arc::from("no step for stage")),
+            },
+        ]),
+        failure: None,
+    };
+    let mut parked = frontend_core::SlotDetail::default();
+    parked.row.phase = frontend_core::Phase::Ready;
+    parked.row.script = script::RunState::Running;
+    parked.state = "ingame scene 2".into();
+    let parked = parked.with_native_status(Some(Arc::new(status)));
+    let shown = draw_status_detail(&parked, "—", "lowmem");
+    assert!(
+        shown.contains("script") && shown.contains("blocked"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("reason") && shown.contains("no step for stage"),
+        "{shown}"
+    );
+
+    let bare = draw_status_detail(&frontend_core::SlotDetail::default(), "—", "lowmem");
+    assert!(
+        !bare.contains("script") && !bare.contains("reason"),
+        "{bare}"
+    );
+}
+
 /// On a 1024×768 desktop the app's client area is about 1008×580 and the
 /// docked Profiles window runs past its right edge. The last row's Edit and
 /// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in
@@ -945,13 +998,25 @@ fn hop_label_px_writes_clamp_to_8_28() {
 #[test]
 fn apply_only_render_selected_warns_before_unchecking() {
     // Checking "only render selected" on is immediate, no dialog.
-    assert_eq!(apply_only_render_selected(false, true), (true, false));
+    assert_eq!(
+        apply_only_render_selected(false, true, false),
+        (true, false)
+    );
     // Unchecking does not apply: keeps the safe default, opens the
     // warning instead.
-    assert_eq!(apply_only_render_selected(true, false), (true, true));
+    assert_eq!(apply_only_render_selected(true, false, false), (true, true));
     // No-op rows: the box already matches the flag.
-    assert_eq!(apply_only_render_selected(true, true), (true, false));
-    assert_eq!(apply_only_render_selected(false, false), (false, false));
+    assert_eq!(apply_only_render_selected(true, true, false), (true, false));
+    assert_eq!(
+        apply_only_render_selected(false, false, false),
+        (false, false)
+    );
+    // After "Don't show again" unchecking applies at once.
+    assert_eq!(
+        apply_only_render_selected(true, false, true),
+        (false, false)
+    );
+    assert_eq!(apply_only_render_selected(false, true, true), (true, false));
 }
 
 #[test]
@@ -5523,5 +5588,348 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
         }
         assert!(changed, "picking {target:?} reports a change");
         assert_eq!(nav.danger_level(), target, "the picked entry is stored");
+    }
+}
+
+/// One headless frame of the render-all warning with the pointer at `point`,
+/// the left button held when `pressed`. Returns the controls' bounds: "I
+/// understand", OK, Cancel, "Don't show again".
+fn render_all_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    pressed: bool,
+) -> Vec<[f32; 4]> {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let items = super::draw_test_render_all_warning(ctx.frame(), session);
+    ctx.render();
+    items
+}
+
+/// Hover, press and release on `target`.
+fn render_all_click(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    target: [f32; 4],
+) {
+    for pressed in [false, true, false] {
+        render_all_frame(ctx, session, rect_centre(target), pressed);
+    }
+}
+
+/// The warning's controls once its window has settled.
+fn open_render_all_warning(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> [[f32; 4]; 4] {
+    session.wall.render_all_warn_open = true;
+    let mut items = Vec::new();
+    for _ in 0..3 {
+        items = render_all_frame(ctx, session, [0.0, 0.0], false);
+    }
+    items
+        .try_into()
+        .expect("the open warning draws its four controls")
+}
+
+/// "Don't show again" is disabled until "I understand" is ticked, and then
+/// does what OK does and saves the acknowledgement: the next launch applies
+/// an unchecked "only render selected" at once, with no dialog.
+#[test]
+fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    assert!(
+        session.focus.lock().unwrap().only_render_selected,
+        "only render selected starts on"
+    );
+    let [understood, _ok, _cancel, dont_show] = open_render_all_warning(&mut ctx, &mut session);
+
+    render_all_click(&mut ctx, &mut session, dont_show);
+    assert!(
+        !session.ui.render_all_warning_ack,
+        "disabled before I understand"
+    );
+    assert!(session.wall.render_all_warn_open);
+    assert!(session.focus.lock().unwrap().only_render_selected);
+
+    render_all_click(&mut ctx, &mut session, understood);
+    assert!(session.wall.render_all_understood);
+    render_all_click(&mut ctx, &mut session, dont_show);
+    assert!(session.ui.render_all_warning_ack);
+    assert!(!session.wall.render_all_warn_open, "it closes the dialog");
+    assert!(
+        !session.focus.lock().unwrap().only_render_selected,
+        "it does what OK does"
+    );
+    assert!(
+        crate::ui_state::load().render_all_warning_ack,
+        "the choice is written to the preferences"
+    );
+
+    // The next launch: the box starts on again, and unchecking it applies
+    // at once.
+    let mut next = crate::session::Session::new();
+    assert!(next.ui.render_all_warning_ack);
+    assert!(next.focus.lock().unwrap().only_render_selected);
+    super::only_render_selected_clicked(&mut next, false);
+    assert!(!next.focus.lock().unwrap().only_render_selected);
+    assert!(
+        !next.wall.render_all_warn_open,
+        "no dialog once acknowledged"
+    );
+}
+
+/// OK alone keeps today's behaviour: it applies for this launch, saves
+/// nothing, and the next launch asks again.
+#[test]
+fn render_all_ok_applies_for_this_launch_only() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let [understood, ok, _cancel, _dont_show] = open_render_all_warning(&mut ctx, &mut session);
+
+    render_all_click(&mut ctx, &mut session, ok);
+    assert!(
+        session.wall.render_all_warn_open,
+        "OK is disabled before I understand"
+    );
+    render_all_click(&mut ctx, &mut session, understood);
+    render_all_click(&mut ctx, &mut session, ok);
+    assert!(!session.wall.render_all_warn_open);
+    assert!(!session.focus.lock().unwrap().only_render_selected);
+    assert!(!session.ui.render_all_warning_ack);
+    assert!(!crate::ui_state::load().render_all_warning_ack);
+
+    let mut next = crate::session::Session::new();
+    assert!(next.focus.lock().unwrap().only_render_selected);
+    super::only_render_selected_clicked(&mut next, false);
+    assert!(
+        next.focus.lock().unwrap().only_render_selected && next.wall.render_all_warn_open,
+        "the next launch asks again"
+    );
+}
+
+fn fleet_test_session(names: &[&str]) -> (crate::session::Session, TestDir) {
+    let dir = TestDir::new("fleet-layout");
+    let mut session = crate::session::Session::new();
+    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    for (i, name) in names.iter().enumerate() {
+        vault
+            .upsert(vault::Profile {
+                username: (*name).into(),
+                password: "pw".into(),
+                uid: 1 + i as i32,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+    }
+    session.core.set_vault(Some(vault));
+    session.fleet_open = true;
+    (session, dir)
+}
+
+/// One frame of the Fleet window at `size`, with the pointer at `point`
+/// (left button held when `pressed`).
+fn fleet_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    size: [f32; 2],
+    point: [f32; 2],
+    pressed: bool,
+) -> crate::fleet::FleetLayout {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let layout = {
+        let ui = ctx.frame();
+        // Fix the window's size and place first: the window's own size is
+        // only a first-use default.
+        ui.window(crate::session::PanelWindow::Fleet.title())
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size(size, dear_imgui_rs::Condition::Always)
+            .build(|| {});
+        crate::fleet::draw_test_window(ui, session)
+    };
+    ctx.render();
+    layout
+}
+
+/// The Fleet window's table shares the window's width: no sideways scroll and
+/// no column past the edge at the default size and at the minimum size, with
+/// every column on.
+#[test]
+fn fleet_table_fits_the_window_at_default_and_narrow_sizes() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob"]);
+    session.persist_ui = false;
+    let columns = crate::fleet_columns::FleetColumn::ALL;
+    for column in columns {
+        crate::fleet_columns::set_visible(&mut session.ui.fleet_columns, column, true);
+    }
+    let cells_per_row = 2 + columns.len();
+    for (label, width) in [("default 760", 760.0), ("minimum", crate::fleet::MIN_WIDTH)] {
+        let mut layout = crate::fleet::FleetLayout::default();
+        for _ in 0..4 {
+            layout = fleet_frame(&mut ctx, &mut session, [width, 460.0], [0.0, 0.0], false);
+        }
+        assert!(
+            layout.scroll_max_x < 0.5,
+            "{label}: the window scrolls sideways by {}",
+            layout.scroll_max_x
+        );
+        assert!(
+            layout.cells.len() >= cells_per_row,
+            "{label}: a row is drawn"
+        );
+        let [content_left, content_right] = layout.content;
+        let mut previous_right = content_left;
+        for (index, [left, right]) in layout.cells[..cells_per_row].iter().enumerate() {
+            assert!(
+                *left >= previous_right - 0.5 && right >= left,
+                "{label}: column {index} spans {left}..{right} after {previous_right}"
+            );
+            previous_right = *right;
+        }
+        let last_right = layout.cells[cells_per_row - 1][1];
+        assert!(
+            last_right <= content_right + 0.5,
+            "{label}: the last column ends at {last_right}, past the window's {content_right}"
+        );
+        assert!(
+            content_right - last_right < 16.0,
+            "{label}: the columns leave {} px unused",
+            content_right - last_right
+        );
+    }
+}
+
+/// "Sort:" is a full-width drop-down like Danger routing, and picking an
+/// entry sorts by it.
+#[test]
+fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob"]);
+    session.persist_ui = false;
+    let size = [760.0, 460.0];
+    let mut layout = crate::fleet::FleetLayout::default();
+    for _ in 0..3 {
+        layout = fleet_frame(&mut ctx, &mut session, size, [0.0, 0.0], false);
+    }
+    let combo = layout.sort_combo;
+    let [content_left, content_right] = layout.content;
+    // `-1` width fills to one pixel short of the edge, as Danger routing's does.
+    assert!(
+        (combo[0] - content_left).abs() < 1.0 && (content_right - combo[2]).abs() <= 1.5,
+        "the drop-down spans {}..{}, not the window's {content_left}..{content_right}",
+        combo[0],
+        combo[2]
+    );
+
+    // Open it, then pick "Status" (the second entry).
+    for pressed in [false, true, false] {
+        fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        choices = fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), false).sort_choices;
+        if choices.len() == crate::fleet::FleetSort::ALL.len() {
+            break;
+        }
+    }
+    assert_eq!(choices.len(), crate::fleet::FleetSort::ALL.len());
+    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Name);
+    let status = rect_centre(choices[1]);
+    for pressed in [false, false, true, false] {
+        fleet_frame(&mut ctx, &mut session, size, status, pressed);
+    }
+    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Status);
+}
+
+/// The Send window opens inside the screen and, for a short list, shows every
+/// name; a list longer than the screen scrolls inside a window that still
+/// fits.
+#[test]
+fn walk_send_window_opens_on_screen_and_fits_its_list() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    for (display, bots) in [
+        ([1280.0_f32, 720.0], 5),
+        ([1280.0, 720.0], 76),
+        ([800.0, 480.0], 5),
+        ([800.0, 480.0], 40),
+    ] {
+        let mut session = crate::session::Session::new();
+        for index in 0..bots {
+            session.core.fleet_mut().add(&format!("bot{index:02}"));
+        }
+        session.refresh_walk_send();
+        session.walk_send.mode = crate::session::WalkSendMode::Group;
+        session.walk_send.open = true;
+        let mut frame = crate::picker::SendWindowFrame::default();
+        for _ in 0..4 {
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new(display, 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            frame = crate::picker::draw_test_walk_send(ctx.frame(), &mut session);
+            ctx.render();
+        }
+        let label = format!("{bots} bots on a {}x{} screen", display[0], display[1]);
+        let (pos, size) = (frame.pos, frame.size);
+        assert!(
+            pos[0] >= 0.0
+                && pos[1] >= 0.0
+                && pos[0] + size[0] <= display[0] + 0.5
+                && pos[1] + size[1] <= display[1] + 0.5,
+            "{label}: the window at {pos:?} sized {size:?} is not inside the screen"
+        );
+        assert_eq!(frame.bot_rows.len(), bots, "{label}: every bot is listed");
+        let window_bottom = pos[1] + size[1];
+        let first = frame.bot_rows[0];
+        assert!(
+            first[1] >= pos[1] && first[3] <= window_bottom,
+            "{label}: the first name is not visible"
+        );
+        if bots <= 5 {
+            assert!(
+                frame.scroll_max_y < 0.5,
+                "{label}: a short list must not scroll ({})",
+                frame.scroll_max_y
+            );
+            let last = frame.bot_rows[bots - 1];
+            assert!(
+                last[3] <= window_bottom,
+                "{label}: the last name is cut off"
+            );
+        } else {
+            assert!(
+                frame.scroll_max_y > 0.0,
+                "{label}: a list taller than the screen scrolls"
+            );
+            assert!(
+                size[1] >= display[1] * 0.5,
+                "{label}: the window is sized to show much of the list, got {}",
+                size[1]
+            );
+        }
     }
 }
