@@ -67,8 +67,8 @@ pub use selection::{
     EMPTY_MARKS_HINT,
 };
 pub use session::{
-    ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
-    StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
+    pick_focus, ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection,
+    SlotTransition, StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

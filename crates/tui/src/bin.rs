@@ -1013,9 +1013,10 @@ impl TuiSession {
     /// loaded, logged-out member is re-armed and a terminal worker
     /// recreated. Returns how many were newly loaded.
     fn load_and_login_all(&mut self) -> usize {
+        let last = self.last_focused.clone();
         let (added, failure) = {
             let (core, mut surface) = self.core_and_surface();
-            let (load, added) = core.load_all(&mut surface);
+            let (load, added) = core.load_all(&mut surface, last.as_deref());
             let login = core.login_all(&mut surface);
             (added, core.failure(load).or_else(|| core.failure(login)))
         };

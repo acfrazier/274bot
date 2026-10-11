@@ -195,7 +195,7 @@ fn load_all_does_not_move_selection_when_others_log_in() {
     s.select("alice");
     assert_eq!(s.selected(), Some("alice"));
 
-    let (op, added) = s.load_all(&mut surface);
+    let (op, added) = s.load_all(&mut surface, None);
     assert_eq!(added, 3);
     assert_eq!(
         s.operation(op).unwrap().outcome("bob"),
@@ -231,21 +231,51 @@ fn load_all_does_not_move_selection_when_others_log_in() {
 }
 
 #[test]
-fn load_all_leaves_selection_empty_when_none_was_selected() {
+fn pick_focus_prefers_last_when_present() {
+    let names = vec!["a".into(), "b".into()];
+    assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
+    assert_eq!(pick_focus(&names, Some("z")).as_deref(), Some("a"));
+    assert_eq!(pick_focus(&names, None).as_deref(), Some("a"));
+    assert_eq!(pick_focus(&[], Some("a")), None);
+}
+
+#[test]
+fn load_all_picks_focus_when_none_was_selected() {
     let mut s = session(
         "load-all-no-sel",
         &[("alice", 1, true), ("bob", 2, true), ("carol", 3, true)],
     );
     let mut surface = Recorder::default();
-    s.load_all(&mut surface);
-    assert_eq!(s.selected(), None);
+    s.load_all(&mut surface, None);
+    let picked = pick_focus(s.members(), None);
+    assert_eq!(s.selected(), picked.as_deref());
+    assert_eq!(picked.as_deref(), Some("alice"));
     s.login_all(&mut surface);
     publish_login(&mut s, "alice", 2);
     publish_login(&mut s, "bob", 2);
     assert_eq!(
         s.selected(),
-        None,
-        "Load all must not invent a focus; first login does not steal one either"
+        Some("alice"),
+        "later logins must not steal the Load all pick"
+    );
+}
+
+#[test]
+fn load_all_picks_last_focus_when_nothing_was_selected() {
+    let mut s = session(
+        "load-all-last-focus",
+        &[("alice", 1, true), ("bob", 2, true), ("carol", 3, true)],
+    );
+    let mut surface = Recorder::default();
+    s.load_all(&mut surface, Some("carol"));
+    assert_eq!(s.selected(), Some("carol"));
+    s.login_all(&mut surface);
+    publish_login(&mut s, "alice", 1);
+    publish_login(&mut s, "alice", 2);
+    assert_eq!(
+        s.selected(),
+        Some("carol"),
+        "later logins must not steal the last-focus pick"
     );
 }
 
@@ -444,7 +474,7 @@ fn finish_stopping(s: &mut OperatorSession<u32>, release: std::sync::mpsc::Sende
 fn login_all_right_after_load_all_reaches_a_member_whose_old_worker_is_still_stopping() {
     let (mut s, mut surface, release, remove) = member_still_stopping("load-login-stopping");
 
-    let (load, _) = s.load_all(&mut surface);
+    let (load, _) = s.load_all(&mut surface, None);
     let login = s.login_all(&mut surface);
     assert_eq!(s.members(), ["b".to_string()]);
     assert_eq!(
@@ -481,7 +511,7 @@ fn login_all_right_after_load_all_reaches_a_member_whose_old_worker_is_still_sto
 #[test]
 fn a_logout_issued_while_the_spawn_waits_holds_the_new_worker_logged_out() {
     let (mut s, mut surface, release, _) = member_still_stopping("load-logout-stopping");
-    s.load_all(&mut surface);
+    s.load_all(&mut surface, None);
     s.login_all(&mut surface);
     s.logout("b");
 
@@ -495,7 +525,7 @@ fn a_logout_issued_while_the_spawn_waits_holds_the_new_worker_logged_out() {
 #[test]
 fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
     let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle");
-    s.load_all(&mut surface);
+    s.load_all(&mut surface, None);
 
     s.set_memory_mode("b", false).unwrap();
     let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
@@ -525,7 +555,7 @@ fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
 #[test]
 fn failed_memory_toggle_resets_a_deferred_profile_and_arm() {
     let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle-fail");
-    s.load_all(&mut surface);
+    s.load_all(&mut surface, None);
     let blocked = block_writes(&vault_path("deferred-memory-toggle-fail"));
 
     s.set_memory_mode("b", false).unwrap();

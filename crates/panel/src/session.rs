@@ -3346,7 +3346,8 @@ impl Session {
 
     /// Focused bot and each member's [`draw_for_slot`]. Tests and headless
     /// Load-all checks; not a per-frame path.
-    pub fn focus_draw_state(&self) -> (Option<String>, Vec<(String, bool)>) {
+    #[cfg(test)]
+    pub(crate) fn focus_draw_state(&self) -> (Option<String>, Vec<(String, bool)>) {
         let members = self.core.members().to_vec();
         let focus = self.focus.lock().unwrap();
         let focused = focus.focused.clone();
@@ -4248,16 +4249,30 @@ impl Session {
     /// wall member — the chooser's "Load all". Returns how many were newly
     /// added. Login intent still follows each profile's auto-login setting.
     pub fn load_all(&mut self) -> usize {
-        let (core, mut surface) = self.core_and_surface();
-        let (op, added) = core.load_all(&mut surface);
+        let had_focus = self.core.selected().is_some();
+        let last = if !had_focus && self.persist_ui {
+            crate::ui_state::load().last_focus
+        } else {
+            None
+        };
+        let (op, added) = {
+            let (core, mut surface) = self.core_and_surface();
+            core.load_all(&mut surface, last.as_deref())
+        };
         self.report_failure(op);
-        // Membership only. A focused, drawing bot keeps the Game pane and
-        // its draw policy (only-render-selected still paints that seat).
-        // Applying focus here used to lock onto the last loaded member, so
-        // A's `set_draw` fell and the last-FBO freeze followed the new
-        // slot through `scene_state==1`. Single-row Load / clicking a bot
-        // still focus that member. Nothing focused stays that way.
+        // Never steal an existing focus. When nothing was focused, the core
+        // already picked with `pick_focus`; mirror that onto the Game pane
+        // so the chosen bot draws. Applying last-member focus here used to
+        // turn A's `set_draw` off.
+        if !had_focus {
+            if let Some(name) = self.core.selected().map(str::to_owned) {
+                self.select(&name);
+            }
+        }
         self.sync_wall_focus();
+        if !had_focus && self.core.selected().is_some() {
+            self.wake_all_slots();
+        }
         added
     }
 
