@@ -58,6 +58,47 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
 }
 
 #[test]
+fn skipped_device_owner_publishes_its_device_limit_reason() {
+    let now = Instant::now();
+    let mut queue = LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60));
+    let owner = 1;
+    for _ in 0..4 {
+        queue.enqueue_owner(owner, 7);
+        assert_eq!(queue.poll_owner(owner, 7, now), Permit::Grant);
+        assert!(queue
+            .start_attempt(owner, now, LoginCancel::new())
+            .is_some());
+        assert!(queue.acknowledge_login_return(owner, now));
+    }
+
+    queue.enqueue_owner(owner, 7);
+    queue.enqueue_owner(2, 8);
+    assert_eq!(queue.poll_owner(2, 8, now), Permit::Grant);
+    assert!(queue.start_attempt(2, now, LoginCancel::new()).is_some());
+    queue.enqueue_owner(3, 9);
+
+    let mut rows = vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }];
+    publish_queue_place(&queue, &mut rows, "alice", owner);
+    assert_eq!(
+        (rows[0].queue_position, rows[0].queue_total),
+        (1, 2),
+        "the device-blocked owner keeps its queue place"
+    );
+    assert!(
+        matches!(
+            rows[0].queue_blocker,
+            Some(host::login_queue::AdmitBlocker::DeviceBudget {
+                until: Some(until)
+            }) if until > Instant::now()
+        ),
+        "the skipped owner publishes the device cooldown reason"
+    );
+}
+
+#[test]
 fn never_released_exhausts_absolute_budget_then_uses_generic_code_five() {
     let start = Instant::now();
     let arm = clean_exit(start);
