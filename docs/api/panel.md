@@ -89,6 +89,12 @@ example on a 1024×768 desktop), its rows, Save/Cancel and Close are laid out
 within the part that is on screen, so every profile's Edit and ✕ and the
 form's buttons stay reachable without scrolling.
 
+The Status card shows what the selected bot's script is doing and why it
+waits: the script line, its phase, and the reason when the script is parked.
+A Quester that finds no step for its stage parks and shows `no step for
+stage`. A bot that runs no script shows no script rows; a script refusal
+still showing after its run stopped keeps its rows.
+
 ## Wiring
 
 `Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)

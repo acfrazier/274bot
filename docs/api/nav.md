@@ -991,7 +991,8 @@ stand — same level first, then Chebyshev distance — (never the booth loc
 or a teller spawn behind the counter), opens
 it, withdraws only shortages, then wears any missing worn item while the bank
 is still open; the Wear interaction itself closes the bank before the strict
-search is re-run. It never deposits backpack items: tools, quest items, food,
+search is re-run. A fetch with nothing to wear still sends Close after its
+withdrawals. It never deposits backpack items: tools, quest items, food,
 and existing route stacks remain carried, including for compatibility-v1 walks,
 which enable fetch by default. Consumed resources use the full route's running
 budget (two 30-coin fares need 60); reusable held gates use their peak requirement.
@@ -1010,10 +1011,13 @@ Packed stands are content-derived booths **and** NPC tellers
 sends the banker op (and a dialog choice when the pack carries one), and
 falls back to the same bank's booths, nearest the player first, when no
 teller answers. Each step then waits until the live snapshot shows it
-landed: the backpack as the bank's side panel shows it while the bank is
-open, the inventory tab once it is closed. A sent withdraw or wear keeps
-waiting while the item has left the bank or the backpack but not yet
-shown up in the backpack or the worn set. Every step has a bounded wait
+landed. Withdraw watches the backpack as the bank's side panel shows it
+while the bank is open (the inventory tab once it is closed); Wear instead
+watches the inventory tab and the worn set straight through the bank close —
+the close itself is not progress — and completes when the item is worn.
+A sent withdraw keeps waiting while the item has left the bank but not yet
+shown up in the backpack; a sent Wear keeps waiting while the item has left
+the backpack but is not yet worn. Every step has a bounded wait
 (32 pumps, one per player tick) and ends the session with a logged reason
 if it never lands, and a send already in flight is not repeated. The
 script walk and the panel/TUI WalkTo share one step machine, one wait
