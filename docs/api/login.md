@@ -52,17 +52,28 @@ following each other back to back.
 | backoff (connection failure, response 7) | **5, 10, 20, 40, then 60 s**, each ×0.8–1.2 jitter, never above 60 s | per slot; 60 s is the engine's address-attempt TTL |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
-exists for tests and rejects a zero address cap. A requester waits when another
-owner is ahead of it or for the longest unmet in-flight, spacing,
-shared-throttle, per-IP, or per-uid constraint. There is no separate hint wait.
+exists for tests and rejects a zero address cap. A clean exit keeps its owner's
+FIFO place but defers the first relog by the normal 1.2 s spacing. If the
+server still replies code 5 (account in use), the owner retries every 5 s
+within a 30 s budget measured from the observed clean exit; after that, normal
+code-5 backoff resumes. Other eligible owners may proceed during this release
+wait.
 
-`LoginQueue::head_blocker(owner, now)` names that constraint for the queue
-head (`AdmitBlocker`: another login in flight, start spacing, address
-cooldown with its attempt count, device limit, or a response-16 hold) with its
-deadline when known. host-play publishes it on the slot row next to the
-place, and `frontend-core` turns it into the one line both the panel (status
-and Game image queue card) and the TUI show, e.g. `waiting in login queue
-(1/21): next in line, login rate cooldown (29 attempts), next try in 41 s`.
+An owner blocked only by its own per-UID device cooldown also keeps its place
+and yields to owners on other UIDs; owners sharing that UID wait for the
+cooldown. Otherwise, a requester waits behind the first eligible owner or for
+the longest unmet in-flight, spacing, shared-throttle, or per-IP constraint.
+There is no separate hint wait.
+
+`LoginQueue::head_blocker(owner, now)` names the eligible head's admission
+blocker; for an owner passed because its own device cooldown is the selected
+blocker, it reports that cooldown instead. `AdmitBlocker` covers another login
+in flight, start spacing, address cooldown with its attempt count, device
+limit, or a response-16 hold, with its deadline when known. host-play publishes
+it on the slot row next to the place, and `frontend-core` turns it into the one
+line both the panel (status and Game image queue card) and the TUI show, e.g.
+`waiting in login queue (1/21): next in line, login rate cooldown (29
+attempts), next try in 41 s`.
 
 ## Backoff
 

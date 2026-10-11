@@ -33,6 +33,24 @@ static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
 pub const UNEXPECTED_LOGOUT_THRESHOLD: usize = 3;
 pub const UNEXPECTED_LOGOUT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
+// World.ts:795-803 retries an unacknowledged player_logout every 15 s;
+// LoginServer.ts:415-455 saves before releasing ownership. The 30 s host
+// budget covers the initial post plus one 15 s retry, not two retries.
+// WorldConfig.ts:108-109 and World.ts:177,2202-2212 reject the fifth device
+// attempt with a refreshed 15 s idle TTL. The 5 s host probe cadence avoids
+// bursts; normal queue admission still enforces four grants then 15 s idle.
+pub(super) const CLEAN_RELEASE_BUDGET: Duration = Duration::from_secs(30);
+pub(super) const CLEAN_RELEASE_CADENCE: Duration = Duration::from_secs(5);
+
+struct CleanExit {
+    observed: Instant,
+    not_before: Instant,
+    host: String,
+    port: u16,
+    uid: i32,
+    world_generation: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginLatchReason {
     OperatorLogout,
@@ -90,6 +108,10 @@ impl std::fmt::Display for RelogParkReason {
 /// intent lock is never held with queue, status, or script locks.
 struct SlotIntent {
     generation: u64,
+    /// Only commands that cancel an in-progress login advance this fence.
+    /// Agreeing Log in / Load all commands still advance `generation` for
+    /// acknowledgements, but must not discard queue places or backoff.
+    cancellation_generation: u64,
     want_login: bool,
     want_logout: bool,
     login_latch: Option<LoginLatchReason>,
@@ -99,11 +121,13 @@ struct SlotIntent {
     /// changes auto-login or the world ([`SlotArm::hold_login_on_error`]).
     error_hold: bool,
     unexpected_logout_times: [Option<Instant>; UNEXPECTED_LOGOUT_THRESHOLD],
+    clean_exit: Option<CleanExit>,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct IntentCommand {
     generation: u64,
+    cancellation_generation: u64,
 }
 
 #[cfg(test)]
@@ -186,6 +210,8 @@ pub struct SlotArm {
     #[cfg(test)]
     retry_wait_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
+    retry_wait_timeout: parking_lot::Mutex<Option<Duration>>,
+    #[cfg(test)]
     retry_notify_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
     stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
@@ -202,12 +228,14 @@ impl SlotArm {
             queue_owner: NEXT_QUEUE_OWNER.fetch_add(1, Ordering::Relaxed),
             intent: parking_lot::Mutex::new(SlotIntent {
                 generation: 0,
+                cancellation_generation: 0,
                 want_login,
                 want_logout: false,
                 login_latch: None,
                 auto_intent: want_login,
                 error_hold: false,
                 unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
+                clean_exit: None,
             }),
             stop: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
@@ -230,6 +258,8 @@ impl SlotArm {
             worker_start_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
             retry_wait_gate: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            retry_wait_timeout: parking_lot::Mutex::new(None),
             #[cfg(test)]
             retry_notify_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
@@ -314,6 +344,11 @@ impl SlotArm {
     }
 
     #[cfg(test)]
+    pub(crate) fn retry_wait_timeout_for_test(&self) -> Option<Duration> {
+        *self.retry_wait_timeout.lock()
+    }
+
+    #[cfg(test)]
     pub(crate) fn hold_retry_notify_before_lock_for_test(
         &self,
     ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
@@ -349,10 +384,12 @@ impl SlotArm {
     pub fn request_logout(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.login_latch = Some(LoginLatchReason::OperatorLogout);
         intent.want_logout = true;
         intent.want_login = false;
         intent.auto_intent = false;
+        intent.clean_exit = None;
         // A connected exit reads OperatorLogout from the latch. Only an
         // already-offline command adds a deferred reset; otherwise a later
         // Log in that cancels an ineffective logout must preserve work. Do
@@ -370,10 +407,12 @@ impl SlotArm {
     pub fn hold_logged_out(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.login_latch = Some(LoginLatchReason::PersistedLogout);
         intent.want_login = false;
         intent.want_logout = false;
         intent.auto_intent = false;
+        intent.clean_exit = None;
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -487,8 +526,10 @@ impl SlotArm {
                 intent.auto_intent = true;
             }
         } else if intent.auto_intent {
+            intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
             intent.auto_intent = false;
             intent.want_login = false;
+            intent.clean_exit = None;
         }
         drop(intent);
         self.retry_wake.notify_all();
@@ -499,8 +540,10 @@ impl SlotArm {
     pub fn withdraw_login(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.want_login = false;
         intent.auto_intent = false;
+        intent.clean_exit = None;
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -511,9 +554,11 @@ impl SlotArm {
     pub(super) fn hold_login_on_error(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.want_login = false;
         intent.auto_intent = false;
         intent.error_hold = true;
+        intent.clean_exit = None;
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -551,6 +596,9 @@ impl SlotArm {
     /// title-loop pass and at every session boundary.
     pub(super) fn set_script_active(&self, active: bool) {
         if self.script_active.swap(active, Ordering::AcqRel) != active {
+            if !active {
+                self.invalidate_clean_exit();
+            }
             self.notify_retry_wait();
         }
     }
@@ -607,25 +655,42 @@ impl SlotArm {
     /// withdrawal, latch, and optionally world selection; generic UI wakes
     /// use a separate channel and cannot spend another login attempt.
     /// `frames` keeps the logged-out title live meanwhile.
-    pub(super) fn wait_for_retry(&self, timeout: Duration, frames: &mut WaitFrames<'_>) -> bool {
-        self.wait_for_retry_inner(timeout, true, frames)
+    pub(super) fn wait_for_retry(
+        &self,
+        timeout: Duration,
+        attempt: Option<(IntentCommand, u64)>,
+        frames: &mut WaitFrames<'_>,
+    ) -> bool {
+        #[cfg(test)]
+        {
+            *self.retry_wait_timeout.lock() = Some(timeout);
+        }
+        self.wait_for_retry_inner(timeout, true, attempt, frames)
     }
 
     /// Response 21 is tied to the same server-selected world. A profile world
     /// edit must not turn the transfer cooldown into an early retry/switch.
     pub(super) fn wait_for_transfer(&self, timeout: Duration, frames: &mut WaitFrames<'_>) -> bool {
-        self.wait_for_retry_inner(timeout, false, frames)
+        self.wait_for_retry_inner(timeout, false, None, frames)
     }
 
     fn wait_for_retry_inner(
         &self,
         timeout: Duration,
         interrupt_on_world_change: bool,
+        attempt: Option<(IntentCommand, u64)>,
         frames: &mut WaitFrames<'_>,
     ) -> bool {
         let mut intent = self.intent.lock();
-        let world_generation = self.world_generation.load(Ordering::Relaxed);
+        let world_generation = attempt.map_or_else(
+            || self.world_generation.load(Ordering::Relaxed),
+            |(_, world)| world,
+        );
         let deadline = Instant::now() + timeout;
+        let cancellation_generation = attempt
+            .map_or(intent.cancellation_generation, |(command, _)| {
+                command.cancellation_generation
+            });
         loop {
             // A title frame runs unlocked so no arm writer waits on a paint;
             // the predicate is read after it, under the lock the wait keeps.
@@ -634,7 +699,8 @@ impl SlotArm {
                 return false;
             }
             if interrupt_on_world_change
-                && self.world_generation.load(Ordering::Relaxed) != world_generation
+                && (self.world_generation.load(Ordering::Relaxed) != world_generation
+                    || intent.cancellation_generation != cancellation_generation)
             {
                 return true;
             }
@@ -652,6 +718,7 @@ impl SlotArm {
         let intent = self.intent.lock();
         (!ingame && self.wanted(&intent)).then_some(IntentCommand {
             generation: intent.generation,
+            cancellation_generation: intent.cancellation_generation,
         })
     }
 
@@ -659,6 +726,7 @@ impl SlotArm {
         let intent = self.intent.lock();
         (ingame && intent.want_logout).then_some(IntentCommand {
             generation: intent.generation,
+            cancellation_generation: intent.cancellation_generation,
         })
     }
 
@@ -697,6 +765,8 @@ impl SlotArm {
         let latched = count >= UNEXPECTED_LOGOUT_THRESHOLD;
         if latched {
             intent.generation = intent.generation.wrapping_add(1);
+            intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
+            intent.clean_exit = None;
             intent.login_latch = Some(LoginLatchReason::RepeatedUnexpectedLogouts {
                 count: count as u8,
                 window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
@@ -734,6 +804,95 @@ impl SlotArm {
 }
 
 impl SlotArm {
+    pub(super) fn login_attempt_is_current(
+        &self,
+        command: IntentCommand,
+        world_generation: u64,
+    ) -> bool {
+        let intent = self.intent.lock();
+        !self.stop.load(Ordering::Relaxed)
+            && self.wanted(&intent)
+            && intent.cancellation_generation == command.cancellation_generation
+            && self.world_generation.load(Ordering::Relaxed) == world_generation
+    }
+
+    fn record_session_exit_at(&self, clean: bool, host: &str, port: u16, now: Instant) {
+        let mut intent = self.intent.lock();
+        intent.clean_exit = clean.then(|| CleanExit {
+            observed: now,
+            not_before: now + host::login_queue::LOGIN_START_SPACING,
+            host: host.to_owned(),
+            port,
+            uid: self.uid.load(Ordering::Relaxed),
+            world_generation: self.world_generation.load(Ordering::Relaxed),
+        });
+    }
+
+    /// Read locally observed release evidence for this account and world.
+    /// A changed identity, world, cancelled intent or elapsed budget consumes it.
+    pub(super) fn clean_release_admission_at(
+        &self,
+        host: &str,
+        port: u16,
+        now: Instant,
+    ) -> Option<Instant> {
+        let mut intent = self.intent.lock();
+        let current = !self.stop.load(Ordering::Relaxed) && self.wanted(&intent);
+        let exit = intent.clean_exit.as_mut()?;
+        if !current
+            || exit.host != host
+            || exit.port != port
+            || exit.uid != self.uid.load(Ordering::Relaxed)
+            || exit.world_generation != self.world_generation.load(Ordering::Relaxed)
+            || now.saturating_duration_since(exit.observed) >= CLEAN_RELEASE_BUDGET
+        {
+            intent.clean_exit = None;
+            return None;
+        }
+        Some(exit.not_before)
+    }
+
+    pub(super) fn defer_clean_release_at(
+        &self,
+        error: &LoginError,
+        command: IntentCommand,
+        host: &str,
+        port: u16,
+        now: Instant,
+    ) -> Option<Duration> {
+        if error.code != 5 {
+            return None;
+        }
+        self.clean_release_admission_at(host, port, now)?;
+        let mut intent = self.intent.lock();
+        if intent.cancellation_generation != command.cancellation_generation {
+            return None;
+        }
+        let exit = intent.clean_exit.as_mut()?;
+        let next = now + CLEAN_RELEASE_CADENCE;
+        if next >= exit.observed + CLEAN_RELEASE_BUDGET {
+            intent.clean_exit = None;
+            return None;
+        }
+        exit.not_before = next;
+        Some(CLEAN_RELEASE_CADENCE)
+    }
+
+    fn invalidate_clean_exit(&self) {
+        let mut intent = self.intent.lock();
+        intent.clean_exit = None;
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
+    }
+
+    fn invalidate_login_identity(&self) {
+        let mut intent = self.intent.lock();
+        intent.clean_exit = None;
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
+        drop(intent);
+        self.retry_wake.notify_all();
+    }
+
     /// The password for the handshake about to start (see the field). A
     /// shared handle: no copy per handshake.
     pub(super) fn login_password(&self) -> Arc<str> {
@@ -744,12 +903,15 @@ impl SlotArm {
 pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     // Every password a slot may send stays out of stderr and every log sink.
     api::hostlog::register_secret(&profile.password);
-    arm.uid.store(profile.uid, Ordering::Relaxed);
+    let identity_changed = arm.uid.swap(profile.uid, Ordering::Relaxed) != profile.uid;
     {
         let mut password = arm.password.lock();
         if **password != *profile.password {
             *password = Arc::from(profile.password.as_str());
         }
+    }
+    if identity_changed {
+        arm.invalidate_login_identity();
     }
     arm.random_events
         .store(profile.settings.random_events, Ordering::Relaxed);
@@ -763,6 +925,7 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
         changed
     };
     if world_changed {
+        arm.invalidate_clean_exit();
         arm.world_generation.fetch_add(1, Ordering::Relaxed);
         arm.release_error_hold();
         arm.notify_retry_wait();
@@ -918,6 +1081,7 @@ pub(super) fn on_login_success(arm: &SlotArm, command: IntentCommand) {
     // Publish the successful connection before acknowledging its command so
     // a concurrent Logout linearizes as connected and needs no deferred reset.
     arm.mark_session_online();
+    arm.invalidate_clean_exit();
     arm.acknowledge_login(command);
     // A later DC / tune / park is opcode 18, not a cold 16.
     arm.reconnect.store(true, Ordering::Relaxed);
@@ -937,6 +1101,12 @@ pub(super) fn tick_flags(
     if let Some(reason) = client.take_session_exit_reason() {
         let clean = matches!(reason, SessionExitReason::ServerLogout { .. });
         arm.last_exit_clean.store(clean, Ordering::Relaxed);
+        arm.record_session_exit_at(
+            clean,
+            &client.config.host,
+            client.config.port,
+            Instant::now(),
+        );
         // The original client reconnects (`login(.., true)`, `Client.java:
         // 6162`) only from `lostCon`, which keeps the map. Every logout —
         // the server's (operator logout, world change, idle), a T1/T2
@@ -1409,10 +1579,27 @@ pub(super) fn wait_for_permit(
             "permit wait withdrawn"
         );
     };
+    let identity = arm.uid.load(Ordering::Relaxed);
+    let world_generation = arm.world_generation.load(Ordering::Relaxed);
+    let replaced = || {
+        arm.uid.load(Ordering::Relaxed) != identity
+            || arm.world_generation.load(Ordering::Relaxed) != world_generation
+    };
     loop {
+        // Retire the old FIFO wait without withdrawing its replacement intent.
+        if replaced() {
+            drop_queue_place(queue, statuses, username, arm.queue_owner);
+            return PermitWait::Cancelled;
+        }
         if permit_wait_cancelled(arm) {
             withdraw();
             return PermitWait::Cancelled;
+        }
+        // A cancelled release observation drops only its pacing, not the
+        // slot's FIFO place. Reaffirming login/password edits keep both.
+        let release_wait = arm.intent.lock().clean_exit.is_some();
+        if !release_wait {
+            queue.lock().clear_owner_defer(arm.queue_owner);
         }
         let wait = {
             let mut q = queue.lock();
@@ -1441,7 +1628,11 @@ pub(super) fn wait_for_permit(
         // intervals for cancellation and refresh its published place.
         let deadline = Instant::now() + wait;
         let mut next_publish = Instant::now() + QUEUE_PUBLISH;
-        while Instant::now() < deadline && !permit_wait_cancelled(arm) {
+        while Instant::now() < deadline
+            && !permit_wait_cancelled(arm)
+            && !replaced()
+            && (!release_wait || arm.intent.lock().clean_exit.is_some())
+        {
             let now = Instant::now();
             if now >= next_publish {
                 publish_queue_place(
@@ -1458,3 +1649,7 @@ pub(super) fn wait_for_permit(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "play_login_tests.rs"]
+mod release_tests;

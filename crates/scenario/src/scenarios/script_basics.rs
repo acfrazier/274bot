@@ -384,9 +384,11 @@ pub(crate) fn bone_burier_v2_scenario(name: &'static str, file_name: &'static st
 /// `scripts/login_logout/logout.rs2:8,23` records `map_clock` then issues
 /// `p_logout`; Engine 289's `engine/src/engine/World.ts:795-803,812-821`
 /// retries pending logout saves every 15s and refuses a login while one is
-/// pending. The host honors response 5 with a 60s retry
-/// (`crates/host-play/src/play_login.rs:1093-1109`), so readiness is the successful
-/// post-logout session, not a fixed sleep or the logout request itself.
+/// pending. The host paces a same-world clean relog from its exit and probes
+/// response 5 at 5s intervals within a 30s budget, under shared admission limits
+/// (`crates/host-play/src/play_login.rs`, `clean_release_admission_at` and
+/// `defer_clean_release_at`); generic fallback still waits 60s. Readiness is the
+/// successful post-logout session, not a fixed sleep or the logout request itself.
 /// Reseed tutorial in that session because the character-design kit close
 /// queues `tutorial=1`, suppressing weapon tabs until `tutorial>400`.
 pub(crate) fn script_live_seed_steps() -> Vec<Step> {

@@ -1878,7 +1878,7 @@ fn stop_slot_interrupts_login_backoff() {
     let waiter = thread::spawn(move || {
         waiting_tx.send(()).unwrap();
         done_tx
-            .send(arm.wait_for_retry(Duration::from_secs(60), &mut no_frames()))
+            .send(arm.wait_for_retry(Duration::from_secs(60), None, &mut no_frames()))
             .unwrap();
     });
     play.handles.insert("bob".into(), waiter);
@@ -1904,7 +1904,7 @@ fn retry_notification_serializes_with_waiter_park() {
 
     let waiting_arm = Arc::clone(&arm);
     let waiter = thread::spawn(move || {
-        waiting_arm.wait_for_retry(Duration::from_millis(40), &mut no_frames())
+        waiting_arm.wait_for_retry(Duration::from_millis(40), None, &mut no_frames())
     });
     waiter_entered.recv().unwrap();
 
@@ -1948,8 +1948,9 @@ fn generic_wake_does_not_shorten_login_backoff() {
     let arm = SlotArm::new(9, true);
     play.attach_arm("bob", Arc::clone(&arm));
     let started = Instant::now();
-    let waiter =
-        thread::spawn(move || arm.wait_for_retry(Duration::from_millis(120), &mut no_frames()));
+    let waiter = thread::spawn(move || {
+        arm.wait_for_retry(Duration::from_millis(120), None, &mut no_frames())
+    });
     thread::sleep(Duration::from_millis(20));
     play.wake("bob");
 
@@ -2399,6 +2400,36 @@ fn client_after_server_logout() -> Client {
     client.psize = 0;
     client.handle_packet(client::io::ServerProt289::LOGOUT, &mut packet);
     client
+}
+
+#[test]
+fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
+    let arm = SlotArm::new(7, true);
+    let mut client = client_after_server_logout();
+    let before = Instant::now();
+    tick_flags(&mut client, &[], &arm);
+    let after = Instant::now();
+    let until = arm
+        .clean_release_admission_at("127.0.0.1", 43594, after)
+        .expect("the actual server Logout supplies local release evidence");
+    assert!(until >= before + host::login_queue::LOGIN_START_SPACING);
+    assert!(until <= after + host::login_queue::LOGIN_START_SPACING);
+    assert!(!arm.reconnect.load(Ordering::Relaxed));
+
+    for transport in [false, true] {
+        let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
+        if transport {
+            client.lost_con();
+        } else {
+            client.ptype = 74;
+            client.psize = 0;
+            client.handle_packet(74, &mut Packet::new(vec![]));
+        }
+        tick_flags(&mut client, &[], &arm);
+        assert!(arm
+            .clean_release_admission_at("127.0.0.1", 43594, Instant::now())
+            .is_none());
+    }
 }
 
 #[test]
@@ -22523,6 +22554,451 @@ fn a_code_5_retry_wait_keeps_the_title_animating() {
     );
     arm.stop.store(true, Ordering::Relaxed);
     play.stop_slot("cooldown");
+}
+
+/// Read one login request from the actual slot worker and return its opcode
+/// and arrival time. The initial 17 bytes are the fake server's login seed.
+fn read_worker_login_attempt(socket: &mut std::net::TcpStream) -> (u8, Instant) {
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut preface = [0u8; 2];
+    socket.read_exact(&mut preface).unwrap();
+    assert_eq!(preface[0], 14, "slot worker opens a login connection");
+    socket.write_all(&[0; 17]).unwrap();
+    socket.flush().unwrap();
+
+    let mut request = [0u8; 512];
+    let read = socket.read(&mut request).unwrap();
+    assert!(read > 0, "slot worker sends its login request");
+    (request[0], Instant::now())
+}
+
+/// Reply to a worker login. A grant includes the staff and mouse bytes after
+/// code 2; a refusal ends at the response byte.
+fn answer_worker_login(socket: &mut std::net::TcpStream, code: u8) -> Instant {
+    let sent_at = Instant::now();
+    socket.write_all(&[code]).unwrap();
+    if code == 2 {
+        socket.write_all(&[0, 0]).unwrap();
+    }
+    socket.flush().unwrap();
+    sent_at
+}
+
+fn run_worker_play(
+    endpoint: std::net::SocketAddr,
+    per_frame: impl Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
+) -> Play {
+    run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        per_frame,
+    )
+}
+
+fn logout_first_worker_session() -> (
+    impl Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
+    std::sync::mpsc::Receiver<Instant>,
+) {
+    let (exit_tx, exit_rx) = std::sync::mpsc::channel();
+    let requested = Arc::new(AtomicBool::new(true));
+    let apply = Arc::clone(&requested);
+    (
+        move |client, _, _| {
+            if client.ingame && apply.swap(false, Ordering::AcqRel) {
+                let mut packet = client::io::Packet::new(vec![]);
+                client.psize = 0;
+                client.handle_packet(client::io::ServerProt::LOGOUT, &mut packet);
+                exit_tx.send(Instant::now()).unwrap();
+            }
+        },
+        exit_rx,
+    )
+}
+
+fn assert_worker_uses_generic_code5_wait(
+    play: &Play,
+    arm: &SlotArm,
+    entered: &std::sync::mpsc::Receiver<()>,
+    username: &str,
+) {
+    entered
+        .recv_timeout(Duration::from_secs(5))
+        .expect("generic code-5 response reaches the worker retry wait");
+    assert_eq!(
+        arm.retry_wait_timeout_for_test(),
+        Some(Duration::from_secs(60)),
+        "the worker passes the unchanged minute-long retry to its wait"
+    );
+    let status = play
+        .statuses()
+        .into_iter()
+        .find(|status| status.username == username)
+        .expect("worker status row");
+    let error = status.error.expect("generic code-5 error is published");
+    assert!(error.starts_with("code 5:"), "{error}");
+    assert!(
+        play.queue.lock().status_owner(arm.queue_owner).is_none(),
+        "generic backoff owns no FIFO place"
+    );
+}
+
+#[test]
+fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (refusal_tx, refusal_rx) = mpsc::channel();
+    let (grant_tx, grant_rx) = mpsc::channel();
+    let (finish_tx, finish_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let mut sessions = Vec::new();
+        for number in 1..=3 {
+            let (mut socket, _) = listener.accept().unwrap();
+            let (opcode, arrived) = read_worker_login_attempt(&mut socket);
+            attempt_tx.send((number, opcode, arrived)).unwrap();
+            if number == 1 {
+                grant_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            let code = if number == 2 { 5 } else { 2 };
+            let answered = answer_worker_login(&mut socket, code);
+            if code == 5 {
+                refusal_tx.send((number, answered)).unwrap();
+            }
+            if number == 3 {
+                finish_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                return;
+            }
+            if number == 1 {
+                sessions.push(socket);
+            }
+        }
+    });
+
+    let (per_frame, exit_rx) = logout_first_worker_session();
+    let mut play = run_worker_play(endpoint, per_frame);
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("clean-release-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!((number, opcode), (1, 16), "initial login is fresh");
+    // Let the ordinary attempt-to-attempt spacing expire while the successful
+    // login is still pending. The next admission must therefore be paced from
+    // the observed ServerLogout, not accidentally from the previous attempt.
+    thread::sleep(host::login_queue::LOGIN_START_SPACING + Duration::from_millis(250));
+    grant_tx.send(()).unwrap();
+    let exit = exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (number, opcode, first_relog) = attempt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        (number, opcode),
+        (2, 16),
+        "ServerLogout starts a fresh login"
+    );
+    let exit_to_attempt = first_relog.duration_since(exit);
+    assert!(
+        exit_to_attempt >= host::login_queue::LOGIN_START_SPACING - Duration::from_millis(100),
+        "the worker applies exit-relative admission; observed {exit_to_attempt:?}"
+    );
+    assert!(
+        exit_to_attempt < Duration::from_secs(3),
+        "the initial post-exit admission is paced, not minute-long: {exit_to_attempt:?}"
+    );
+
+    let (number, code5_at) = refusal_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(number, 2);
+    let (number, opcode, retry) = attempt_rx.recv_timeout(Duration::from_secs(8)).unwrap();
+    assert_eq!((number, opcode), (3, 16));
+    let retry_after_code5 = retry.duration_since(code5_at);
+    assert!(
+        retry_after_code5 >= Duration::from_millis(4_500)
+            && retry_after_code5 < Duration::from_secs(8),
+        "clean code 5 re-enters at the ~5 s release cadence, got {retry_after_code5:?}"
+    );
+    assert_eq!(arm.retry_wait_timeout_for_test(), None);
+    assert!(wait_until(2_000, || play.slot_connected("clean-release-worker")));
+
+    play.stop_slot("clean-release-worker");
+    finish_tx.send(()).unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn spawned_worker_code5_without_exit_evidence_uses_generic_sixty_seconds() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut socket);
+        attempt_tx.send((opcode, arrived)).unwrap();
+        answer_worker_login(&mut socket, 5);
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    let (entered, release_wait) = arm.hold_retry_wait_before_park_for_test();
+    play.spawn_slot(
+        profile("no-exit-evidence-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(opcode, 16);
+    assert_worker_uses_generic_code5_wait(&play, &arm, &entered, "no-exit-evidence-worker");
+    assert!(
+        attempt_rx.try_recv().is_err(),
+        "no retry starts in the 60 s wait"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_wait.send(()).unwrap();
+    play.stop_slot("no-exit-evidence-worker");
+    server.join().unwrap();
+}
+
+#[test]
+fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (disconnect_tx, disconnect_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut first);
+        attempt_tx.send((1, opcode, arrived)).unwrap();
+        answer_worker_login(&mut first, 2);
+        disconnect_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        drop(first);
+
+        let (mut second, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut second);
+        attempt_tx.send((2, opcode, arrived)).unwrap();
+        answer_worker_login(&mut second, 5);
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    let (entered, release_wait) = arm.hold_retry_wait_before_park_for_test();
+    play.spawn_slot(
+        profile("dirty-exit-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!((number, opcode), (1, 16));
+    assert!(wait_until(5_000, || play.slot_connected("dirty-exit-worker")));
+    disconnect_tx.send(()).unwrap();
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        (number, opcode),
+        (2, 18),
+        "transport loss retains the dirty in-world reconnect"
+    );
+    assert_worker_uses_generic_code5_wait(&play, &arm, &entered, "dirty-exit-worker");
+    assert!(
+        attempt_rx.try_recv().is_err(),
+        "no retry starts in the 60 s wait"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_wait.send(()).unwrap();
+    play.stop_slot("dirty-exit-worker");
+    server.join().unwrap();
+}
+
+#[test]
+fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (refusal_tx, refusal_rx) = mpsc::channel();
+    let (grant_tx, grant_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let mut sessions = Vec::new();
+        for number in 1..=5 {
+            let (mut socket, _) = listener.accept().unwrap();
+            let (opcode, arrived) = read_worker_login_attempt(&mut socket);
+            attempt_tx.send((number, opcode, arrived)).unwrap();
+            if number == 1 {
+                grant_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                answer_worker_login(&mut socket, 2);
+                sessions.push(socket);
+            } else {
+                let answered = answer_worker_login(&mut socket, 5);
+                refusal_tx.send((number, answered)).unwrap();
+            }
+        }
+    });
+
+    let (per_frame, exit_rx) = logout_first_worker_session();
+    let mut play = run_worker_play(endpoint, per_frame);
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    let (entered, release_wait) = arm.hold_retry_wait_before_park_for_test();
+    play.spawn_slot(
+        profile("release-budget-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!((number, opcode), (1, 16));
+    thread::sleep(host::login_queue::LOGIN_START_SPACING + Duration::from_millis(250));
+    grant_tx.send(()).unwrap();
+    let exit = exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let mut last_refusal = None;
+    for expected in 2..=5 {
+        let (number, opcode, arrived) = attempt_rx
+            .recv_timeout(Duration::from_secs(match expected {
+                2 => 5,
+                5 => 18,
+                _ => 8,
+            }))
+            .unwrap();
+        assert_eq!((number, opcode), (expected, 16));
+        if expected == 2 {
+            let exit_to_attempt = arrived.duration_since(exit);
+            assert!(
+                exit_to_attempt
+                    >= host::login_queue::LOGIN_START_SPACING - Duration::from_millis(100)
+                    && exit_to_attempt < Duration::from_secs(3),
+                "first release probe is paced from the clean exit: {exit_to_attempt:?}"
+            );
+        }
+        if let Some(previous_refusal) = last_refusal {
+            let cadence = arrived.duration_since(previous_refusal);
+            if expected == 5 {
+                // The initial login plus three release probes exhaust the
+                // unchanged four-grant device budget. Its 15 s idle hold
+                // carries this probe into the final five seconds of the
+                // absolute clean-exit budget, so code 5 must now use 60 s.
+                assert!(
+                    cadence >= Duration::from_secs(15) && cadence < Duration::from_secs(18),
+                    "the worker preserves the device cooldown: {cadence:?}"
+                );
+            } else {
+                assert!(
+                    cadence >= Duration::from_millis(4_500) && cadence < Duration::from_secs(8),
+                    "release probe {expected} follows the prior code 5 at ~5 s: {cadence:?}"
+                );
+            }
+        }
+        let (refusal_number, refused_at) = refusal_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(refusal_number, expected);
+        last_refusal = Some(refused_at);
+        if expected < 5 {
+            assert_eq!(
+                arm.retry_wait_timeout_for_test(),
+                None,
+                "code 5 inside the clean-exit budget re-enters the release queue"
+            );
+        }
+    }
+
+    assert_worker_uses_generic_code5_wait(&play, &arm, &entered, "release-budget-worker");
+    assert!(
+        attempt_rx.try_recv().is_err(),
+        "the exhausted budget stops special probes"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_wait.send(()).unwrap();
+    play.stop_slot("release-budget-worker");
+    server.join().unwrap();
+}
+
+#[test]
+fn spawned_worker_stale_code5_does_not_publish_error_or_install_backoff() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (reply_tx, reply_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut socket);
+        attempt_tx.send((opcode, arrived)).unwrap();
+        reply_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        answer_worker_login(&mut socket, 5);
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("stale-code5-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(opcode, 16);
+    // Hold the replacement intent in the FIFO after the in-flight response
+    // returns, so a stale error cannot be hidden by the next attempt clearing it.
+    play.queue
+        .lock()
+        .hold_for(Instant::now(), Duration::from_secs(5));
+    arm.request_logout();
+    arm.arm_explicit_login();
+    reply_tx.send(()).unwrap();
+
+    assert!(
+        wait_until(3_000, || {
+            play.queue.lock().status_owner(arm.queue_owner).is_some()
+                && play
+                    .statuses()
+                    .iter()
+                    .find(|status| status.username == "stale-code5-worker")
+                    .is_some_and(|status| status.error.is_none())
+        }),
+        "the replacement intent requeues without publishing the stale code-5 result"
+    );
+    assert_eq!(
+        arm.retry_wait_timeout_for_test(),
+        None,
+        "a stale response must not install even an immediately-cancelled 60 s backoff"
+    );
+    assert!(
+        attempt_rx.try_recv().is_err(),
+        "the replacement is still held in FIFO"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("stale-code5-worker");
+    server.join().unwrap();
 }
 
 fn start_offline_script(play: &Play) {

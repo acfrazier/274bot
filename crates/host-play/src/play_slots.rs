@@ -1078,6 +1078,13 @@ fn spawn_slot_thread(
                         world_dirty = false;
                         refresh_key = false;
                     }
+                    if let Some(until) = arm.clean_release_admission_at(
+                        &client.config.host,
+                        client.config.port,
+                        Instant::now(),
+                    ) {
+                        slot_queue.lock().defer_owner_until(arm.queue_owner, until);
+                    }
                     host_log!(Category::Login, Level::Info, "relog decision wait queue");
                     show_title_message(&mut client, "", "Waiting to log in...");
                     let wait = wait_for_permit(
@@ -1113,6 +1120,7 @@ fn spawn_slot_thread(
                         }
                         continue;
                     };
+                    let login_world_generation = arm.world_generation.load(Ordering::Relaxed);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     host_log!(
@@ -1187,7 +1195,25 @@ fn spawn_slot_thread(
                             {
                                 continue;
                             }
+                            if !arm.login_attempt_is_current(login_command, login_world_generation) {
+                                continue;
+                            }
                             record_login_error(&slot_statuses, &username, &e);
+                            if let Some(delay) = arm.defer_clean_release_at(
+                                &e,
+                                login_command,
+                                &client.config.host,
+                                client.config.port,
+                                Instant::now(),
+                            ) {
+                                host_log!(
+                                    Category::Login,
+                                    Level::Info,
+                                    "relog decision release_wait_ms={} code=5; rejoining login queue",
+                                    delay.as_millis()
+                                );
+                                continue;
+                            }
                             let worlds = connection.profile().and_then(|p| p.public_worlds());
                             let plan = plan_login_retry(
                                 &e,
@@ -1225,6 +1251,7 @@ fn spawn_slot_thread(
                             );
                             arm.wait_for_retry(
                                 retry,
+                                Some((login_command, login_world_generation)),
                                 &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                             );
                             continue;
