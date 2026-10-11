@@ -37,7 +37,7 @@ use crossterm::terminal::{
 #[cfg(test)]
 use host_play::arm_walk_on;
 use host_play::catalog_core::CoreWatch;
-use host_play::live_gate::{self, CoreGate, LiveCore, PassHold};
+use host_play::live_gate::{self, CoreGate, LiveCore, LiveTiming, PassHold};
 use host_play::live_start::{self, PendingCatalogStart, StartArming};
 use host_play::paired_core::PairWatch;
 use host_play::walk_map::{
@@ -463,6 +463,8 @@ pub struct TuiSession {
     live_witnesses: Option<LiveWitnesses>,
     /// The armed witness's own ceiling (`None` without a core gate).
     live_core_deadline: Option<Instant>,
+    /// Pair fixture elapsed time, latched through the first shared Start.
+    live_timing: Arc<Mutex<Option<LiveTiming>>>,
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
@@ -564,6 +566,7 @@ impl TuiSession {
             live_pair_core: false,
             live_witnesses: None,
             live_core_deadline: None,
+            live_timing: Arc::new(Mutex::new(None)),
             live_soak_until: None,
             live_announced_pass: false,
             live_wait_script_stop: None,
@@ -679,6 +682,7 @@ impl TuiSession {
         let scenario = Arc::clone(&self.scenario);
         let pending_script = Arc::clone(&self.pending_script);
         let start_arming = Arc::clone(&self.start_arming);
+        let live_timing = Arc::clone(&self.live_timing);
         let options = self.options.clone();
         let (mainland, host_options) = mainland_seed_options(&options);
         let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
@@ -749,12 +753,35 @@ impl TuiSession {
                             runner.observe_script_paint(paint.lines.iter().map(String::as_str));
                         }
                     }
-                    let pump = live_start::fire_pending_catalog_start(
-                        &mut pending_script.lock().unwrap(),
-                        runner.on_start_script(),
-                        runner.on_stop_script(),
-                        || start_arming.lock().unwrap().clone(),
-                    );
+                    let on_start_script = runner.on_start_script();
+                    let pump = {
+                        let mut pending = pending_script.lock().unwrap();
+                        let mut timing = live_timing.lock().unwrap();
+                        if timing.as_ref().is_some_and(|timing| {
+                            timing.setup_expired(
+                                live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
+                                Instant::now(),
+                            )
+                        }) {
+                            runner.fail_start("paired fixture setup deadline expired before Start");
+                            live_start::StartScriptPump::Hold
+                        } else {
+                            let pump = live_start::fire_pending_catalog_start(
+                                &mut pending,
+                                on_start_script,
+                                runner.on_stop_script(),
+                                || start_arming.lock().unwrap().clone(),
+                            );
+                            mark_live_script_start(
+                                &mut timing,
+                                &pending,
+                                on_start_script,
+                                &pump,
+                                Instant::now(),
+                            );
+                            pump
+                        }
+                    };
                     match pump {
                         live_start::StartScriptPump::Hold => {}
                         live_start::StartScriptPump::CompiledFailed(error) => {
@@ -780,17 +807,38 @@ impl TuiSession {
                             // Arm it now rather than after the reconnect posts colour.
                             if runner.on_start_script() {
                                 if let Ok(mut pending) = pending_script.lock() {
-                                    let pump = live_start::fire_pending_catalog_start(
-                                        &mut pending,
-                                        true,
-                                        false,
-                                        || {
-                                            start_arming
-                                                .lock()
-                                                .map(|arming| arming.clone())
-                                                .unwrap_or_default()
-                                        },
-                                    );
+                                    let mut timing = live_timing.lock().unwrap();
+                                    let pump = if timing.as_ref().is_some_and(|timing| {
+                                        timing.setup_expired(
+                                            live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
+                                            Instant::now(),
+                                        )
+                                    }) {
+                                        runner.fail_start(
+                                            "paired fixture setup deadline expired before Start",
+                                        );
+                                        live_start::StartScriptPump::Hold
+                                    } else {
+                                        let pump = live_start::fire_pending_catalog_start(
+                                            &mut pending,
+                                            true,
+                                            false,
+                                            || {
+                                                start_arming
+                                                    .lock()
+                                                    .map(|arming| arming.clone())
+                                                    .unwrap_or_default()
+                                            },
+                                        );
+                                        mark_live_script_start(
+                                            &mut timing,
+                                            &pending,
+                                            true,
+                                            &pump,
+                                            Instant::now(),
+                                        );
+                                        pump
+                                    };
                                     match pump {
                                         live_start::StartScriptPump::CompiledRunning => {
                                             runner.observe_script_running();
@@ -1039,6 +1087,7 @@ impl TuiSession {
     /// before either slot publishes, exactly like the panel watches.
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         self.persist_ui = false;
+        *self.live_timing.lock().unwrap() = None;
         let live_core = LiveCore::resolve(
             scenario.name,
             scenario.seed.profiles.len(),
@@ -1182,15 +1231,26 @@ impl TuiSession {
                 )?;
             }
         }
+        let live_started = Instant::now();
         self.live_core_deadline = self.live_witnesses.as_ref().and_then(|armed| {
             live_gate::core_deadline(
                 Some(&armed.catalog),
                 Some(&armed.pair),
                 budget,
                 scenario_deadline,
-                Instant::now(),
+                live_started,
             )
         });
+        *self.live_timing.lock().unwrap() = self
+            .live_witnesses
+            .as_ref()
+            .filter(|armed| {
+                matches!(
+                    live_core,
+                    LiveCore::Pair(host_play::paired_core::PairCase::Flax)
+                ) && armed.pair.configured()
+            })
+            .map(|_| LiveTiming::new(live_started, self.live_core_deadline));
         Ok(())
     }
 
@@ -2650,21 +2710,30 @@ impl TuiSession {
         let Some(name) = self.live_name.as_deref() else {
             return (None, Vec::new());
         };
+        let now = Instant::now();
+        let timing = self.live_timing.lock().unwrap().as_ref().copied();
+        if let Some(timing) = timing
+            .filter(|timing| timing.setup_expired(live_gate::PAIR_FIXTURE_SETUP_DEADLINE, now))
+        {
+            return (
+                Some(1),
+                vec![
+                    ProofLine::Stderr(live_timing_record(name, timing, now)),
+                    ProofLine::Stderr(format!(
+                        "FAIL: live {name} setup: paired fixture did not reach successful relog and scene readiness before its bounded pre-Start deadline"
+                    )),
+                ],
+            );
+        }
+        // Build the JSON receipt only on a terminal or first-PASS poll.
         // Only the witness this run armed can decide it, borrowed from the
         // run; a plain `--live` run has none and evaluates no gate.
         let (core_gate, pair_gate) = match &self.live_witnesses {
             None => (CoreGate::Disabled, CoreGate::Disabled),
-            Some(armed) => {
-                let now = Instant::now();
-                (
-                    live_gate::catalog_core_gate(
-                        Some(&armed.catalog),
-                        self.live_core_deadline,
-                        now,
-                    ),
-                    live_gate::pair_core_gate(Some(&armed.pair), self.live_core_deadline, now),
-                )
-            }
+            Some(armed) => (
+                live_gate::catalog_core_gate(Some(&armed.catalog), self.live_core_deadline, now),
+                live_gate::pair_core_gate(Some(&armed.pair), self.live_core_deadline, now),
+            ),
         };
         let catalog = self.live_witnesses.as_ref().map(|armed| &armed.catalog);
         let pair = self.live_witnesses.as_ref().map(|armed| &armed.pair);
@@ -2695,6 +2764,9 @@ impl TuiSession {
         };
         let fail = |receipt: String, message: &str| {
             let mut lines = witnesses(false);
+            if let Some(timing) = timing {
+                lines.push(ProofLine::Stderr(live_timing_record(name, timing, now)));
+            }
             lines.push(ProofLine::Stderr(receipt));
             lines.push(ProofLine::Stderr(format!("FAIL: {message}")));
             (Some(1), lines)
@@ -2715,7 +2787,7 @@ impl TuiSession {
                 self.live_wait_script_stop,
                 |needle| self.script_self_stop_observed(needle),
                 &mut grace,
-                Instant::now(),
+                now,
             );
             self.live_stop_wait_started = grace;
             match hold {
@@ -2734,14 +2806,26 @@ impl TuiSession {
             .and_then(|r| r.evidence().cloned())
             .map(|ev| ev.to_json())
             .unwrap_or_default();
-        let soaking = self.live_soak_until.is_some_and(|t| Instant::now() < t);
+        let soaking = self.live_soak_until.is_some_and(|t| now < t);
+        let was_announced = self.live_announced_pass;
         let (code, proof, announced) =
             live_proof(name, status, &evidence, soaking, self.live_announced_pass);
+        let timing_due = code.is_some() || (announced && !was_announced);
         let mut lines = match code {
             Some(1) => witnesses(false),
-            _ if announced && !self.live_announced_pass => witnesses(true),
+            _ if announced && !was_announced => witnesses(true),
             _ => Vec::new(),
         };
+        if timing_due {
+            if let Some(timing) = timing {
+                let receipt = live_timing_record(name, timing, now);
+                lines.push(if code == Some(1) {
+                    ProofLine::Stderr(receipt)
+                } else {
+                    ProofLine::Stdout(receipt)
+                });
+            }
+        }
         lines.extend(proof);
         self.live_announced_pass = announced;
         if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
@@ -2865,6 +2949,37 @@ impl ProofLine {
             Self::Stderr(line) => eprintln!("{line}"),
         }
     }
+}
+
+fn mark_live_script_start(
+    timing: &mut Option<LiveTiming>,
+    pending: &[PendingCatalogStart],
+    on_start_script: bool,
+    pump: &live_start::StartScriptPump,
+    now: Instant,
+) {
+    if !on_start_script
+        || !matches!(
+            pump,
+            live_start::StartScriptPump::Continue | live_start::StartScriptPump::CompiledRunning
+        )
+        || pending.is_empty()
+        || pending.iter().any(|card| !card.started)
+    {
+        return;
+    }
+    if let Some(timing) = timing {
+        timing.mark_script_started(now);
+    }
+}
+
+fn live_timing_record(name: &str, timing: LiveTiming, now: Instant) -> String {
+    let millis = |duration: Duration| duration.as_millis().min(u128::from(u64::MAX)) as u64;
+    let receipt = serde_json::json!({
+        "setup_elapsed_ms": millis(timing.setup_elapsed(now)),
+        "script_elapsed_ms": timing.script_elapsed(now).map(millis),
+    });
+    format!("LIVE_TIMING: script_{name} {receipt}")
 }
 
 fn write_proof_lines(lines: &[ProofLine]) {
