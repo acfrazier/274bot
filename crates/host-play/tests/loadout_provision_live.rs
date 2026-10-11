@@ -453,13 +453,15 @@ impl LiveState {
             Prep::WaitTutorial => {
                 if self.chat_has(scenario::tutorial::TUTORIAL_CHAT_NEEDLE) {
                     self.relog_offline_seen = false;
+                    let session_before = client.gens.session;
+                    self.relog_session_before = Some(session_before);
                     println!(
                         "{}",
                         json!({
                             "phase": "before-relog",
                             "observation": observation,
                             "scene_state": client.scene_state,
-                            "session": client.gens.session,
+                            "session": session_before,
                             "hold": hold,
                             "logout_observed": false,
                         })

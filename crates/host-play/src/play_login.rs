@@ -34,9 +34,11 @@ pub const UNEXPECTED_LOGOUT_THRESHOLD: usize = 3;
 pub const UNEXPECTED_LOGOUT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 // World.ts:795-803 retries an unacknowledged player_logout every 15 s;
-// LoginServer.ts:415-455 saves before releasing ownership. These are host
-// policy bounds, not a promise that storage completes within them: allow two
-// release cycles, probing at one third of a cycle through normal admission.
+// LoginServer.ts:415-455 saves before releasing ownership. The 30 s host
+// budget covers the initial post plus one 15 s retry, not two retries.
+// WorldConfig.ts:108-109 and World.ts:177,2202-2212 reject the fifth device
+// attempt with a refreshed 15 s idle TTL. The 5 s host probe cadence avoids
+// bursts; normal queue admission still enforces four grants then 15 s idle.
 pub(super) const CLEAN_RELEASE_BUDGET: Duration = Duration::from_secs(30);
 pub(super) const CLEAN_RELEASE_CADENCE: Duration = Duration::from_secs(5);
 
@@ -47,7 +49,6 @@ struct CleanExit {
     port: u16,
     uid: i32,
     world_generation: u64,
-    login_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +108,10 @@ impl std::fmt::Display for RelogParkReason {
 /// intent lock is never held with queue, status, or script locks.
 struct SlotIntent {
     generation: u64,
+    /// Only commands that cancel an in-progress login advance this fence.
+    /// Agreeing Log in / Load all commands still advance `generation` for
+    /// acknowledgements, but must not discard queue places or backoff.
+    cancellation_generation: u64,
     want_login: bool,
     want_logout: bool,
     login_latch: Option<LoginLatchReason>,
@@ -122,6 +127,7 @@ struct SlotIntent {
 #[derive(Clone, Copy)]
 pub(super) struct IntentCommand {
     generation: u64,
+    cancellation_generation: u64,
 }
 
 #[cfg(test)]
@@ -204,6 +210,8 @@ pub struct SlotArm {
     #[cfg(test)]
     retry_wait_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
+    retry_wait_timeout: parking_lot::Mutex<Option<Duration>>,
+    #[cfg(test)]
     retry_notify_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
     stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
@@ -220,6 +228,7 @@ impl SlotArm {
             queue_owner: NEXT_QUEUE_OWNER.fetch_add(1, Ordering::Relaxed),
             intent: parking_lot::Mutex::new(SlotIntent {
                 generation: 0,
+                cancellation_generation: 0,
                 want_login,
                 want_logout: false,
                 login_latch: None,
@@ -249,6 +258,8 @@ impl SlotArm {
             worker_start_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
             retry_wait_gate: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            retry_wait_timeout: parking_lot::Mutex::new(None),
             #[cfg(test)]
             retry_notify_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
@@ -333,6 +344,11 @@ impl SlotArm {
     }
 
     #[cfg(test)]
+    pub(crate) fn retry_wait_timeout_for_test(&self) -> Option<Duration> {
+        *self.retry_wait_timeout.lock()
+    }
+
+    #[cfg(test)]
     pub(crate) fn hold_retry_notify_before_lock_for_test(
         &self,
     ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
@@ -360,13 +376,6 @@ impl SlotArm {
         intent.auto_intent = false;
         intent.want_logout = false;
         intent.unexpected_logout_times = [None; UNEXPECTED_LOGOUT_THRESHOLD];
-        if intent
-            .clean_exit
-            .as_ref()
-            .is_some_and(|exit| exit.login_generation.is_some())
-        {
-            intent.clean_exit = None;
-        }
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -375,6 +384,7 @@ impl SlotArm {
     pub fn request_logout(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.login_latch = Some(LoginLatchReason::OperatorLogout);
         intent.want_logout = true;
         intent.want_login = false;
@@ -397,6 +407,7 @@ impl SlotArm {
     pub fn hold_logged_out(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.login_latch = Some(LoginLatchReason::PersistedLogout);
         intent.want_login = false;
         intent.want_logout = false;
@@ -515,8 +526,10 @@ impl SlotArm {
                 intent.auto_intent = true;
             }
         } else if intent.auto_intent {
+            intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
             intent.auto_intent = false;
             intent.want_login = false;
+            intent.clean_exit = None;
         }
         drop(intent);
         self.retry_wake.notify_all();
@@ -527,6 +540,7 @@ impl SlotArm {
     pub fn withdraw_login(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.want_login = false;
         intent.auto_intent = false;
         intent.clean_exit = None;
@@ -540,6 +554,7 @@ impl SlotArm {
     pub(super) fn hold_login_on_error(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         intent.want_login = false;
         intent.auto_intent = false;
         intent.error_hold = true;
@@ -646,6 +661,10 @@ impl SlotArm {
         attempt: Option<(IntentCommand, u64)>,
         frames: &mut WaitFrames<'_>,
     ) -> bool {
+        #[cfg(test)]
+        {
+            *self.retry_wait_timeout.lock() = Some(timeout);
+        }
         self.wait_for_retry_inner(timeout, true, attempt, frames)
     }
 
@@ -668,7 +687,10 @@ impl SlotArm {
             |(_, world)| world,
         );
         let deadline = Instant::now() + timeout;
-        let generation = attempt.map_or(intent.generation, |(command, _)| command.generation);
+        let cancellation_generation = attempt
+            .map_or(intent.cancellation_generation, |(command, _)| {
+                command.cancellation_generation
+            });
         loop {
             // A title frame runs unlocked so no arm writer waits on a paint;
             // the predicate is read after it, under the lock the wait keeps.
@@ -678,7 +700,7 @@ impl SlotArm {
             }
             if interrupt_on_world_change
                 && (self.world_generation.load(Ordering::Relaxed) != world_generation
-                    || intent.generation != generation)
+                    || intent.cancellation_generation != cancellation_generation)
             {
                 return true;
             }
@@ -696,6 +718,7 @@ impl SlotArm {
         let intent = self.intent.lock();
         (!ingame && self.wanted(&intent)).then_some(IntentCommand {
             generation: intent.generation,
+            cancellation_generation: intent.cancellation_generation,
         })
     }
 
@@ -703,6 +726,7 @@ impl SlotArm {
         let intent = self.intent.lock();
         (ingame && intent.want_logout).then_some(IntentCommand {
             generation: intent.generation,
+            cancellation_generation: intent.cancellation_generation,
         })
     }
 
@@ -741,6 +765,8 @@ impl SlotArm {
         let latched = count >= UNEXPECTED_LOGOUT_THRESHOLD;
         if latched {
             intent.generation = intent.generation.wrapping_add(1);
+            intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
+            intent.clean_exit = None;
             intent.login_latch = Some(LoginLatchReason::RepeatedUnexpectedLogouts {
                 count: count as u8,
                 window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
@@ -786,7 +812,7 @@ impl SlotArm {
         let intent = self.intent.lock();
         !self.stop.load(Ordering::Relaxed)
             && self.wanted(&intent)
-            && intent.generation == command.generation
+            && intent.cancellation_generation == command.cancellation_generation
             && self.world_generation.load(Ordering::Relaxed) == world_generation
     }
 
@@ -799,11 +825,10 @@ impl SlotArm {
             port,
             uid: self.uid.load(Ordering::Relaxed),
             world_generation: self.world_generation.load(Ordering::Relaxed),
-            login_generation: None,
         });
     }
 
-    /// Bind locally observed release evidence to this login intent and world.
+    /// Read locally observed release evidence for this account and world.
     /// A changed identity, world, cancelled intent or elapsed budget consumes it.
     pub(super) fn clean_release_admission_at(
         &self,
@@ -812,7 +837,6 @@ impl SlotArm {
         now: Instant,
     ) -> Option<Instant> {
         let mut intent = self.intent.lock();
-        let generation = intent.generation;
         let current = !self.stop.load(Ordering::Relaxed) && self.wanted(&intent);
         let exit = intent.clean_exit.as_mut()?;
         if !current
@@ -820,15 +844,11 @@ impl SlotArm {
             || exit.port != port
             || exit.uid != self.uid.load(Ordering::Relaxed)
             || exit.world_generation != self.world_generation.load(Ordering::Relaxed)
-            || exit
-                .login_generation
-                .is_some_and(|bound| bound != generation)
             || now.saturating_duration_since(exit.observed) >= CLEAN_RELEASE_BUDGET
         {
             intent.clean_exit = None;
             return None;
         }
-        exit.login_generation = Some(generation);
         Some(exit.not_before)
     }
 
@@ -845,8 +865,7 @@ impl SlotArm {
         }
         self.clean_release_admission_at(host, port, now)?;
         let mut intent = self.intent.lock();
-        if intent.generation != command.generation {
-            intent.clean_exit = None;
+        if intent.cancellation_generation != command.cancellation_generation {
             return None;
         }
         let exit = intent.clean_exit.as_mut()?;
@@ -860,13 +879,16 @@ impl SlotArm {
     }
 
     fn invalidate_clean_exit(&self) {
-        self.intent.lock().clean_exit = None;
+        let mut intent = self.intent.lock();
+        intent.clean_exit = None;
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
     }
 
     fn invalidate_login_identity(&self) {
         let mut intent = self.intent.lock();
         intent.clean_exit = None;
         intent.generation = intent.generation.wrapping_add(1);
+        intent.cancellation_generation = intent.cancellation_generation.wrapping_add(1);
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -886,7 +908,6 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
         let mut password = arm.password.lock();
         if **password != *profile.password {
             *password = Arc::from(profile.password.as_str());
-            arm.invalidate_login_identity();
         }
     }
     if identity_changed {
@@ -1558,10 +1579,10 @@ pub(super) fn wait_for_permit(
             "permit wait withdrawn"
         );
     };
-    let generation = arm.intent.lock().generation;
+    let identity = arm.uid.load(Ordering::Relaxed);
     let world_generation = arm.world_generation.load(Ordering::Relaxed);
     let replaced = || {
-        arm.intent.lock().generation != generation
+        arm.uid.load(Ordering::Relaxed) != identity
             || arm.world_generation.load(Ordering::Relaxed) != world_generation
     };
     loop {
@@ -1573,6 +1594,12 @@ pub(super) fn wait_for_permit(
         if permit_wait_cancelled(arm) {
             withdraw();
             return PermitWait::Cancelled;
+        }
+        // A cancelled release observation drops only its pacing, not the
+        // slot's FIFO place. Reaffirming login/password edits keep both.
+        let release_wait = arm.intent.lock().clean_exit.is_some();
+        if !release_wait {
+            queue.lock().clear_owner_defer(arm.queue_owner);
         }
         let wait = {
             let mut q = queue.lock();
@@ -1601,7 +1628,11 @@ pub(super) fn wait_for_permit(
         // intervals for cancellation and refresh its published place.
         let deadline = Instant::now() + wait;
         let mut next_publish = Instant::now() + QUEUE_PUBLISH;
-        while Instant::now() < deadline && !permit_wait_cancelled(arm) && !replaced() {
+        while Instant::now() < deadline
+            && !permit_wait_cancelled(arm)
+            && !replaced()
+            && (!release_wait || arm.intent.lock().clean_exit.is_some())
+        {
             let now = Instant::now();
             if now >= next_publish {
                 publish_queue_place(

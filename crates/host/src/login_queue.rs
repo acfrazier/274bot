@@ -37,7 +37,7 @@ pub enum Permit {
     Wait(Duration),
 }
 
-/// Why the queue head may not start its login yet. The deadline is a
+/// Why the eligible queue head may not start its login yet. The deadline is a
 /// monotonic instant on this host; `None` means it waits for the login
 /// handshake that is in flight to return first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,7 +119,7 @@ pub struct QueuePos {
     pub total: u32,
 }
 
-/// Login FIFO with focused-slot priority when that slot requests a permit.
+/// Login FIFO with focused-slot priority among eligible owners.
 ///
 /// FIFO identity is a slot-owner token, not a device UID: two configured
 /// accounts may share the same UID and must still own two independently
@@ -240,30 +240,51 @@ impl LoginQueue {
         }
     }
 
-    /// Pace an already queued owner without reserving a handshake or charging
-    /// an attempt. This preserves its FIFO place and all shared admission holds.
+    /// Defer an already queued owner without reserving a handshake or charging
+    /// an attempt. Its place is preserved, but eligible siblings may pass it.
     pub fn defer_owner_until(&mut self, owner: u64, until: Instant) {
         if let Some(entry) = self.queue.iter_mut().find(|entry| entry.owner == owner) {
             entry.not_before = Some(entry.not_before.map_or(until, |old| old.max(until)));
         }
     }
 
+    /// Clear an owner's defer without changing its queue place.
+    ///
+    /// Returns whether a deadline was cleared.
+    pub fn clear_owner_defer(&mut self, owner: u64) -> bool {
+        let Some(entry) = self.queue.iter_mut().find(|entry| entry.owner == owner) else {
+            return false;
+        };
+        entry.not_before.take().is_some()
+    }
+
     /// Poll a slot-owner place already entered through
     /// [`Self::enqueue_owner`].
     pub fn poll_owner(&mut self, owner: u64, uid: i32, now: Instant) -> Permit {
         self.expire(now);
-        if self.queue.front().map(|entry| entry.owner) != Some(owner) {
+        let Some(index) = self.queue.iter().position(|entry| entry.owner == owner) else {
             return Permit::Wait(QUEUE_POLL);
+        };
+        debug_assert_eq!(self.queue[index].uid, uid);
+        if self.eligible_head_index(now) != Some(index) {
+            return self
+                .head_blocker(owner, now)
+                .map_or(Permit::Wait(QUEUE_POLL), |blocker| {
+                    Permit::Wait(
+                        blocker
+                            .until()
+                            .map_or(QUEUE_POLL, |until| until.saturating_duration_since(now)),
+                    )
+                });
         }
-        debug_assert_eq!(self.queue.front().map(|entry| entry.uid), Some(uid));
-        match self.head_blocker(owner, now) {
+        match self.blocker(uid, now) {
             Some(blocker) => Permit::Wait(
                 blocker
                     .until()
                     .map_or(QUEUE_POLL, |until| until.saturating_duration_since(now)),
             ),
             None => {
-                self.grant(owner, uid, now);
+                self.grant(index, now);
                 Permit::Grant
             }
         }
@@ -279,16 +300,29 @@ impl LoginQueue {
         })
     }
 
-    /// What keeps `owner` from starting its login at `now` while it is the
-    /// queue head. `None` for any other owner (the bots ahead of it are its
-    /// blocker) and for a head the next poll would grant.
+    /// What keeps `owner` from starting at `now`: its defer while active, or
+    /// the admission blocker for the first eligible queued owner. `None` for
+    /// an eligible owner behind another eligible owner and for an eligible
+    /// head whose next poll would grant.
     pub fn head_blocker(&self, owner: u64, now: Instant) -> Option<AdmitBlocker> {
-        let head = self.queue.front().filter(|entry| entry.owner == owner)?;
-        self.blocker(head.uid, now).or_else(|| {
-            head.not_before
-                .filter(|until| *until > now)
-                .map(|until| AdmitBlocker::Spacing { until })
-        })
+        let index = self.queue.iter().position(|entry| entry.owner == owner)?;
+        let entry = self.queue[index];
+        if let Some(until) = entry.not_before.filter(|until| *until > now) {
+            return self
+                .blocker(entry.uid, now)
+                .or(Some(AdmitBlocker::Spacing { until }));
+        }
+        if self.eligible_head_index(now) != Some(index) {
+            return None;
+        }
+        self.blocker(entry.uid, now)
+    }
+
+    /// The first queued owner whose per-owner defer has elapsed.
+    fn eligible_head_index(&self, now: Instant) -> Option<usize> {
+        self.queue
+            .iter()
+            .position(|entry| entry.not_before.is_none_or(|until| until <= now))
     }
 
     /// Drop one slot owner's place. Other owners with the same device UID
@@ -511,12 +545,14 @@ impl LoginQueue {
         worst.map(|(blocker, _)| blocker)
     }
 
-    fn grant(&mut self, owner: u64, uid: i32, now: Instant) {
-        debug_assert_eq!(
-            self.queue.front().map(|entry| (entry.owner, entry.uid)),
-            Some((owner, uid))
-        );
-        self.queue.pop_front();
+    fn grant(&mut self, queue_index: usize, now: Instant) {
+        let entry = self
+            .queue
+            .remove(queue_index)
+            .expect("the eligible queue entry exists");
+        debug_assert!(entry.not_before.is_none_or(|until| until <= now));
+        let owner = entry.owner;
+        let uid = entry.uid;
         self.previous_start = self.last_start;
         self.last_start = Some(now);
         self.ip_count += 1;
@@ -639,6 +675,11 @@ mod tests {
         assert!(queue.flights.is_empty());
         assert!(queue.by_uid.is_empty());
         assert_eq!(queue.status_owner(2).unwrap().position, 2);
+        assert_eq!(queue.poll_owner(2, 8, now), Permit::Grant);
+        assert_eq!(queue.status_owner(1).unwrap().position, 1);
+        assert_eq!(queue.ip_count, 1);
+        assert!(queue.abandon_permit(2));
+        queue.enqueue_owner(2, 8);
         queue.hold_for(now, Duration::from_secs(20));
         assert_eq!(
             queue.poll_owner(1, 7, now),
@@ -652,6 +693,98 @@ mod tests {
         assert!(queue.abandon_permit(2));
         assert_eq!(queue.poll_owner(1, 7, later), Permit::Grant);
         assert_eq!(queue.ip_count, 1);
+    }
+
+    #[test]
+    fn deferred_head_yields_to_sibling_and_rejoins_after_delay() {
+        let now = Instant::now();
+        let release = now + Duration::from_secs(5);
+        let mut queue = LoginQueue::default();
+        queue.enqueue_owner(1, 7);
+        queue.enqueue_owner(2, 8);
+        queue.defer_owner_until(1, release);
+
+        assert_eq!(
+            queue.poll_owner(1, 7, now),
+            Permit::Wait(Duration::from_secs(5))
+        );
+        assert_eq!(queue.poll_owner(2, 8, now), Permit::Grant);
+        assert_eq!(queue.status_owner(1).unwrap().position, 1);
+        assert_eq!(queue.ip_count, 1);
+        assert!(queue.start_attempt(2, now, LoginCancel::new()).is_some());
+
+        assert_eq!(
+            queue.poll_owner(1, 7, release),
+            Permit::Wait(QUEUE_POLL),
+            "the defer ending does not bypass the in-flight handshake"
+        );
+        assert!(queue.acknowledge_login_return(2, release));
+        assert_eq!(queue.poll_owner(1, 7, release), Permit::Grant);
+        assert_eq!(queue.flights.len(), 1);
+        assert_eq!(queue.ip_count, 2);
+    }
+
+    #[test]
+    fn preferred_deferred_owner_yields_then_regains_priority() {
+        let now = Instant::now();
+        let release = now + Duration::from_secs(5);
+        let mut queue = LoginQueue::default();
+        queue.enqueue_owner(2, 8);
+        queue.enqueue_owner(3, 9);
+        queue.set_preferred_owner(Some(1));
+        queue.enqueue_owner(1, 7);
+        queue.defer_owner_until(1, release);
+        assert_eq!(queue.status_owner(1).unwrap().position, 1);
+
+        let sibling_start = now + Duration::from_secs(4);
+        assert_eq!(queue.poll_owner(2, 8, sibling_start), Permit::Grant);
+        assert!(queue
+            .start_attempt(2, sibling_start, LoginCancel::new())
+            .is_some());
+        assert!(matches!(
+            queue.poll_owner(3, 9, sibling_start),
+            Permit::Wait(_),
+        ));
+        let sibling_return = sibling_start + Duration::from_millis(100);
+        assert!(queue.acknowledge_login_return(2, sibling_return));
+
+        assert_eq!(
+            queue.poll_owner(3, 9, release - Duration::from_millis(500)),
+            Permit::Wait(LOGIN_START_SPACING - Duration::from_millis(500)),
+            "the eligible sibling is next before the preferred owner's delay ends"
+        );
+        assert_eq!(
+            queue.poll_owner(1, 7, release),
+            Permit::Wait(Duration::from_millis(200)),
+            "the preferred owner becomes eligible but keeps normal start spacing"
+        );
+        assert_eq!(
+            queue.poll_owner(3, 9, release),
+            Permit::Wait(QUEUE_POLL),
+            "the preferred owner regains priority once its delay ends"
+        );
+        assert_eq!(
+            queue.poll_owner(1, 7, sibling_start + LOGIN_START_SPACING),
+            Permit::Grant
+        );
+        assert_eq!(queue.queued_uids(), vec![9]);
+    }
+
+    #[test]
+    fn clearing_owner_defer_restores_eligibility_without_losing_place() {
+        let now = Instant::now();
+        let mut queue = LoginQueue::default();
+        queue.enqueue_owner(1, 7);
+        queue.enqueue_owner(2, 8);
+        queue.defer_owner_until(1, now + Duration::from_secs(5));
+
+        assert_eq!(queue.poll_owner(2, 8, now), Permit::Grant);
+        assert!(queue.abandon_permit(2));
+        assert_eq!(queue.status_owner(1).unwrap().position, 1);
+        assert!(queue.clear_owner_defer(1));
+        assert_eq!(queue.status_owner(1).unwrap().position, 1);
+        assert_eq!(queue.poll_owner(1, 7, now), Permit::Grant);
+        assert!(!queue.clear_owner_defer(1), "no queued defer remains");
     }
 
     const TEST_OWNER_NAMESPACE: u64 = 1 << 63;
