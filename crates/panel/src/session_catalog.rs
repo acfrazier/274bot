@@ -61,8 +61,8 @@ impl Session {
                 return;
             }
         };
-        self.scripts.mark_catalog_filled();
         if let Some(root) = selected {
+            self.scripts.mark_catalog_scanned(&root);
             if let Err(e) = self
                 .scripts
                 .js
@@ -74,6 +74,7 @@ impl Session {
             }
             return;
         }
+        self.scripts.mark_catalog_filled();
         if script::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
             return;
         }
@@ -108,6 +109,7 @@ impl Session {
                 script::registry_index_path(root).display()
             ));
         }
+        self.scripts.mark_catalog_scanned(root);
         let n = self
             .scripts
             .js

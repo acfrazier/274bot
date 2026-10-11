@@ -280,6 +280,8 @@ pub struct Scripts {
     tally: Option<StartTally>,
     last_bulk_report: Option<String>,
     catalog_filled: bool,
+    /// Root of the most recent catalog registry scan.
+    catalog_root: Option<PathBuf>,
     reload: reload::ReloadState,
     sync: sync::SyncState,
     notice: Option<Notice>,
@@ -311,6 +313,7 @@ impl Scripts {
             tally: None,
             last_bulk_report: None,
             catalog_filled: false,
+            catalog_root: None,
             reload: reload::ReloadState::default(),
             sync: sync::SyncState::default(),
             notice: None,
@@ -525,6 +528,12 @@ impl Scripts {
         self.catalog_filled = true;
     }
 
+    /// Record the root before scanning it, including when the scan fails.
+    pub fn mark_catalog_scanned(&mut self, root: &Path) {
+        self.catalog_root = Some(root.to_path_buf());
+        self.catalog_filled = true;
+    }
+
     /// Register the catalog at `root` once per session. Without a root the
     /// catalog stays unfilled so a later Browse can still prompt.
     pub fn fill_catalog_once(&mut self, root: Option<&Path>) {
@@ -534,7 +543,7 @@ impl Scripts {
         let Some(root) = root else {
             return;
         };
-        self.catalog_filled = true;
+        self.mark_catalog_scanned(root);
         if let Err(error) = self
             .js
             .register_rs2b0t(root, &script::default_rs2b0t_path_file())
@@ -1080,6 +1089,7 @@ impl Scripts {
     /// card whose file is gone is refused as missing, the same on every
     /// platform: Start never runs a deleted script from the copy loaded
     /// earlier, whether or not the card's stored path still resolves.
+    /// Missing catalog cards name the root whose registry was scanned.
     pub(crate) fn startable_card(
         &self,
         source: script::ScriptSource,
@@ -1090,6 +1100,15 @@ impl Scripts {
             .filter(|card| source != script::ScriptSource::File || card.path.is_file())
             .ok_or_else(|| match source {
                 script::ScriptSource::File => format!("missing file: {lookup}"),
+                script::ScriptSource::Catalog => match self.catalog_root.as_deref() {
+                    Some(root) => format!(
+                        "catalog at {} was scanned, but card {lookup} is missing",
+                        root.display()
+                    ),
+                    None => {
+                        format!("catalog card {lookup} is missing; no catalog root was scanned")
+                    }
+                },
                 _ => format!("unavailable: {lookup}"),
             })
     }

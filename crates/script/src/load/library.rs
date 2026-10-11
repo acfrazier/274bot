@@ -517,6 +517,13 @@ impl JsLibrary {
                 Ok(())
             }
             Err(crate::StartLoadError::RuntimeLoad(diagnostic)) => {
+                let user_diagnostic = missing_compat_api_export(card.source, &diagnostic)
+                    .map(|export| {
+                        format!(
+                            "This script needs a newer rs2b0t API than this build supports (frozen at commit 00d39a17e0; missing export: {export})."
+                        )
+                    })
+                    .unwrap_or_else(|| diagnostic.clone());
                 let mut failure = LoadFailure::capture(
                     card.source,
                     &card.path,
@@ -528,7 +535,7 @@ impl JsLibrary {
                 // The typed spawn boundary, not diagnostic text, owns the stage.
                 failure.stage = LoadStage::RuntimeLoad;
                 self.record_failure(failure);
-                Err(diagnostic)
+                Err(user_diagnostic)
             }
             Err(
                 crate::StartLoadError::Waiting(diagnostic)
@@ -916,6 +923,19 @@ fn cache_meta(shape: LoadShape, source: ScriptSource, family: ApiFamily) -> Cach
         shape: Some(shape_label(shape).into()),
         api_family: Some(family.as_str().into()),
     }
+}
+
+fn missing_compat_api_export(source: ScriptSource, diagnostic: &str) -> Option<&str> {
+    if source != ScriptSource::Catalog {
+        return None;
+    }
+    let (_, diagnostic) = diagnostic.split_once("The requested module '")?;
+    let (module, diagnostic) = diagnostic.split_once("' does not provide an export named '")?;
+    if !module.split('/').any(|part| part == "api") {
+        return None;
+    }
+    let export = diagnostic.split_once('\'')?.0;
+    (!export.is_empty()).then_some(export)
 }
 
 fn classify_stage(diagnostic: &str, sibling: Option<&str>) -> LoadStage {
