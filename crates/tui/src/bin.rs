@@ -1662,8 +1662,11 @@ impl TuiSession {
             return;
         }
         let root = self.catalog_root();
-        self.scripts.fill_catalog_once(root.as_deref());
-        self.scripts.mark_catalog_filled();
+        if let Some(root) = root.as_deref() {
+            self.scripts.fill_catalog_once(Some(root));
+        } else {
+            self.scripts.mark_catalog_filled();
+        }
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
@@ -1702,8 +1705,7 @@ impl TuiSession {
         }
         let n = self
             .scripts
-            .js
-            .register_rs2b0t(root, &script::default_rs2b0t_path_file())?;
+            .register_catalog(root, &script::default_rs2b0t_path_file())?;
         let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
         self.rs2b0t_catalog_open = false;
         app.rs2b0t_catalog_open = false;

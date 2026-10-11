@@ -517,6 +517,13 @@ impl JsLibrary {
                 Ok(())
             }
             Err(crate::StartLoadError::RuntimeLoad(diagnostic)) => {
+                let user_diagnostic = missing_compat_api_export(card.source, &diagnostic)
+                    .map(|export| {
+                        format!(
+                            "This script needs a newer rs2b0t API than this build supports (frozen at commit 00d39a17e0; missing export: {export})."
+                        )
+                    })
+                    .unwrap_or_else(|| diagnostic.clone());
                 let mut failure = LoadFailure::capture(
                     card.source,
                     &card.path,
@@ -528,7 +535,7 @@ impl JsLibrary {
                 // The typed spawn boundary, not diagnostic text, owns the stage.
                 failure.stage = LoadStage::RuntimeLoad;
                 self.record_failure(failure);
-                Err(diagnostic)
+                Err(user_diagnostic)
             }
             Err(
                 crate::StartLoadError::Waiting(diagnostic)
@@ -916,6 +923,40 @@ fn cache_meta(shape: LoadShape, source: ScriptSource, family: ApiFamily) -> Cach
         shape: Some(shape_label(shape).into()),
         api_family: Some(family.as_str().into()),
     }
+}
+
+fn missing_compat_api_export(source: ScriptSource, diagnostic: &str) -> Option<&str> {
+    if source != ScriptSource::Catalog {
+        return None;
+    }
+    let (_, diagnostic) = diagnostic.split_once("The requested module '")?;
+    let (module, diagnostic) = diagnostic.split_once("' does not provide an export named '")?;
+    let export = diagnostic.split_once('\'')?.0;
+    if export.is_empty() || export == "default" || !is_compat_api_module(module) {
+        return None;
+    }
+    Some(export)
+}
+
+fn is_compat_api_module(module: &str) -> bool {
+    if module == "@rs2b0t/api" {
+        return true;
+    }
+    let Some(path) = module
+        .strip_prefix("./../../")
+        .or_else(|| module.strip_prefix("../../"))
+        .or_else(|| module.strip_prefix("#/bot/"))
+        .or_else(|| module.strip_prefix("/rs2b0t/bot/"))
+    else {
+        return false;
+    };
+    let Some(path) = path.strip_prefix("api/") else {
+        return false;
+    };
+    !path.is_empty()
+        && path
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
 fn classify_stage(diagnostic: &str, sibling: Option<&str>) -> LoadStage {
