@@ -19,6 +19,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - A script waiting inside a Duel Arena fight pen is no longer restarted over and
   over trying to walk back to the lobby (the pen's walls make that impossible);
   the watchdog waits until the bot leaves the pen.
+- On Linux with recent processors, running several bots no longer crashes the
+  whole program when a second bot starts or restarts a script.
 
 ### Gatherer
 

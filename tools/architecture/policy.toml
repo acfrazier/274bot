@@ -337,8 +337,8 @@ reason = "e2e links host to poll slot state instead of scraping logs."
 [[allow]]
 from = "e2e"
 to = "host-play"
-kinds = ["normal"]
-reason = "e2e reuses Play for login/RSS/null-raster twins and suite child launch."
+kinds = ["normal", "dev"]
+reason = "e2e reuses Play for login/RSS/null-raster twins and suite child launch. dev: test-support so script's unprotected V8 test platform is compiled for libtest workers; production e2e-suite binaries never enable it."
 
 [[allow]]
 from = "e2e"

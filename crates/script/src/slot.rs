@@ -563,7 +563,8 @@ impl SlotScript {
             identity.siblings.iter().cloned().collect(),
             identity.game_data.clone(),
             Arc::clone(&identity.named_banks),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         isolate.post_loadouts(&identity.loadouts);
         isolate.post_recovery_hints(Arc::clone(&self.recovery_hints));
         if let Some(bag) = identity.settings_bag.as_deref() {

@@ -122,7 +122,7 @@ pub use watchdog::{
 };
 
 #[cfg(feature = "load")]
-pub use load::{transpile_ts, LoadIsolate, Ready};
+pub use load::{bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready};
 
 #[cfg(feature = "load")]
 mod anchor_return;
