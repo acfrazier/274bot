@@ -44,6 +44,34 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Panel
+
+- The Fleet window is tidier. Its button labels no longer end in "…", its
+  table columns share the window's width instead of scrolling sideways, its
+  buttons and column checkboxes wrap on a narrow window, and "Sort:" is a
+  full-width drop-down.
+- Grid now shows the resource readout (bots, CPU, RAM, traffic) in the
+  right-hand panel, where the rail's card isn't on screen.
+- The rail's mark checkbox says "mark for Fleet actions" on servers that don't
+  allow Debug (the public worlds), and still mentions Debug actions where it
+  exists.
+- The "Render all wall members?" warning has a "Don't show again" button,
+  enabled once "I understand" is ticked. It does what OK does and remembers
+  the choice, so unchecking "only render selected" later applies at once. OK
+  alone still asks again next launch, and "only render selected" still starts
+  on at every launch.
+- "sidecar 50 fps" and "focused 50 fps" are remembered between launches. A
+  bot that isn't drawing doesn't run at 50 fps because of them.
+- WalkTo's Send window opens on screen and is sized to its list of bots, and
+  the "Walk n bots" count follows the marked bots from the rail, Grid and
+  Fleet while WalkTo is open.
+
+### Walking
+
+- When a one-time walk overrides danger routing and the bot's poison status is
+  unknown, the panel, TUI and log now say "Poison status is unknown until the
+  bot can track it" instead of a paragraph about internal planning.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts

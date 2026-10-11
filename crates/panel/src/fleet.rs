@@ -8,7 +8,9 @@
 
 use std::cell::RefCell;
 
-use dear_imgui_rs::{Condition, TableColumnFlags, TableFlags, Ui, WindowFlags};
+use dear_imgui_rs::{
+    Condition, TableColumnFlags, TableFlags, TableOptions, TableSizingPolicy, Ui, WindowFlags,
+};
 use frontend_core::progress::{self, NONE};
 use frontend_core::{FleetRow, ProfileIdentity, Scripts};
 
@@ -18,15 +20,94 @@ use crate::theme::{scale_px, scale_size, WARN};
 
 const RESTART_POPUP: &str = "##fleet-restart-confirm";
 
+/// The Fleet window's smallest size at scale 1: wide enough for its longest
+/// button, so nothing runs past the edge however narrow it is dragged.
+pub(crate) const MIN_WIDTH: f32 = 360.0;
+const MIN_HEIGHT: f32 = 240.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FleetSort {
     Name,
     Status,
 }
 
+impl FleetSort {
+    pub const ALL: [FleetSort; 2] = [Self::Name, Self::Status];
+
+    /// The drop-down entry.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Status => "Status",
+        }
+    }
+}
+
 thread_local! {
     /// One reused buffer for every formatted cell of the open window.
     static CELL: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// What a test sees of the Fleet window after one frame.
+#[cfg(test)]
+#[derive(Debug, Default, Clone)]
+pub(crate) struct FleetLayout {
+    /// Left and right edge of the window's content region, in screen space.
+    pub content: [f32; 2],
+    /// How far the window scrolls sideways; 0 when nothing runs past its edge.
+    pub scroll_max_x: f32,
+    /// The Sort drop-down's `[min_x, min_y, max_x, max_y]`.
+    pub sort_combo: [f32; 4],
+    /// Each entry of the open Sort drop-down.
+    pub sort_choices: Vec<[f32; 4]>,
+    /// Left and right edge of each table cell drawn, row by row.
+    pub cells: Vec<[f32; 2]>,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static LAYOUT: RefCell<FleetLayout> = RefCell::new(FleetLayout::default());
+}
+
+#[cfg(test)]
+fn record_content_edges(ui: &Ui) {
+    let left = ui.cursor_screen_pos()[0];
+    LAYOUT.with_borrow_mut(|layout| layout.content = [left, left + ui.content_region_avail()[0]]);
+}
+
+#[cfg(test)]
+fn record_sort_combo(ui: &Ui) {
+    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+    LAYOUT.with_borrow_mut(|layout| layout.sort_combo = [min[0], min[1], max[0], max[1]]);
+}
+
+#[cfg(test)]
+fn record_sort_choice(ui: &Ui) {
+    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+    LAYOUT.with_borrow_mut(|layout| layout.sort_choices.push([min[0], min[1], max[0], max[1]]));
+}
+
+#[cfg(test)]
+fn record_cell(ui: &Ui) {
+    let left = ui.cursor_screen_pos()[0];
+    LAYOUT.with_borrow_mut(|layout| {
+        layout
+            .cells
+            .push([left, left + ui.content_region_avail()[0]])
+    });
+}
+
+#[cfg(test)]
+fn record_window_layout(ui: &Ui) {
+    LAYOUT.with_borrow_mut(|layout| layout.scroll_max_x = ui.scroll_max_x());
+}
+
+/// Draw the Fleet window for a test and return what it laid out.
+#[cfg(test)]
+pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
+    LAYOUT.with_borrow_mut(|layout| *layout = FleetLayout::default());
+    window(ui, session);
+    LAYOUT.with_borrow_mut(std::mem::take)
 }
 
 fn identity(session: &Session, name: &str) -> ProfileIdentity {
@@ -86,6 +167,47 @@ fn profile_rows(session: &Session) -> Vec<FleetRow> {
         .unwrap_or_else(|| projected.to_vec())
 }
 
+const ASSIGN_LABEL: &str = "Assign selected card";
+const ASSIGN_RESTART_LABEL: &str = "Assign & restart";
+const APPLY_SETTINGS_LABEL: &str = "Apply focused bot's settings to marked";
+
+/// The action bar's count-bearing button labels. None ends in an ellipsis: a
+/// button that opens a window or a confirmation still names the action plainly.
+struct ActionLabels {
+    start: String,
+    stop: String,
+    log_in: String,
+    log_out: String,
+    walk: String,
+}
+
+impl ActionLabels {
+    fn new(count: usize) -> Self {
+        Self {
+            start: format!("Start selected card on {count} marked bots"),
+            stop: format!("Stop {count} marked bots"),
+            log_in: format!("Log in {count}"),
+            log_out: format!("Log out {count}"),
+            walk: format!("Walk {count} marked bots"),
+        }
+    }
+
+    /// Every label of the bar, including the fixed ones.
+    #[cfg(test)]
+    fn all(&self) -> [&str; 8] {
+        [
+            &self.start,
+            &self.stop,
+            ASSIGN_LABEL,
+            ASSIGN_RESTART_LABEL,
+            &self.log_in,
+            &self.log_out,
+            &self.walk,
+            APPLY_SETTINGS_LABEL,
+        ]
+    }
+}
+
 fn action_bar(ui: &Ui, session: &mut Session) {
     let count = session.fleet_selection.len();
     let has_card = session.script_sel.is_some();
@@ -98,32 +220,39 @@ fn action_bar(ui: &Ui, session: &mut Session) {
             action.to_string()
         }
     };
+    let ActionLabels {
+        start: start_label,
+        stop: stop_label,
+        log_in: log_in_label,
+        log_out: log_out_label,
+        walk: walk_label,
+    } = ActionLabels::new(count);
     {
         let _disabled = (count == 0 || !has_card).then(|| ui.begin_disabled());
-        if ui.button(format!("Start selected card on {count} marked bots")) {
+        if ui.button(start_label) {
             session.fleet_start_selected();
         }
         ui.set_item_tooltip(card_tip("start the selected card on every marked profile"));
     }
-    ui.same_line();
+    continue_line_if_fits(ui, button_width(ui, &stop_label));
     {
         let _disabled = (count == 0).then(|| ui.begin_disabled());
-        if ui.button(format!("Stop {count} marked bots")) {
+        if ui.button(stop_label) {
             session.fleet_stop_selected();
         }
         ui.set_item_tooltip("stop every marked profile; ineligible rows are reported");
     }
     {
         let _disabled = (count == 0 || !has_card).then(|| ui.begin_disabled());
-        if ui.button("Assign selected card") {
+        if ui.button(ASSIGN_LABEL) {
             session.fleet_assign_selected();
         }
         ui.set_item_tooltip(card_tip(
             "save the selected card on every marked profile without starting it, \
              so each bot's settings can be adjusted first; running bots are skipped",
         ));
-        ui.same_line();
-        if ui.button("Assign & restart...") {
+        continue_line_if_fits(ui, button_width(ui, ASSIGN_RESTART_LABEL));
+        if ui.button(ASSIGN_RESTART_LABEL) {
             session.fleet_restart_confirm = true;
             ui.open_popup(RESTART_POPUP);
         }
@@ -135,17 +264,17 @@ fn action_bar(ui: &Ui, session: &mut Session) {
     restart_confirm(ui, session);
     {
         let _disabled = (count == 0).then(|| ui.begin_disabled());
-        if ui.button(format!("Log in {count}")) {
+        if ui.button(log_in_label) {
             session.fleet_login_selected();
         }
         ui.set_item_tooltip("log in every marked profile, loading the ones not loaded yet");
-        ui.same_line();
-        if ui.button(format!("Log out {count}")) {
+        continue_line_if_fits(ui, button_width(ui, &log_out_label));
+        if ui.button(log_out_label) {
             session.fleet_logout_selected();
         }
         ui.set_item_tooltip("log out every marked profile that is logged in");
-        ui.same_line();
-        if ui.button(format!("Walk {count} to...")) {
+        continue_line_if_fits(ui, button_width(ui, &walk_label));
+        if ui.button(walk_label) {
             session.open_walkto_for_marked();
         }
         ui.set_item_tooltip(
@@ -175,7 +304,7 @@ fn apply_settings_row(ui: &Ui, session: &mut Session, count: usize) {
     }
     let ready = count > 0 && session.script_sel.is_some() && session.focused_name().is_some();
     let _disabled = (!ready).then(|| ui.begin_disabled());
-    if ui.button("Apply focused bot's settings to marked...") {
+    if ui.button(APPLY_SETTINGS_LABEL) {
         session.fleet_prepare_apply_settings();
     }
     ui.set_item_tooltip(if ready {
@@ -251,16 +380,68 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
     let mut changed = false;
     for (i, column) in FleetColumn::ALL.into_iter().enumerate() {
         let mut on = fleet_columns::visible(&session.ui.fleet_columns, column);
+        if i > 0 {
+            let width = ui.frame_height()
+                + ui.clone_style().item_inner_spacing()[0]
+                + label_width(ui, column.title());
+            continue_line_if_fits(ui, width);
+        }
         if ui.checkbox(column.title(), &mut on) {
             fleet_columns::set_visible(&mut session.ui.fleet_columns, column, on);
             changed = true;
         }
-        if i + 1 < FleetColumn::ALL.len() {
-            ui.same_line();
-        }
     }
     if changed && session.persist_ui {
         crate::ui_state::save(&session.ui);
+    }
+}
+
+/// The "Sort:" drop-down, full width like the Danger routing one.
+fn sort_combo(ui: &Ui, session: &mut Session) {
+    ui.text("Sort:");
+    ui.set_next_item_width(-1.0);
+    let combo = ui.begin_combo("##fleet-sort", session.fleet_sort.label());
+    #[cfg(test)]
+    record_sort_combo(ui);
+    if let Some(_open) = combo {
+        for sort in FleetSort::ALL {
+            let selected = sort == session.fleet_sort;
+            let picked = ui
+                .selectable_config(sort.label())
+                .selected(selected)
+                .build();
+            #[cfg(test)]
+            record_sort_choice(ui);
+            if picked {
+                session.fleet_sort = sort;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+}
+
+/// Width of a label's visible text (what follows `##` is only an id).
+fn label_width(ui: &Ui, label: &str) -> f32 {
+    let visible = label.split("##").next().unwrap_or(label);
+    ui.current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, visible)[0]
+}
+
+/// A button's width: its text and the frame padding either side.
+fn button_width(ui: &Ui, label: &str) -> f32 {
+    label_width(ui, label) + 2.0 * ui.clone_style().frame_padding()[0]
+}
+
+/// Continue the current line with an item `width` wide when it still fits
+/// inside the window; otherwise leave the cursor so the item starts the next
+/// line. Call straight after the previous item.
+fn continue_line_if_fits(ui: &Ui, width: f32) {
+    let spacing = ui.clone_style().item_spacing()[0];
+    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+    if ui.item_rect_max()[0] + spacing + width <= right + 0.5 {
+        ui.same_line();
     }
 }
 
@@ -281,37 +462,45 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
     let needs_progress = columns.iter().any(|column| column.needs_progress());
     let needs_last_line = columns.contains(&FleetColumn::LastLog);
     let table_id = format!("##fleet-table-{}", columns.len());
+    // Every column stretches with the window, so the table is never wider
+    // than the window and has no horizontal scroll; only the Mark column keeps
+    // a fixed width. The weights follow the width each column wants.
     if let Some(_table) = ui.begin_table_with_sizing(
         &table_id,
         2 + columns.len(),
-        TableFlags::ROW_BG
-            | TableFlags::BORDERS_INNER_H
-            | TableFlags::SCROLL_Y
-            | TableFlags::SCROLL_X
-            | TableFlags::RESIZABLE,
+        TableOptions::new()
+            .flags(
+                TableFlags::ROW_BG
+                    | TableFlags::BORDERS_INNER_H
+                    | TableFlags::SCROLL_Y
+                    | TableFlags::RESIZABLE,
+            )
+            .sizing_policy(TableSizingPolicy::StretchProp),
         [
             0.0,
             (ui.content_region_avail()[1] - scale_px(ui, 70.0)).max(scale_px(ui, 80.0)),
         ],
         0.0,
     ) {
-        ui.table_setup_column("Mark", TableColumnFlags::NONE, None, None);
-        ui.table_setup_column("Profile", TableColumnFlags::NONE, None, None);
+        ui.table_setup_column_fixed_width(
+            "Mark",
+            TableColumnFlags::NONE,
+            ui.frame_height() + 2.0 * ui.clone_style().cell_padding()[0],
+            None,
+        );
+        ui.table_setup_column_stretch_weight(
+            "Profile",
+            TableColumnFlags::NONE,
+            fleet_columns::PROFILE_WEIGHT,
+            None,
+        );
         for column in &columns {
-            match column.init_width() {
-                Some(width) => ui.table_setup_column_fixed_width(
-                    column.title(),
-                    TableColumnFlags::NONE,
-                    scale_px(ui, width),
-                    None,
-                ),
-                None => ui.table_setup_column_stretch_weight(
-                    column.title(),
-                    TableColumnFlags::NONE,
-                    1.0,
-                    None,
-                ),
-            }
+            ui.table_setup_column_stretch_weight(
+                column.title(),
+                TableColumnFlags::NONE,
+                column.weight(),
+                None,
+            );
         }
         ui.table_headers_row();
         for row in visible {
@@ -319,10 +508,14 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             let mut marked = session.fleet_selection.contains(marked_id);
             ui.table_next_row();
             ui.table_next_column();
+            #[cfg(test)]
+            record_cell(ui);
             if ui.checkbox(format!("##fleet-mark-{}", marked_id.raw()), &mut marked) {
                 session.fleet_selection.set(marked_id, marked);
             }
             ui.table_next_column();
+            #[cfg(test)]
+            record_cell(ui);
             ui.text(&row.name);
             if session.scripts.has_restart_badge(&row.name) {
                 ui.same_line();
@@ -339,6 +532,8 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             };
             for column in &columns {
                 ui.table_next_column();
+                #[cfg(test)]
+                record_cell(ui);
                 match column {
                     FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
                     FleetColumn::Card => cell(ui, |out| {
@@ -404,33 +599,32 @@ pub fn window(ui: &Ui, session: &mut Session) {
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [760.0, 460.0]), Condition::FirstUseEver)
+        .size_constraints(
+            scale_size(ui, [MIN_WIDTH, MIN_HEIGHT]),
+            [f32::MAX, f32::MAX],
+        )
         .build(|| {
+            #[cfg(test)]
+            record_content_edges(ui);
             ui.input_text("Filter", &mut session.fleet_filter)
                 .hint("name or status")
                 .build();
-            ui.same_line();
-            if ui.small_button(match session.fleet_sort {
-                FleetSort::Name => "Sort: name",
-                FleetSort::Status => "Sort: status",
-            }) {
-                session.fleet_sort = match session.fleet_sort {
-                    FleetSort::Name => FleetSort::Status,
-                    FleetSort::Status => FleetSort::Name,
-                };
-            }
+            sort_combo(ui, session);
             ui.separator();
             action_bar(ui, session);
             column_toggles(ui, session);
             ui.separator();
             let rows = profile_rows(session);
             table(ui, session, &rows);
+            #[cfg(test)]
+            record_window_layout(ui);
         });
     session.fleet_open = open;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{row_matches, sorted_rows, FleetSort};
+    use super::{row_matches, sorted_rows, ActionLabels, FleetSort};
     use frontend_core::{FleetRow, Phase};
 
     /// The open window survives frames while columns come and go (the table
@@ -495,5 +689,18 @@ mod tests {
         assert!(row_matches(&rows[0], "idle"));
         assert_eq!(sorted_rows(&rows, "", FleetSort::Name)[0].name, "alice");
         assert_eq!(sorted_rows(&rows, "starting", FleetSort::Status).len(), 1);
+    }
+
+    /// No button of the action bar ends in an ellipsis, whatever the count.
+    #[test]
+    fn action_button_labels_have_no_ellipsis() {
+        for count in [0, 1, 12] {
+            for label in ActionLabels::new(count).all() {
+                assert!(
+                    !label.contains('\u{2026}') && !label.contains("..."),
+                    "{label:?}"
+                );
+            }
+        }
     }
 }

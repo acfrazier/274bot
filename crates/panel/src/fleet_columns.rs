@@ -7,6 +7,11 @@
 
 use std::collections::HashMap;
 
+/// Width weight of the Profile column (see [`FleetColumn::weight`]).
+pub const PROFILE_WEIGHT: f32 = 120.0;
+/// Width weight of the Last log column.
+const LAST_LOG_WEIGHT: f32 = 240.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FleetColumn {
     /// World and login state.
@@ -83,6 +88,13 @@ impl FleetColumn {
             Self::Idle => Some(96.0),
             Self::Levels => Some(88.0),
         }
+    }
+
+    /// This column's share of the table's width. The table stretches every
+    /// column with the window, so a weight is the width the column wants
+    /// relative to the others; Last log takes the most.
+    pub fn weight(self) -> f32 {
+        self.init_width().unwrap_or(LAST_LOG_WEIGHT)
     }
 }
 
