@@ -25,11 +25,10 @@ client = { workspace = true }
 # Integration tests use the fixture seams behind this crate's test-support.
 frontend-core = { path = ".", features = ["test-support"] }
 # The capacity smoke forces the macOS/Windows measure and reads receipts.
-host = { path = "../host", features = ["test-support"] }
 host-play = { path = "../host-play", features = ["test-support"] }
 scenario = { path = "../scenario" }
 
 [features]
-# Test-only lifecycle fixtures (arm-only spawns). Enabled from front-end
-# dev-dependencies, never production builds.
-test-support = ["host-play/test-support"]
+# Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
+# never production builds.
+test-support = ["host-play/test-support", "host/test-support"]
