@@ -1003,7 +1003,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         Category::Echo,
                         Level::Warn,
                         slot = name,
-                        "watchdog holding in Duel Arena fight pen; recovery anchor is unreachable"
+                        "watchdog: holding recovery in a Duel Arena fight pen; the recovery anchor is outside the pen"
                     );
                 }
                 other => apply_watchdog_nav_action(

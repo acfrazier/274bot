@@ -100,6 +100,7 @@ struct RunProgress {
 pub struct ProgressWatchdog {
     state: WatchdogState,
     last_scheduler: Option<Instant>,
+    scheduler_warn_from: Option<Instant>,
     last_game_packet_tick: Option<Instant>,
     last_gameplay: Option<Instant>,
     pair_wait_since: Option<Instant>,
@@ -130,6 +131,7 @@ impl ProgressWatchdog {
         Self {
             state: WatchdogState::Idle,
             last_scheduler: None,
+            scheduler_warn_from: None,
             last_game_packet_tick: None,
             last_gameplay: None,
             pair_wait_since: None,
@@ -259,6 +261,7 @@ impl ProgressWatchdog {
         self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
         self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.pair_wait_since = None;
@@ -284,6 +287,7 @@ impl ProgressWatchdog {
         self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
         self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.pair_wait_since = None;
@@ -366,17 +370,19 @@ impl ProgressWatchdog {
             return;
         }
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
         self.warned = false;
     }
 
     /// Record a fresh server `PLAYER_INFO` tick. After a quiet interval, give
-    /// the local scheduler a fresh opportunity window before calling it hung.
+    /// the local scheduler a fresh warning window without changing the
+    /// hard-stall clock.
     pub fn stamp_game_packet_tick(&mut self, now: Instant) {
         if self.state == WatchdogState::Idle {
             return;
         }
         if self.game_packet_elapsed(now) >= SCHEDULER_WARN {
-            self.last_scheduler = Some(now);
+            self.scheduler_warn_from = Some(now);
             self.warned = false;
         }
         self.last_game_packet_tick = Some(now);
@@ -601,6 +607,7 @@ impl ProgressWatchdog {
 
     fn restamp(&mut self, now: Instant) {
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
         self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.warned = false;
@@ -609,6 +616,12 @@ impl ProgressWatchdog {
 
     fn scheduler_elapsed(&self, now: Instant) -> Duration {
         self.last_scheduler
+            .map(|t| now.saturating_duration_since(t))
+            .unwrap_or(Duration::ZERO)
+    }
+
+    fn scheduler_warning_elapsed(&self, now: Instant) -> Duration {
+        self.scheduler_warn_from
             .map(|t| now.saturating_duration_since(t))
             .unwrap_or(Duration::ZERO)
     }
@@ -629,7 +642,7 @@ impl ProgressWatchdog {
         if !self.wait_active()
             && !self.warned
             && self.game_packet_elapsed(now) < SCHEDULER_WARN
-            && self.scheduler_elapsed(now) >= SCHEDULER_WARN
+            && self.scheduler_warning_elapsed(now) >= SCHEDULER_WARN
         {
             self.warned = true;
             WatchdogAction::WarnHungLoop
@@ -921,6 +934,44 @@ mod tests {
                 reason: RestartReason::Stall
             },
             "flowing game packets do not mask a real local scheduler stall"
+        );
+    }
+
+    #[test]
+    fn packet_gaps_do_not_extend_the_hard_scheduler_stall_deadline() {
+        let mut watchdog = ProgressWatchdog::new();
+        let start = t0();
+        watchdog.arm_fresh(start);
+
+        for seconds in 1..=60 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        let first_resume = start + Duration::from_secs(72);
+        watchdog.stamp_game_packet_tick(first_resume);
+        assert_eq!(watchdog.observe(first_resume, true), WatchdogAction::None);
+        for seconds in 73..=82 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        assert_eq!(
+            watchdog.observe(start + Duration::from_secs(82), true),
+            WatchdogAction::WarnHungLoop,
+            "packet resumption gives only the warning clock a fresh window"
+        );
+
+        for seconds in 83..=660 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        watchdog.stamp_game_packet_tick(start + Duration::from_secs(672));
+        for seconds in 673..=HARD_STALL.as_secs() {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+
+        assert_eq!(
+            watchdog.observe_with_pair_wait(start + HARD_STALL, true, true),
+            WatchdogAction::Restart {
+                reason: RestartReason::Stall
+            },
+            "two 12-second packet gaps do not move the raw scheduler deadline"
         );
     }
 
