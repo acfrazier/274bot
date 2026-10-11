@@ -44,6 +44,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Host
+
+- When this machine can't keep the bots on time, the panel, the TUI and the
+  log warn that the host is falling behind: how many bots are late, the delay,
+  the tick rate, and whether every bot is rendering. It suggests running fewer
+  bots or turning off render-all, and it clears once the host keeps up. A quiet
+  game server is not reported as a slow host.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts

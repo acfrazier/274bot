@@ -1,6 +1,7 @@
 //! 274 bot host: one OS thread per client slot.
 
 mod auto_run;
+pub mod capacity;
 pub mod login_queue;
 #[cfg(feature = "performance-profile")]
 pub mod performance_profile;
@@ -25,6 +26,10 @@ use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
 use vault::{Profile, ProfileSettings};
 
+pub use capacity::{
+    bind_capacity, record_service, set_service_class, unbind_capacity, CapacityEval,
+    CapacityMonitor, CapacityWarning, RenderPolicyLabel, ServiceClass,
+};
 pub use random::{
     detect, CooldownMap, DetectedRandom, Guardian, RandomClaim, RandomKind, RandomStatus,
 };
@@ -298,6 +303,8 @@ impl Host {
             if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
+                let delay = service_delay(slot.next_wake, start);
+                let tick_before = slot.tick_n;
                 let (new_busy, _) = Self::client_tick(
                     client,
                     &mut slot,
@@ -308,6 +315,7 @@ impl Host {
                     &mut observe,
                     Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
                 );
+                record_service(username, start, delay, slot.tick_n != tick_before);
                 busy = new_busy;
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
@@ -315,6 +323,7 @@ impl Host {
                 if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
                     thread::sleep(rest);
                 }
+                slot.next_wake = Some(start + FRAME_MS);
                 continue;
             }
             // Idle: park until a packet, a control kick, or the bound, then
@@ -329,7 +338,11 @@ impl Host {
             } else {
                 IDLE_PARK_MS
             };
+            let wake_at = Instant::now() + timeout;
             let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
+            let now = Instant::now();
+            let delay = now.saturating_duration_since(wake_at);
+            let tick_before = slot.tick_n;
             let (new_busy, _) = Self::client_tick(
                 client,
                 &mut slot,
@@ -340,7 +353,9 @@ impl Host {
                 &mut observe,
                 Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
             );
+            record_service(username, now, delay, slot.tick_n != tick_before);
             busy = new_busy;
+            slot.next_wake = None;
             if stream_bytes(client) != before {
                 socket_stalled = false;
             } else if reason == ParkWake::Socket {
@@ -807,6 +822,11 @@ fn rearm_after_head_drop(client: &mut Client, draw_off_edge: bool, backend_flip:
     }
 }
 
+fn service_delay(wake: Option<Instant>, now: Instant) -> Duration {
+    wake.map(|deadline| now.saturating_duration_since(deadline))
+        .unwrap_or(Duration::ZERO)
+}
+
 /// Why a park returned.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ParkWake {
@@ -1111,6 +1131,8 @@ struct SlotLoop {
     /// Game-tick edges (`PLAYER_INFO` this drain). Counted internally;
     /// printed in the 50-frame summary, not per tick.
     tick_n: u64,
+    /// Deadline of the next service (frame leftover or park timeout).
+    next_wake: Option<Instant>,
     log_n: u32,
     /// Totals at the last `BOT_DEBUG` window line (deltas, not cumulatives).
     dbg: DebugSnap,
@@ -1166,6 +1188,7 @@ impl SlotLoop {
             paint_n: 0,
             skip_n: 0,
             tick_n: 0,
+            next_wake: None,
             log_n: 0,
             dbg: DebugSnap::default(),
             dbg_at: None,

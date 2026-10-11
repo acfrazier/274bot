@@ -15,11 +15,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::hostlog::{Level, Source};
-use host::{FrameBuf, SlotInput};
+use api::host_log;
+use api::hostlog::{Category, Level, Source};
+use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, Vault, VaultChange};
 
+use crate::capacity::{CapacityNotice, RenderPolicyLabel};
 use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
@@ -328,6 +330,18 @@ pub struct OperatorSession<Io> {
     walk_globals_store: Option<std::path::PathBuf>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
+    /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
+    capacity: Option<CapacityNotice>,
+    capacity_kind: CapacityKind,
+    capacity_render: RenderPolicyLabel,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CapacityKind {
+    #[default]
+    Clear,
+    Silence,
+    Warn,
 }
 
 impl<Io> OperatorSession<Io> {
@@ -376,6 +390,9 @@ impl<Io> OperatorSession<Io> {
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
             _instance: instance,
+            capacity: None,
+            capacity_kind: CapacityKind::Clear,
+            capacity_render: RenderPolicyLabel::OnlySelected,
         }
     }
 
@@ -510,6 +527,22 @@ impl<Io> OperatorSession<Io> {
     /// The process resource meter as of its last 1 Hz sample.
     pub fn resources(&self) -> &ResourceView {
         self.resources.view()
+    }
+
+    /// Shared host-capacity warning, when the host is behind.
+    pub fn capacity_notice(&self) -> Option<&CapacityNotice> {
+        self.capacity.as_ref()
+    }
+
+    /// What the front end is rendering, included in the capacity warning.
+    pub fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
+        self.capacity_render = render;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inject_capacity_notice(&mut self, notice: CapacityNotice) {
+        self.capacity_kind = CapacityKind::Warn;
+        self.capacity = Some(notice);
     }
 
     /// Moves whenever a sample changed [`Self::resources`].
@@ -1245,6 +1278,36 @@ impl<Io> OperatorSession<Io> {
         self.refresh_views();
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
+        self.refresh_capacity(now);
+    }
+
+    fn refresh_capacity(&mut self, now: Instant) {
+        let eval = self
+            .play
+            .as_ref()
+            .map(|play| play.capacity().evaluate(now, self.capacity_render))
+            .unwrap_or(CapacityEval::Clear);
+        match eval {
+            CapacityEval::Warn(warning) => {
+                let notice = CapacityNotice::from_warning(warning);
+                if self.capacity_kind != CapacityKind::Warn {
+                    host_log!(Category::Lifecycle, Level::Warn, "{}", notice.notice_text());
+                }
+                self.capacity = Some(notice);
+                self.capacity_kind = CapacityKind::Warn;
+            }
+            CapacityEval::Silence => {
+                self.capacity = None;
+                self.capacity_kind = CapacityKind::Silence;
+            }
+            CapacityEval::Clear => {
+                if self.capacity_kind == CapacityKind::Warn {
+                    host_log!(Category::Lifecycle, Level::Info, "host is keeping up again");
+                }
+                self.capacity = None;
+                self.capacity_kind = CapacityKind::Clear;
+            }
+        }
     }
 
     /// Move the operation outcomes recorded since the last take onto each

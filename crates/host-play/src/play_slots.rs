@@ -550,6 +550,7 @@ impl Play {
             self.catalog_core.clone(),
             self.paired_core.clone(),
             Arc::clone(&self.per_frame),
+            Arc::clone(&self.capacity),
             &mut self.handles,
         );
         Ok(())
@@ -785,6 +786,23 @@ pub(super) fn observe_slot_catalog_and_paired(
     }
 }
 
+fn capacity_service_class(
+    ingame: bool,
+    latched: bool,
+    state: Option<script::RunState>,
+    frozen: bool,
+) -> host::ServiceClass {
+    if !ingame || latched {
+        host::ServiceClass::Parked
+    } else if state == Some(script::RunState::Paused) {
+        host::ServiceClass::Paused
+    } else if frozen || state == Some(script::RunState::Stopping) {
+        host::ServiceClass::Suspended
+    } else {
+        host::ServiceClass::Active
+    }
+}
+
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
 // The worker body keeps its hand layout: rustfmt used to skip it (an
@@ -818,6 +836,7 @@ fn spawn_slot_thread(
     slot_catalog_core: catalog_core::CoreWatch,
     slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
+    slot_capacity: Arc<host::CapacityMonitor>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
@@ -840,6 +859,7 @@ fn spawn_slot_thread(
             .stack_size(THREAD_STACK)
             .spawn(move || {
             api::hostlog::bind_slot(&username);
+            host::bind_capacity(Arc::clone(&slot_capacity));
             let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             let startup_entries_published = arm.wait_worker_start_for_test();
@@ -1514,6 +1534,15 @@ fn spawn_slot_thread(
                             );
                             let script_state = script_frame_state(&slot_scripts, name);
                             let running = script_state == Some(script::RunState::Running);
+                            let frozen = script_slot(&slot_scripts, name)
+                                .and_then(|slot| slot.lock().ok().map(|slot| slot.watchdog().frozen()))
+                                .unwrap_or(false);
+                            host::set_service_class(capacity_service_class(
+                                c.ingame,
+                                arm_latch_obs.login_latched(),
+                                script_state,
+                                frozen,
+                            ));
                             let nav_facts = script_state_builds_nav_facts(script_state);
                             let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
                                 bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
@@ -1799,6 +1828,8 @@ fn spawn_slot_thread(
                 }
             }
             }));
+            slot_capacity.remove(&username);
+            host::unbind_capacity();
             // No later session observes this slot, however the worker
             // ended (a Stop while parked at the title never reaches the
             // boundary above): its channel member leaves the party now.
