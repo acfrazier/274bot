@@ -870,7 +870,9 @@ fn choose<'a, T>(
     let snapshot = cx.snapshot();
     let view = live_reach(
         snapshot.reach().map(|reach| reach.value),
-        snapshot.here().map(|here| here.value),
+        snapshot
+            .local_player()
+            .map(|player| player.value.player.network),
     );
     let mut reachable: Option<((u32, i32, u16), &'a T)> = None;
     let mut unreachable: Option<((i32, i32), &'a T)> = None;
@@ -1037,7 +1039,9 @@ pub fn reach_known(cx: &ActionContext<'_>) -> bool {
     let snapshot = cx.snapshot();
     live_reach(
         snapshot.reach().map(|reach| reach.value),
-        snapshot.here().map(|here| here.value),
+        snapshot
+            .local_player()
+            .map(|player| player.value.player.network),
     )
     .is_some()
 }
@@ -1046,7 +1050,9 @@ fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
     let snapshot = cx.snapshot();
     let view = live_reach(
         snapshot.reach().map(|reach| reach.value),
-        snapshot.here().map(|here| here.value),
+        snapshot
+            .local_player()
+            .map(|player| player.value.player.network),
     )?;
     route_steps(view, fp).map(|(steps, _)| steps)
 }
@@ -1056,7 +1062,9 @@ fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
 /// reach view this keeps the straight-line one-tile check.
 pub fn npc_adjacent(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> bool {
     let snapshot = cx.snapshot();
-    let here = snapshot.here().map(|here| here.value);
+    let here = snapshot
+        .local_player()
+        .map(|player| player.value.player.network);
     let (Some(here), Some(view)) = (here, live_reach(snapshot.reach().map(|r| r.value), here))
     else {
         return npc.distance <= 1;

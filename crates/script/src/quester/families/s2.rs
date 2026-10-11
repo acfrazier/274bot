@@ -3,7 +3,7 @@ use super::{reach, walk_step_evidence, NoArgs};
 use crate::combat::RaisedPrayers;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
-use crate::native_bank::{BankAction, BankItem, BankReceipt, Close};
+use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
@@ -538,8 +538,8 @@ impl StepRun for BuyRun {
                 .tick
                 .cx
                 .snapshot()
-                .here()
-                .is_some_and(|here| reach::within(here.value, self.tile, 6));
+                .local_player()
+                .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
                     cx.tick.actions.begin::<Walk>(
@@ -715,8 +715,8 @@ impl StepRun for MakeRun {
                 .tick
                 .cx
                 .snapshot()
-                .here()
-                .is_some_and(|here| reach::within(here.value, self.tile, 6));
+                .local_player()
+                .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
                     cx.tick.actions.begin::<Walk>(
@@ -836,19 +836,19 @@ struct EquipmentPlan {
 }
 impl StepPlan for EquipmentPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let handle = cx
+        let equipment = cx
             .tick
             .actions
             .begin::<EquipmentMachine>(self.request.clone(), &mut cx.tick.cx)?;
-        Ok(Box::new(EquipmentRun { handle }))
+        Ok(Box::new(EquipmentRun { equipment }))
     }
 }
 struct EquipmentRun {
-    handle: ActionHandle<EquipmentMachine>,
+    equipment: ActionHandle<EquipmentMachine>,
 }
 impl StepRun for EquipmentRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
+        match cx.tick.actions.poll(&self.equipment, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
@@ -1124,8 +1124,7 @@ impl LoadoutPlan {
                 worn.push(Arc::from(items));
             }
             // No `Close` here: the trip leaves the bank open for the next
-            // step's run to reuse (design-bank-snapshot §4 F3); the run
-            // closes it only right before an equipment request.
+            // step's run to reuse (design-bank-snapshot §4 F3).
         }
         Ok(LoadoutRun {
             bank: (!bank_actions.is_empty()).then(|| {
@@ -1137,7 +1136,6 @@ impl LoadoutPlan {
                     cx,
                 )
             }),
-            closing: None,
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),
             worn_index: 0,
@@ -1213,8 +1211,6 @@ impl StepRun for LoadoutObservationWait {
 
 struct LoadoutRun {
     bank: Option<BankRun>,
-    /// The `Close` sent before an equipment request at an open bank.
-    closing: Option<ActionHandle<Close>>,
     worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
@@ -1226,25 +1222,11 @@ struct LoadoutRun {
     receipt: Option<Arc<dyn FamilyReceipt>>,
 }
 impl LoadoutRun {
-    /// Begins `request` once the bank is shut: a Wear, Unequip or Strip
-    /// acts on the regular inventory widget, which an open bank hides, so
-    /// an open bank is closed first and the request re-planned on the next
-    /// poll (design-bank-snapshot §4 F3: no `Close` inside the trip).
     fn begin_equipment(
         &mut self,
         request: EquipmentRequest,
         cx: &mut StepContext<'_, '_>,
     ) -> Result<(), ActionError> {
-        let bank_open = cx
-            .tick
-            .cx
-            .snapshot()
-            .bank_session()
-            .is_some_and(|session| session.value.open);
-        if bank_open {
-            self.closing = Some(cx.tick.actions.begin::<Close>((), &mut cx.tick.cx)?);
-            return Ok(());
-        }
         self.removing = matches!(request, EquipmentRequest::Unequip { .. });
         self.equipment = Some(
             cx.tick
@@ -1256,13 +1238,6 @@ impl LoadoutRun {
 }
 impl StepRun for LoadoutRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.closing {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.closing = None,
-            }
-        }
         if let Some(handle) = &self.equipment {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1289,8 +1264,8 @@ impl StepRun for LoadoutRun {
                 }
             }
         }
-        // Exclusive stripping follows the trip so the withdrawn tiers and
-        // the removed extras share one closed-bank inventory pass.
+        // Exclusive stripping follows the trip without a separate Close. On
+        // 289, Unequip/Strip is accepted while open and closes the bank itself.
         if self.exclusive {
             let snapshot = cx.tick.cx.snapshot();
             let Some(equipment) = snapshot.equipment() else {

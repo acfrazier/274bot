@@ -105,7 +105,7 @@ impl DrainedBatch {
             if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
                 assert_ne!(
                     batch, 0,
-                    "combat interactions use emit_batch, including one-row plans"
+                    "combat plan interactions use emit_batch, including one-row plans"
                 );
             }
         }
