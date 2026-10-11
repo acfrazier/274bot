@@ -30,6 +30,8 @@ export function fightArenaAt(tile) {
     return index === null ? null : DUEL_FIGHT_ARENAS[index];
 }
 
+export function inDuelChallengeArea(tile) { return call({ op: 'challenge-area', tile }); }
+
 export const Duel = proxy('Duel', {
     offerOpen() { return facts().offer === true; },
     confirmOpen() { return facts().confirm === true; },

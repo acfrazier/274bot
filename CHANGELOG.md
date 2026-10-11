@@ -3,6 +3,13 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.2
+
+### Scripts
+
+- The current rs2b0t Duel Arena script loads again: the duel API offers the
+  challenge-area check that newer catalogs use.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
