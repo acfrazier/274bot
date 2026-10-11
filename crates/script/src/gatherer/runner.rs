@@ -129,10 +129,10 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
     }
 }
 
-/// Nearest stand within [`HAZARD_RETREAT_RADIUS`] of `here` that is walkable
-/// and reachable from `here` inside that bound, ranked toward the
-/// away-from-hazard direction. Missing collision treats every in-bound tile
-/// as reachable so the one-step away tile still wins.
+/// Nearest stand within [`HAZARD_RETREAT_RADIUS`] of `here` that the
+/// router can actually step to from `here` inside that bound, ranked
+/// toward the away-from-hazard direction. Missing collision treats every
+/// in-bound tile as reachable so the one-step away tile still wins.
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
@@ -155,6 +155,11 @@ fn hazard_retreat_stand(
         while head < tail {
             let (ox, oz) = queue[head];
             head += 1;
+            let cur = WorldTile {
+                x: here.x.saturating_add(ox),
+                z: here.z.saturating_add(oz),
+                level: here.level,
+            };
             for (step_x, step_z) in [
                 (0, 1),
                 (0, -1),
@@ -175,12 +180,7 @@ fn hazard_retreat_stand(
                 if reachable[index_x][index_z] {
                     continue;
                 }
-                let tile = WorldTile {
-                    x: here.x.saturating_add(next_x),
-                    z: here.z.saturating_add(next_z),
-                    level: here.level,
-                };
-                if !collision.walkable(tile) {
+                if !nav::router::step_ok(collision, cur, (step_x, step_z)) {
                     continue;
                 }
                 reachable[index_x][index_z] = true;
@@ -189,7 +189,6 @@ fn hazard_retreat_stand(
             }
         }
     }
-    let walkable = |tile: WorldTile| collision.is_none_or(|collision| collision.walkable(tile));
     let mut best = None;
     for ox in -HAZARD_RETREAT_RADIUS..=HAZARD_RETREAT_RADIUS {
         for oz in -HAZARD_RETREAT_RADIUS..=HAZARD_RETREAT_RADIUS {
@@ -203,7 +202,7 @@ fn hazard_retreat_stand(
             };
             let index_x = (ox + HAZARD_RETREAT_RADIUS) as usize;
             let index_z = (oz + HAZARD_RETREAT_RADIUS) as usize;
-            if tile == hazard || !walkable(tile) || !reachable[index_x][index_z] {
+            if tile == hazard || !reachable[index_x][index_z] {
                 continue;
             }
             let away = i64::from(ox.signum() == dx) + i64::from(oz.signum() == dz);
@@ -3346,6 +3345,63 @@ mod tests {
     }
 
     #[test]
+    fn hazard_retreat_does_not_pick_a_diagonal_only_cage() {
+        use crate::quester::families::tests::with_tick;
+
+        let here = WorldTile {
+            x: 3087,
+            z: 3228,
+            level: 0,
+        };
+        let hazard = WorldTile {
+            x: 3086,
+            z: 3228,
+            level: 0,
+        };
+        let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| {
+            let dx = (tile.x - here.x).abs();
+            let dz = (tile.z - here.z).abs();
+            (dx == 1 && dz == 0) || (dx == 0 && dz == 1)
+        });
+        assert_eq!(
+            nav::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS).len(),
+            1,
+            "the router cannot leave a four-neighbour cage"
+        );
+        assert!(
+            hazard_retreat_stand(here, hazard, Some(&collision)).is_none(),
+            "a diagonal-only stand is not a router step"
+        );
+
+        let mut gatherer = draynor_net_gatherer();
+        gatherer.hazard_escape = Some(hazard);
+        gatherer.avoid[0] = AvoidedTile {
+            tile: hazard,
+            until: 180,
+        };
+        let snapshot = bank_snapshot(here);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 120, |tick| {
+            gatherer.retreat_from_hazard(tick, Some(&collision));
+        });
+        assert!(
+            gatherer.failure.is_none(),
+            "a temporary cage must keep observing: {:?}",
+            gatherer.failure
+        );
+        assert!(
+            ledger.is_none(),
+            "do not walk a diagonal the router refuses"
+        );
+        assert_eq!(gatherer.hazard_escape, Some(hazard));
+        assert!(
+            gatherer.last_event.contains("waiting for hazard to clear"),
+            "{}",
+            gatherer.last_event
+        );
+    }
+
+    #[test]
     fn hazard_retreat_ignores_walkable_tiles_in_another_component() {
         let here = WorldTile {
             x: 3087,
@@ -3358,12 +3414,35 @@ mod tests {
             level: 0,
         };
         let island = WorldTile {
-            x: 3091,
+            x: 3089,
             z: 3228,
             level: 0,
         };
-        let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| tile.x == 3089);
+        let north = WorldTile {
+            x: 3087,
+            z: 3229,
+            level: 0,
+        };
+        let south = WorldTile {
+            x: 3087,
+            z: 3227,
+            level: 0,
+        };
+        // Wall at x=3088 with only diagonal gaps at here.z±1. Here's north and
+        // south tiles are blocked so the router cannot step through those gaps;
+        // an 8-way walkable flood still squeezes through and would pick the
+        // island, which is also the nearest away tile under walkable-only ranking.
+        let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| {
+            (tile.x == 3088 && tile.z != north.z && tile.z != south.z)
+                || tile == north
+                || tile == south
+        });
         assert!(collision.walkable(island));
+        assert!(!collision.walkable(WorldTile {
+            x: 3088,
+            z: 3228,
+            level: 0,
+        }));
         assert_eq!(
             nav::paint::flood_component_id(&collision, &[here], island),
             None

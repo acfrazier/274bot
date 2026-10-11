@@ -3342,7 +3342,7 @@ fn wildy_step_ok(
 /// reject entry from every direction. Every step stays inside the bake's
 /// x/z grid (the whole-world mapsquare bbox); each level tests its own
 /// plane (an unstamped plane is unrestricted within it).
-pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
+pub fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     let nb = WorldTile {
         x: cur.x + d.0,
         z: cur.z + d.1,
