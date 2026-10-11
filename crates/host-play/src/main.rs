@@ -74,6 +74,7 @@ where
 }
 
 fn main() -> ExitCode {
+    script::bootstrap_v8_platform();
     let args = match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
         Err(msg) => {

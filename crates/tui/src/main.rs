@@ -9,6 +9,7 @@ static ALLOCATOR: host_play::memory::BenchmarkAllocator = host_play::memory::BEN
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    script::bootstrap_v8_platform();
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
