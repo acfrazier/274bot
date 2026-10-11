@@ -718,6 +718,7 @@ dependencies = [
  "num-bigint",
  "pollster",
  "rustysynth",
+ "serde_json",
  "sha2",
  "softbuffer",
  "tungstenite",

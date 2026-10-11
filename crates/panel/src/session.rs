@@ -807,28 +807,44 @@ pub enum WalkSendMode {
     Group,
 }
 
+/// One bot of the Send list. Whether it is checked is read from the shared
+/// marked-bots set (the one the rail, Grid and Fleet use), never stored here.
 #[derive(Debug, Clone)]
 pub struct WalkSendRow {
     pub name: String,
+    identity: frontend_core::ProfileIdentity,
     pub status: host_play::walk_map::WalkSlotStatus,
-    pub checked: bool,
+}
+
+impl WalkSendRow {
+    /// Marked and able to walk.
+    pub fn checked(&self, marks: &frontend_core::MarkedSelection) -> bool {
+        self.status.is_eligible() && marks.contains(self.identity)
+    }
 }
 
 /// Send control state. Eligibility rows are rebuilt on open/refresh, not
-/// every frame. The bot list is the rail membership when MultiBox has any.
+/// every frame; the checks and the Walk label follow the shared marks live.
+/// The bot list is the rail membership when MultiBox has any.
 #[derive(Debug, Clone)]
 pub struct WalkSendState {
     pub mode: WalkSendMode,
+    /// The Send window is open.
+    pub open: bool,
     rows: Vec<WalkSendRow>,
     walk_label: String,
+    /// The mode and count `walk_label` was built for.
+    labelled: (WalkSendMode, usize),
 }
 
 impl Default for WalkSendState {
     fn default() -> Self {
         Self {
             mode: WalkSendMode::Focused,
+            open: false,
             rows: Vec::new(),
             walk_label: "Walk".into(),
+            labelled: (WalkSendMode::Focused, 0),
         }
     }
 }
@@ -842,15 +858,29 @@ impl WalkSendState {
         &self.walk_label
     }
 
-    pub fn checked_count(&self) -> usize {
-        self.rows.iter().filter(|row| row.checked).count()
+    pub fn checked_count(&self, marks: &frontend_core::MarkedSelection) -> usize {
+        self.rows.iter().filter(|row| row.checked(marks)).count()
     }
 
-    fn sync_walk_label(&mut self) {
-        self.walk_label = match self.mode {
-            WalkSendMode::Focused => "Walk".into(),
-            WalkSendMode::Group => format!("Walk {} bots", self.checked_count()),
+    /// Bring the Walk label up to date with the marks. Formats only when the
+    /// mode or the count changed, so an idle frame allocates nothing.
+    pub fn sync_walk_label(&mut self, marks: &frontend_core::MarkedSelection) {
+        let count = match self.mode {
+            WalkSendMode::Focused => 0,
+            WalkSendMode::Group => self.checked_count(marks),
         };
+        if self.labelled == (self.mode, count) {
+            return;
+        }
+        self.labelled = (self.mode, count);
+        self.walk_label.clear();
+        match self.mode {
+            WalkSendMode::Focused => self.walk_label.push_str("Walk"),
+            WalkSendMode::Group => {
+                use std::fmt::Write as _;
+                let _ = write!(self.walk_label, "Walk {count} bots");
+            }
+        }
     }
 }
 
@@ -1369,6 +1399,7 @@ impl Session {
             .into_owned();
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
+        let (sidecar_50_pref, focused_50_pref) = (ui.sidecar_50, ui.focused_50);
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
@@ -1385,9 +1416,9 @@ impl Session {
                 game_pane_open: true,
                 capture: capture_pref,
                 only_render_selected: true,
-                sidecar_50: false,
+                sidecar_50: sidecar_50_pref,
                 live_full_rate: false,
-                focused_50: true,
+                focused_50: focused_50_pref,
                 wall_open: false,
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),
@@ -3768,6 +3799,8 @@ impl Session {
     pub fn set_sidecar_50(&mut self, on: bool) {
         self.focus.lock().unwrap().sidecar_50 = on;
         self.wake_all_slots();
+        let before = std::mem::replace(&mut self.ui.sidecar_50, on);
+        self.save_pref_change("sidecar_50", before, on);
     }
 
     /// Game-pane 50 fps for whoever is focused. Does not follow that
@@ -3775,6 +3808,35 @@ impl Session {
     pub fn set_focused_50(&mut self, on: bool) {
         self.focus.lock().unwrap().focused_50 = on;
         self.wake_all_slots();
+        let before = std::mem::replace(&mut self.ui.focused_50, on);
+        self.save_pref_change("focused_50", before, on);
+    }
+
+    /// Confirm the render-all warning: wall members draw from now on. With
+    /// `remember`, also save "Don't show again", after which unchecking
+    /// "only render selected" applies at once. Without it the choice lasts
+    /// this launch only.
+    pub fn confirm_render_all(&mut self, remember: bool) {
+        self.focus.lock().unwrap().only_render_selected = false;
+        self.wake_all_slots();
+        self.wall.render_all_warn_open = false;
+        if remember {
+            let before = std::mem::replace(&mut self.ui.render_all_warning_ack, true);
+            self.save_pref_change("render_all_warning_ack", before, true);
+        }
+    }
+
+    /// Write the panel preferences after `key` changed, logging the change.
+    fn save_pref_change(&self, key: &str, before: bool, after: bool) {
+        if !self.persist_ui || before == after {
+            return;
+        }
+        crate::ui_state::save(&self.ui);
+        frontend_core::log::global().process_line(
+            frontend_core::log::Source::Host,
+            frontend_core::log::Level::Info,
+            &format!("panel preference {key}: {before} -> {after}"),
+        );
     }
 
     /// Ephemeral live overlay: every drawing slot at 50 fps, focused
@@ -4322,6 +4384,11 @@ impl Session {
         }
     }
 
+    /// The MultiBox rail window is on screen: MultiBox is on and Grid is off.
+    pub fn rail_shown(&self) -> bool {
+        self.multibox && !self.wall.grid
+    }
+
     /// Remove a member from the rail and return immediately. Connected slots
     /// get a bounded clean-logout window advanced by [`Session::pump_status`];
     /// disconnected workers are stopped asynchronously. Neither path sleeps
@@ -4751,36 +4818,23 @@ impl Session {
                 Some(play) => play.walk_eligibility(&name),
                 None => WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn),
             };
-            let checked =
-                status.is_eligible() && self.fleet_selection.contains(self.fleet_identity(&name));
+            let identity = self.fleet_identity(&name);
             rows.push(WalkSendRow {
                 name,
+                identity,
                 status,
-                checked,
             });
         }
         self.walk_send.rows = rows;
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     pub fn set_walk_send_mode(&mut self, mode: WalkSendMode) {
         self.walk_send.mode = mode;
-        if mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
-            let identities = self
-                .walk_send
-                .rows
-                .iter()
-                .filter(|row| row.status.is_eligible())
-                .map(|row| self.fleet_identity(&row.name))
-                .collect::<Vec<_>>();
-            self.fleet_selection.mark_all(identities);
-            for row in &mut self.walk_send.rows {
-                if row.status.is_eligible() {
-                    row.checked = true;
-                }
-            }
+        if mode == WalkSendMode::Group && self.walk_send.checked_count(&self.fleet_selection) == 0 {
+            self.walk_send_all_eligible();
         }
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     pub fn walk_send_all_eligible(&mut self) {
@@ -4789,13 +4843,10 @@ impl Session {
             .rows
             .iter()
             .filter(|row| row.status.is_eligible())
-            .map(|row| self.fleet_identity(&row.name))
+            .map(|row| row.identity)
             .collect::<Vec<_>>();
         self.fleet_selection.mark_all(identities);
-        for row in &mut self.walk_send.rows {
-            row.checked = row.status.is_eligible();
-        }
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     /// Open (or bring forward) the WalkTo picker for the Fleet window's
@@ -4805,32 +4856,23 @@ impl Session {
         self.open_window(PanelWindow::WalkTo);
         self.refresh_walk_send();
         self.walk_send.mode = WalkSendMode::Group;
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     pub fn walk_send_none(&mut self) {
         self.fleet_selection.clear();
-        for row in &mut self.walk_send.rows {
-            row.checked = false;
-        }
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
+    /// Mark or unmark the Send list's bot at `index` in the shared set. A bot
+    /// that cannot walk stays as it is.
     pub fn set_walk_send_checked(&mut self, index: usize, checked: bool) {
-        let identity = self
-            .walk_send
-            .rows
-            .get(index)
-            .map(|row| self.fleet_identity(&row.name));
-        if let Some(row) = self.walk_send.rows.get_mut(index) {
+        if let Some(row) = self.walk_send.rows.get(index) {
             if row.status.is_eligible() {
-                row.checked = checked;
-                if let Some(identity) = identity {
-                    self.fleet_selection.set(identity, checked);
-                }
+                self.fleet_selection.set(row.identity, checked);
             }
         }
-        self.walk_send.sync_walk_label();
+        self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     /// Walk every marked bot to the confirmed destination through the shared
