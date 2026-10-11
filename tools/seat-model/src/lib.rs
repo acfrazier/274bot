@@ -1,12 +1,14 @@
 //! Bounded conformance oracle. No product crate depends on this crate.
 //!
-//! `records` and dispatch counters are specification monitors, not authority
-//! storage. Authority uses live entries, retained results, history and the
-//! bounded leases embedded in queued rows. See synthesis/28-seat-sg.md.
-use std::collections::{HashSet, VecDeque};
+//! Boundary observations feed a separate specification monitor. Authority uses
+//! live entries, retained results, history and bounded leases in queued rows.
+//! See synthesis/28-seat-sg.md.
 use std::fmt::Write;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+
+mod explorer;
+mod monitor;
+pub use explorer::*;
+use monitor::Monitor;
 
 pub type Id = u16;
 pub const MAX_START_CHARGE: usize = 64 * 1024;
@@ -19,6 +21,17 @@ pub const CONTROL_RESERVATION: usize = 115;
 pub enum Rules {
     R5,
     Chosen,
+}
+
+/// Permanent seeded regressions. Production exploration uses `None`.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Mutation {
+    #[default]
+    None,
+    Deferral,
+    Replacement,
+    ReleaseDisplacement,
+    SessionCapture,
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Class {
@@ -168,6 +181,7 @@ pub enum Step {
         keep: bool,
     },
     Stop,
+    HeldTick,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Entry {
@@ -226,14 +240,12 @@ struct Emission {
     dropped: bool,
     take_filtered: bool,
     awaiting_admission: bool,
+    witness: usize,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Record {
     outcome: Option<Outcome>,
     settlements: u8,
-    cancelled_before_admit: bool,
-    revoked: bool,
-    admitted: bool,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Status {
@@ -268,6 +280,8 @@ pub struct State {
     dropped: usize,
     stopped: bool,
     failure: Option<Violation>,
+    monitor: Monitor,
+    mutation: Mutation,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Violation {
@@ -301,6 +315,14 @@ impl State {
             dropped: 0,
             stopped: false,
             failure: None,
+            monitor: Monitor::default(),
+            mutation: Mutation::None,
+        }
+    }
+    pub fn with_mutation(rules: Rules, bounds: Bounds, mutation: Mutation) -> Self {
+        Self {
+            mutation,
+            ..Self::new(rules, bounds)
         }
     }
     pub fn live(&self) -> usize {
@@ -341,6 +363,9 @@ impl State {
     }
     pub fn carry_len(&self) -> usize {
         self.carry.len()
+    }
+    pub fn dropped(&self) -> usize {
+        self.dropped
     }
     pub fn encoded_rows(&self) -> Vec<(Option<Id>, bool)> {
         self.wire
@@ -423,16 +448,15 @@ impl State {
     fn mint(&mut self) -> Id {
         let id = self.next;
         self.next += 1;
+        self.monitor.minted();
         self.records.push(Record {
             outcome: None,
             settlements: 0,
-            cancelled_before_admit: false,
-            revoked: false,
-            admitted: false,
         });
         id
     }
     fn remember(&mut self, id: Id) {
+        self.monitor.history_report(id);
         if id < self.floor || self.history.contains(&id) {
             return;
         }
@@ -443,6 +467,7 @@ impl State {
         }
     }
     fn settle_local(&mut self, id: Id, outcome: Outcome) {
+        self.monitor.settled(id, outcome);
         let r = &mut self.records[usize::from(id - 1)];
         r.settlements = r.settlements.saturating_add(1);
         if r.outcome.is_none() {
@@ -450,11 +475,8 @@ impl State {
         }
     }
     fn publish(&mut self, id: Id, outcome: Outcome, old_parent: Option<Id>) {
-        // Caller owns either an entry's converted credit or a fresh credit.
-        if self.live() + self.retained() >= self.bounds.credits {
-            self.fail("terminal-credit", format!("publish {id} without a credit"));
-        }
         self.terminal_seq += 1;
+        self.monitor.published(id, outcome, self.bounds);
         self.ledger.push(Terminal {
             id,
             seq: self.terminal_seq,
@@ -466,17 +488,11 @@ impl State {
             self.remember(id);
         }
     }
-    fn fail(&mut self, name: &'static str, detail: String) {
-        if self.failure.is_none() {
-            self.failure = Some(Violation { name, detail });
-        }
-    }
     fn retire(&mut self, id: Id) {
         self.pending.retain(|p| p.entry.id != id);
         self.carry.retain(|c| c.id() != id);
     }
     fn revoke_leases(&mut self, id: Id) {
-        self.records[usize::from(id - 1)].revoked = true;
         for row in self.queue.iter_mut().chain(&mut self.wire) {
             if row.owner == Some(id) || row.ancestors.contains(&id) {
                 row.revoked = true;
@@ -509,9 +525,6 @@ impl State {
     fn cancel_pending(&mut self, id: Id) {
         if let Some(p) = self.pending.iter_mut().find(|p| p.entry.id == id) {
             p.cancelled = true;
-            if self.entry(id).is_none() {
-                self.records[usize::from(id - 1)].cancelled_before_admit = true;
-            }
         }
         self.carry.retain(|c| c.id() != id);
         self.carry.push(Control::Cancel {
@@ -524,6 +537,7 @@ impl State {
             return;
         }
         if let Some(at) = self.mirrors.iter().position(|m| m.id == id) {
+            self.monitor.local_end(id, true, self.bounds);
             self.mirrors.remove(at);
             self.remember(id);
             self.revoke_leases(id);
@@ -600,6 +614,11 @@ impl State {
         self.publish(id, Outcome::Refused(reason), None);
     }
     fn admit(&mut self, id: Id) {
+        let before = self.monitor.admission(id, self.bounds);
+        self.admit_impl(id);
+        self.monitor.admission_finished(id, before);
+    }
+    fn admit_impl(&mut self, id: Id) {
         let at = self
             .pending
             .iter()
@@ -608,13 +627,9 @@ impl State {
         if self.entry(id).is_some() || self.ledger.iter().any(|t| t.id == id) {
             return;
         }
-        if self.rules == Rules::R5 && self.pending[at].deferred {
-            if self.free() > 0 {
-                self.fail(
-                    "admission-progress",
-                    format!("deferred {id} replay ignored with a free credit"),
-                );
-            }
+        if (self.rules == Rules::R5 || self.mutation == Mutation::Deferral)
+            && self.pending[at].deferred
+        {
             return;
         }
         if self.free() == 0 {
@@ -723,13 +738,9 @@ impl State {
             })
             .count()
             + 1;
-        if self.rules == Rules::R5 && self.live() == self.bounds.live {
-            if victim.is_some() && projected_live <= self.bounds.live {
-                self.fail(
-                    "reusable-capacity",
-                    format!("replacement {id} refused at full live capacity"),
-                );
-            }
+        if (self.rules == Rules::R5 || self.mutation == Mutation::Replacement)
+            && self.live() == self.bounds.live
+        {
             self.refuse(id, Refusal::Busy);
             return;
         }
@@ -743,7 +754,7 @@ impl State {
             self.revoke(v, Trigger::Superseded);
         }
         e.origin = Origin::Started;
-        self.records[usize::from(id - 1)].admitted = true;
+        self.monitor.accepted(id);
         for row in self.queue.iter_mut().chain(&mut self.wire) {
             if row.owner == Some(id) {
                 row.awaiting_admission = false;
@@ -816,7 +827,26 @@ impl State {
             Some(Status::Live | Status::Pending) => local.map_or(of, |m| m.ancestor),
             _ => None,
         };
-        let mut ancestors = lineage.map_or_else(Vec::new, |id| self.chain(id));
+        let mut ancestors = if self.rules == Rules::Chosen && local.is_some() {
+            // Until Page rebases a mirror, the retained result preserves its chain.
+            let mut ancestors = Vec::new();
+            let mut next = lineage;
+            while let Some(id) = next {
+                ancestors.push(id);
+                next = self.entry(id).map_or_else(
+                    || {
+                        self.ledger
+                            .iter()
+                            .find(|t| t.id == id)
+                            .and_then(|t| t.old_parent)
+                    },
+                    |entry| entry.parent,
+                );
+            }
+            ancestors
+        } else {
+            lineage.map_or_else(Vec::new, |id| self.chain(id))
+        };
         let pending = of.and_then(|id| {
             self.pending.iter().find(|p| {
                 p.entry.id == id
@@ -838,16 +868,28 @@ impl State {
                     .filter(|p| p.entry.class == Class::Session && p.entry.parent.is_none())
                     .map(|p| p.entry.id)
             });
+        let ancestor_revoked = self.rules == Rules::Chosen
+            && local.is_some()
+            && ancestors
+                .iter()
+                .any(|id| matches!(self.status(*id), Status::Revoked | Status::Expired));
+        let awaiting_admission = pending.is_some();
+        let witness = self.monitor.emitted(of, release);
         self.queue.push(Emission {
             owner: of,
             lineage,
             ancestors,
-            session,
+            session: if self.mutation == Mutation::SessionCapture {
+                None
+            } else {
+                session
+            },
             release,
-            revoked: matches!(status, Some(Status::Revoked)),
-            dropped: matches!(status, Some(Status::Revoked | Status::Expired)),
+            revoked: ancestor_revoked || matches!(status, Some(Status::Revoked)),
+            dropped: ancestor_revoked || matches!(status, Some(Status::Revoked | Status::Expired)),
             take_filtered: false,
-            awaiting_admission: pending.is_some(),
+            awaiting_admission,
+            witness,
         });
     }
     fn take(&mut self) {
@@ -858,20 +900,22 @@ impl State {
         };
         let mut actions = 0;
         let mut queue = std::mem::take(&mut self.queue);
-        if self.rules == Rules::Chosen {
+        if self.rules == Rules::Chosen && self.mutation != Mutation::ReleaseDisplacement {
             self.wire.extend(queue.extract_if(.., |row| row.release));
         }
         for mut row in queue {
-            if self.rules == Rules::R5 || !row.release {
+            if self.rules == Rules::R5
+                || self.mutation == Mutation::ReleaseDisplacement
+                || !row.release
+            {
                 actions += 1;
             }
-            if actions > cap && (self.rules == Rules::R5 || !row.release) {
-                if row.release {
-                    self.fail(
-                        "encoder-release",
-                        "release displaced by gameplay overflow".into(),
-                    );
-                }
+            if actions > cap
+                && (self.rules == Rules::R5
+                    || self.mutation == Mutation::ReleaseDisplacement
+                    || !row.release)
+            {
+                self.monitor.overflow(row.witness);
                 self.dropped += 1;
                 continue;
             }
@@ -896,22 +940,10 @@ impl State {
         let rows = std::mem::take(&mut self.wire);
         for row in rows {
             if row.release {
+                self.monitor.dispatched(row.witness, true);
                 self.releases += 1;
                 continue;
             }
-            let monitor_revoked = row
-                .owner
-                .into_iter()
-                .chain(row.ancestors.iter().copied())
-                .any(|id| self.records[usize::from(id - 1)].revoked);
-            let monitor_unadmitted = row.awaiting_admission
-                && row
-                    .owner
-                    .is_some_and(|id| !self.records[usize::from(id - 1)].admitted);
-            let expected = !monitor_revoked
-                && !monitor_unadmitted
-                && !row.dropped
-                && (session.is_none() || row.session == session);
             let actual = if self.rules == Rules::Chosen {
                 !row.revoked
                     && !row.awaiting_admission
@@ -935,15 +967,7 @@ impl State {
                     && (session.is_none()
                         || authority.is_some_and(|a| session.is_some_and(|s| a.contains(&s))))
             };
-            if actual != expected {
-                self.fail(
-                    "accepted-emission-authority",
-                    format!(
-                        "owner {:?}: expected {expected}, dispatched {actual}",
-                        row.owner
-                    ),
-                );
-            }
+            self.monitor.dispatched(row.witness, actual);
             if actual {
                 self.dispatched += 1;
             } else {
@@ -957,6 +981,7 @@ impl State {
             if t.seq <= self.consumed_seq {
                 continue;
             }
+            self.monitor.page_result(t.id);
             if t.authority_revoked {
                 let ids: Vec<_> = self
                     .mirrors
@@ -997,7 +1022,28 @@ impl State {
             self.carry.retain(|c| !matches!(c, Control::Decide { of, seq, .. } if *of == e.id && *seq <= e.decisions));
         }
     }
+    fn watermark(&mut self) {
+        let retired: Vec<_> = self
+            .ledger
+            .iter()
+            .filter(|t| t.seq <= self.consumed_seq)
+            .map(|t| t.id)
+            .collect();
+        self.monitor.watermark(&retired);
+        self.ledger.retain(|t| t.seq > self.consumed_seq);
+    }
+    fn discard_rows(&mut self, keep_releases: bool) {
+        let mut discarded = Vec::new();
+        for rows in [&mut self.queue, &mut self.wire] {
+            for row in rows.extract_if(.., |row| !keep_releases || !row.release) {
+                self.dropped += usize::from(!row.release);
+                discarded.push(row.witness);
+            }
+        }
+        self.monitor.discarded(discarded.into_iter());
+    }
     fn clear(&mut self, stop: bool) {
+        self.discard_rows(false);
         if !stop {
             for id in 1..self.next {
                 if self.records[usize::from(id - 1)].settlements == 0 {
@@ -1017,10 +1063,12 @@ impl State {
         self.terminal_seq = 0;
         self.consumed_seq = 0;
         self.stopped = stop;
+        self.monitor.reset(self.next);
     }
     /// Invalid steps leave the state unchanged. Bounds also bound the explorer's alphabet.
     pub fn apply(&mut self, step: &Step) -> Result<(), String> {
         self.enabled(step)?;
+        self.monitor.input(step);
         match *step {
             Step::Start {
                 parent,
@@ -1031,6 +1079,7 @@ impl State {
                 hooks,
             } => {
                 let id = self.mint();
+                self.monitor.start(id, parent, local_parent, class, group);
                 let charge =
                     bytes.saturating_add(START_METADATA + usize::from(hooks) * HOOK_CHARGE);
                 if self.pending.len() == self.bounds.pending {
@@ -1061,6 +1110,7 @@ impl State {
             }
             Step::Mirror { ancestor, parent } => {
                 let id = self.mint();
+                self.monitor.mirror(id, ancestor, parent);
                 self.mirrors.push(Mirror {
                     id,
                     ancestor,
@@ -1075,6 +1125,7 @@ impl State {
                     Outcome::Done
                 };
                 if let Some(at) = self.mirrors.iter().position(|m| m.id == id) {
+                    self.monitor.local_end(id, false, self.bounds);
                     let parent = self.mirrors.remove(at).parent;
                     for m in &mut self.mirrors {
                         if m.parent == Some(id) {
@@ -1158,14 +1209,14 @@ impl State {
             Step::Take => self.take(),
             Step::Dispatch => self.dispatch(),
             Step::Page => self.page(),
-            Step::Watermark => self.ledger.retain(|t| t.seq > self.consumed_seq),
+            Step::Watermark => self.watermark(),
             Step::AdmitStamped { of, session } => {
                 if session == self.session {
                     self.admit(of);
                 }
             }
             Step::Batch => {
-                self.ledger.retain(|t| t.seq > self.consumed_seq);
+                self.watermark();
                 self.controls();
                 if let Err(failure) = self.check() {
                     self.failure = Some(failure);
@@ -1182,14 +1233,14 @@ impl State {
             }
             Step::Reconnect { keep } => {
                 self.session += 1;
-                self.queue.clear();
-                self.wire.clear();
+                self.discard_rows(keep);
                 if !keep {
                     self.clear(false);
                 }
                 self.batches += 1;
             }
             Step::Stop => self.clear(true),
+            Step::HeldTick => self.discard_rows(false),
         }
         Ok(())
     }
@@ -1223,9 +1274,21 @@ impl State {
                 self.entry(id).is_some() || self.mirrors.iter().any(|m| m.id == id)
             }
             Step::Prompt(id) => self.entry(id).is_some_and(|e| !e.prompt && e.decisions < 2),
-            Step::Cancel { of, .. } | Step::Decide { of, .. } => known(of),
+            Step::Cancel { of, throw } => {
+                known(of)
+                    && (!throw
+                        || self.entry(of).is_some()
+                        || self.mirrors.iter().any(|m| m.id == of))
+            }
+            // A hook cannot decide before its request has admitted. Late copies remain legal.
+            Step::Decide { of, .. } => {
+                known(of)
+                    && (self.entry(of).is_some()
+                        || self.ledger.iter().any(|t| t.id == of)
+                        || self.pending.iter().all(|p| p.entry.id != of))
+            }
             Step::Emit { of, release } => {
-                of.is_none_or(known)
+                (of.is_none_or(known) || release && of == Some(0))
                     && (!release
                         || self.rules == Rules::R5
                         || self
@@ -1233,11 +1296,12 @@ impl State {
                             .iter()
                             .chain(&self.wire)
                             .any(|r| r.release && r.owner == of)
+                        || of.is_none_or(|id| id == 0)
                         || self
                             .queue
                             .iter()
                             .chain(&self.wire)
-                            .filter(|r| r.release)
+                            .filter(|r| r.release && r.owner.is_some_and(|id| id > 0))
                             .count()
                             < self.bounds.live)
             }
@@ -1255,6 +1319,10 @@ impl State {
         if let Some(failure) = &self.failure {
             return Err(failure.clone());
         }
+        self.monitor.check(
+            self.bounds,
+            self.queue.iter().chain(&self.wire).map(|row| row.witness),
+        )?;
         let violation = |name, detail| Err(Violation { name, detail });
         if self.live() + self.retained() > self.bounds.credits {
             return violation("credit-bound", self.describe());
@@ -1273,12 +1341,6 @@ impl State {
                 || self.depth(e.id) > self.bounds.depth
             {
                 return violation("forest-depth-parent", self.describe());
-            }
-            if self.records[usize::from(e.id - 1)].cancelled_before_admit {
-                return violation(
-                    "cancel-before-start",
-                    format!("cancelled pending {} admitted", e.id),
-                );
             }
         }
         if self
@@ -1323,13 +1385,6 @@ impl State {
         if self.ledger.windows(2).any(|w| w[0].seq >= w[1].seq) {
             return violation("terminal-sequence", self.describe());
         }
-        if self.ledger.iter().any(|t| {
-            matches!(t.outcome, Outcome::Done | Outcome::Failed)
-                && !self.records[usize::from(t.id - 1)].revoked
-                && self.history.contains(&t.id)
-        }) {
-            return violation("ordinary-completion-not-revocation", self.describe());
-        }
         if self
             .ledger
             .iter()
@@ -1351,7 +1406,7 @@ impl State {
             .queue
             .iter()
             .chain(&self.wire)
-            .filter(|r| r.release)
+            .filter(|r| r.release && r.owner.is_some_and(|id| id > 0))
             .count()
             > self.bounds.live
             && self.rules == Rules::Chosen
@@ -1423,67 +1478,6 @@ pub fn run_trace(rules: Rules, bounds: Bounds, steps: &[Step]) -> Trace {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Exploration {
-    pub states: usize,
-    pub transitions: usize,
-    pub max_frontier: usize,
-    pub elapsed: Duration,
-    pub failure: Option<(Violation, Vec<Step>)>,
-}
-/// Complete BFS of all enabled actions in this finite alphabet, through `steps`.
-/// IDs, batches, payload classes and decision sequences are explicit bounds.
-pub fn explore(bounds: Bounds, steps: usize) -> Exploration {
-    let start = Instant::now();
-    let initial = Rc::new(State::new(Rules::Chosen, bounds));
-    let mut seen = HashSet::from([Rc::clone(&initial)]);
-    let mut queue = VecDeque::from([(initial, Vec::<Step>::new())]);
-    let mut transitions = 0;
-    let mut max_frontier = 1;
-    while let Some((state, path)) = queue.pop_front() {
-        if path.len() == steps || state.stopped {
-            continue;
-        }
-        for step in alphabet(&state) {
-            let mut next = (*state).clone();
-            if next.apply(&step).is_err() {
-                continue;
-            }
-            transitions += 1;
-            if let Err(failure) = next.check() {
-                let mut trace = path.clone();
-                trace.push(step);
-                return Exploration {
-                    states: seen.len(),
-                    transitions,
-                    max_frontier,
-                    elapsed: start.elapsed(),
-                    failure: Some((failure, trace)),
-                };
-            }
-            // Observation counters do not affect enabled actions or authority.
-            next.dispatched = 0;
-            next.releases = 0;
-            next.late_controls = 0;
-            next.dropped = 0;
-            if !seen.contains(&next) {
-                let next = Rc::new(next);
-                seen.insert(Rc::clone(&next));
-                let mut trace = path.clone();
-                trace.push(step);
-                queue.push_back((next, trace));
-            }
-        }
-        max_frontier = max_frontier.max(queue.len());
-    }
-    Exploration {
-        states: seen.len(),
-        transitions,
-        max_frontier,
-        elapsed: start.elapsed(),
-        failure: None,
-    }
-}
 fn alphabet(state: &State) -> Vec<Step> {
     let mut out = vec![
         Step::Controls,
@@ -1495,12 +1489,17 @@ fn alphabet(state: &State) -> Vec<Step> {
         Step::Reconnect { keep: true },
         Step::Reconnect { keep: false },
         Step::Stop,
+        Step::HeldTick,
         Step::Emit {
             of: None,
             release: false,
         },
         Step::Emit {
             of: None,
+            release: true,
+        },
+        Step::Emit {
+            of: Some(0),
             release: true,
         },
     ];
@@ -1617,24 +1616,6 @@ fn alphabet(state: &State) -> Vec<Step> {
 mod tests {
     use super::*;
     #[test]
-    fn chosen_exhaustive_small() {
-        let result = explore(Bounds::small(), 6);
-        println!(
-            "states={} transitions={} frontier={} elapsed={:?}",
-            result.states, result.transitions, result.max_frontier, result.elapsed
-        );
-        assert!(result.failure.is_none(), "{:?}", result.failure);
-    }
-    #[test]
-    fn chosen_exhaustive_protocol_closure() {
-        let result = explore(Bounds::closure(), usize::MAX);
-        println!(
-            "closure states={} transitions={} frontier={} elapsed={:?}",
-            result.states, result.transitions, result.max_frontier, result.elapsed
-        );
-        assert!(result.failure.is_none(), "{:?}", result.failure);
-    }
-    #[test]
     fn stale_stamp_is_nonallocating_and_fresh_replay_admits() {
         let mut state = State::new(Rules::Chosen, Bounds::small());
         state
@@ -1718,5 +1699,55 @@ mod tests {
         let trace = run_trace(Rules::Chosen, Bounds::small(), &steps);
         assert!(trace.failure.is_none(), "{}", trace.text);
         assert_eq!(trace.final_state.dispatched(), 1);
+    }
+    #[test]
+    fn chosen_unpaged_mirror_emission_retains_ancestor_authority() {
+        for revoked in [false, true] {
+            let steps = [
+                Step::Start {
+                    parent: None,
+                    local_parent: None,
+                    class: if revoked {
+                        Class::Capability
+                    } else {
+                        Class::Session
+                    },
+                    group: 2,
+                    bytes: 1,
+                    hooks: 0,
+                },
+                Step::Admit(1),
+                Step::Start {
+                    parent: Some(1),
+                    local_parent: None,
+                    class: Class::Capability,
+                    group: 0,
+                    bytes: 1,
+                    hooks: 0,
+                },
+                Step::Admit(2),
+                Step::Mirror {
+                    ancestor: Some(2),
+                    parent: None,
+                },
+                if revoked {
+                    Step::Revoke {
+                        of: 2,
+                        trigger: Trigger::HostRevoke,
+                    }
+                } else {
+                    Step::Complete(2)
+                },
+                Step::Emit {
+                    of: Some(3),
+                    release: false,
+                },
+                Step::Take,
+                Step::Dispatch,
+            ];
+            let trace = run_trace(Rules::Chosen, Bounds::small(), &steps);
+            assert!(trace.failure.is_none(), "{}", trace.text);
+            assert_eq!(trace.final_state.dispatched(), usize::from(!revoked));
+        }
     }
 }
