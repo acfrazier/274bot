@@ -51,7 +51,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   withdrawing and closing each wait for a set number of game ticks and at
   least the matching time before giving up, and a bank that doesn't open or
   close is tried again a few times. Teller banks (such as the Mage Arena)
-  get time to finish their conversation before the bank opens.
+  get time to finish their conversation before the bank opens. The
+  Quester's bank visits get the same wait.
 
 ### Random-event guardian
 
@@ -147,6 +148,161 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - A bot on a WebSocket world no longer disconnects and reconnects when its
   connection is briefly congested.
+
+### Not in this release
+
+Planned work that didn't make this release, plus options and script calls
+that visibly refuse. Each item says where it's headed.
+
+**Quests and combat**
+
+- Quest guides cover 25 of 69 quests; the other 44 aren't here, and Haunted
+  Mine stays unavailable on the target server. The guides that ship are still
+  beta rather than all checked end to end. More quest coverage is planned for
+  a later release.
+- The Quester doesn't yet pick quest-aware supplies or pick up every quest
+  where you left off: earned quest items, some mid-conversation resumes,
+  following up on some quest targets, and coin costs in quest requirements
+  aren't handled. Quest resume and recipe work is planned for a later
+  release.
+- Prayer flicking, safespots, luring around corners, attacking other players,
+  range-aware standing spots, automatic gear switching and face-tank fallbacks
+  aren't here; settings the game marks unsupported still refuse to start, and
+  fights without progress still use the existing time limits. Combat tactics
+  are planned for later combat work.
+- Hunt keeps its two-minute fight limit and retreat behavior; it hasn't moved
+  to the full combat system. Hunt parity is planned for later combat work.
+
+**Walking, gathering and clues**
+
+- Walks into quest areas that unlock as a quest progresses, regional
+  entrances and transports such as boats and gliders, the land route over
+  White Wolf Mountain below level 51, and some traveller and cosmetic walks
+  aren't fixed by this release's walk-target change. Fuller survivable
+  routing is navigation work planned for a later release.
+- Gathering sites the route finder can't reach yet stay hidden: 90 on 289 —
+  the Morytania, elven, island and boat-or-glider, gated and underground
+  groups listed under 0.2.0.1 below. A saved Gatherer card naming one still
+  refuses to start; pick another site. They come back as the route finder
+  learns the entrances, which is navigation work planned for a later
+  release.
+- Faster interactions aren't here: acting on the nearest thing first, not
+  walking through the thing you're acting on, shorter follow-ups when using
+  an item on something next to you, and reaching a clue's usable side in one
+  walk.
+- The Gatherer gets no closest-site option, no shop tool buying, and no tool
+  provisioning while a quest Path owns the inventory; finding locked areas
+  and matching gather timing stay as they are. More Gatherer work is planned
+  for a later release.
+- Clues that need a key you don't carry, locked chests, and Kharazi and
+  Tirannwn coverage stay incomplete, and clue conversations still go one step
+  at a time. The Wear change doesn't close the wider clue backlog.
+- The WalkTo town list is unchanged, and map redraw work is deferred to a
+  later release.
+
+**Scripts and compatibility**
+
+- This release doesn't re-check the whole script catalog against newer
+  rs2b0t: the Duel challenge-area check and the clearer "needs a newer API"
+  message are the two specific changes. Broader compatibility work is planned
+  for a later release.
+- Scripts using newer rs2b0t calls the bot doesn't implement yet still refuse
+  to start, including `Game.castOnNpc`, `Shop.buyById`, `ChatDialog.makeOne`,
+  `Traversal.remaining` and `requestRepath`, `EntityQuery.inside` and
+  `nearestPreferLocal`, script registration and events, `InvItem`, the
+  acquire/branch/leaf task classes, and the gathering, fishing, mining,
+  woodcutting, banking and tool data and helper families. The planned fixes
+  for `shouldBankNow`, `toolAttackLevel` and `toolsNeedingEquip` haven't
+  landed either. Compatibility work continues in a later release.
+- The clearer Start messages don't yet separate "can't do that right now"
+  from "not implemented" everywhere in scripts.
+- FlourCollector, the Zanaris cook and the blocked Jive cards stay
+  unqualified, and the stronger pair-trade checks don't qualify every pair
+  setup.
+- The watchdog no longer restarts a bot waiting in a Duel Arena fight pen,
+  but a Duel script that remembered the wrong opponent can still wait there
+  until the fight moves on. Correct opponent tracking is catalog work planned
+  for a later release.
+
+**Panel, TUI, memory and host**
+
+- No quick world switch from the world bubble, no Fleet bulk world switch
+  with script pause and resume, no game-window resizing, no script-window
+  auto-sizing, and no custom profile ordering. These controls are planned for
+  a later release.
+- Grid cells don't each paint their script, the terminal shows no game
+  pixels, GPU sampling stays approximate, and the pickpocket wall-clip fix
+  stays out. Rendering work is planned for a later release.
+- The Mac memory readout still shows RSS rather than physical footprint, and
+  turning render-all off can leave counted-but-reclaimable memory behind; the
+  new capacity warning doesn't change that accounting. Readout improvements
+  are planned for a later release.
+- Waking bots together and using fewer connection resources per bot stay
+  parked for later host work; this release brings no broader CPU or memory
+  optimization batch.
+- Copying settings onto a profile with no bot can still save without
+  assigning when a later copy fails or is cancelled, and there is no saved
+  quest-route knowledge yet. Saved-state work is planned for a later
+  release.
+- Full operator-action audit logging, frame-stall diagnostics and lock-order
+  checking aren't here; the new Gatherer and watchdog messages are specific
+  fixes, not that project. Region-load lines still appear under the login
+  category.
+
+**Testing and supported versions**
+
+- This release doesn't establish the full nightly live-testing lane (several
+  green nights, every quest stage, full tick ledger); the targeted live
+  checks behind these fixes aren't that lane.
+- 289 is the supported server version; 274 stays best-effort and
+  unqualified.
+
+### Known issues
+
+Unchanged since 0.2.0.1: found while testing that release, not changed by
+this one; fixes are planned for a later release. (The 0.2.0.1 empty-world
+reconnect issue is fixed instead — see Login above.)
+
+- **Panel:** with MultiBox on, saving a new profile that has auto-login
+  enabled logs the bot in but doesn't add it to the wall, so it runs without
+  a tile. Click the new profile in the Profiles list to bring it onto the
+  wall; nothing is lost.
+- **Gatherer:** a bank trip keeps every copy of the tool in your inventory,
+  not just one, so a second harpoon (or axe, pickaxe or net) stays in your
+  inventory and takes a slot. Bank the extra by hand; the bot leaves it in
+  the bank.
+- **Scripts:** `api.gather` can stop with "walk failed" when the next
+  resource it picks has no spot to stand at that it can reach, instead of
+  picking another one. Start it again on a different work area.
+- **Quester:** Sheep Shearer can stop at a closed door on the way to the
+  spinning wheel. In a quest queue, the next quest then starts and Sheep
+  Shearer is left unfinished.
+- **Quester:** Imp Catcher can hand in the beads and give you the reward, but
+  keep waiting on the conversation instead of marking the quest done. Check
+  the quest journal; the quest itself is complete.
+- **Quester:** if you stop a quest in the middle of one of its conversations
+  (for example the bartender's beer in Vampire Slayer) and press Start again
+  while the choice is still open, the quest stops at that choice. Close the
+  conversation (walk a step) before pressing Start.
+- **Combat:** if a fight is started against a target that can't be attacked,
+  the bot stops as it should, but on very low HP its walk away can stall next
+  to the target.
+
+### Fixed during development
+
+Fixes to problems that appeared and were fixed during 0.2.0.2 development.
+They are listed here for completeness and are left out of the release notes.
+
+- Scripts: while open-bank Wear was being built, Wear's own bank close looked
+  like a reason to send it again, so a Wear could go out twice. Wear now
+  stays latched on the inventory tab and the worn set through the close, and
+  completes when the item is worn.
+- Scripts: while the new bank waits were being built, a teller bank's
+  conversation could be cut short by the booth-open deadline. Teller dialogue
+  now has its own deadline.
+- Login: while the paced login queue was being built, a bot first in line
+  could look stuck with no reason while it waited out its device cooldown and
+  another device's bot went first. It now reports that device wait.
 
 ## [0.2.0.1.1] — 2026-10-11 — Beta 1 Linux patch
 
