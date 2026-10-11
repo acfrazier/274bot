@@ -37,6 +37,17 @@ const SAVING: &str = "profile is still saving";
 
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Prefer `last` when it is still in `names`; otherwise the first name.
+/// Load all uses this when nothing is selected, matching MultiBox-on.
+pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
+    if let Some(last) = last {
+        if names.iter().any(|n| n == last) {
+            return Some(last.to_string());
+        }
+    }
+    names.first().cloned()
+}
+
 /// A removal is owned by the exact arm that received its clean-logout
 /// request. `io` stays here while that worker drains so re-adding the member
 /// reattaches the same surface devices without a second client lifetime.
@@ -750,16 +761,26 @@ impl<Io> OperatorSession<Io> {
     /// Load every profile (vault plus running slots) that is not a member
     /// yet. Returns the operation and how many were newly added.
     ///
-    /// Membership only: this never changes the selected bot, and later
-    /// logins of the new members do not either. Front ends must not apply
-    /// focus after this call. Single-row Load / clicking a bot still focus
-    /// that member; when nothing is selected, it stays that way.
-    pub fn load_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> (OperationId, usize) {
+    /// Never steals an existing selection, and later logins of the new
+    /// members do not either. When nothing is selected, [`pick_focus`]
+    /// chooses a member (last focus if it is now on the wall, else the
+    /// first) so panel and TUI have something to show. Single-row Load /
+    /// clicking a bot still focuses that member.
+    pub fn load_all<S: SlotSurface<Io = Io>>(
+        &mut self,
+        surface: &mut S,
+        last_focus: Option<&str>,
+    ) -> (OperationId, usize) {
         let op = self.operations.open(ActionKind::Load);
         let mut added = 0;
         for name in self.profile_names() {
             if self.load_member(op, &name, surface) {
                 added += 1;
+            }
+        }
+        if self.selected.is_none() {
+            if let Some(name) = pick_focus(self.members(), last_focus) {
+                self.select(&name);
             }
         }
         (op, added)

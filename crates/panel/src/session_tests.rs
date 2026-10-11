@@ -7396,7 +7396,7 @@ fn load_all_keeps_focused_bot_drawing_when_others_log_in() {
 }
 
 #[test]
-fn load_all_leaves_focus_empty_when_none_was_focused() {
+fn load_all_picks_focus_when_none_was_focused() {
     let path = tmp_vault("load-all-no-focus.vault");
     let mut s = Session::new();
     s.persist_ui = false;
@@ -7407,19 +7407,80 @@ fn load_all_leaves_focus_empty_when_none_was_focused() {
     vault.upsert(profile("carol", "pw", 44)).unwrap();
     s.core.set_vault(Some(vault));
     s.set_multibox(true);
+    s.set_renderer(true);
+    s.focus.lock().unwrap().only_render_selected = true;
+    s.focus.lock().unwrap().game_pane_open = true;
     s.load_all();
+    let picked = frontend_core::pick_focus(s.core.members(), None);
+    assert_eq!(picked.as_deref(), Some("bob"));
+    assert_eq!(s.focused_name(), picked);
     publish_slot_login(&mut s, "bob", 2);
-    assert_eq!(
-        s.focused_name(),
-        None,
-        "Load all must not invent a focus when none was set"
-    );
     let (focused, draws) = s.focus_draw_state();
-    assert_eq!(focused, None);
-    assert!(
-        draws.iter().all(|(_, draw)| !*draw),
-        "no focused seat: nobody draws under only-render-selected; {draws:?}"
+    assert_eq!(focused, picked);
+    let bob = draws.iter().find(|(name, _)| name == "bob");
+    assert_eq!(
+        bob,
+        Some(&("bob".into(), true)),
+        "picked bot must draw; {draws:?}"
     );
+    for (name, draw) in &draws {
+        if name != "bob" {
+            assert!(
+                !*draw,
+                "{name} must stay skip-paint under only-render-selected; {draws:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn load_all_keeps_focus_with_render_all_on() {
+    let path = tmp_vault("load-all-render-all.vault");
+    let mut s = Session::new();
+    s.persist_ui = false;
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    for (name, uid) in [("alice", 42), ("bob", 43), ("carol", 44)] {
+        let mut p = profile(name, "pw", uid);
+        p.settings.auto_login = name != "alice";
+        vault.upsert(p).unwrap();
+    }
+    s.core.set_vault(Some(vault));
+    s.set_multibox(true);
+    s.load("alice");
+    s.set_renderer(true);
+    s.focus.lock().unwrap().only_render_selected = false;
+    s.focus.lock().unwrap().game_pane_open = true;
+    publish_slot_login(&mut s, "alice", 2);
+
+    let added = s.load_all();
+    assert_eq!(added, 2, "bob and carol are new");
+    let (focused, draws) = s.focus_draw_state();
+    assert_eq!(focused.as_deref(), Some("alice"));
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    for (name, draw) in &draws {
+        assert!(*draw, "{name} must draw with render-all; {draws:?}");
+    }
+
+    s.login_all();
+    for name in ["bob", "carol"] {
+        publish_slot_login(&mut s, name, 1);
+        let (focused, draws) = s.focus_draw_state();
+        assert_eq!(
+            focused.as_deref(),
+            Some("alice"),
+            "{name} at scene_state==1 must not steal focus"
+        );
+        assert!(
+            draws.iter().all(|(_, draw)| *draw),
+            "{name} at scene 1: render-all still paints; {draws:?}"
+        );
+        publish_slot_login(&mut s, name, 2);
+    }
+    let (focused, draws) = s.focus_draw_state();
+    assert_eq!(focused.as_deref(), Some("alice"));
+    assert!(draws.iter().all(|(_, draw)| *draw), "{draws:?}");
 }
 
 #[test]
@@ -7496,47 +7557,107 @@ fn live_load_all_keeps_focus_on_engine_a() {
     s.focus.lock().unwrap().game_pane_open = true;
     s.login(&focused);
 
-    let wait_scene = |s: &mut Session, name: &str, scene: i32, deadline: Instant| {
+    let wait_scene =
+        |s: &mut Session, name: &str, scene: i32, deadline: Instant, stride: Duration| {
+            while Instant::now() < deadline {
+                s.pump_status();
+                if s.statuses()
+                    .iter()
+                    .any(|row| row.username == name && row.ingame && row.scene_state == scene)
+                {
+                    return true;
+                }
+                std::thread::sleep(stride);
+            }
+            false
+        };
+    let focused_gen = |s: &Session| s.focused_pixels().map(|p| p.generation()).unwrap_or(0);
+    let wait_gen = |s: &mut Session, min: u64, deadline: Instant| -> u64 {
+        let mut last = focused_gen(s);
         while Instant::now() < deadline {
             s.pump_status();
-            if s.statuses()
-                .iter()
-                .any(|row| row.username == name && row.ingame && row.scene_state == scene)
-            {
-                return true;
+            last = focused_gen(s);
+            if last > min {
+                return last;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(20));
         }
-        false
+        last
     };
     let deadline = Instant::now() + Duration::from_secs(150);
     assert!(
-        wait_scene(&mut s, &focused, 2, deadline),
+        wait_scene(&mut s, &focused, 2, deadline, Duration::from_millis(50)),
         "focused bot never reached scene 2: {:?}",
         s.statuses()
     );
+    let mut gen0 = 0;
+    while Instant::now() < deadline {
+        s.pump_status();
+        gen0 = focused_gen(&s);
+        if gen0 > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(gen0 > 0, "focused bot produced no frames before Load all");
     let before = s.focus_draw_state();
-    eprintln!("focus-draw before Load all: {before:?}");
+    eprintln!("focus-draw before Load all: {before:?} gen={gen0}");
 
     let added = s.load_all();
     assert_eq!(added, 4, "the other four vault profiles load");
     s.login_all();
     let after_load = s.focus_draw_state();
-    eprintln!("focus-draw immediately after Load all: {after_load:?}");
+    let gen_after_load = focused_gen(&s);
+    eprintln!("focus-draw immediately after Load all: {after_load:?} gen={gen_after_load}");
     assert_eq!(after_load.0.as_deref(), Some(focused.as_str()));
     assert_eq!(
         after_load.1.iter().find(|(n, _)| n == &focused),
         Some(&(focused.clone(), true))
     );
 
+    let mut scene1_gens = Vec::new();
     for name in names.iter().skip(1) {
+        let mut sampled_scene1 = false;
+        while Instant::now() < deadline {
+            s.pump_status();
+            let snap = s
+                .statuses()
+                .iter()
+                .find(|row| row.username == *name)
+                .map(|row| (row.scene_state, row.ingame));
+            if let Some((scene_state, ingame)) = snap {
+                if scene_state == 1 && !sampled_scene1 {
+                    let mid1 = s.focus_draw_state();
+                    let gen1 = focused_gen(&s);
+                    eprintln!("focus-draw while {name} at scene_state==1: {mid1:?} gen={gen1}");
+                    assert_eq!(
+                        mid1.0.as_deref(),
+                        Some(focused.as_str()),
+                        "{name} at scene 1 must not steal focus"
+                    );
+                    assert_eq!(
+                        mid1.1.iter().find(|(n, _)| n == &focused),
+                        Some(&(focused.clone(), true))
+                    );
+                    scene1_gens.push((name.clone(), gen1));
+                    sampled_scene1 = true;
+                }
+                if ingame && scene_state == 2 {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(
-            wait_scene(&mut s, name, 2, deadline),
+            s.statuses()
+                .iter()
+                .any(|row| row.username == *name && row.ingame && row.scene_state == 2),
             "{name} never reached scene 2: {:?}",
             s.statuses()
         );
         let mid = s.focus_draw_state();
-        eprintln!("focus-draw while {name} logging in: {mid:?}");
+        let gen2 = focused_gen(&s);
+        eprintln!("focus-draw while {name} logging in: {mid:?} gen={gen2}");
         assert_eq!(
             mid.0.as_deref(),
             Some(focused.as_str()),
@@ -7547,8 +7668,14 @@ fn live_load_all_keeps_focus_on_engine_a() {
             Some(&(focused.clone(), true))
         );
     }
+    assert!(
+        !scene1_gens.is_empty(),
+        "Load all never sampled a member at scene_state==1: {:?}",
+        s.statuses()
+    );
+    let gen_done = wait_gen(&mut s, gen0, deadline);
     let done = s.focus_draw_state();
-    eprintln!("focus-draw after Load all logins: {done:?}");
+    eprintln!("focus-draw after Load all logins: {done:?} gen={gen_done}");
     let receipt = evidence.join("focus-draw.json");
     std::fs::write(
         &receipt,
@@ -7556,10 +7683,19 @@ fn live_load_all_keeps_focus_on_engine_a() {
             "focused": done.0,
             "draws": done.1,
             "names": names,
+            "generation_before": gen0,
+            "generation_after_load": gen_after_load,
+            "generation_done": gen_done,
+            "scene1_generations": scene1_gens,
         })
         .to_string(),
     )
     .unwrap();
+    assert!(
+        gen_done > gen0,
+        "focused slot must keep producing frames across Load all; wrote {}",
+        receipt.display()
+    );
     assert_eq!(done.0.as_deref(), Some(focused.as_str()));
     assert_eq!(
         done.1.iter().find(|(n, _)| n == &focused),

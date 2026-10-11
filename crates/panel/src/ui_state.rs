@@ -164,12 +164,7 @@ pub fn default_section_closed(id: &str) -> bool {
 
 /// Prefer `last` when it is still in `names`; otherwise the first name.
 pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
-    if let Some(l) = last {
-        if names.iter().any(|n| n == l) {
-            return Some(l.to_string());
-        }
-    }
-    names.first().cloned()
+    frontend_core::pick_focus(names, last)
 }
 
 /// `~/.274bot/panel-ui.json` (same HOME rule as the vault path).
