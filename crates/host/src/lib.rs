@@ -601,11 +601,12 @@ impl Host {
             rearm_after_head_drop(client, !client.draw && slot.draw_was_on, backend_flip);
         }
         slot.draw_was_on = client.draw;
+        let paced_at = slot.pacing_now(t_loop);
         let paint = if client.ingame {
             raster_this_tick(
                 client.draw,
                 zap || full_rate,
-                t_loop,
+                paced_at,
                 &mut slot.raster_last,
                 &mut slot.raster_was_on,
             )
@@ -613,7 +614,7 @@ impl Host {
             title_raster_this_tick(
                 client.draw,
                 title_dirty,
-                t_loop,
+                paced_at,
                 &mut slot.raster_last,
                 &mut slot.raster_was_on,
             )
@@ -623,7 +624,7 @@ impl Host {
             raster_this_tick(
                 client.draw,
                 title_dirty,
-                t_loop,
+                paced_at,
                 &mut slot.raster_last,
                 &mut slot.raster_was_on,
             )
@@ -770,7 +771,8 @@ impl TitleWait {
         } else {
             IDLE_PARK_MS
         };
-        let now = Instant::now();
+        let started = Instant::now();
+        let now = self.slot.pacing_now(started);
         if let Some(since) = self.last_frame.map(|last| now.duration_since(last)) {
             if since < interval {
                 return interval - since;
@@ -792,7 +794,7 @@ impl TitleWait {
             },
         );
         let _ = client.take_title_login_request();
-        interval.saturating_sub(now.elapsed())
+        interval.saturating_sub(started.elapsed())
     }
 }
 
@@ -1143,6 +1145,11 @@ struct SlotLoop {
     /// when it is ≥1 s old, and a fast title keeps its flame deadline here.
     raster_last: Option<Instant>,
     raster_was_on: bool,
+    /// Tests pin the instant the paint cadence is measured at, so which
+    /// ticks paint does not depend on how long a loaded machine takes to
+    /// run them.
+    #[cfg(test)]
+    pacing_now: Option<Instant>,
     /// `client.draw` from the previous frame. The draw-off detach
     /// dematerializes the headed overlay meshes on the falling edge, so a
     /// parked draw-off slot does not re-walk the tile grid every frame.
@@ -1207,6 +1214,8 @@ impl SlotLoop {
             renderer_lowmem: None,
             raster_last: None,
             raster_was_on: false,
+            #[cfg(test)]
+            pacing_now: None,
             draw_was_on: false,
             loop_ns: 0,
             raster_ns: 0,
@@ -1224,6 +1233,16 @@ impl SlotLoop {
             #[cfg(feature = "performance-profile")]
             profile_published_at: Instant::now(),
         }
+    }
+
+    /// The instant the paint cadence is measured at: this tick's start (a
+    /// test may pin it instead).
+    fn pacing_now(&self, tick_start: Instant) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.pacing_now {
+            return now;
+        }
+        tick_start
     }
 
     #[cfg(feature = "performance-profile")]

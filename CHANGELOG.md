@@ -64,6 +64,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   script doesn't count, nor do bots that are logging in or paused, or whose
   script has heard nothing from the game server for 10 s.
 
+### Login
+
+- Loading many bots logs them in one at a time, a little over a second
+  apart, focused bot first. A login that gets no answer gives up after 30
+  seconds instead of holding up the others.
+- The first bot in the login queue shows what it is waiting for and for how
+  long. A failed connection says where it failed. Its retries start at about
+  5 seconds and grow to about a minute, with some variation between bots.
+- "World full" names the world and when the bot tries next; on Auto the bot
+  moves on to another world. After you log a bot out, its next login is a
+  fresh one; a dropped connection still reconnects.
+
 ### Panel
 
 - The Fleet window is tidier. Its button labels no longer end in "…", its

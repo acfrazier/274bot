@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -99,6 +99,21 @@ pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
     lock_unpoisoned(&crate::IMGUI_CTX_TEST_GUARD)
 }
 
+/// A Dear ImGui context for a test, with the `.ini` settings file off.
+/// Dear ImGui's default is `imgui.ini` in the working directory: every
+/// context would load it at its first frame and write it back when dropped,
+/// so one test's window, dock and table settings (a Fleet column width at
+/// another font scale, for one) changed the layout the next test, and the
+/// next run, measured. Tests create contexts here; `crates/panel/clippy.toml`
+/// disallows `Context::create()` everywhere else.
+pub(crate) fn imgui_context() -> dear_imgui_rs::Context {
+    #[expect(clippy::disallowed_methods, reason = "the one sanctioned test context")]
+    let mut ctx = dear_imgui_rs::Context::create();
+    ctx.set_ini_filename::<PathBuf>(None)
+        .expect("clearing the ini file name cannot fail");
+    ctx
+}
+
 /// A headless device on this machine's adapter, `None` when there is none
 /// (the GPU tests then skip).
 pub(crate) fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -111,31 +126,53 @@ pub(crate) fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// cold discrete-GPU driver on a hybrid laptop. Asking every backend at
 /// once hung the Windows test host's panel lane for hours there, and the
 /// stalled driver load held up unrelated tests in the same process.
+///
+/// `SKIP_GPU=1` (CI's lanes have no adapter; the vendored client reads it
+/// the same way) yields `None` before any graphics driver is touched.
+///
+/// The instance and adapter are made once per process and every call gets
+/// its own device and queue from them. Tests run in parallel, and
+/// concurrent `wgpu::Instance::new` calls raced inside the Vulkan loader
+/// (`libvulkan.so.1`, `vkEnumerateInstanceExtensionProperties`) and
+/// crashed the whole test binary with SIGSEGV; the `LazyLock` makes every
+/// other test wait for the one initialisation instead.
 pub(crate) fn headless_gpu_with_info() -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
-    crate::window::backend_attempts()
-        .into_iter()
-        .find_map(|backends| {
-            let instance = crate::window::instance_for(backends);
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                }))
-                .ok()?;
-            let info = adapter.get_info();
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                    label: Some("274 panel test"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                    trace: wgpu::Trace::default(),
-                }))
-                .ok()?;
-            Some((device, queue, info))
-        })
+    if std::env::var("SKIP_GPU").as_deref() == Ok("1") {
+        return None;
+    }
+    static ADAPTER: LazyLock<Option<(wgpu::Instance, wgpu::Adapter)>> = LazyLock::new(|| {
+        crate::window::backend_attempts()
+            .into_iter()
+            .find_map(|backends| {
+                let instance = crate::window::instance_for(backends);
+                let adapter =
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    }))
+                    .ok()?;
+                // A backend whose adapter cannot give a device is skipped
+                // here, as it always was, not left to fail every test.
+                request_test_device(&adapter)?;
+                Some((instance, adapter))
+            })
+    });
+    let (_instance, adapter) = ADAPTER.as_ref()?;
+    let (device, queue) = request_test_device(adapter)?;
+    Some((device, queue, adapter.get_info()))
+}
+
+fn request_test_device(adapter: &wgpu::Adapter) -> Option<(wgpu::Device, wgpu::Queue)> {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("274 panel test"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::default(),
+    }))
+    .ok()
 }
 
 /// An OS window frame for the M-003 fit glue. Size and position writes land
@@ -237,4 +274,14 @@ impl crate::window::FitTarget for FakeFrame {
         s.pos = (pos.x, pos.y);
         s.moves += 1;
     }
+}
+
+#[test]
+fn test_contexts_have_no_ini_file() {
+    let _guard = imgui_context_guard();
+    let ctx = imgui_context();
+    assert!(
+        ctx.io().ini_filename().is_none(),
+        "a test context must not read or write imgui.ini"
+    );
 }

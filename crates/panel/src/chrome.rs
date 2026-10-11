@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn apply_amber_replaces_imgui_blue_title() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
         let title = ctx.style().color(dear_imgui_rs::StyleColor::TitleBgActive);
         // Default imgui TitleBgActive is the blue-gray chrome. Amber CRT is

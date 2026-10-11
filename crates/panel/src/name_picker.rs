@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn popup_rect_stays_inside_narrow_parent_at_right_edge_and_fractional_dpi() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         crate::app::apply_ui_scale(ctx.style_mut(), 1.5);
         let short = vec![row("Bow", "bow_alias")];
         let widened = vec![
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn popup_content_fit_width_tracks_the_longest_name() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let short = vec![row("Bow", "stable_alias")];
         let long = vec![
             row("Bow", "stable_alias"),
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn cached_rows_format_once_per_result_set() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let calls = Rc::new(Cell::new(0));
         let hits = vec![CountingHit {
             name: "Bow".into(),
@@ -759,7 +759,7 @@ mod tests {
     #[test]
     fn popup_without_positive_parent_width_uses_minimum_content_width() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
         );
@@ -795,7 +795,7 @@ mod tests {
     #[test]
     fn closed_popup_consumes_next_window_data() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         ctx.prepare_frame(
             FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
         );
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn nan_anchor_and_degenerate_work_area_keep_popup_rect_finite() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+        let mut ctx = crate::test_support::imgui_context();
         let anchor = [[f32::NAN; 2]; 2];
         let mut rows = PickerRows::default();
         let zero_size_area = PopupWorkArea {
