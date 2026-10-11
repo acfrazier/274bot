@@ -69,9 +69,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - Logging back in right after logging out no longer waits a minute when the
   same world is still saving your character. The bot briefly waits and retries
-  without holding up other bots logging in; if the server keeps reporting the
-  account in use, normal login backoff resumes. Repeating Log in or Load all
-  keeps this release wait and the bot's queue place.
+  without making bots on other device IDs wait out this account's device
+  cooldown; if the server keeps reporting the account in use, normal login
+  backoff resumes. Repeating Log in or Load all keeps this release wait and
+  the bot's queue place.
 - Loading many bots logs them in one at a time, a little over a second
   apart, focused bot first. A login that gets no answer gives up after 30
   seconds instead of holding up the others.
