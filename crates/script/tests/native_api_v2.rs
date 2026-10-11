@@ -381,14 +381,19 @@ export function tick() {}
     slot.start_load(source.into(), LoadShape::NativeTick, vec![])
         .unwrap();
     let t = Instant::now();
+    slot.note_game_packet_tick(t);
     assert_eq!(
         slot.feed_watchdog(t, None, &[], false, true, &[]),
         WatchdogAction::None
     );
     let settlement_at = t + script::watchdog::SCHEDULER_WARN;
+    slot.note_game_packet_tick(settlement_at);
     assert_eq!(
         slot.feed_watchdog(settlement_at, None, &[], false, true, &lifecycle),
         WatchdogAction::None
+    );
+    slot.note_game_packet_tick(
+        settlement_at + script::watchdog::SCHEDULER_WARN - Duration::from_millis(1),
     );
     assert_eq!(
         slot.feed_watchdog(

@@ -1899,6 +1899,47 @@ impl SlotScript {
         self.watchdog.progress(now)
     }
 
+    /// Record a fresh player-info tick observed from game packet input.
+    pub fn note_game_packet_tick(&mut self, now: Instant) {
+        self.watchdog.stamp_game_packet_tick(now);
+    }
+
+    fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
+        let pen_index = |tile: WatchdogTile| {
+            crate::duel::pen_at(crate::observed::Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            })
+        };
+        let Some(player_pen) = pen_index(player) else {
+            return false;
+        };
+        Some(player_pen) != pen_index(anchor)
+    }
+
+    fn hold_fight_pen_recovery_if_needed(
+        &mut self,
+        player: Option<WatchdogTile>,
+        anchor: Option<WatchdogTile>,
+    ) -> Option<WatchdogAction> {
+        let (Some(player), Some(anchor)) = (player, anchor) else {
+            return None;
+        };
+        if !self.load_active() || !Self::duel_fight_pen_anchor_unreachable(player, anchor) {
+            return None;
+        }
+        let action = self.watchdog.hold_in_fight_pen(anchor);
+        if action != WatchdogAction::HoldInFightPen {
+            return None;
+        }
+        self.pending_logs.push(
+            "watchdog: holding recovery in a Duel Arena fight pen; the recovery anchor is outside the pen"
+                .into(),
+        );
+        Some(action)
+    }
+
     /// Apply isolate lifecycle facts and host tile/XP, then decide.
     pub fn feed_watchdog(
         &mut self,
@@ -1923,6 +1964,16 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
+        if self.load_active() {
+            if let (Some(anchor), Some((x, z, level))) =
+                (self.watchdog.held_fight_pen_anchor(), here)
+            {
+                let player = WatchdogTile { x, z, level };
+                if !Self::duel_fight_pen_anchor_unreachable(player, anchor) {
+                    self.watchdog.resume_after_fight_pen(now);
+                }
+            }
+        }
         let previous_gameplay = self.watchdog.gameplay_stamp();
         use crate::shim::InteractReq;
         let mut anchor_reply = None;
@@ -1945,6 +1996,9 @@ impl SlotScript {
         }
         if let Some(reply) = anchor_reply {
             let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
+            if let Some(action) = self.hold_fight_pen_recovery_if_needed(player, reply) {
+                return action;
+            }
             return self.watchdog.on_anchor(now, player, reply);
         }
         if let Some((x, z, level)) = here {
@@ -1990,17 +2044,24 @@ impl SlotScript {
                 );
             }
             #[cfg(feature = "load")]
+            // `api.gather` has a separate recovery-anchor path; keep its
+            // Duel Arena fight-pen check consistent with lifecycle anchors.
             if let Some(anchor) = self.api_recovery_anchor() {
-                return self.watchdog.on_anchor(
-                    now,
-                    here.map(|(x, z, level)| WatchdogTile { x, z, level }),
-                    anchor,
-                );
+                let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
+                if let Some(action) = self.hold_fight_pen_recovery_if_needed(player, anchor) {
+                    return action;
+                }
+                return self.watchdog.on_anchor(now, player, anchor);
             }
         }
-        if matches!(action, WatchdogAction::WarnHungLoop) {
-            self.pending_logs
-                .push("watchdog: hung loop (10s, no scheduler progress)".into());
+        match action {
+            WatchdogAction::WarnHungLoop => self
+                .pending_logs
+                .push("watchdog: hung loop (10s, no scheduler progress)".into()),
+            WatchdogAction::WarnNoGamePackets => self
+                .pending_logs
+                .push("watchdog: no game packets for 10 s".into()),
+            _ => {}
         }
         action
     }

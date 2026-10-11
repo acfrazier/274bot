@@ -584,6 +584,8 @@ fn a_watchdog_recovery_hold_freezes_the_active_clock() {
     let (mut slot, _) = receiver(44, SettingsApply::Applied);
     let start = Instant::now();
     slot.watchdog.arm_fresh(start);
+    slot.watchdog
+        .stamp_game_packet_tick(start + crate::watchdog::WEDGE);
     assert_eq!(
         slot.watchdog.observe(start + crate::watchdog::WEDGE, true),
         WatchdogAction::RequestAnchor

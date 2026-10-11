@@ -398,17 +398,20 @@ fn run_slot_tick(
 fn assert_admission_watchdog_waits(runner: &mut Runner) {
     let now = Instant::now();
     for now in [now, now + script::watchdog::WEDGE + Duration::from_secs(1)] {
-        assert_eq!(
-            runner.slot.feed_watchdog(
-                now,
-                None,
-                &[],
-                false,
-                true,
-                &[script::shim::InteractReq::LoopSettled],
+        let action = runner.slot.feed_watchdog(
+            now,
+            None,
+            &[],
+            false,
+            true,
+            &[script::shim::InteractReq::LoopSettled],
+        );
+        assert!(
+            matches!(
+                action,
+                script::WatchdogAction::None | script::WatchdogAction::WarnNoGamePackets
             ),
-            script::WatchdogAction::None,
-            "gameplay recovery must not race the bounded admission deadline"
+            "gameplay recovery must not race the bounded admission deadline: {action:?}"
         );
     }
     assert!(runner.port.waiting(runner.run));

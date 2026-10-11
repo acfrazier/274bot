@@ -445,7 +445,9 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
         Some("High")
     );
     let t = Instant::now();
+    slot.note_game_packet_tick(t);
     slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    slot.note_game_packet_tick(t + script::watchdog::WEDGE);
     let action = slot.feed_watchdog(
         t + script::watchdog::WEDGE,
         Some((0, 0, 0)),
@@ -474,6 +476,7 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     // The recreate follows the old isolate's reap; it runs the same identity.
     wait_slot_state(&mut slot, script::RunState::Running);
     assert_eq!(&*slot.load_identity().unwrap().source, &*before.source);
+    slot.note_game_packet_tick(t + script::watchdog::WEDGE + script::watchdog::WEDGE);
     let later = slot.feed_watchdog(
         t + script::watchdog::WEDGE + script::watchdog::WEDGE,
         Some((0, 0, 0)),
@@ -769,7 +772,9 @@ fn pause_aborts_recovery_state_even_when_already_frozen() {
     )
     .unwrap();
     let t = Instant::now();
+    slot.note_game_packet_tick(t);
     slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    slot.note_game_packet_tick(t + script::watchdog::WEDGE);
     assert_eq!(
         slot.feed_watchdog(
             t + script::watchdog::WEDGE,
@@ -817,7 +822,9 @@ fn session_reset_aborts_recovery_state() {
     )
     .unwrap();
     let t = Instant::now();
+    slot.note_game_packet_tick(t);
     slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    slot.note_game_packet_tick(t + script::watchdog::WEDGE);
     slot.feed_watchdog(
         t + script::watchdog::WEDGE,
         Some((0, 0, 0)),
