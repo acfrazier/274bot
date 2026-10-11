@@ -136,7 +136,7 @@ fn walk_near_anchor() -> InteractReq {
         z: 3295,
         level: 0,
         radius: 3,
-        compat_tile_intent: false,
+        compat_tile_intent: true,
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: true,

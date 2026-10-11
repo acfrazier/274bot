@@ -1973,7 +1973,8 @@ pub(crate) struct ScriptRouteRequest {
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
-    /// A compat tile walk routes to its requested walkable tile; radius only governs arrival.
+    /// A compat tile walk prefers its requested walkable tile, then falls back
+    /// to the ordinary in-radius endpoints if that route is unavailable.
     pub(crate) compat_tile_intent: bool,
     pub(crate) completion: RouteCompletion,
 }
@@ -1988,23 +1989,27 @@ impl ScriptRouteRequest {
             vec![self.to]
         } else if let Some(stands) = self.live_candidates.as_ref() {
             stands.clone()
-        } else if self.compat_tile_intent
-            && self.loc_id.is_none()
-            && self.arrival != ArrivalKind::Area
-            && self.world.collision.walkable(self.to)
-            && self.world.collision.standable(self.to)
-        {
-            // Radius is arrival tolerance; do not let a fallback make an
-            // unreachable walkable destination report success.
-            vec![self.to]
         } else {
-            approach_tiles(
+            let mut targets = approach_tiles(
                 &self.world,
                 self.from,
                 self.to,
                 self.radius,
                 self.loc_id.is_some() || self.arrival == ArrivalKind::Area,
-            )
+            );
+            if self.compat_tile_intent
+                && self.loc_id.is_none()
+                && self.arrival != ArrivalKind::Area
+                && self.world.collision.walkable(self.to)
+                && self.world.collision.standable(self.to)
+            {
+                // Prefer the requested tile, but retain today's arrival-valid
+                // endpoints so routing constraints can fall back without
+                // reporting success outside the requested radius.
+                targets.retain(|target| *target != self.to);
+                targets.insert(0, self.to);
+            }
+            targets
         }
     }
 
