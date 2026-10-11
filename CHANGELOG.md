@@ -23,8 +23,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ### Gatherer
 
 - After a bank trip or a death, a resource cooldown no longer stops the
-  bot with "return failed". It waits until the exclusion ends, then walks
-  back and keeps gathering.
+  bot with "return failed". It waits until the spot can be used again, then
+  walks back and keeps gathering.
 - When a fishing hazard appears, the bot steps to a nearby tile it can
   actually reach from where it stands. If every nearby tile is blocked
   and the hazard is temporary, it waits instead of stopping with "walk
