@@ -159,6 +159,32 @@ fn flax_spinner_requires_ten_crafting_but_runner_keeps_low_stat() {
 }
 
 #[test]
+fn flax_pair_waits_for_both_scene2_observations_before_start() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+
+    let mut spinner_offline = flax_ready("spinner", FlaxRole::Spinner);
+    spinner_offline.ingame = false;
+    watch.observe_flax("spinner", spinner_offline, false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+
+    let mut runner_loading_scene = flax_ready("runner", FlaxRole::Runner);
+    runner_loading_scene.scene_state = 1;
+    watch.observe_flax("runner", runner_loading_scene, false);
+    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+
+    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch
+        .begin_shared_start("runner", "spinner")
+        .expect("both Flax roles must be ingame in scene 2 before shared Start");
+}
+
+#[test]
 fn mule_seed_only_cannot_qualify() {
     let watch = PairWatch::default();
     watch.configure(PairCase::Mule, "crafter", "mule");
