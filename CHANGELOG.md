@@ -72,6 +72,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   unknown, the panel, TUI and log now say "Poison status is unknown until the
   bot can track it" instead of a paragraph about internal planning.
 
+### Connection
+
+- A bot on a WebSocket world no longer disconnects and reconnects when its
+  connection is briefly congested.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
