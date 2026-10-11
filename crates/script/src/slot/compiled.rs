@@ -146,7 +146,31 @@ struct StatusDetails<'a> {
 
 fn distinct_status_field<'a>(value: Option<&'a str>, occupied: &[&str]) -> Option<&'a str> {
     value.filter(|value| {
-        !value.is_empty() && *value != "—" && occupied.iter().all(|text| !text.contains(value))
+        !value.is_empty()
+            && *value != "—"
+            && occupied
+                .iter()
+                .all(|text| !status_text_has_field(text, value))
+    })
+}
+
+/// True when `value` is already a whole field or `key=value` token in `text`,
+/// not merely a substring of some other word.
+fn status_text_has_field(text: &str, value: &str) -> bool {
+    if text == value {
+        return true;
+    }
+    text.split(';').any(|segment| {
+        let segment = segment.trim();
+        if segment == value {
+            return true;
+        }
+        segment.split_once('=').is_some_and(|(key, rhs)| {
+            let key = key.trim();
+            !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && rhs.trim() == value
+        })
     })
 }
 
@@ -219,7 +243,15 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
     let waiting_for_changed = status_text_changed(previous, status, "waiting_for");
     let action_state_changed = status_text_changed(previous, status, "action_state");
     let gatherer = status.card.0 == "Gatherer";
+    let last_event = if gatherer {
+        status_text(status, "last_event")
+    } else {
+        None
+    };
     let last_event_changed = gatherer && status_text_changed(previous, status, "last_event");
+    let waiting_or_blocked_event = last_event_changed
+        && (matches!(status.phase, NativePhase::Waiting | NativePhase::Blocked)
+            || last_event.is_some_and(|event| event.starts_with("waiting")));
     if !(phase_changed
         || failure_changed
         || waiting_for_changed
@@ -229,7 +261,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         return;
     }
 
-    let level = if phase_changed || failure_changed || last_event_changed {
+    let level = if phase_changed || failure_changed || waiting_or_blocked_event {
         api::hostlog::Level::Info
     } else {
         api::hostlog::Level::Debug
@@ -256,11 +288,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         } else {
             None
         },
-        last_event: if gatherer {
-            status_text(status, "last_event")
-        } else {
-            None
-        },
+        last_event,
     };
     api::host_log!(
         api::hostlog::Category::ScriptLifecycle,
