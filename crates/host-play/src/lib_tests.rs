@@ -5990,10 +5990,110 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
 }
 
 #[test]
-fn compat_radius_does_not_fall_back_when_the_walkable_anchor_is_unreachable() {
-    let world = Arc::new(open_world(7, 7));
+fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreachable() {
     let target = WorldTile {
         x: 3,
+        z: 3,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 0,
+        z: 3,
+        level: 0,
+    };
+    let make_request = |avoid| ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
+        loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
+        generation: 0,
+        request_id: 0,
+        world: Arc::new(open_world(7, 7)),
+        from,
+        to: target,
+        radius: 2,
+        opts: FindOptions::default(),
+        state: None,
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
+        live_candidates: None,
+        compat_tile_intent: true,
+        completion: Default::default(),
+        exclusions: Some(Arc::new(ScriptRouteExclusions {
+            avoid,
+            ..Default::default()
+        })),
+    };
+    let avoid_anchor = nav::router::AvoidRect {
+        min_x: target.x,
+        max_x: target.x,
+        min_z: target.z,
+        max_z: target.z,
+        level: Some(target.level),
+    };
+    let request = make_request(vec![avoid_anchor]);
+    let candidates = approach_tiles(&request.world, from, target, 2, false);
+    assert!(request.world.collision.walkable(target));
+    let (outcome, targets) = request.calculate();
+    assert_eq!(targets.first(), Some(&target));
+    assert_eq!(
+        targets
+            .iter()
+            .filter(|candidate| **candidate == target)
+            .count(),
+        1,
+        "the preferred tile is not duplicated in the fallback list"
+    );
+    let RouteOutcome::Routed(route) = outcome else {
+        panic!("the excluded center has reachable in-radius fallback endpoints");
+    };
+    assert_ne!(
+        route.dest, target,
+        "the avoided center is not a route endpoint"
+    );
+    assert!(
+        candidates.contains(&route.dest),
+        "fallback endpoint must pass the ordinary arrival-candidate filter: {:?}",
+        route.dest
+    );
+    assert!(
+        (route.dest.x - target.x)
+            .abs()
+            .max((route.dest.z - target.z).abs())
+            <= 2,
+        "fallback endpoint remains within the requested radius: {:?}",
+        route.dest
+    );
+
+    let unreachable = make_request(vec![nav::router::AvoidRect {
+        min_x: target.x - 2,
+        max_x: target.x + 2,
+        min_z: target.z - 2,
+        max_z: target.z + 2,
+        level: Some(target.level),
+    }]);
+    assert!(
+        matches!(unreachable.calculate().0, RouteOutcome::NoPath),
+        "when all arrival endpoints are excluded the request still fails"
+    );
+}
+
+#[test]
+fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
+    let target = WorldTile {
+        x: 3,
+        z: 3,
+        level: 0,
+    };
+    let mut world = open_world(7, 7);
+    world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
+    let world = Arc::new(world);
+    let from = WorldTile {
+        x: 0,
         z: 3,
         level: 0,
     };
@@ -6008,12 +6108,8 @@ fn compat_radius_does_not_fall_back_when_the_walkable_anchor_is_unreachable() {
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
-        world,
-        from: WorldTile {
-            x: 0,
-            z: 3,
-            level: 0,
-        },
+        world: Arc::clone(&world),
+        from,
         to: target,
         radius: 2,
         opts: FindOptions::default(),
@@ -6023,23 +6119,28 @@ fn compat_radius_does_not_fall_back_when_the_walkable_anchor_is_unreachable() {
         live_candidates: None,
         compat_tile_intent: true,
         completion: Default::default(),
-        exclusions: Some(Arc::new(ScriptRouteExclusions {
-            avoid: vec![nav::router::AvoidRect {
-                min_x: target.x,
-                max_x: target.x,
-                min_z: target.z,
-                max_z: target.z,
-                level: Some(target.level),
-            }],
-            ..Default::default()
-        })),
+        exclusions: None,
     };
-    assert!(request.world.collision.walkable(target));
+    let candidates = approach_tiles(&world, from, target, 2, false);
     let (outcome, targets) = request.calculate();
-    assert_eq!(targets, vec![target]);
     assert!(
-        matches!(outcome, RouteOutcome::NoPath),
-        "an excluded walkable destination must not succeed via a radius fallback"
+        !targets.contains(&target),
+        "a blocked center is not a route goal"
+    );
+    let RouteOutcome::Routed(route) = outcome else {
+        panic!("a reachable in-radius neighbor should be used");
+    };
+    assert_ne!(route.dest, target);
+    assert!(
+        candidates.contains(&route.dest),
+        "blocked-center fallback uses today's arrival-valid endpoints: {:?}",
+        route.dest
+    );
+    assert!(
+        (route.dest.x - target.x)
+            .abs()
+            .max((route.dest.z - target.z).abs())
+            <= 2
     );
 }
 
@@ -21200,6 +21301,24 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     rig.frames(1);
     let armed = rig.armed();
     let initial_walks = rig.walks();
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_compat_tile_intent
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.as_ref().is_some_and(|route| {
+                        route.dest
+                            == WorldTile {
+                                x: 40,
+                                z: 40,
+                                level: 0,
+                            }
+                    })
+            })
+        }),
+        "the original compatibility route ends at its requested center"
+    );
     let outcome_seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     rig.boundary(true);
     // The slot pump passes ingame && !session_boundary to the takeover seam.
@@ -21218,7 +21337,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
-        assert!(bot.carried_walk.is_some());
+        assert!(bot.carried_walk.is_some(), "the route is carried");
         assert_eq!(bot.user_move_intent_seq, 1);
         assert_eq!(bot.walk_outcome_seq, outcome_seq);
         assert_eq!(bot.manual_takeover_watermark, 0);
@@ -21244,9 +21363,92 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         vec![initial_walks[0], initial_walks[0]],
         "the carry is restored exactly once"
     );
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_compat_tile_intent
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.as_ref().is_some_and(|route| {
+                        route.dest
+                            == WorldTile {
+                                x: 40,
+                                z: 40,
+                                level: 0,
+                            }
+                    })
+            })
+        }),
+        "the re-armed compatibility route still ends at its requested center"
+    );
     assert_eq!(
         rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
         outcome_seq
+    );
+
+    rig.here = (4, 4, 0);
+    let (request_id, to, radius, options, exclusions, route_generation) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, zones) = bot
+            .requested_route
+            .expect("the carried route remains requested");
+        assert!(bot.route_compat_tile_intent);
+        (
+            bot.walk_request_id,
+            to,
+            radius,
+            FindOptions {
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
+                zones,
+                ..FindOptions::default()
+            },
+            bot.requested_exclusions
+                .as_deref()
+                .cloned()
+                .unwrap_or_default(),
+            bot.route_generation,
+        )
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.traveller.clear();
+        bot.route = None;
+    }
+    let arm = crate::script_runtime::ScriptWalkArm {
+        here: Some(rig.here),
+        world: rig.world.clone(),
+        navs: Arc::clone(&rig.navs),
+        name: "alice".to_owned(),
+        state: None,
+        bank: BankRows::default(),
+    };
+    assert!(arm.refresh_route_in_snapshot(
+        &rig.snap,
+        to,
+        radius,
+        options,
+        request_id,
+        exclusions,
+        None,
+        None,
+        nav::arrival::ArrivalKind::Reach,
+        true,
+    ));
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_generation != route_generation
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route_compat_tile_intent
+                    && bot.route.as_ref().is_some_and(|route| route.dest == to)
+            })
+        }),
+        "live route refresh preserves the compatibility tile endpoint"
     );
     rig.here = (40, 40, 0);
     rig.frames(5);

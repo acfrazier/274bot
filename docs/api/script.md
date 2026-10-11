@@ -1565,6 +1565,12 @@ replay automatically.
 The rs2b0t walk and reach helpers are Rust step machines; the shim passes
 arguments and awaits one completion.
 
+For a positive-radius tile walk, if the requested tile is walkable and
+standable, the host tries it first. If no route reaches it, the host tries
+the ordinary arrival-valid in-radius approach endpoints in their existing
+order; the radius still governs arrival. A blocked or occupied target uses
+those approach endpoints directly.
+
 - **`Traversal.walkResilient`** runs the frozen ladder: baked walk, scene
   step (`sceneRadius`, default `radius + 1`), door-or-step unstick, backoff,
   and after three no-progress passes a verify probe (one route preview from

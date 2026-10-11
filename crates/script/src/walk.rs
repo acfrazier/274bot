@@ -1708,7 +1708,15 @@ impl WalkOpening {
                     if self.segment >= OPENING_SEGMENTS {
                         return Some(arrived(self.dest, self.radius));
                     }
-                    match Walk::begin(self.dest, self.radius, BAKED_TIMEOUT_MS, false, cx) {
+                    match Walk::begin_compat_avoiding(
+                        self.dest,
+                        self.radius,
+                        BAKED_TIMEOUT_MS,
+                        false,
+                        Vec::new(),
+                        Vec::new(),
+                        cx,
+                    ) {
                         Ok(walk) => {
                             self.phase = OpeningPhase::Walking(walk);
                             return None;
@@ -3413,9 +3421,13 @@ pub(crate) mod tests {
     }
 
     fn start_opening(obstacles: &[&str]) -> machine::Handle {
+        start_opening_with_radius(obstacles, 0)
+    }
+
+    fn start_opening_with_radius(obstacles: &[&str], radius: i32) -> machine::Handle {
         let args = json!({
             "dest": { "x": 10, "z": 0, "level": 0 },
-            "radius": 0,
+            "radius": radius,
             "obstacles": obstacles,
         });
         let Started::Running(h) = machine::start("walk-opening", args, Vec::new(), 0) else {
@@ -3440,6 +3452,25 @@ pub(crate) mod tests {
             }] if *x == dest_x => *request_id,
             other => panic!("expected the opening walk to {dest_x}, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn walk_opening_prefers_its_compat_destination_tile() {
+        reset();
+        post_here(0, 0);
+        let h = start_opening_with_radius(&[], 1);
+        machine::step(&mut NoJs);
+        assert!(matches!(
+            machine::merge_ops(Vec::new()).as_slice(),
+            [InteractReq::WalkNear {
+                x: 10,
+                z: 0,
+                radius: 1,
+                compat_tile_intent: true,
+                ..
+            }]
+        ));
+        assert_eq!(machine::take(h), Take::Pending);
     }
 
     #[test]
