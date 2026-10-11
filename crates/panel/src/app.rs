@@ -16,7 +16,7 @@ use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
 use crate::headed_record::{HeadedRecord, RecordFrame, StepInfo};
-use crate::overlay::{draw_queue_card_for, PathOverlay};
+use crate::overlay::{PathOverlay, QueueCards};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::rail::{
@@ -158,6 +158,8 @@ struct PanelState {
     pair_capture_restore: Option<String>,
     /// Cached queue-card overlay for the focused slot (see `overlay`).
     overlay: PathOverlay,
+    /// Cached queue cards over the Grid's Images, one per queued bot.
+    queue_cards: QueueCards,
     /// Cached script-paint overlay over the Game chatbox (see `paint`).
     paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
@@ -576,6 +578,7 @@ impl PanelState {
             last_upload: None,
             pair_capture_restore: None,
             overlay: PathOverlay::new(),
+            queue_cards: QueueCards::default(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
             fleet: Vec::new(),
@@ -1273,9 +1276,13 @@ fn game_window_flags() -> WindowFlags {
 fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui.window(title).flags(game_window_flags()).build(|| {
         let avail = ui.content_region_avail();
+        let grid = !state.session.walkto_open && state.session.multibox && state.session.wall.grid;
+        if !grid {
+            state.queue_cards.clear();
+        }
         if state.session.walkto_open {
             picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
-        } else if state.session.multibox && state.session.wall.grid {
+        } else if grid {
             grid_pane(ui, gpu, state, avail);
         } else {
             game_pane(ui, gpu, state, avail);
@@ -1396,6 +1403,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     state.sync_fleet();
     if state.fleet.is_empty() {
+        state.queue_cards.clear();
         ui.text_disabled("no wall members");
         state.paint.release_canvas(gpu);
         return;
@@ -1484,7 +1492,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     .keyboard
                     .capture_keys(ui, state.session.capture_tx.as_ref());
             }
-            draw_queue_card_for(ui, row.queue, image_min);
+            state.queue_cards.frame(ui, name, row.queue, image_min);
             if is_focused {
                 overlay_script_paint(
                     ui,
@@ -1508,6 +1516,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             state.session.select(name);
         }
     }
+    state.queue_cards.end_frame();
     state.fleet = rows;
     state.fleet_labels = labels;
 }

@@ -464,7 +464,7 @@ fn walkto_actions_enable_teleport_without_a_walk_target() {
 #[test]
 fn picker_map_window_builds_headless() {
     let _guard = crate::test_support::imgui_context_guard();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     ctx.prepare_frame(
         dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
     );
@@ -484,7 +484,7 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
         ROUTE_THROUGH_ZONES_TOOLTIP,
         "Allows routes past monsters that may kill your bot."
     );
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let world = open_world(3, 3);
 
     for marked in [false, true] {
@@ -539,7 +539,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
         "Global danger-zone override is enabled."
     );
     let _isolated = IsolatedEnv::enter("picker-durable-danger");
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let world = open_world(3, 3);
 
     super::note_closed();
@@ -635,7 +635,7 @@ fn picker_click_frame(
 fn picker_click_selects_a_walkable_tile() {
     let _guard = crate::test_support::imgui_context_guard();
     super::note_closed();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     // Default open recentres on Lumbridge (3220,3220); the bake must cover
     // that so radius-16 snap can succeed (it no longer scans the whole plane).
     let world = open_world_at((3219, 3219), 3, 3);
@@ -1032,7 +1032,7 @@ fn map_owned_collision_does_not_load_flags_sidecar() {
     let _imgui = crate::test_support::imgui_context_guard();
     let _guard = super::lock_nav_statics();
     drop_flags_sidecar();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     ctx.prepare_frame(
         dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
     );
@@ -1116,7 +1116,7 @@ fn assert_walkto_layout_fits(label: &str, layout: super::PickerLayout) {
 
 fn measure_nested_walkto(game_size: [f32; 2], display: [f32; 2]) -> super::PickerLayout {
     super::note_closed();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     ctx.prepare_frame(
         dear_imgui_rs::FramePrepareOptions::new(display, 1.0 / 60.0).renderer_has_textures(),
     );
@@ -1349,7 +1349,7 @@ fn picker_frame_colours(
 fn pending_selection_draws_no_dest_marker_until_a_walk_is_armed() {
     let _guard = crate::test_support::imgui_context_guard();
     super::note_closed();
-    let mut ctx = dear_imgui_rs::Context::create();
+    let mut ctx = crate::test_support::imgui_context();
     let world = open_world_at((3219, 3219), 3, 3);
     let mut s = Session::new();
     s.walkto_open = true;

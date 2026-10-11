@@ -261,7 +261,7 @@ mod tests {
         let light = Light::Yellow;
 
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
-            let mut ctx = dear_imgui_rs::Context::create();
+            let mut ctx = crate::test_support::imgui_context();
             crate::app::apply_ui_scale(ctx.style_mut(), scale);
             let _ = ctx.font_atlas_mut().build();
             ctx.io_mut().set_display_size([128.0 * scale, 96.0 * scale]);

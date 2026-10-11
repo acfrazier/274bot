@@ -25,11 +25,10 @@ use crate::memory;
 use crate::play_bootstrap::{bot_client_config, PlayConnection};
 use crate::play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
-    granted_permit_world_is_current, login_and_acknowledge_permit, login_retry_wait,
-    on_login_success, publish_login_latched_from_arm, refresh_slot_world_preference,
-    should_handshake, sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, GrantedReservation, PermitWait, QueuePlaceRetirement,
-    SharedLoginQueue, SlotArm,
+    granted_permit_world_is_current, on_login_success, plan_login_retry,
+    publish_login_latched_from_arm, refresh_slot_world_preference, server_hold, should_handshake,
+    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
+    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -1089,18 +1088,16 @@ fn spawn_slot_thread(
                         &arm,
                         &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
                     );
-                    if wait == PermitWait::Cancelled {
+                    // The reservation is owned from the granting poll on:
+                    // every `continue`/`return` (or unwind) below that drops
+                    // it unused gives the grant back.
+                    let PermitWait::Granted(mut permit) = wait else {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
-                    }
-                    if !granted_permit_world_is_current(
-                        &slot_queue,
-                        uid,
-                        world_round.as_ref(),
-                        &arm,
-                    ) {
+                    };
+                    if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
                         continue;
                     }
                     // A withdrawal or stop that lands after the granting poll
@@ -1108,18 +1105,14 @@ fn spawn_slot_thread(
                     // as does a relog wanted only by a script that has since
                     // stopped.
                     sync_script_login(&arm, &slot_scripts, &username);
-                    let Some(login_command) = granted_permit_may_start_login(
-                        &slot_queue,
-                        uid,
-                        &arm,
-                        client.ingame,
-                    ) else {
+                    let Some(login_command) =
+                        granted_permit_may_start_login(&arm, client.ingame)
+                    else {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
                     };
-                    let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     host_log!(
@@ -1145,9 +1138,19 @@ fn spawn_slot_thread(
                         }
                     }
                     let handshake_lowmem = client.config.lowmem;
-                    let login = login_and_acknowledge_permit(&mut permit, || {
-                        client.login(&username, &password, reconnect)
-                    });
+                    // Spacing counts from the attempt's start; the client
+                    // stops all handshake I/O at the deadline the queue gives,
+                    // and the queue shuts the socket if the lease ends first.
+                    let Some(login) = permit.attempt(
+                        |deadline, cancel| {
+                            client.set_login_deadline(deadline);
+                            client.set_login_cancel(cancel);
+                            client.login(&username, &password, reconnect)
+                        },
+                        |result| server_hold(result, &backoff),
+                    ) else {
+                        continue;
+                    };
                     match login {
                         Ok(()) => {
                             show_title_message(&mut client, "", "");
@@ -1185,30 +1188,34 @@ fn spawn_slot_thread(
                                 continue;
                             }
                             record_login_error(&slot_statuses, &username, &e);
-                            let decision = world_round.as_mut().map(|round| {
-                                let count = connection.profile().and_then(|p| p.public_worlds())
-                                    .expect("bound public worlds").worlds.len();
-                                round.on_login_error(e.code, count)
-                            });
-                            match decision {
-                                Some(public_worlds::WorldErrorStep::SwitchNow) => {
-                                    world_dirty = true;
-                                    key_refreshed = false;
-                                    continue;
-                                }
-                                Some(public_worlds::WorldErrorStep::SwitchAfterWait) => {
-                                    world_dirty = true;
-                                    key_refreshed = false;
-                                }
-                                _ => {}
+                            let worlds = connection.profile().and_then(|p| p.public_worlds());
+                            let plan = plan_login_retry(
+                                &e,
+                                world_round.as_mut().map(|round| {
+                                    (round, &**worlds.expect("bound public worlds"))
+                                }),
+                                (&client.config.host, client.config.port),
+                                &mut backoff,
+                                rand_core::RngCore::next_u32(&mut rand_core::OsRng),
+                            );
+                            if let Some(receipt) = plan.world_full {
+                                host_log!(Category::Login, Level::Warn, "{receipt}");
                             }
+                            if plan.switch_world {
+                                world_dirty = true;
+                                key_refreshed = false;
+                            }
+                            // Auto world rotation: straight back into the
+                            // paced queue for the next world.
+                            let Some(retry) = plan.wait else {
+                                continue;
+                            };
                             if world_round.is_some()
                                 && public_worlds::refresh_after_login_error(e.code, &mut key_refreshed)
                             {
                                 refresh_key = true;
                                 world_dirty = true;
                             }
-                            let retry = login_retry_wait(&mut backoff, e.code);
                             host_log!(
                                 Category::Login,
                                 Level::Info,
@@ -1216,9 +1223,6 @@ fn spawn_slot_thread(
                                 retry.as_millis(),
                                 e.code
                             );
-                            if e.code == 16 {
-                                slot_queue.lock().hold_for(Instant::now(), retry);
-                            }
                             arm.wait_for_retry(
                                 retry,
                                 &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
