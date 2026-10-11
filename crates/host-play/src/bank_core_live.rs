@@ -18,8 +18,10 @@
 //! - **L-load-unstack** (120 s): compat `Bank.withdrawLoad('Logs')` with
 //!   40 logs banked and 20 free slots fills the pack and leaves 20 banked.
 //! - **L-close** (20 s): compat `Bank.close()` on the open booth is true
-//!   within 4 s with the bank shut, its side root released and the session
-//!   generation newer; a second close on the shut bank is true at once.
+//!   with the bank shut, its side root released and the session generation
+//!   newer; the 4 s cap is this cell's healthy-engine performance target,
+//!   not the default close timeout (eight observed ticks). A second close
+//!   on the shut bank is true at once.
 //! - **L-except** (60 s): compat host `Bank.depositAllExcept(['Coins'])`
 //!   with coins, bones and a tinderbox held banks the junk and keeps the
 //!   coins.
@@ -1311,8 +1313,11 @@ fn live_bank_core_compat_close_at_draynor() {
             answered_true(answer, "shut")?;
             answered_true(answer, "again")?;
             let ms = answer["ms"].as_u64().unwrap_or(u64::MAX);
+            // Live latency target only; the default close limit counts observed ticks.
             if ms > 4_000 {
-                return Err(format!("close took {ms} ms, over 4 s"));
+                return Err(format!(
+                    "close took {ms} ms, over the 4 s live-cell performance target"
+                ));
             }
             let acknowledged = posted
                 .open_generation

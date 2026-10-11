@@ -849,8 +849,6 @@ fn load_click_prefers_the_rows_all_op() {
 
 #[test]
 fn close_scan_needs_shut_main_released_side_and_new_session() {
-    assert_eq!(close_deadline(None), CLOSE_BOUND);
-    assert_eq!(close_deadline(Some(1_500)), Duration::from_millis(1_500));
     assert_eq!(close_begin(false), Some(CloseScan::AlreadyShut));
     assert_eq!(close_begin(true), None);
     let base = CloseBaseline {

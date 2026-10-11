@@ -9,6 +9,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - The current rs2b0t Duel Arena script loads again: the duel API offers the
   challenge-area check that newer catalogs use.
+- Gatherer bank trips now wait through busy-computer delays for bank opens and
+  closes to settle instead of failing the trip prematurely.
 
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
