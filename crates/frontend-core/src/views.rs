@@ -16,6 +16,7 @@ use std::fmt::{self, Write as _};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Instant;
 
+use host::login_queue::AdmitBlocker;
 use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
 use script::RunState;
 
@@ -84,14 +85,25 @@ impl Phase {
     }
 }
 
-/// A login-queue place: `position` of `total`, 1-based.
+/// A login-queue place: `position` of `total`, 1-based, and at the head of
+/// the login queue what keeps it from starting its login.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueuePlace {
     pub position: u32,
     pub total: u32,
+    blocker: Option<AdmitBlocker>,
 }
 
 impl QueuePlace {
+    /// A place with no admission reason (a start queue, or behind the head).
+    pub const fn new(position: u32, total: u32) -> Self {
+        Self {
+            position,
+            total,
+            blocker: None,
+        }
+    }
+
     /// The place `status` publishes; `None` when it holds none (or the
     /// published pair is not a valid place).
     pub fn of(status: &SlotStatus) -> Option<Self> {
@@ -99,12 +111,49 @@ impl QueuePlace {
         (position >= 1 && total >= 1 && position <= total).then_some(Self {
             position: position as u32,
             total: total as u32,
+            blocker: status.queue_blocker,
         })
     }
 
     /// Slots ahead of this one.
     pub fn ahead(self) -> u32 {
         self.position - 1
+    }
+
+    /// What keeps the login queue's head from starting its login.
+    pub fn blocker(self) -> Option<AdmitBlocker> {
+        self.blocker
+    }
+
+    /// The head's reason for waiting, with the time left when the host
+    /// knows it: `another bot is logging in`, `login rate cooldown (29
+    /// attempts), next try in 41 s`. Writes nothing and returns `false` when
+    /// there is no such reason (behind the head, the bots ahead are it).
+    pub fn write_wait(self, out: &mut String, now: Instant) -> bool {
+        let Some(blocker) = self.blocker else {
+            return false;
+        };
+        let _ = match blocker {
+            AdmitBlocker::Handshake => write!(out, "another bot is logging in"),
+            AdmitBlocker::Spacing { .. } => write!(out, "pacing logins"),
+            AdmitBlocker::AddressBudget {
+                attempts,
+                until: None,
+            } => write!(
+                out,
+                "login rate cooldown ({attempts} attempts) after the current login"
+            ),
+            AdmitBlocker::AddressBudget { attempts, .. } => {
+                write!(out, "login rate cooldown ({attempts} attempts)")
+            }
+            AdmitBlocker::DeviceBudget { .. } => write!(out, "device login limit"),
+            AdmitBlocker::ServerHold { .. } => write!(out, "server: too many login attempts"),
+        };
+        if let Some(until) = blocker.until() {
+            let left = until.saturating_duration_since(now).as_millis();
+            let _ = write!(out, ", next try in {} s", left.div_ceil(1000));
+        }
+        true
     }
 }
 
@@ -288,10 +337,7 @@ impl FleetRow {
         }
         let text = match self.phase {
             Phase::Queued => {
-                let place = self.queue.unwrap_or(QueuePlace {
-                    position: 0,
-                    total: 0,
-                });
+                let place = self.queue.unwrap_or(QueuePlace::new(0, 0));
                 let _ = write!(self.brief, "queued {}/{}", place.position, place.total);
                 return;
             }
@@ -969,6 +1015,11 @@ fn write_state(
                     "waiting in login queue ({}/{})",
                     place.position, place.total
                 );
+                let head = out.len();
+                out.push_str(": next in line, ");
+                if !place.write_wait(out, Instant::now()) {
+                    out.truncate(head);
+                }
             }
             None => out.push_str("waiting in login queue"),
         },

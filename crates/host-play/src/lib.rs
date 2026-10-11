@@ -133,16 +133,16 @@ pub use play_bootstrap::{
     run_channels, run_prepared_template, run_with_io, run_with_profile, run_with_template,
     validate_play_host, PlayOptions, ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
 };
-use play_login::{apply_queue_wait, sync_profile_arm, SharedLoginQueue};
 #[cfg(test)]
 use play_login::{
-    configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
-    granted_permit_world_is_current, login_and_acknowledge_permit, login_retry_wait,
-    on_login_success, permit_wait_cancelled, publish_login_latched_from_arm,
-    refresh_slot_world_preference, should_handshake, tick_flags, wait_for_permit,
-    wait_for_transfer_response, GrantedReservation, PermitWait, UNEXPECTED_LOGOUT_THRESHOLD,
-    UNEXPECTED_LOGOUT_WINDOW,
+    apply_queue_wait, configure_slot_world, drop_queue_place, enqueue_queue_place,
+    granted_permit_may_start_login, granted_permit_world_is_current, login_and_acknowledge_permit,
+    login_retry_wait, on_login_success, permit_wait_cancelled, plan_login_retry,
+    publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake, tick_flags,
+    wait_for_permit, wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
+    UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
 };
+use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
 pub use play_slots::SlotFrameInput;
@@ -481,8 +481,12 @@ impl Play {
         };
         let mut q = self.queue.lock();
         q.prefer_owner(arm.queue_owner);
-        let pos = q.status_owner(arm.queue_owner);
-        apply_queue_wait(&mut lock_statuses(&self.statuses), name, pos);
+        publish_queue_place(
+            &q,
+            &mut lock_statuses(&self.statuses),
+            name,
+            arm.queue_owner,
+        );
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).

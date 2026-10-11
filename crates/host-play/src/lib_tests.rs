@@ -196,12 +196,7 @@ fn startup_progress_is_latest_only_and_clears_on_completion() {
     record_login_error(
         &statuses,
         "alice",
-        &LoginError {
-            code: 16,
-            mes1: "busy".into(),
-            mes2: "busy".into(),
-            retry_after: None,
-        },
+        &LoginError::response(16, "busy", "busy"),
     );
     let rows = statuses.lock().unwrap();
     assert_eq!(rows[0].startup_phase, StartupPhase::Error);
@@ -347,12 +342,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
     record_login_error(
         &statuses,
         "alice",
-        &LoginError {
-            code: 5,
-            mes1: "invalid".into(),
-            mes2: "invalid".into(),
-            retry_after: None,
-        },
+        &LoginError::response(5, "invalid", "invalid"),
     );
     client.ingame = false;
     drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
@@ -601,48 +591,183 @@ fn live_vault_passphrase_is_fresh_and_accepted() {
     vault::check_new_passphrase(&second).unwrap();
 }
 
+/// A login against a closed local port: a real refused connection.
+fn refused_login_error() -> LoginError {
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    client.login("alice", "secret", false).unwrap_err()
+}
+
 #[test]
-fn full_world_round_uses_existing_backoff() {
-    let worlds = public_worlds::PublicWorlds::default();
-    let mut round = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
+fn refused_login_row_names_the_failed_stage_instead_of_code_minus_one() {
+    let error = refused_login_error();
+    let statuses = rows(&["alice"]);
+    set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
+    record_login_error(&statuses, "alice", &error);
+    let rows = statuses.lock().unwrap();
+    let shown = rows[0].error.as_deref().expect("published login error");
+    assert!(
+        !shown.starts_with("code -1"),
+        "a failed connection is not a server response: {shown}"
+    );
+    assert!(
+        shown.starts_with("Error connecting to server. (connect: "),
+        "the stage and OS error are kept: {shown}"
+    );
+    let transport = error.transport.as_ref().expect("receipt");
+    assert_eq!(transport.kind, std::io::ErrorKind::ConnectionRefused);
+    assert!(transport.errno.is_some());
+}
+
+#[test]
+fn transport_failures_back_off_longer_each_time_up_to_a_minute() {
+    let refused = refused_login_error();
     let mut backoff = LoginBackoff::new();
-    for expected_world in [2, 3] {
-        assert_eq!(
-            round.on_login_error(7, worlds.worlds.len()),
-            public_worlds::WorldErrorStep::SwitchNow
-        );
-        assert_eq!(worlds.worlds[round.index].number, expected_world);
+    let waits: Vec<Duration> = (0..7)
+        .map(|_| login_retry_wait(&mut backoff, &refused, 0))
+        .collect();
+    assert!(waits[0] >= Duration::from_secs(4) && waits[0] <= Duration::from_secs(6));
+    assert!(
+        waits[..5].windows(2).all(|pair| pair[1] > pair[0]),
+        "each failure waits longer: {waits:?}"
+    );
+    assert!(waits.iter().all(|wait| *wait <= Duration::from_secs(60)));
+    assert_eq!(waits[5], waits[6], "the delay stops growing at its cap");
+    let jittered = login_retry_wait(&mut LoginBackoff::new(), &refused, 400);
+    assert_ne!(jittered, waits[0], "slots that failed together retry apart");
+    backoff.reset();
+    assert_eq!(login_retry_wait(&mut backoff, &refused, 0), waits[0]);
+}
+
+#[test]
+fn world_full_auto_tries_every_world_then_waits_and_pinned_keeps_its_world() {
+    let worlds = public_worlds::PublicWorlds::default();
+    let full = LoginError::response(7, "This world is full.", "Please use a different world.");
+    let mut backoff = LoginBackoff::new();
+    let mut auto = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
+    // A full world sends an Auto profile straight to the next world,
+    // through the paced queue, without a wait.
+    for (refused, next) in [(1, 2), (2, 3)] {
+        let plan = plan_login_retry(&full, Some((&mut auto, &worlds)), ("", 0), &mut backoff, 0);
+        assert!(plan.switch_world);
+        assert_eq!(plan.wait, None);
+        let receipt = plan.world_full.expect("world-full receipt");
+        assert_eq!(receipt.choice, WorldChoice::Auto);
+        assert_eq!(receipt.refused.world, Some(refused));
+        assert_eq!(receipt.refused.host, format!("w{refused}.rs2b2t.com"));
+        assert_eq!(receipt.refused.port, 443);
+        assert!(!receipt.round_full);
+        assert_eq!(receipt.next.world, Some(next));
+        assert_eq!(receipt.retry_in, None);
     }
-    assert_eq!(
-        round.on_login_error(7, worlds.worlds.len()),
-        public_worlds::WorldErrorStep::SwitchAfterWait
+    // Every world was full this round: wait, then start over at w1.
+    let plan = plan_login_retry(&full, Some((&mut auto, &worlds)), ("", 0), &mut backoff, 0);
+    assert!(plan.switch_world);
+    let first_round = plan.wait.expect("a full round waits");
+    let receipt = plan.world_full.unwrap();
+    assert!(receipt.round_full);
+    assert_eq!(receipt.refused.world, Some(3));
+    assert_eq!(receipt.next.world, Some(1));
+    assert_eq!(receipt.retry_in, Some(first_round));
+    let line = receipt.to_string();
+    for part in [
+        "w3 w3.rs2b2t.com:443",
+        "auto world; every world was full this round",
+        "next attempt w1 w1.rs2b2t.com:443 in ",
+    ] {
+        assert!(line.contains(part), "{line:?} names {part:?}");
+    }
+    for _ in 0..2 {
+        let plan = plan_login_retry(&full, Some((&mut auto, &worlds)), ("", 0), &mut backoff, 0);
+        assert_eq!(plan.wait, None);
+    }
+    let second_round =
+        plan_login_retry(&full, Some((&mut auto, &worlds)), ("", 0), &mut backoff, 0)
+            .wait
+            .expect("a full round waits");
+    assert!(
+        second_round > first_round,
+        "the next full round waits longer"
     );
-    assert_eq!(worlds.worlds[round.index].number, 1);
-    assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
+
+    // A pinned profile keeps its world and waits, longer each time.
     let mut pinned = public_worlds::WorldRound::new(&worlds, Some(2), None).unwrap();
-    assert_eq!(
-        pinned.on_login_error(7, worlds.worlds.len()),
-        public_worlds::WorldErrorStep::Stay
+    let mut backoff = LoginBackoff::new();
+    let mut last = Duration::ZERO;
+    for _ in 0..3 {
+        let plan = plan_login_retry(
+            &full,
+            Some((&mut pinned, &worlds)),
+            ("", 0),
+            &mut backoff,
+            0,
+        );
+        assert!(!plan.switch_world);
+        let wait = plan.wait.expect("pinned waits");
+        assert!(wait > last);
+        last = wait;
+        let receipt = plan.world_full.unwrap();
+        assert_eq!(receipt.choice, WorldChoice::Pinned);
+        assert_eq!(
+            (receipt.refused.world, receipt.next.world),
+            (Some(2), Some(2))
+        );
+        assert_eq!(receipt.retry_in, Some(wait));
+        assert!(receipt
+            .to_string()
+            .contains("w2 w2.rs2b2t.com:443 (pinned world)"));
+    }
+
+    // A local server names its endpoint.
+    let plan = plan_login_retry(
+        &full,
+        None,
+        ("127.0.0.1", 44594),
+        &mut LoginBackoff::new(),
+        0,
     );
-    assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
+    let receipt = plan.world_full.unwrap();
+    assert_eq!(receipt.choice, WorldChoice::Local);
+    assert!(receipt.to_string().starts_with(
+        "world full (code 7) on 127.0.0.1:44594 (local server); next attempt 127.0.0.1:44594 in "
+    ));
+
+    // Other refusals are not world-full and never rotate a pinned world.
+    let busy = LoginError::response(5, "", "Try again in 60 secs...");
+    let plan = plan_login_retry(
+        &busy,
+        Some((&mut pinned, &worlds)),
+        ("", 0),
+        &mut backoff,
+        0,
+    );
+    assert_eq!(plan.world_full, None);
+    assert_eq!(plan.wait, Some(Duration::from_secs(60)));
 }
 
 #[test]
 fn response_one_returns_to_fifo_without_publishing_error() {
     let mut backoff = LoginBackoff::new();
-    assert_eq!(login_retry_wait(&mut backoff, 1), Duration::from_secs(2));
+    assert_eq!(
+        login_retry_wait(&mut backoff, &LoginError::response(1, "", ""), 0),
+        Duration::from_secs(2)
+    );
 
     let statuses = rows(&["alice"]);
     set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
     record_login_error(
         &statuses,
         "alice",
-        &LoginError {
-            code: 1,
-            mes1: "retry".into(),
-            mes2: "retry".into(),
-            retry_after: None,
-        },
+        &LoginError::response(1, "retry", "retry"),
     );
     let rows = statuses.lock().unwrap();
     assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
@@ -661,10 +786,12 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
         thread::spawn(move || {
             wait_for_transfer_response(
                 &LoginError {
-                    code: 21,
-                    mes1: "You have only just left another world".into(),
-                    mes2: "Your profile will be transferred in: 1 seconds".into(),
                     retry_after: Some(Duration::from_secs(1)),
+                    ..LoginError::response(
+                        21,
+                        "You have only just left another world",
+                        "Your profile will be transferred in: 1 seconds",
+                    )
                 },
                 &arm,
                 &statuses,
@@ -705,10 +832,12 @@ fn response_21_updates_client_title_countdown() {
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, true);
     let error = LoginError {
-        code: 21,
-        mes1: "The server supplied a transfer message".into(),
-        mes2: "Your profile will be transferred in: 1 seconds".into(),
         retry_after: Some(Duration::from_secs(1)),
+        ..LoginError::response(
+            21,
+            "The server supplied a transfer message",
+            "Your profile will be transferred in: 1 seconds",
+        )
     };
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
@@ -823,15 +952,13 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         !play.queue.lock().abandon_permit(42),
         "the transfer countdown must hold no handshake reservation"
     );
+    let paced = Instant::now() + host::login_queue::LOGIN_START_SPACING;
     assert_eq!(
-        request_shared(&play.queue, 43, Instant::now()),
+        request_shared(&play.queue, 43, paced),
         Permit::Grant,
         "a follower can enter while the transfer countdown runs"
     );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(43, Instant::now()));
+    assert!(play.queue.lock().acknowledge_login_return(43, paced));
 
     let (second_number, second_attempt, second_endpoint) =
         attempt_rx.recv_timeout(Duration::from_secs(4)).unwrap();
@@ -1080,7 +1207,11 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     );
     assert_eq!(reconnect_mode, Some(true));
     assert_eq!(queued_mode, Some(false), "the queued mode must survive");
-    assert_eq!(relog, (18, 0), "a clean logout applies the queued mode");
+    assert_eq!(
+        relog,
+        (16, 0),
+        "a clean logout logs in fresh and applies the queued mode"
+    );
 }
 
 #[test]
@@ -1513,15 +1644,8 @@ fn stop_slot_sets_stop_and_forgets_name() {
     // uid 7 sits on the FIFO behind a full 29-grant address TTL;
     // stop_slot must drop it even though the thread is still running.
     {
+        let now = fill_address_window(&play.queue);
         let mut q = play.queue.lock();
-        let now = Instant::now();
-        for i in 0..29 {
-            assert!(matches!(
-                request_test_owner(&mut q, 1000 + i, now),
-                Permit::Grant
-            ));
-            assert!(q.acknowledge_login_return(1000 + i, now));
-        }
         q.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
             q.poll_owner(arm.queue_owner, 7, now),
@@ -1905,15 +2029,8 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
     // The profile uid 42 sits queued behind a full address window;
     // stopping must drop 42 from the FIFO, not the arm's stale uid 0.
     {
+        let now = fill_address_window(&play.queue);
         let mut q = play.queue.lock();
-        let now = Instant::now();
-        for i in 0..29 {
-            assert!(matches!(
-                request_test_owner(&mut q, 1000 + i, now),
-                Permit::Grant
-            ));
-            assert!(q.acknowledge_login_return(1000 + i, now));
-        }
         q.enqueue_owner(arm.queue_owner, 42);
         assert!(matches!(
             q.poll_owner(arm.queue_owner, 42, now),
@@ -2287,10 +2404,64 @@ fn operator_logout_wins_over_a_correlated_client_idle_logout() {
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
-    assert!(arm.reconnect.load(Ordering::Relaxed));
+    assert!(
+        !arm.reconnect.load(Ordering::Relaxed),
+        "a server logout makes the next login fresh"
+    );
     assert!(arm.wants_logout());
     assert!(!should_handshake(&arm, false));
     assert_eq!(client.take_session_exit_reason(), None);
+}
+
+/// Operator log-out, then a world change (aindniK3, 2026-10-10): the next
+/// login is a fresh one (opcode 16), as the original client's title login.
+#[test]
+fn operator_logout_then_world_change_logs_in_fresh() {
+    let mut client = client_after_server_logout();
+    let arm = SlotArm::new(7, true);
+    // Online after a successful handshake.
+    arm.reconnect.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    assert!(!tick_flags(&mut client, &[], &arm));
+
+    let mut moved = profile("alice", 7);
+    moved.settings.world = Some(3);
+    sync_profile_arm(&arm, &moved);
+    arm.arm_explicit_login();
+    assert!(should_handshake(&arm, false));
+    assert!(
+        !arm.reconnect.load(Ordering::Relaxed),
+        "the next handshake after a clean logout is not a reconnect"
+    );
+    assert!(arm.login_applies_memory());
+}
+
+/// An ordinary connection loss still reconnects into the running session.
+#[test]
+fn connection_loss_keeps_the_reconnect_handshake() {
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_external_reconnect_owner(true);
+    client.ingame = true;
+    client.lost_con();
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(should_handshake(&arm, client.ingame));
+    assert!(
+        arm.reconnect.load(Ordering::Relaxed),
+        "a lost connection reconnects (opcode 18)"
+    );
+    assert!(!arm.login_applies_memory());
 }
 
 #[test]
@@ -2492,16 +2663,20 @@ fn refused_logout_stays_pending_with_command_latch() {
 }
 
 /// Fill the default 29-grant / 60 s idle address limit so the next request has
-/// to wait instead of being granted on arrival.
+/// to wait instead of being granted on arrival. The grants are paced like
+/// real starts and the last one returns now.
 fn fill_address_window(queue: &SharedLoginQueue) -> Instant {
     let now = Instant::now();
+    let spacing = host::login_queue::LOGIN_START_SPACING;
+    let mut at = now.checked_sub(spacing * 28).expect("host uptime");
     let mut q = queue.lock();
     for i in 0..29 {
         assert!(matches!(
-            request_test_owner(&mut q, 1000 + i, now),
+            request_test_owner(&mut q, 1000 + i, at),
             Permit::Grant
         ));
-        assert!(q.acknowledge_login_return(1000 + i, now));
+        assert!(q.acknowledge_login_return(1000 + i, at));
+        at += spacing;
     }
     now
 }

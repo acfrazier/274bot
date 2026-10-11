@@ -18,7 +18,7 @@ fn queued(name: &str, position: u32, total: u32) -> FleetRow {
         name,
         Phase::Queued,
         Some(1),
-        Some(QueuePlace { position, total }),
+        Some(QueuePlace::new(position, total)),
     )
 }
 
