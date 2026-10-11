@@ -159,7 +159,9 @@ checkboxes on a focused profile:
   running; flipping the renderer on reattaches 3D from the same map
   bytes on the **same** client (never a logout or restart).
 - **sidecar 50 fps** — unfocused wall members at 50 fps. Interactive /
-  non-test. Scenarios never flip it.
+  non-test. Scenarios never flip it. Both 50 fps checkboxes are saved in
+  `panel-ui.json` (`sidecar_50` defaults off, `focused_50` on); a restored
+  setting costs nothing for a slot that isn't drawing.
 - **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
   Every drawing slot at 50 fps, focused included. Ephemeral.
 - **lowmem / highmem** — default **lowmem**. Click the current mem
@@ -219,7 +221,13 @@ body focuses the member. The dot is error **red**, then ingame **amber**,
 then FIFO-queue **warn**, else grey. **only render selected** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
-member paints. The Game pane always follows **focus** — a rail-Off
+member paints. Unchecking it opens a **Render all wall members?** confirm:
+**OK** (once **I understand** is ticked) applies for this launch, and **Don't
+show again** does the same and saves `render_all_warning_ack` in
+`panel-ui.json`, after which unchecking applies at once. The box starts
+checked on every launch and is never saved. The mark checkbox's tooltip says
+"Fleet and Debug actions" on servers that allow Debug and "Fleet actions"
+elsewhere. The Game pane always follows **focus** — a rail-Off
 member still grows a head while it is the selected slot (stress50: one
 GPU seat, not glued to `s00`).
 
@@ -230,6 +238,9 @@ is on). The Game pane is divided into equal cells — one per member, each
 the largest 765:503 box that fits its slot — row-major, with `cols` chosen
 to maximise the cell area. Clicking a cell selects that member; capture
 reaches **only** the focused cell; the queue card overlays it while queued.
+The rail is hidden in Grid, so the right-hand panel shows the same 1 Hz
+**resource** readout there (the one sample the rail card reads; the panel
+section stays hidden only while the rail is shown).
 
 ### Chooser
 
@@ -374,7 +385,7 @@ in the picker. **Log in automatically** (saved as
 Non-toggle window buttons — **Profiles** / **Profiles…**, **General
 config**, **Nav config**, **Loadouts**, **Script prefs**, **Log**,
 **Fleet** (and Debug's **Open Fleet**), **Panel** / **maxme** (Debug),
-**Browse…**, **Load**, **Import catalog…** and Fleet's **Walk N to…** —
+**Browse…**, **Load**, **Import catalog…** and Fleet's **Walk N marked bots** —
 open a closed window where it first appears (docked or floating as
 before) and bring an already-open one to the front, selecting its dock
 tab. The focus is requested once per click (`Session::open_window`), never
@@ -415,17 +426,19 @@ the prompt until settings change again.
 
 The **Fleet** window (the button beside WalkTo) is the panel's view of the
 shared marked selection: one row per vault profile with a checkbox mark,
-filter and sort. Its action bar runs on the marked rows only and each action
+a filter and a full-width **Sort** drop-down. The table's columns share the
+window's width, so it never scrolls sideways, and the action rows and column
+toggles wrap at a narrow width. Its action bar runs on the marked rows only and each action
 puts one report in the window, counting every marked bot once with failures
 first: **Start selected card on N marked bots**, **Stop N marked bots**,
 **Assign selected card** (saves the card without starting; running bots are
-skipped), **Assign & restart...** (a confirmation names the bots whose running
+skipped), **Assign & restart** (a confirmation names the bots whose running
 script it stops; the Starts are paced like Start all), **Log in N** / **Log out N**,
-**Walk N to…** (opens the
+**Walk N marked bots** (opens the
 WalkTo picker in group mode; each marked bot walks to the chosen tile from
 its own position, and bots that are logged out, have no position or run a
 script are skipped with that reason) and **Apply focused bot's settings to
-marked…** (the same command as the TUI palette: the focused bot's parameters
+marked** (the same command as the TUI palette: the focused bot's parameters
 for the selected card go to the marked same-card bots only, with a
 confirmation that names the skipped marked bots and counts the unmarked ones).
 Checkboxes under the buttons toggle the status columns: world and login
@@ -506,8 +519,12 @@ config. While Danger routing is Always, the per-walk checkbox is superseded.
 On a legacy grid pack the toggle cannot enable zone checks, and the
 report says `zones: unavailable (legacy grid pack)`.
 The map selection is a destination (tile/POI, plane, nav identity), not a bot.
-**Send** chooses **Focused bot** (default) or **Group** — a checklist of
-wall bots with **All eligible / None**. Ineligible bots stay listed,
+**Send** opens a window, on screen and sized to its list (it scrolls only
+when the list is taller than the screen), that chooses **Focused bot**
+(default) or **Group** — a checklist of wall bots with **All eligible /
+None**. The checks are the shared marked-bots set (the rail, Grid and Fleet
+marks), so a mark made anywhere updates the **Walk N bots** count at once.
+Ineligible bots stay listed,
 greyed, with a host reason (not logged in, no position yet, running a
 script). Group confirm reads **Walk N bots**; each eligible bot gets its
 own command and a Start-all-style summary. A refusal names the dangerous
