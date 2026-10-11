@@ -1878,7 +1878,7 @@ fn stop_slot_interrupts_login_backoff() {
     let waiter = thread::spawn(move || {
         waiting_tx.send(()).unwrap();
         done_tx
-            .send(arm.wait_for_retry(Duration::from_secs(60), &mut no_frames()))
+            .send(arm.wait_for_retry(Duration::from_secs(60), None, &mut no_frames()))
             .unwrap();
     });
     play.handles.insert("bob".into(), waiter);
@@ -1904,7 +1904,7 @@ fn retry_notification_serializes_with_waiter_park() {
 
     let waiting_arm = Arc::clone(&arm);
     let waiter = thread::spawn(move || {
-        waiting_arm.wait_for_retry(Duration::from_millis(40), &mut no_frames())
+        waiting_arm.wait_for_retry(Duration::from_millis(40), None, &mut no_frames())
     });
     waiter_entered.recv().unwrap();
 
@@ -1948,8 +1948,9 @@ fn generic_wake_does_not_shorten_login_backoff() {
     let arm = SlotArm::new(9, true);
     play.attach_arm("bob", Arc::clone(&arm));
     let started = Instant::now();
-    let waiter =
-        thread::spawn(move || arm.wait_for_retry(Duration::from_millis(120), &mut no_frames()));
+    let waiter = thread::spawn(move || {
+        arm.wait_for_retry(Duration::from_millis(120), None, &mut no_frames())
+    });
     thread::sleep(Duration::from_millis(20));
     play.wake("bob");
 
@@ -2399,6 +2400,36 @@ fn client_after_server_logout() -> Client {
     client.psize = 0;
     client.handle_packet(client::io::ServerProt289::LOGOUT, &mut packet);
     client
+}
+
+#[test]
+fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
+    let arm = SlotArm::new(7, true);
+    let mut client = client_after_server_logout();
+    let before = Instant::now();
+    tick_flags(&mut client, &[], &arm);
+    let after = Instant::now();
+    let until = arm
+        .clean_release_admission_at("127.0.0.1", 43594, after)
+        .expect("the actual server Logout supplies local release evidence");
+    assert!(until >= before + host::login_queue::LOGIN_START_SPACING);
+    assert!(until <= after + host::login_queue::LOGIN_START_SPACING);
+    assert!(!arm.reconnect.load(Ordering::Relaxed));
+
+    for transport in [false, true] {
+        let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
+        if transport {
+            client.lost_con();
+        } else {
+            client.ptype = 74;
+            client.psize = 0;
+            client.handle_packet(74, &mut Packet::new(vec![]));
+        }
+        tick_flags(&mut client, &[], &arm);
+        assert!(arm
+            .clean_release_admission_at("127.0.0.1", 43594, Instant::now())
+            .is_none());
+    }
 }
 
 #[test]

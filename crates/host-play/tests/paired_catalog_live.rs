@@ -2281,7 +2281,16 @@ mod tests {
             relog_admission(true, false, 0, false),
             RelogAdmission::WaitLogin
         );
-        assert_eq!(relog_admission(true, true, 2, true), RelogAdmission::Ready);
+        assert_eq!(
+            relog_admission(true, true, 1, true),
+            RelogAdmission::WaitLogin,
+            "scene 1 after a logout is not Start-ready"
+        );
+        assert_eq!(
+            relog_admission(true, true, 2, false),
+            RelogAdmission::WaitLogin,
+            "scene 2 without the post-relog inventory tab is not Start-ready"
+        );
         assert_ne!(relog_admission(false, true, 2, true), RelogAdmission::Ready);
     }
 

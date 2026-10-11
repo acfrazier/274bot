@@ -44,7 +44,7 @@ pub enum Permit {
 pub enum AdmitBlocker {
     /// Another bot's login handshake has not returned yet.
     Handshake,
-    /// The minimum gap between two login starts.
+    /// The minimum gap after a prior login start or this owner's release wait.
     Spacing { until: Instant },
     /// The address's recent login attempts reached the server's limit; the
     /// next attempt waits for the server's idle period after the latest one.
@@ -151,6 +151,7 @@ pub struct LoginQueue {
 struct QueueEntry {
     owner: u64,
     uid: i32,
+    not_before: Option<Instant>,
 }
 
 /// One granted login, owned by its slot owner until it returns.
@@ -227,11 +228,23 @@ impl LoginQueue {
         if self.queue.iter().any(|entry| entry.owner == owner) {
             return;
         }
-        let entry = QueueEntry { owner, uid };
+        let entry = QueueEntry {
+            owner,
+            uid,
+            not_before: None,
+        };
         if self.preferred == Some(owner) {
             self.queue.push_front(entry);
         } else {
             self.queue.push_back(entry);
+        }
+    }
+
+    /// Pace an already queued owner without reserving a handshake or charging
+    /// an attempt. This preserves its FIFO place and all shared admission holds.
+    pub fn defer_owner_until(&mut self, owner: u64, until: Instant) {
+        if let Some(entry) = self.queue.iter_mut().find(|entry| entry.owner == owner) {
+            entry.not_before = Some(entry.not_before.map_or(until, |old| old.max(until)));
         }
     }
 
@@ -243,7 +256,7 @@ impl LoginQueue {
             return Permit::Wait(QUEUE_POLL);
         }
         debug_assert_eq!(self.queue.front().map(|entry| entry.uid), Some(uid));
-        match self.blocker(uid, now) {
+        match self.head_blocker(owner, now) {
             Some(blocker) => Permit::Wait(
                 blocker
                     .until()
@@ -271,7 +284,11 @@ impl LoginQueue {
     /// blocker) and for a head the next poll would grant.
     pub fn head_blocker(&self, owner: u64, now: Instant) -> Option<AdmitBlocker> {
         let head = self.queue.front().filter(|entry| entry.owner == owner)?;
-        self.blocker(head.uid, now)
+        self.blocker(head.uid, now).or_else(|| {
+            head.not_before
+                .filter(|until| *until > now)
+                .map(|until| AdmitBlocker::Spacing { until })
+        })
     }
 
     /// Drop one slot owner's place. Other owners with the same device UID
@@ -605,6 +622,37 @@ impl LoginBackoff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_owner_keeps_fifo_without_reserving_or_charging_attempts() {
+        let now = Instant::now();
+        let mut queue = LoginQueue::default();
+        queue.enqueue_owner(1, 7);
+        queue.enqueue_owner(2, 8);
+        queue.defer_owner_until(1, now + Duration::from_secs(5));
+        queue.defer_owner_until(1, now + Duration::from_secs(1));
+        assert_eq!(
+            queue.poll_owner(1, 7, now),
+            Permit::Wait(Duration::from_secs(5))
+        );
+        assert_eq!(queue.ip_count, 0);
+        assert!(queue.flights.is_empty());
+        assert!(queue.by_uid.is_empty());
+        assert_eq!(queue.status_owner(2).unwrap().position, 2);
+        queue.hold_for(now, Duration::from_secs(20));
+        assert_eq!(
+            queue.poll_owner(1, 7, now),
+            Permit::Wait(Duration::from_secs(20))
+        );
+        queue.leave_owner(1);
+        queue.enqueue_owner(1, 7);
+        assert_eq!(queue.status_owner(1).unwrap().position, 2);
+        let later = now + Duration::from_secs(20);
+        assert_eq!(queue.poll_owner(2, 8, later), Permit::Grant);
+        assert!(queue.abandon_permit(2));
+        assert_eq!(queue.poll_owner(1, 7, later), Permit::Grant);
+        assert_eq!(queue.ip_count, 1);
+    }
 
     const TEST_OWNER_NAMESPACE: u64 = 1 << 63;
     const TICK: Duration = Duration::from_millis(600);
