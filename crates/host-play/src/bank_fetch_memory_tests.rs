@@ -149,7 +149,6 @@ fn a_closed_bank_with_a_session_memory_plans_the_walk_to_session() {
                 id: KNIFE,
                 count: 1
             },
-            BankStep::Close,
             BankStep::Wear { id: KNIFE },
         ])
     );

@@ -962,10 +962,10 @@ fn loadout_at_an_open_bank_issues_no_select_walk_or_open() {
 }
 
 /// A legal tier that is held but not worn still needs its `Wear`. The
-/// missing carry requires an ordinary bank trip; its normal Close occurs
-/// before the already-held helm is worn.
+/// missing carry requires an ordinary bank trip; the Wear is sent without
+/// a separate Close, so the engine closes the bank as it equips the helm.
 #[test]
-fn held_legal_tier_is_worn_only_after_the_carry_trip_closes_the_bank() {
+fn held_legal_tier_is_worn_after_carry_trip_without_a_separate_close() {
     with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
         let lobster = data.item_by_alias("lobster").unwrap();
@@ -989,6 +989,10 @@ fn held_legal_tier_is_worn_only_after_the_carry_trip_closes_the_bank() {
         let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
         assert_eq!(withdrawn, [lobster.id], "only the carry row is withdrawn");
         assert_eq!(end.unwrap().as_deref(), Some("Adamant full helm"));
+        assert!(
+            snapshot.bank_component_id() >= 0,
+            "the held-tier Wear is sent before any separate bank Close"
+        );
     });
 }
 
@@ -1024,10 +1028,10 @@ fn fully_held_loadout_wears_with_open_bank() {
     });
 }
 
-/// An exclusive loadout strips the extra worn item after its bank trip has
-/// closed the bank.
+/// An exclusive loadout removes extra worn items after the bank trip. It
+/// sends Unequip with the bank open; 289 closes it on that interaction.
 #[test]
-fn exclusive_strip_follows_the_trip_and_its_close() {
+fn exclusive_strip_follows_the_trip_without_a_separate_close() {
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     let args = serde_json::json!({"exclusive": true});
     with_path_loadout_args(vec![], loadout, args, |plan, _, data| {
@@ -1053,6 +1057,10 @@ fn exclusive_strip_follows_the_trip_and_its_close() {
         let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
         assert_eq!(withdrawn, [helm.id]);
         assert_eq!(end.unwrap().as_deref(), Some("Rune full helm"));
+        assert!(
+            snapshot.bank_component_id() >= 0,
+            "the extra-item removal and Wear need no separate bank Close"
+        );
         assert!(
             snapshot.equipment().is_empty()
                 && snapshot

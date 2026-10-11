@@ -1264,8 +1264,8 @@ impl StepRun for LoadoutRun {
                 }
             }
         }
-        // Exclusive stripping follows the trip so the withdrawn tiers and
-        // the removed extras share one closed-bank inventory pass.
+        // Exclusive stripping follows the trip without a separate Close. On
+        // 289, Unequip/Strip is accepted while open and closes the bank itself.
         if self.exclusive {
             let snapshot = cx.tick.cx.snapshot();
             let Some(equipment) = snapshot.equipment() else {

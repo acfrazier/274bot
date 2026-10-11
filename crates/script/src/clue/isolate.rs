@@ -1775,9 +1775,8 @@ struct BankApproach {
     /// The booth open stays latched through unchanged closed-bank evidence.
     /// After success and an observed close, restore may start another claim cycle.
     open_issued: bool,
-    /// The interface was observed open on this bank cycle: the strip exit or
-    /// restore wear pass owes it a close before its own verb, so nothing is
-    /// worn back on behind an open bank.
+    /// The interface was observed open on this bank cycle: a strip closes it
+    /// after deposits, and a restore Wear can close it on the same interaction.
     opened: bool,
 }
 

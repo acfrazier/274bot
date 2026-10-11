@@ -8096,8 +8096,8 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
     assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
     assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
     assert_no_completion(&claimed);
-    // The claim landed in the pack: the open interface closes first, and
-    // only then does the wear pass put the name back on.
+    // The claim landed in the pack while the bank remains open. Wear restores
+    // it directly; 289 closes the bank as it equips on the same interaction.
     let claimed_open = json!({
         "here": here(2810, 3350, 0),
         "ground": json!([]),
@@ -8108,24 +8108,12 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
         "nearest_booth": booth_page(),
         "bank_open": true,
     });
-    let closed = call(&data, token, json!([]), claimed_open);
-    assert_eq!(closed["kind"], "close", "{closed}");
-    let claimed_closed = json!({
-        "here": here(2810, 3350, 0),
-        "ground": json!([]),
-        "inv": json!([inv(HELM, "Rune full helm", 1)]),
-        "inv_size": 28,
-        "main_modal_id": -1,
-        "equipment": json!([]),
-        "nearest_booth": booth_page(),
-        "bank_open": false,
-    });
-    let wear_back = call(&data, token, json!([]), claimed_closed);
+    let wear_back = call(&data, token, json!([]), claimed_open);
     assert_eq!(wear_back["kind"], "wear", "{wear_back}");
     assert_eq!(wear_back["name"], "Rune full helm", "{wear_back}");
     assert_no_completion(&wear_back);
-    // The first name is back on; the remaining claim starts a fresh bank
-    // cycle after the successful open and its interface close.
+    // Wear closed the bank on the same packet; the next missing name starts
+    // a fresh bank cycle.
     let helm_back = json!({
         "here": here(2810, 3350, 0),
         "ground": json!([]),
@@ -8168,18 +8156,8 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
         "equipment": json!([worn(HELM, "Rune full helm", 0)]),
         "bank_open": true,
     });
-    let closed_again = call(&data, token, json!([]), plate_claimed);
-    assert_eq!(closed_again["kind"], "close", "{closed_again}");
-    let plate_claimed_closed = json!({
-        "here": here(2810, 3350, 0),
-        "ground": json!([]),
-        "inv": json!([inv(1181, "Rune platebody", 1)]),
-        "inv_size": 28,
-        "main_modal_id": -1,
-        "equipment": json!([worn(HELM, "Rune full helm", 0)]),
-        "bank_open": false,
-    });
-    let wear_plate = call(&data, token, json!([]), plate_claimed_closed);
+    // The second claimed name likewise goes straight to Wear with the bank open.
+    let wear_plate = call(&data, token, json!([]), plate_claimed);
     assert_eq!(wear_plate["kind"], "wear", "{wear_plate}");
     assert_eq!(wear_plate["name"], "Rune platebody", "{wear_plate}");
     let all_back = json!({

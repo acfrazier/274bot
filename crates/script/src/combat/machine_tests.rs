@@ -102,12 +102,7 @@ impl DrainedBatch {
         for offset in 0..self.len {
             assert_eq!(self.request_ids[offset], first + offset as u64);
             assert_eq!(self.batch_ids[offset], batch);
-            if matches!(
-                self.get(offset),
-                Some(HostEffect::Interaction(InteractReq::Close))
-            ) {
-                assert_eq!(batch, 0, "bank Close is a standalone control interaction");
-            } else if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
+            if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
                 assert_ne!(
                     batch, 0,
                     "combat plan interactions use emit_batch, including one-row plans"
