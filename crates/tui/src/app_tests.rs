@@ -36,13 +36,12 @@ fn member(name: &str, phase: Phase) -> FleetRow {
 
 /// The selected slot's projected detail while it is in game on `tile`.
 fn ready_detail(name: &str, tile: (i32, i32, i32)) -> SlotDetail {
-    SlotDetail {
-        row: member(name, Phase::Ready),
-        state: "ingame scene 2".into(),
-        tile,
-        ready_tile: Some(tile),
-        ..SlotDetail::default()
-    }
+    let mut detail = SlotDetail::default();
+    detail.row = member(name, Phase::Ready);
+    detail.state = "ingame scene 2".into();
+    detail.tile = tile;
+    detail.ready_tile = Some(tile);
+    detail
 }
 
 fn bone_burier_card() -> BrowseCard {
@@ -333,6 +332,56 @@ fn boot_draws_the_fleet_without_map_demand() {
         MapCatalogueStatus::Inactive,
         "draw must not demand a catalogue"
     );
+}
+
+/// A parked Quester (a queue wait) shows its script phase and park reason on
+/// the status card at both common sizes; a slot with no script shows neither.
+#[test]
+fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
+    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.show_screen(Screen::Overview);
+    let mut detail = crate::test_support::ready_detail("alice");
+    detail.row.script = RunState::Running;
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "action_state",
+                label: "Action",
+                value: StatusValue::Text(Arc::from("blocked")),
+            },
+            StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text(Arc::from("queue position 5 of 9")),
+            },
+        ]),
+        failure: None,
+    };
+    app.detail = Some(detail.with_native_status(Some(Arc::new(status))));
+    for (width, height) in [(120, 40), (80, 24)] {
+        let all = text(&draw(&mut app, width, height));
+        assert!(all.contains("script: blocked"), "{width}x{height}: {all}");
+        assert!(all.contains("phase: blocked"), "{width}x{height}: {all}");
+        assert!(
+            all.contains("reason: queue position 5 of 9"),
+            "{width}x{height}: {all}"
+        );
+    }
+    app.detail = Some(crate::test_support::ready_detail("alice"));
+    let all = text(&draw(&mut app, 120, 40));
+    assert!(!all.contains("script:"), "no script, no script row: {all}");
+    assert!(!all.contains("reason:"), "no script, no reason row: {all}");
 }
 
 /// Map activation is explicit; loaded collision/POIs then render in cells.
