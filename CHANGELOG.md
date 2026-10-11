@@ -10,6 +10,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - The current rs2b0t Duel Arena script loads again: the duel API offers the
   challenge-area check that newer catalogs use.
 
+- Start explains a missing named export from a catalog script's compat rs2b0t
+  API module, naming the export and frozen API commit. A missing assigned card
+  is refused with the scanned catalog root, and failed catalog registration
+  leaves a later `$RS2B0T` fill available.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
