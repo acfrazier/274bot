@@ -1144,12 +1144,17 @@ pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&st
 
 /// The park reason: the terminal failure, or while parked the script's own
 /// `block_reason`. A queue wait parks without a failure, so it needs the field.
+///
+/// A status can carry several `block_reason` fields. The queue copies a reason
+/// from whichever quest it picked, earlier quests included, and the runner
+/// appends the current quest's own park line after those, so the last one is
+/// this park's reason. The first one can belong to an earlier quest.
 fn park_reason(status: &script::native::ScriptStatus) -> Option<&str> {
     if let Some(failure) = status.failure.as_ref() {
         return Some(failure.message.as_ref());
     }
     if parked(status) {
-        return text_field(status, "block_reason");
+        return last_text_field(status, "block_reason");
     }
     None
 }
@@ -1163,12 +1168,30 @@ fn parked(status: &script::native::ScriptStatus) -> bool {
 
 /// The non-empty text of a status field, borrowed from the status.
 fn text_field<'a>(status: &'a script::native::ScriptStatus, key: &str) -> Option<&'a str> {
-    status.fields.iter().find_map(|field| match &field.value {
+    status
+        .fields
+        .iter()
+        .find_map(|field| field_text(field, key))
+}
+
+/// The last non-empty text of a status field. The runner appends the current
+/// park's own reason after any reason the queue copied from another quest.
+fn last_text_field<'a>(status: &'a script::native::ScriptStatus, key: &str) -> Option<&'a str> {
+    status
+        .fields
+        .iter()
+        .rev()
+        .find_map(|field| field_text(field, key))
+}
+
+/// The text of one status field, when it has the key and is non-empty.
+fn field_text<'a>(field: &'a script::native::StatusField, key: &str) -> Option<&'a str> {
+    match &field.value {
         script::native::StatusValue::Text(text) if field.key == key && !text.is_empty() => {
             Some(text.as_ref())
         }
         _ => None,
-    })
+    }
 }
 
 /// The short text rows both front ends show under the status line, as

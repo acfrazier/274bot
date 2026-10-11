@@ -822,26 +822,26 @@ fn status_card_shows_the_script_phase_and_park_reason() {
         value: StatusValue::Text(Arc::from(value)),
     };
 
-    let mut queued = SlotDetail::default();
-    queued.row.script = RunState::Running;
-    let queued = queued.with_native_status(Some(Arc::new(status(
+    let mut in_quest = SlotDetail::default();
+    in_quest.row.script = RunState::Running;
+    let in_quest = in_quest.with_native_status(Some(Arc::new(status(
         NativePhase::Working,
         vec![
             action("blocked"),
             StatusField {
                 key: "block_reason",
-                label: "Queue block reason",
-                value: StatusValue::Text(Arc::from("queue position 5 of 9")),
+                label: "Blocked",
+                value: StatusValue::Text(Arc::from("no step for stage")),
             },
         ],
         None,
     ))));
-    let phase = queued
+    let phase = in_quest
         .script_phase()
         .expect("a parked script shows its phase");
     assert_eq!(phase.label(), "blocked");
     assert_eq!(phase.phase(), Some("blocked"));
-    assert_eq!(phase.reason(), Some("queue position 5 of 9"));
+    assert_eq!(phase.reason(), Some("no step for stage"));
 
     let mut refused = SlotDetail::default();
     refused.row.script = RunState::Idle;
@@ -863,6 +863,56 @@ fn status_card_shows_the_script_phase_and_park_reason() {
     );
 
     assert_eq!(SlotDetail::default().script_phase(), None);
+}
+
+/// The partner timeout that ends a Quester's second quest in the queue.
+const SECOND_QUEST_PARK: &str =
+    "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts";
+
+/// Two quests run from one queue. The first parked on `no step for stage`;
+/// the queue then moved on, and the second quest parked on a partner timeout.
+/// The queue copies the first quest's reason into `block_reason` ahead of the
+/// second quest's own park line, so the card must show the second reason.
+#[test]
+fn status_card_shows_the_current_park_reason_not_an_earlier_quests() {
+    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+    use std::sync::Arc;
+
+    let field = |key: &'static str, label: &'static str, value: &'static str| StatusField {
+        key,
+        label,
+        value: StatusValue::Text(Arc::from(value)),
+    };
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            field("action_state", "Action", "blocked"),
+            field("block_reason", "Queue block reason", "no step for stage"),
+            field("block_reason", "Blocked", SECOND_QUEST_PARK),
+        ]),
+        failure: None,
+    };
+    let mut detail = SlotDetail::default();
+    detail.row.script = RunState::Running;
+    let detail = detail.with_native_status(Some(Arc::new(status)));
+    let phase = detail
+        .script_phase()
+        .expect("a parked script shows its phase");
+    assert_eq!(phase.label(), "blocked");
+    assert_eq!(phase.reason(), Some(SECOND_QUEST_PARK));
+    assert_eq!(
+        script_status_reason(detail.native_status().expect("status is retained")),
+        Some(SECOND_QUEST_PARK),
+        "the Script section reads the same park reason"
+    );
 }
 
 #[test]

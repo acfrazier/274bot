@@ -47,8 +47,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ### Panel
 
 - The Status card shows what the selected bot's script is doing and why it
-  waits: its phase, and the reason when the script is parked (for example a
-  Quester waiting in a queue). A bot that runs no script shows nothing extra.
+  waits: its phase, and the reason when the script is parked. A Quester that
+  finds no step for its stage parks and shows `no step for stage`. A bot that
+  runs no script shows no script rows; a script refusal still showing after
+  its run stopped keeps its rows.
 
 ### TUI
 

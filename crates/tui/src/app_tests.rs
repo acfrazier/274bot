@@ -334,7 +334,7 @@ fn boot_draws_the_fleet_without_map_demand() {
     );
 }
 
-/// A parked Quester (a queue wait) shows its script phase and park reason on
+/// A parked Quester (an in-quest hold) shows its script phase and park reason on
 /// the status card at both common sizes; a slot with no script shows neither.
 #[test]
 fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
@@ -362,8 +362,8 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
             },
             StatusField {
                 key: "block_reason",
-                label: "Queue block reason",
-                value: StatusValue::Text(Arc::from("queue position 5 of 9")),
+                label: "Blocked",
+                value: StatusValue::Text(Arc::from("no step for stage")),
             },
         ]),
         failure: None,
@@ -374,7 +374,7 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
         assert!(all.contains("script: blocked"), "{width}x{height}: {all}");
         assert!(all.contains("phase: blocked"), "{width}x{height}: {all}");
         assert!(
-            all.contains("reason: queue position 5 of 9"),
+            all.contains("reason: no step for stage"),
             "{width}x{height}: {all}"
         );
     }
