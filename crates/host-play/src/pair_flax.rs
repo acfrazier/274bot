@@ -527,7 +527,7 @@ impl FlaxSlotRecord {
         }
         let session_ok =
             observation.trade_session_generation == self.baseline.trade_session_generation;
-        if !session_ok || !observation.ingame || observation.scene_state != 2 {
+        if !session_ok || !observation.ingame {
             self.session_mismatch = true;
         }
         let continuity_ok =

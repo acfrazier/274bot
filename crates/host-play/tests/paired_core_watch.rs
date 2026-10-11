@@ -2537,6 +2537,31 @@ fn flax_live_fd1_fd3_gaps_link_first_delivery_to_bank_and_return() {
 }
 
 #[test]
+fn flax_scene_loading_between_exchanges_is_not_a_session_change() {
+    let trace = FlaxReplayTrace::fd2();
+    let watch = flax_replay_started_watch();
+    flax_replay_first_exchange(&watch, trace);
+    let mut loading = flax_replay_observation(
+        FlaxRole::Runner,
+        trace.first.runner_close_tick + 1,
+        0,
+        0,
+        0,
+        FLAX_MEET,
+        4,
+        2,
+    );
+    loading.scene_state = 1;
+    watch.observe_flax("runner", loading, false);
+    assert_eq!(
+        watch.evidence()["witness"]["runner"]["session_mismatch"],
+        false
+    );
+    flax_replay_finish_cycle(&watch, trace);
+    assert_flax_full_cycle_receipt(&watch, "same-session scene rebuild");
+}
+
+#[test]
 fn flax_live_prompt_replay_uses_original_deadline_and_cached_receipt() {
     let trace = FlaxReplayTrace::fd2();
     let setup_started = Instant::now();
