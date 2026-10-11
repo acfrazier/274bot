@@ -2,6 +2,7 @@
 //! Both slots stay visible. Ordinary panel-play leaves pair_core off.
 
 fn main() {
+    script::bootstrap_v8_platform();
     let mut args = match panel::parse_args(std::env::args().skip(1), None) {
         Ok(args) => args,
         Err((code, message)) => {
