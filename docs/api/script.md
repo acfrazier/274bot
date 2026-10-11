@@ -426,8 +426,9 @@ step without an unnecessary withdrawal.
 The wait shows `Waiting for inventory/equipment observation`. It has a
 30-second active-time limit. Missing observations at that limit park the step
 with a `needs-evidence` reason, rather than waiting indefinitely.
-A loadout trip closes an open bank before it sends any equipment request; a
-carry-only loadout leaves the bank open for the next bank run to reuse.
+A loadout trip does not close an open bank before its equipment request; the
+Wear interaction closes the bank itself. A carry-only loadout leaves the bank
+open for the next bank run to reuse.
 
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do

@@ -56,7 +56,8 @@ pub struct StepProgress {
 }
 
 /// The snapshot facts a BankBudget send latched, so the next pump does
-/// not re-send until the bank session or the step's own target changes.
+/// not re-send until the step's target changes. Wear ignores bank identity
+/// because the bank close is part of its own interaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BankFetchFlight {
     pub(crate) bank_gen: u64,
@@ -71,8 +72,11 @@ pub(crate) struct BankFetchFlight {
 pub(crate) enum FlightTarget {
     /// Open / Close: the bank session alone.
     Bank,
-    /// Withdraw / Withdraw-X / Wear: the obj's backpack total and whether it is worn.
+    /// Withdraw / Withdraw-X: the obj's backpack total and whether it is worn.
     Obj { id: i32, carried: i32, worn: bool },
+    /// Wear: the inventory rows targeted by `Interactions::wear` and worn
+    /// state, independent of the bank session it closes.
+    Wear { id: i32, carried: i32, worn: bool },
 }
 
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget

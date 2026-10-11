@@ -15432,6 +15432,127 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
     assert_eq!(front(&bot), None, "the worn knife lands the Wear");
 }
 
+/// The bank-side row can disappear before the inv-tab row, even as a sent
+/// Wear closes the bank. Keep its flight tied to the inv-tab outcome so that
+/// this transient bank view cannot cause a duplicate Wear.
+#[test]
+fn bank_fetch_wear_ignores_its_own_bank_close_until_equipped() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let set_rows = |c: &mut Client, com: usize, obj: Vec<i32>, n: Vec<i32>| {
+        c.set_iface_mut(
+            com,
+            IfTypeMut {
+                link_obj_type: Some(obj),
+                link_obj_number: Some(n),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    };
+
+    let mut c = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs[2].iop[1] = Some("Wield".into());
+    }
+    // The item is still in the backpack after the bank closes. While open,
+    // the bank-side root exposes that same backpack to Wear.
+    set_rows(&mut c, 500, vec![3, 0], vec![1, 0]);
+    set_rows(&mut c, 701, vec![3, 0], vec![1, 0]);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let open_generation = snap.bank_session_generation();
+    assert!(snap.bank_component_id() >= 0, "the bank is open");
+
+    let route = dummy_fetch_route();
+    let wear = BankStep::Wear { id: 2 };
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([wear.clone()]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: Arc::new(route),
+            avoid: Vec::new(),
+            progress: Default::default(),
+        }),
+        ..Default::default()
+    };
+    let here = Some((0, 4, 0));
+    let before_wear = c.out.pos;
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    let after_wear = c.out.pos;
+    assert!(after_wear > before_wear, "the open-bank Wear is sent");
+
+    // Model the 289 Wear OPHELD's bank-side row clearing before IF_CLOSE.
+    // Its inventory target remains carried until equipment is observed.
+    set_rows(&mut c, 701, vec![0, 0], vec![0, 0]);
+    snap.rebuild(&c);
+    assert!(
+        snap.bank_component_id() >= 0,
+        "the bank-side row clears before the modal closes"
+    );
+    assert!(
+        snap.bank_side().iter().all(|item| item.def.id != 2),
+        "the bank-side mirror no longer shows the carried item"
+    );
+    assert!(
+        snap.inventory().iter().any(|item| item.def.id == 2),
+        "the Wear target still shows the item"
+    );
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(
+        c.out.pos, after_wear,
+        "a bank-side rebuild must not send a second Wear"
+    );
+
+    dispatch_289(&mut c, ServerProt::IF_CLOSE, Vec::new());
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() < 0, "the Wear closed the bank");
+    assert!(
+        snap.bank_session_generation() > open_generation,
+        "the close is a new bank-session observation"
+    );
+    assert!(
+        snap.inventory().iter().any(|item| item.def.id == 2),
+        "the item is still carried before the equipment observation"
+    );
+
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(
+        c.out.pos, after_wear,
+        "the bank-close transition must not send a second Wear"
+    );
+    assert_eq!(
+        bot.bank_fetch
+            .as_ref()
+            .and_then(|pending| pending.steps.front().cloned()),
+        Some(wear),
+        "Wear remains pending until its own outcome is observed"
+    );
+
+    // Only the actual equipment/inventory outcome lands the Wear.
+    set_rows(&mut c, 500, vec![0, 0], vec![0, 0]);
+    c.side_icon[4] = 710;
+    c.set_iface(
+        710,
+        IfType {
+            id: 710,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
+    );
+    set_rows(&mut c, 710, vec![3], vec![1]);
+    snap.rebuild(&c);
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert!(
+        bot.bank_fetch.is_none(),
+        "the observed equipment result lands the Wear"
+    );
+    assert_eq!(c.out.pos, after_wear, "the Wear was sent exactly once");
+}
+
 /// A sent Withdraw stays in flight until its own obj moves: another
 /// backpack row changing before the withdrawal's update arrives is not an
 /// acknowledgement, so neither the script pump nor the panel/TUI pump
