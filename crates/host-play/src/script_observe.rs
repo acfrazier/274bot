@@ -918,6 +918,9 @@ pub(crate) fn script_observe_cached_with_channels(
             };
             let now = Instant::now();
             journal_wall_now = Some(now);
+            if tick_edge {
+                slot.note_game_packet_tick(now);
+            }
             if frozen {
                 if slot.watchdog().recovering_anchor().is_some() {
                     if hold {
@@ -985,6 +988,22 @@ pub(crate) fn script_observe_cached_with_channels(
                         Level::Warn,
                         slot = name,
                         "watchdog hung loop (10s)"
+                    );
+                }
+                script::WatchdogAction::WarnNoGamePackets => {
+                    host_log!(
+                        Category::Echo,
+                        Level::Warn,
+                        slot = name,
+                        "watchdog no game packets for 10 s"
+                    );
+                }
+                script::WatchdogAction::HoldInFightPen => {
+                    host_log!(
+                        Category::Echo,
+                        Level::Warn,
+                        slot = name,
+                        "watchdog holding in Duel Arena fight pen; recovery anchor is unreachable"
                     );
                 }
                 other => apply_watchdog_nav_action(
