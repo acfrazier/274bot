@@ -269,6 +269,7 @@ impl Family for DeathRecovery {
                         z: anchor.z,
                         level: anchor.level,
                         radius: self.radius,
+                        compat_tile_intent: true,
                         allow_teleports: false,
                         allow_wilderness: true,
                         allow_bank_fetch: true,
@@ -422,6 +423,7 @@ mod tests {
                         [InteractReq::WalkNear {
                             x: 3235,
                             z: 3295,
+                            compat_tile_intent: true,
                             radius: 3,
                             ..
                         }]

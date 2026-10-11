@@ -135,6 +135,8 @@ pub(crate) struct NavBot {
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
+    /// The current route came from a compat tile-destination walk.
+    pub(crate) route_compat_tile_intent: bool,
     /// Explicit loc identity; tile walks never infer it from scene contents.
     pub(crate) route_loc_id: Option<i32>,
     /// Settlement mode for the current armed route and its live refreshes.
@@ -565,6 +567,7 @@ impl ScriptWalkArm {
             opts: options,
             admission,
             state: self.state,
+            compat_tile_intent: false,
             bank_origin: self.bank.origin,
             bank: self.bank.rows,
             live_candidates,
@@ -774,6 +777,7 @@ impl ScriptWalkArm {
             request.loc_id,
             request.arrival,
             Some(admission),
+            false,
         );
         if queued {
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
@@ -798,6 +802,7 @@ impl ScriptWalkArm {
         authority: Option<script::native::HostAuthority>,
         loc_id: Option<i32>,
         arrival: ArrivalKind,
+        compat_tile_intent: bool,
     ) -> bool {
         self.queue_route_impl(
             to.x,
@@ -814,6 +819,7 @@ impl ScriptWalkArm {
             loc_id,
             arrival,
             None,
+            compat_tile_intent,
         )
     }
 
@@ -913,6 +919,7 @@ impl ScriptWalkArm {
             None,
             ArrivalKind::Reach,
             None,
+            false,
         )
     }
 
@@ -952,6 +959,7 @@ impl ScriptWalkArm {
             None,
             ArrivalKind::Reach,
             None,
+            false,
         )
     }
 
@@ -982,6 +990,7 @@ impl ScriptWalkArm {
             None,
             ArrivalKind::Reach,
             None,
+            false,
         )
     }
 
@@ -996,6 +1005,7 @@ impl ScriptWalkArm {
         opts: FindOptions,
         radius: i32,
         request_id: u64,
+        compat_tile_intent: bool,
         exclusions: ScriptRouteExclusions,
     ) -> bool {
         self.queue_route_impl(
@@ -1013,6 +1023,7 @@ impl ScriptWalkArm {
             None,
             ArrivalKind::Reach,
             None,
+            compat_tile_intent,
         )
     }
 
@@ -1046,6 +1057,7 @@ impl ScriptWalkArm {
             loc_id,
             ArrivalKind::Reach,
             None,
+            false,
         )
         .then_some(receiver)
     }
@@ -1063,6 +1075,7 @@ impl ScriptWalkArm {
         native: Option<&script::native::HostAuthority>,
         loc_id: Option<i32>,
         arrival: ArrivalKind,
+        compat_tile_intent: bool,
     ) -> Option<bool> {
         if native.is_some() && bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             // The owner cancelled or replaced its previous walk: that follow
@@ -1099,6 +1112,7 @@ impl ScriptWalkArm {
             && bot.requested_exclusions.as_deref() == exclusions.as_deref()
             && bot.route_loc_id == loc_id
             && bot.route_arrival == arrival
+            && bot.route_compat_tile_intent == compat_tile_intent
             && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
@@ -1144,6 +1158,7 @@ impl ScriptWalkArm {
         loc_id: Option<i32>,
         arrival: ArrivalKind,
         request_admission: Option<crate::admission::Admission>,
+        compat_tile_intent: bool,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -1278,6 +1293,7 @@ impl ScriptWalkArm {
                 authority.as_ref(),
                 loc_id,
                 arrival,
+                compat_tile_intent,
             ) {
                 return result;
             }
@@ -1329,6 +1345,7 @@ impl ScriptWalkArm {
                 authority.as_ref(),
                 loc_id,
                 arrival,
+                compat_tile_intent,
             ) {
                 return result;
             }
@@ -1403,6 +1420,7 @@ impl ScriptWalkArm {
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
             bot.native_walk_failure = None;
+            bot.route_compat_tile_intent = compat_tile_intent;
             bot.pending_route = Some(Box::new(ScriptRouteRequest {
                 generation: bot.route_generation,
                 request_id,
@@ -1415,6 +1433,7 @@ impl ScriptWalkArm {
                 opts,
                 admission,
                 state,
+                compat_tile_intent,
                 bank_origin: self.bank.origin,
                 bank: self.bank.rows.clone(),
                 live_candidates,
@@ -1954,6 +1973,9 @@ pub(crate) struct ScriptRouteRequest {
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
+    /// A compat tile walk prefers its requested walkable tile, then falls back
+    /// to the ordinary in-radius endpoints if that route is unavailable.
+    pub(crate) compat_tile_intent: bool,
     pub(crate) completion: RouteCompletion,
 }
 
@@ -1968,13 +1990,26 @@ impl ScriptRouteRequest {
         } else if let Some(stands) = self.live_candidates.as_ref() {
             stands.clone()
         } else {
-            approach_tiles(
+            let mut targets = approach_tiles(
                 &self.world,
                 self.from,
                 self.to,
                 self.radius,
                 self.loc_id.is_some() || self.arrival == ArrivalKind::Area,
-            )
+            );
+            if self.compat_tile_intent
+                && self.loc_id.is_none()
+                && self.arrival != ArrivalKind::Area
+                && self.world.collision.walkable(self.to)
+                && self.world.collision.standable(self.to)
+            {
+                // Prefer the requested tile, but retain today's arrival-valid
+                // endpoints so routing constraints can fall back without
+                // reporting success outside the requested radius.
+                targets.retain(|target| *target != self.to);
+                targets.insert(0, self.to);
+            }
+            targets
         }
     }
 
@@ -2699,6 +2734,7 @@ impl NavBot {
         self.walk_outcome_z = 0;
         self.walk_outcome_level = 0;
         self.walk_outcome_radius = 0;
+        self.route_compat_tile_intent = false;
         self.walk_outcome_allow_teleports = false;
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
@@ -2975,6 +3011,7 @@ pub(super) fn preserve_recovery_walk_identity(
             radius,
             allow_teleports,
             allow_wilderness,
+            compat_tile_intent: bot.route_compat_tile_intent,
             allow_bank_fetch,
             request_id: bot.walk_request_id,
             avoid: Vec::new(),
@@ -3043,6 +3080,7 @@ pub(crate) fn hold_script_nav(
                     z: to.z,
                     level: to.level,
                     radius,
+                    compat_tile_intent: nav.route_compat_tile_intent,
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
@@ -3168,6 +3206,7 @@ mod diagnostic_tests {
             bank: Vec::new(),
             live_candidates: None,
             exclusions: None,
+            compat_tile_intent: false,
             completion: Default::default(),
         };
         let targets = request.targets();

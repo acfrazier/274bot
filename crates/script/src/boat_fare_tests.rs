@@ -235,8 +235,17 @@ fn until(world: &mut World, what: &str, want: impl Fn(&InteractReq) -> bool) -> 
 
 fn walk_near(to: WorldTile, radius: i32) -> impl Fn(&InteractReq) -> bool {
     move |op| {
-        matches!(op, InteractReq::WalkNear { x, z, level, radius: r, .. }
-            if *x == to.x && *z == to.z && *level == to.level && *r == radius)
+        matches!(
+            op,
+            InteractReq::WalkNear {
+                x,
+                z,
+                level,
+                radius: r,
+                compat_tile_intent: true,
+                ..
+            } if *x == to.x && *z == to.z && *level == to.level && *r == radius
+        )
     }
 }
 

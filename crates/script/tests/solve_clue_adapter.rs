@@ -344,6 +344,7 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         z,
         level,
         radius: 1,
+        compat_tile_intent: false,
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,

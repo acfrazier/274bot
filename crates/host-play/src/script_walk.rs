@@ -38,6 +38,7 @@ struct LiveRouteRefresh {
     exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
     authority: Option<script::native::HostAuthority>,
     quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    compat_tile_intent: bool,
 }
 
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
@@ -1016,6 +1017,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 exclusions: bot.requested_exclusions.clone(),
                 authority: bot.native_walk.clone(),
                 quest_evidence: bot.route_quest_evidence.clone(),
+                compat_tile_intent: bot.route_compat_tile_intent,
             };
             // Keep the live owner and request correlation; only the old
             // endpoint and its Traveller run are replaced by the worker.
@@ -1047,6 +1049,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             refresh.authority,
             refresh.loc_id,
             refresh.arrival,
+            refresh.compat_tile_intent,
         );
     }
     let defer_estimated_end = estimated_endpoint;

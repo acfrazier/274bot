@@ -4703,6 +4703,7 @@ fn park_walk_isolate(
             z: dz,
             level: 0,
             radius: dr,
+            compat_tile_intent: true,
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -4732,6 +4733,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             z: dz0,
             level: 0,
             radius: dr0,
+            compat_tile_intent: true,
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -4744,6 +4746,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             level: 0,
             radius: dr1,
             allow_teleports: false,
+            compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: second,
@@ -5212,6 +5215,7 @@ fn same_key_pending_route_refuses_distinct_id() {
                 bank_origin: Origin::Unknown,
                 bank: Vec::new(),
                 live_candidates: None,
+                compat_tile_intent: false,
                 completion: Default::default(),
                 exclusions: None,
             })),
@@ -5758,6 +5762,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
             avoid,
@@ -5850,6 +5855,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
@@ -5905,6 +5911,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
@@ -5965,6 +5972,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: true,
         completion: Default::default(),
         exclusions: None,
     };
@@ -5979,6 +5987,161 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
             <= 1
     );
     assert!(request.world.collision.standable(route.dest));
+}
+
+#[test]
+fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreachable() {
+    let target = WorldTile {
+        x: 3,
+        z: 3,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 0,
+        z: 3,
+        level: 0,
+    };
+    let make_request = |avoid| ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
+        loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
+        generation: 0,
+        request_id: 0,
+        world: Arc::new(open_world(7, 7)),
+        from,
+        to: target,
+        radius: 2,
+        opts: FindOptions::default(),
+        state: None,
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
+        live_candidates: None,
+        compat_tile_intent: true,
+        completion: Default::default(),
+        exclusions: Some(Arc::new(ScriptRouteExclusions {
+            avoid,
+            ..Default::default()
+        })),
+    };
+    let avoid_anchor = nav::router::AvoidRect {
+        min_x: target.x,
+        max_x: target.x,
+        min_z: target.z,
+        max_z: target.z,
+        level: Some(target.level),
+    };
+    let request = make_request(vec![avoid_anchor]);
+    let candidates = approach_tiles(&request.world, from, target, 2, false);
+    assert!(request.world.collision.walkable(target));
+    let (outcome, targets) = request.calculate();
+    assert_eq!(targets.first(), Some(&target));
+    assert_eq!(
+        targets
+            .iter()
+            .filter(|candidate| **candidate == target)
+            .count(),
+        1,
+        "the preferred tile is not duplicated in the fallback list"
+    );
+    let RouteOutcome::Routed(route) = outcome else {
+        panic!("the excluded center has reachable in-radius fallback endpoints");
+    };
+    assert_ne!(
+        route.dest, target,
+        "the avoided center is not a route endpoint"
+    );
+    assert!(
+        candidates.contains(&route.dest),
+        "fallback endpoint must pass the ordinary arrival-candidate filter: {:?}",
+        route.dest
+    );
+    assert!(
+        (route.dest.x - target.x)
+            .abs()
+            .max((route.dest.z - target.z).abs())
+            <= 2,
+        "fallback endpoint remains within the requested radius: {:?}",
+        route.dest
+    );
+
+    let unreachable = make_request(vec![nav::router::AvoidRect {
+        min_x: target.x - 2,
+        max_x: target.x + 2,
+        min_z: target.z - 2,
+        max_z: target.z + 2,
+        level: Some(target.level),
+    }]);
+    assert!(
+        matches!(unreachable.calculate().0, RouteOutcome::NoPath),
+        "when all arrival endpoints are excluded the request still fails"
+    );
+}
+
+#[test]
+fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
+    let target = WorldTile {
+        x: 3,
+        z: 3,
+        level: 0,
+    };
+    let mut world = open_world(7, 7);
+    world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
+    let world = Arc::new(world);
+    let from = WorldTile {
+        x: 0,
+        z: 3,
+        level: 0,
+    };
+    let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
+        loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
+        generation: 0,
+        request_id: 0,
+        world: Arc::clone(&world),
+        from,
+        to: target,
+        radius: 2,
+        opts: FindOptions::default(),
+        state: None,
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
+        live_candidates: None,
+        compat_tile_intent: true,
+        completion: Default::default(),
+        exclusions: None,
+    };
+    let candidates = approach_tiles(&world, from, target, 2, false);
+    let (outcome, targets) = request.calculate();
+    assert!(
+        !targets.contains(&target),
+        "a blocked center is not a route goal"
+    );
+    let RouteOutcome::Routed(route) = outcome else {
+        panic!("a reachable in-radius neighbor should be used");
+    };
+    assert_ne!(route.dest, target);
+    assert!(
+        candidates.contains(&route.dest),
+        "blocked-center fallback uses today's arrival-valid endpoints: {:?}",
+        route.dest
+    );
+    assert!(
+        (route.dest.x - target.x)
+            .abs()
+            .max((route.dest.z - target.z).abs())
+            <= 2
+    );
 }
 
 #[test]
@@ -6017,6 +6180,7 @@ fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
             state: None,
             bank: vec![],
             live_candidates: None,
+            compat_tile_intent: false,
             completion: Default::default(),
             exclusions: None,
         }
@@ -6075,6 +6239,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
@@ -6138,6 +6303,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
@@ -6199,6 +6365,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
+        compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
@@ -13602,6 +13769,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             z: dest.z,
             level: dest.level,
             radius: 1,
+            compat_tile_intent: false,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -21133,6 +21301,24 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     rig.frames(1);
     let armed = rig.armed();
     let initial_walks = rig.walks();
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_compat_tile_intent
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.as_ref().is_some_and(|route| {
+                        route.dest
+                            == WorldTile {
+                                x: 40,
+                                z: 40,
+                                level: 0,
+                            }
+                    })
+            })
+        }),
+        "the original compatibility route ends at its requested center"
+    );
     let outcome_seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     rig.boundary(true);
     // The slot pump passes ingame && !session_boundary to the takeover seam.
@@ -21151,7 +21337,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
-        assert!(bot.carried_walk.is_some());
+        assert!(bot.carried_walk.is_some(), "the route is carried");
         assert_eq!(bot.user_move_intent_seq, 1);
         assert_eq!(bot.walk_outcome_seq, outcome_seq);
         assert_eq!(bot.manual_takeover_watermark, 0);
@@ -21177,9 +21363,92 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         vec![initial_walks[0], initial_walks[0]],
         "the carry is restored exactly once"
     );
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_compat_tile_intent
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.as_ref().is_some_and(|route| {
+                        route.dest
+                            == WorldTile {
+                                x: 40,
+                                z: 40,
+                                level: 0,
+                            }
+                    })
+            })
+        }),
+        "the re-armed compatibility route still ends at its requested center"
+    );
     assert_eq!(
         rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
         outcome_seq
+    );
+
+    rig.here = (4, 4, 0);
+    let (request_id, to, radius, options, exclusions, route_generation) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, zones) = bot
+            .requested_route
+            .expect("the carried route remains requested");
+        assert!(bot.route_compat_tile_intent);
+        (
+            bot.walk_request_id,
+            to,
+            radius,
+            FindOptions {
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
+                zones,
+                ..FindOptions::default()
+            },
+            bot.requested_exclusions
+                .as_deref()
+                .cloned()
+                .unwrap_or_default(),
+            bot.route_generation,
+        )
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.traveller.clear();
+        bot.route = None;
+    }
+    let arm = crate::script_runtime::ScriptWalkArm {
+        here: Some(rig.here),
+        world: rig.world.clone(),
+        navs: Arc::clone(&rig.navs),
+        name: "alice".to_owned(),
+        state: None,
+        bank: BankRows::default(),
+    };
+    assert!(arm.refresh_route_in_snapshot(
+        &rig.snap,
+        to,
+        radius,
+        options,
+        request_id,
+        exclusions,
+        None,
+        None,
+        nav::arrival::ArrivalKind::Reach,
+        true,
+    ));
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_generation != route_generation
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route_compat_tile_intent
+                    && bot.route.as_ref().is_some_and(|route| route.dest == to)
+            })
+        }),
+        "live route refresh preserves the compatibility tile endpoint"
     );
     rig.here = (40, 40, 0);
     rig.frames(5);
@@ -21256,11 +21525,13 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     let (request_id, requested) = rig.armed();
     let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _zones) =
         requested.expect("the carry re-armed the walk");
+    let compat_tile_intent = rig.navs.lock().unwrap()["alice"].route_compat_tile_intent;
     rig.dispatch(vec![script::shim::InteractReq::WalkNear {
         x: to.x,
         z: to.z,
         level: to.level,
         radius,
+        compat_tile_intent,
         allow_teleports,
         allow_wilderness,
         allow_bank_fetch,
@@ -24164,6 +24435,126 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
 }
 
 #[test]
+fn compat_walk_resilient_routes_opposite_actors_to_the_requested_center() {
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let world = Arc::new(open_world(20, 20));
+    assert!(world.collision.walkable(target));
+    let world = Some(world);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+
+    let route_from = |name: &str, here: WorldTile| {
+        assert!(
+            (here.x - target.x).abs().max((here.z - target.z).abs()) > 2,
+            "each actor starts outside radius 2"
+        );
+        let source = format!(
+            r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__ok = await Traversal.walkResilient(
+            {{ x: {}, z: {}, level: {} }},
+            {{ radius: 2, timeoutMs: 300000 }},
+        );
+    }}
+}}
+"#,
+            target.x, target.z, target.level
+        );
+        let iso =
+            script::LoadIsolate::spawn(source, script::LoadShape::CompatClass, vec![]).unwrap();
+        let here_tuple = (here.x, here.z, here.level);
+        iso.post_snapshot(encode_walk_snapshot(
+            1,
+            here_tuple,
+            PostedWalkOutcome::default(),
+        ));
+        iso.on_game_tick(1);
+        assert!(iso.probe("__started").unwrap().as_bool().unwrap());
+        let emitted = iso.drain_interacts();
+        let batch = script::isolate_fb::encode_interact_batch(&emitted);
+        let requests = script::isolate_fb::decode_interact_batch(&batch).expect("walk batch");
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [script::shim::InteractReq::WalkNear {
+                    x: 10,
+                    z: 10,
+                    level: 0,
+                    radius: 2,
+                    compat_tile_intent: true,
+                    ..
+                }]
+            ),
+            "{name} emitted {requests:?}"
+        );
+
+        let mut client = nav_client();
+        let mut snapshot = GameSnapshot::new();
+        nav_snapshot_at(&mut client, &mut snapshot, here.x, here.z);
+        assert!(dispatch_script_interact(
+            &mut client,
+            &snapshot,
+            None,
+            Some(here_tuple),
+            &navs,
+            &world,
+            None,
+            name,
+            requests,
+        ));
+        assert!(
+            wait_until(500, || navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(|bot| bot.route.is_some())),
+            "{name}'s route worker settled"
+        );
+        let endpoint = navs.lock().unwrap()[name]
+            .route
+            .as_ref()
+            .expect("routed walk")
+            .dest;
+
+        iso.post_snapshot(encode_walk_snapshot(
+            2,
+            (target.x, target.z, target.level),
+            PostedWalkOutcome::default(),
+        ));
+        iso.on_game_tick(2);
+        assert!(iso.probe("__ok").unwrap().as_bool().unwrap());
+        iso.join();
+        endpoint
+    };
+
+    let left = route_from(
+        "left",
+        WorldTile {
+            x: 6,
+            z: 10,
+            level: 0,
+        },
+    );
+    let right = route_from(
+        "right",
+        WorldTile {
+            x: 14,
+            z: 10,
+            level: 0,
+        },
+    );
+    assert_eq!(left, target, "left actor's final route aim is the center");
+    assert_eq!(right, target, "right actor's final route aim is the center");
+}
+
+#[test]
 fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() {
     use script::native::walk::Walk;
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd};
@@ -25766,6 +26157,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
+        compat_tile_intent: false,
         completion: Default::default(),
     };
     let route = nav::router::find_with_avoid(

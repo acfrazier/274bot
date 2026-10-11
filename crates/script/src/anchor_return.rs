@@ -283,7 +283,15 @@ impl ReturnToAnchor {
             ));
             return self.advance(cx);
         }
-        match Walk::begin(self.anchor, self.arrive_radius, self.timeout_ms, false, cx) {
+        match Walk::begin_compat_avoiding(
+            self.anchor,
+            self.arrive_radius,
+            self.timeout_ms,
+            false,
+            Vec::new(),
+            Vec::new(),
+            cx,
+        ) {
             Ok(walk) => {
                 self.leg = Leg::WalkTo(walk);
                 false
@@ -330,6 +338,7 @@ mod tests {
             [InteractReq::WalkNear {
                 x: 10,
                 z: 0,
+                compat_tile_intent: true,
                 radius,
                 request_id,
                 ..
