@@ -27,8 +27,8 @@ use client::render::Renderer;
 use vault::{Profile, ProfileSettings};
 
 pub use capacity::{
-    bind_capacity, record_service, set_service_class, unbind_capacity, CapacityEval,
-    CapacityMonitor, CapacityWarning, RenderPolicyLabel, ServiceClass,
+    bind_capacity, set_service_class, unbind_capacity, CapacityEval, CapacityMonitor,
+    CapacityWarning, RenderPolicyLabel, ServiceClass,
 };
 pub use random::{
     detect, CooldownMap, DetectedRandom, Guardian, RandomClaim, RandomKind, RandomStatus,
@@ -296,15 +296,16 @@ impl Host {
         // so re-polling it would busy-spin; skip the socket until a tick
         // consumes bytes again.
         let mut socket_stalled = false;
+        capacity::begin_services(client.gens.player_info);
         loop {
             if probe(client) {
+                capacity::end_services();
                 return slot.run_policy;
             }
             if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
-                let delay = service_delay(slot.next_wake, start);
-                let tick_before = slot.tick_n;
+                let overshoot = wake_overshoot(slot.next_wake.take(), start);
                 let (new_busy, _) = Self::client_tick(
                     client,
                     &mut slot,
@@ -315,15 +316,17 @@ impl Host {
                     &mut observe,
                     Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
                 );
-                record_service(username, start, delay, slot.tick_n != tick_before);
+                capacity::record_service(start, overshoot, client.gens.player_info);
                 busy = new_busy;
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
-                // (slow picture, extra idle). If the tick overruns, skip sleep.
+                // (slow picture, extra idle). If the tick overruns, skip sleep:
+                // with no timed wake there is no overshoot to measure, so the
+                // slot's own slow work never reads as host lateness.
                 if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
                     thread::sleep(rest);
+                    slot.next_wake = Some(start + FRAME_MS);
                 }
-                slot.next_wake = Some(start + FRAME_MS);
                 continue;
             }
             // Idle: park until a packet, a control kick, or the bound, then
@@ -338,11 +341,11 @@ impl Host {
             } else {
                 IDLE_PARK_MS
             };
-            let wake_at = Instant::now() + timeout;
+            let parked = Instant::now();
+            let slept_over = wake_overshoot(slot.next_wake.take(), parked);
             let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
             let now = Instant::now();
-            let delay = now.saturating_duration_since(wake_at);
-            let tick_before = slot.tick_n;
+            let overshoot = slept_over + wake_overshoot(Some(parked + timeout), now);
             let (new_busy, _) = Self::client_tick(
                 client,
                 &mut slot,
@@ -353,9 +356,8 @@ impl Host {
                 &mut observe,
                 Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
             );
-            record_service(username, now, delay, slot.tick_n != tick_before);
+            capacity::record_service(now, overshoot, client.gens.player_info);
             busy = new_busy;
-            slot.next_wake = None;
             if stream_bytes(client) != before {
                 socket_stalled = false;
             } else if reason == ParkWake::Socket {
@@ -822,9 +824,13 @@ fn rearm_after_head_drop(client: &mut Client, draw_off_edge: bool, backend_flip:
     }
 }
 
-fn service_delay(wake: Option<Instant>, now: Instant) -> Duration {
-    wake.map(|deadline| now.saturating_duration_since(deadline))
-        .unwrap_or(Duration::ZERO)
+/// How far past a timed wait's deadline the thread resumed (zero when
+/// there was no timed wait). The capacity fallback where the OS has no
+/// per-thread run-queue clock.
+fn wake_overshoot(deadline: Option<Instant>, now: Instant) -> Duration {
+    deadline.map_or(Duration::ZERO, |deadline| {
+        now.saturating_duration_since(deadline)
+    })
 }
 
 /// Why a park returned.
@@ -1131,7 +1137,7 @@ struct SlotLoop {
     /// Game-tick edges (`PLAYER_INFO` this drain). Counted internally;
     /// printed in the 50-frame summary, not per tick.
     tick_n: u64,
-    /// Deadline of the next service (frame leftover or park timeout).
+    /// Deadline of the 20 ms frame sleep, set only when the frame slept.
     next_wake: Option<Instant>,
     log_n: u32,
     /// Totals at the last `BOT_DEBUG` window line (deltas, not cumulatives).

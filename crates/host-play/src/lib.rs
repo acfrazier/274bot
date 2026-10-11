@@ -300,12 +300,13 @@ pub struct Play {
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.
     wakes: HashMap<String, SlotWake>,
-    /// Shared host-capacity tracker: slot threads record wake lateness.
+    /// Host-capacity registry: each slot thread registers its own record
+    /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
 }
 
 impl Play {
-    /// Shared host-capacity tracker the operator session evaluates each poll.
+    /// Host-capacity registry the operator session evaluates at UI cadence.
     pub fn capacity(&self) -> &host::CapacityMonitor {
         &self.capacity
     }

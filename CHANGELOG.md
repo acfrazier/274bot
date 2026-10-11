@@ -46,11 +46,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### Host
 
-- When this machine can't keep the bots on time, the panel, the TUI and the
-  log warn that the host is falling behind: how many bots are late, the delay,
-  the tick rate, and whether every bot is rendering. It suggests running fewer
-  bots or turning off render-all, and it clears once the host keeps up. A quiet
-  game server is not reported as a slow host.
+- When this machine can't give the bots CPU time when they need it, the panel,
+  the TUI and the log warn that the host is falling behind: how many bots are
+  late, how long they were kept waiting, the game tick rate they kept up with,
+  and what is being rendered. It suggests running fewer bots (and turning off
+  render-all when it's on), and it clears after 30 s of the host keeping up.
+  On Linux it measures how long each bot waits for a free CPU; on macOS and
+  Windows, how late a bot wakes from its timed waits, which can miss shorter
+  stalls. A bot's own slow script doesn't count, nor do bots that are logging
+  in or paused, or whose script has heard nothing from the game server for
+  10 s.
 
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 

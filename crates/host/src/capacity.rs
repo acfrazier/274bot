@@ -1,19 +1,44 @@
-//! Host service-wake lateness: one bounded per-slot ring, no per-tick
-//! allocation. The slot loop records how late it ran past the park/frame
-//! deadline it already chose; this module decides when the fleet is behind.
+//! Host capacity: whether this machine gives the bots CPU time when they
+//! need it.
+//!
+//! Each slot thread owns one [`SlotCapacity`] (atomics only), registered
+//! once when the thread binds and unregistered when it unbinds. The frame
+//! path writes only that slot's atomics: no shared lock, no hash, no heap.
+//! The operator session calls [`CapacityMonitor::evaluate`] at UI cadence;
+//! that is the only place that walks every slot.
+//!
+//! A service's delay is **scheduling delay**: how long the slot thread
+//! was kept waiting for a CPU since its previous service, not how long
+//! its own work took.
+//! - Linux: the thread's run-queue wait (`/proc/thread-self/schedstat`,
+//!   field 2: nanoseconds runnable but not running), one `pread` per
+//!   service. The bot's own work, its sleeps and its blocking on other
+//!   threads (the script isolate, locks, the GPU) are not run-queue wait,
+//!   so a 2 s script tick on an idle machine adds nothing. A timer or
+//!   packet wake that waits for a busy CPU, and preemption in the middle of
+//!   a tick, add all of it, on the 20 ms frame path and the idle park alike.
+//! - Elsewhere (macOS, Windows, or a Linux kernel without schedstat): how
+//!   far past its chosen deadline a timed wait returned (the 20 ms frame
+//!   sleep or the park bound). Own work is excluded by construction (a
+//!   frame that overran its 20 ms does not sleep, so it has no deadline to
+//!   miss). Preemption inside a tick and a packet wake that is late but
+//!   still before the park bound are not seen there.
 
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
+
 /// Sliding window that counts late services.
 pub const WINDOW: Duration = Duration::from_secs(10);
-/// Warning stays up until this long of delays under [`CALM`].
+/// Warning stays up until this long without a delay of [`CALM`] or more.
 pub const CLEAR_AFTER: Duration = Duration::from_secs(30);
-/// A service this far past its chosen wake counts as late.
+/// A service delayed this long counts as late.
 pub const LATE: Duration = Duration::from_millis(600);
-/// Delays at or above this reset the calm timer.
+/// Delays at or above this keep the warning up (reset the calm timer).
 pub const CALM: Duration = Duration::from_millis(300);
 /// A bot needs this many late services in [`WINDOW`] to count.
 pub const MIN_LATE_SERVICES: u32 = 3;
@@ -22,49 +47,48 @@ pub const MIN_LATE_BOTS: usize = 3;
 /// Late bots as a percentage of active bots, with [`MIN_LATE_BOTS`] as floor.
 pub const LATE_BOT_PERCENT: usize = 10;
 
-const LATE_RING: usize = 8;
-const LAST_DELAY_BOTS: usize = 128;
+/// Delays of [`CALM`] or more each slot keeps. A bot can have at most about
+/// `WINDOW / CALM` of them in a window, and only [`MIN_LATE_SERVICES`] late
+/// ones decide whether it counts.
+const RING: usize = 16;
+/// Low bits of a packed sample: delay ms (or tick count).
+const LOW_BITS: u32 = 24;
+const LOW_MASK: u64 = (1 << LOW_BITS) - 1;
+/// Shown figures are rounded to this, so the warning changes only when the
+/// line would.
+const SHOWN_STEP_MS: u64 = 10;
 
-thread_local! {
-    static MONITOR: RefCell<Option<Arc<CapacityMonitor>>> = const { RefCell::new(None) };
-    static CLASS: Cell<ServiceClass> = const { Cell::new(ServiceClass::Active) };
-}
-
-/// Bind this slot thread to a play's capacity monitor.
-pub fn bind_capacity(monitor: Arc<CapacityMonitor>) {
-    MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
-}
-
-/// Drop the thread-local monitor (slot thread exit).
-pub fn unbind_capacity() {
-    MONITOR.with(|slot| *slot.borrow_mut() = None);
-}
-
-/// Class for the next [`record_service`] on this thread (observe sets it).
-pub fn set_service_class(class: ServiceClass) {
-    CLASS.with(|slot| slot.set(class));
-}
-
-/// Record one service on the bound monitor. No-op when none is bound.
-pub fn record_service(name: &str, now: Instant, delay: Duration, saw_tick: bool) {
-    MONITOR.with(|slot| {
-        if let Some(monitor) = slot.borrow().as_ref() {
-            monitor.record(name, now, delay, CLASS.with(|c| c.get()), saw_tick);
-        }
-    });
-}
+const WINDOW_MS: u64 = WINDOW.as_millis() as u64;
+const CLEAR_AFTER_MS: u64 = CLEAR_AFTER.as_millis() as u64;
+const LATE_MS: u64 = LATE.as_millis() as u64;
 
 /// Whether this bot counts toward the fleet threshold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ServiceClass {
-    /// In-game, not latched, not paused: counted.
-    Active,
-    /// Title-parked or login-latched: ignored.
-    Parked,
+    /// In game, not latched, not paused, hearing the server: counted.
+    Active = 0,
+    /// The script watchdog has seen no game packets for 10 s: the server
+    /// is quiet, which is not this host's load.
+    Quiet = 1,
+    /// Title, logging in, or login-latched: ignored.
+    Parked = 2,
     /// Operator-paused script: ignored.
-    Paused,
-    /// Frozen / stopping: ignored.
-    Suspended,
+    Paused = 3,
+    /// Frozen or stopping script: ignored.
+    Suspended = 4,
+}
+
+impl ServiceClass {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Active,
+            1 => Self::Quiet,
+            3 => Self::Paused,
+            4 => Self::Suspended,
+            _ => Self::Parked,
+        }
+    }
 }
 
 /// How the front end is drawing, for the warning line.
@@ -90,126 +114,412 @@ impl RenderPolicyLabel {
     }
 }
 
-/// Snapshot shown while the host is behind.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Snapshot shown while the host is behind. Figures are rounded to 10 ms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapacityWarning {
-    /// Active bots with at least [`MIN_LATE_SERVICES`] late wakes in [`WINDOW`].
-    pub late_bots: u16,
-    /// Active bots (parked / paused / suspended excluded).
-    pub active_bots: u16,
-    /// `max(3, 10% of active)`.
-    pub threshold: u16,
-    /// p95 of each active bot's latest service delay.
-    pub p95_delay: Duration,
-    /// Median milliseconds per observed game tick across active bots.
-    pub tick_ms: u32,
-    /// What the front end is rendering.
-    pub render: RenderPolicyLabel,
+    late_bots: u16,
+    active_bots: u16,
+    threshold: u16,
+    p95_delay: Option<Duration>,
+    tick_period: Option<Duration>,
+    render: RenderPolicyLabel,
 }
 
-/// Result of one evaluate: fire, hide for server silence, or clear.
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl CapacityWarning {
+    /// A warning snapshot; durations are rounded to 10 ms.
+    pub fn new(
+        late_bots: u16,
+        active_bots: u16,
+        threshold: u16,
+        p95_delay: Option<Duration>,
+        tick_period: Option<Duration>,
+        render: RenderPolicyLabel,
+    ) -> Self {
+        let round = |d: Duration| {
+            let ms = (d.as_millis() as u64 + SHOWN_STEP_MS / 2) / SHOWN_STEP_MS * SHOWN_STEP_MS;
+            Duration::from_millis(ms)
+        };
+        Self {
+            late_bots,
+            active_bots,
+            threshold,
+            p95_delay: p95_delay.map(round),
+            tick_period: tick_period.map(round),
+            render,
+        }
+    }
+
+    /// Active bots with at least [`MIN_LATE_SERVICES`] late services in
+    /// [`WINDOW`].
+    pub fn late_bots(&self) -> u16 {
+        self.late_bots
+    }
+
+    /// Active bots (parked, paused, suspended and quiet bots excluded).
+    pub fn active_bots(&self) -> u16 {
+        self.active_bots
+    }
+
+    /// `max(3, 10% of active)`, rounded up.
+    pub fn threshold(&self) -> u16 {
+        self.threshold
+    }
+
+    /// p95 of the delays of [`CALM`] or more in [`WINDOW`] across active
+    /// bots; `None` when there were none.
+    pub fn p95_delay(&self) -> Option<Duration> {
+        self.p95_delay
+    }
+
+    /// Median time per game tick the active bots processed, measured
+    /// between real `PLAYER_INFO` ticks over 10–20 s; `None` without ticks.
+    pub fn tick_period(&self) -> Option<Duration> {
+        self.tick_period
+    }
+
+    /// What the front end is rendering.
+    pub fn render(&self) -> RenderPolicyLabel {
+        self.render
+    }
+}
+
+/// Result of one evaluate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapacityEval {
     /// No warning.
     Clear,
-    /// Active bots, but no game packets in [`WINDOW`]: do not blame the host.
+    /// Every bot that would count hears no game packets: the server is
+    /// quiet, so the host is not blamed.
     Silence,
     /// Show the warning.
     Warn(CapacityWarning),
 }
 
-/// Process-wide (per Play) lateness tracker.
-pub struct CapacityMonitor {
-    inner: Mutex<Inner>,
+/// One slot's record, written only by its own slot thread.
+struct SlotCapacity {
+    class: AtomicU8,
+    /// `(at_ms + 1) << 24 | delay_ms`; 0 is empty.
+    samples: [AtomicU64; RING],
+    /// `(at_ms + 1) << 24 | ticks mod 2^24` at the newest game tick; 0 none.
+    tick: AtomicU64,
 }
 
-struct Inner {
-    slots: HashMap<String, SlotTrack>,
-    warning: Option<Instant>,
-}
-
-struct SlotTrack {
-    class: ServiceClass,
-    last_seen: Instant,
-    last_unrest: Option<Instant>,
-    last_packet: Option<Instant>,
-    last_delay_ms: u16,
-    lates: [Option<Instant>; LATE_RING],
-    late_i: u8,
-    late_n: u8,
-    packet_n: u16,
-    packet_origin: Instant,
-}
-
-impl SlotTrack {
-    fn new(now: Instant) -> Self {
+impl SlotCapacity {
+    fn new() -> Self {
         Self {
-            class: ServiceClass::Active,
-            last_seen: now,
-            last_unrest: None,
-            last_packet: None,
-            last_delay_ms: 0,
-            lates: [None; LATE_RING],
-            late_i: 0,
-            late_n: 0,
-            packet_n: 0,
-            packet_origin: now,
+            class: AtomicU8::new(ServiceClass::Parked as u8),
+            samples: std::array::from_fn(|_| AtomicU64::new(0)),
+            tick: AtomicU64::new(0),
         }
     }
 
-    fn observe(&mut self, now: Instant, delay: Duration, class: ServiceClass, saw_tick: bool) {
+    fn class(&self) -> ServiceClass {
+        ServiceClass::from_u8(self.class.load(Ordering::Relaxed))
+    }
+}
+
+fn pack(at_ms: u64, low: u64) -> u64 {
+    ((at_ms + 1) << LOW_BITS) | low.min(LOW_MASK)
+}
+
+fn unpack(packed: u64) -> Option<(u64, u64)> {
+    (packed != 0).then(|| ((packed >> LOW_BITS) - 1, packed & LOW_MASK))
+}
+
+/// Where a slot's scheduling delay comes from.
+enum WaitSource {
+    /// Cumulative run-queue wait of this thread.
+    #[cfg(target_os = "linux")]
+    RunQueue(RunQueueStat),
+    /// The slot loop's timed-wait overshoot.
+    Overshoot,
+    /// A test's cumulative run-queue wait.
+    #[cfg(test)]
+    Injected(std::rc::Rc<std::cell::Cell<Duration>>),
+}
+
+impl WaitSource {
+    /// Run-queue wait where the kernel keeps it; overshoot elsewhere. Call
+    /// on the slot thread (the Linux file is that thread's).
+    fn for_this_thread() -> Self {
+        #[cfg(target_os = "linux")]
+        if let Some(stat) = RunQueueStat::open() {
+            log_source_once("run-queue wait (Linux schedstat)");
+            return Self::RunQueue(stat);
+        }
+        log_source_once("timed-wake overshoot");
+        Self::Overshoot
+    }
+
+    /// Cumulative run-queue wait; `None` means use the overshoot.
+    fn waited(&self) -> Option<Duration> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::RunQueue(stat) => stat.waited(),
+            Self::Overshoot => None,
+            #[cfg(test)]
+            Self::Injected(total) => Some(total.get()),
+        }
+    }
+}
+
+fn log_source_once(source: &str) {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        host_log!(
+            Category::Lifecycle,
+            Level::Info,
+            "host capacity: measuring each bot's {source}"
+        );
+    });
+}
+
+/// This thread's `/proc/thread-self/schedstat`, kept open: one `pread`
+/// per read, no allocation.
+#[cfg(target_os = "linux")]
+struct RunQueueStat(std::fs::File);
+
+#[cfg(target_os = "linux")]
+impl RunQueueStat {
+    /// `None` when the file is missing or the kernel does not keep the
+    /// counters (older kernels then report `0 0 0`; a thread that is running
+    /// has been switched in at least once). The CPU-time field is no test:
+    /// it can still read 0 on a thread that has only just started.
+    fn open() -> Option<Self> {
+        let stat = Self(std::fs::File::open("/proc/thread-self/schedstat").ok()?);
+        let [_, _, slices] = stat.read()?;
+        (slices > 0).then_some(stat)
+    }
+
+    fn read(&self) -> Option<[u64; 3]> {
+        use std::os::unix::fs::FileExt;
+        let mut buf = [0u8; 80];
+        let n = self.0.read_at(&mut buf, 0).ok()?;
+        parse_schedstat(&buf[..n])
+    }
+
+    fn waited(&self) -> Option<Duration> {
+        self.read().map(|[_, wait, _]| Duration::from_nanos(wait))
+    }
+}
+
+/// `"<cpu ns> <run-queue wait ns> <timeslices>\n"`.
+#[cfg(any(target_os = "linux", test))]
+fn parse_schedstat(bytes: &[u8]) -> Option<[u64; 3]> {
+    let mut fields = bytes
+        .split(|b| b.is_ascii_whitespace())
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            field.iter().try_fold(0u64, |acc, &b| {
+                b.is_ascii_digit()
+                    .then_some(())
+                    .and_then(|()| acc.checked_mul(10)?.checked_add(u64::from(b - b'0')))
+            })
+        });
+    Some([fields.next()??, fields.next()??, fields.next()??])
+}
+
+/// The slot thread's writer: its own [`SlotCapacity`] plus the state only
+/// this thread reads. Dropping it unregisters the slot.
+struct SlotRecorder {
+    monitor: Arc<CapacityMonitor>,
+    slot: Arc<SlotCapacity>,
+    source: WaitSource,
+    class: ServiceClass,
+    /// The previous service was Active: the delay since then counts only
+    /// when that one and this one both were.
+    counted: bool,
+    /// Cumulative run-queue wait at the previous service.
+    waited: Option<Duration>,
+    cursor: usize,
+    ticks: u64,
+}
+
+impl SlotRecorder {
+    fn new(monitor: &Arc<CapacityMonitor>, source: WaitSource) -> Self {
+        Self {
+            monitor: Arc::clone(monitor),
+            slot: monitor.register(),
+            source,
+            class: ServiceClass::Parked,
+            counted: false,
+            waited: None,
+            cursor: 0,
+            ticks: 0,
+        }
+    }
+
+    /// Leaving Active drops the slot's samples, so delays from before a
+    /// pause, a park or a relog never count after it. Any change also skips
+    /// the next service: its delay accrued under the old class.
+    fn set_class(&mut self, class: ServiceClass) {
+        if class == self.class {
+            return;
+        }
+        if self.class == ServiceClass::Active {
+            for cell in &self.slot.samples {
+                cell.store(0, Ordering::Relaxed);
+            }
+        }
         self.class = class;
-        self.last_seen = now;
-        let delay_ms = millis_u16(delay);
-        self.last_delay_ms = delay_ms;
-        if delay >= CALM {
-            self.last_unrest = Some(now);
-        }
-        if delay >= LATE {
-            self.lates[self.late_i as usize] = Some(now);
-            self.late_i = (self.late_i + 1) % LATE_RING as u8;
-            if (self.late_n as usize) < LATE_RING {
-                self.late_n += 1;
+        self.counted = false;
+        self.slot.class.store(class as u8, Ordering::Relaxed);
+    }
+
+    /// The slot loop starts (after login): re-baseline, count nothing until
+    /// observe reports Active twice in a row.
+    fn begin(&mut self, ticks: u64) {
+        self.set_class(ServiceClass::Parked);
+        self.counted = false;
+        self.waited = self.source.waited();
+        self.ticks = ticks;
+    }
+
+    /// One service at `at`. `overshoot` is how far past its timed deadline
+    /// the loop resumed (used only without a run-queue clock); `ticks` is
+    /// the client's cumulative `PLAYER_INFO` count.
+    fn record(&mut self, at: Instant, overshoot: Duration, ticks: u64) {
+        let delay = match self.source.waited() {
+            Some(total) => {
+                let delay = self
+                    .waited
+                    .map_or(Duration::ZERO, |prev| total.saturating_sub(prev));
+                self.waited = Some(total);
+                delay
             }
+            None => overshoot,
+        };
+        let active = self.class == ServiceClass::Active;
+        if active && self.counted && delay >= CALM {
+            let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+            self.slot.samples[self.cursor]
+                .store(pack(self.monitor.ms(at), delay_ms), Ordering::Relaxed);
+            self.cursor = (self.cursor + 1) % RING;
         }
-        if saw_tick {
-            self.last_packet = Some(now);
-            if now.saturating_duration_since(self.packet_origin) >= WINDOW {
-                self.packet_n = 1;
-                self.packet_origin = now;
-            } else {
-                self.packet_n = self.packet_n.saturating_add(1);
-            }
+        self.counted = active;
+        if ticks != self.ticks {
+            self.ticks = ticks;
+            self.slot.tick.store(
+                pack(self.monitor.ms(at), ticks & LOW_MASK),
+                Ordering::Relaxed,
+            );
         }
     }
+}
 
-    fn late_in_window(&self, now: Instant) -> u32 {
-        self.lates
-            .iter()
-            .take(self.late_n as usize)
-            .flatten()
-            .filter(|at| now.saturating_duration_since(**at) <= WINDOW)
-            .count() as u32
+impl Drop for SlotRecorder {
+    fn drop(&mut self) {
+        self.monitor.unregister(&self.slot);
+    }
+}
+
+thread_local! {
+    static RECORDER: RefCell<Option<SlotRecorder>> = const { RefCell::new(None) };
+}
+
+fn with_recorder(f: impl FnOnce(&mut SlotRecorder)) {
+    RECORDER.with(|cell| {
+        if let Some(recorder) = cell.borrow_mut().as_mut() {
+            f(recorder);
+        }
+    });
+}
+
+/// Register this slot thread with a play's monitor (once, at thread start).
+pub fn bind_capacity(monitor: &Arc<CapacityMonitor>) {
+    let recorder = SlotRecorder::new(monitor, WaitSource::for_this_thread());
+    RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
+}
+
+/// Bind this thread with an injected run-queue clock (`Some`) or the
+/// overshoot fallback (`None`).
+#[cfg(test)]
+pub(crate) fn bind_capacity_for_test(
+    monitor: &Arc<CapacityMonitor>,
+    waited: Option<std::rc::Rc<std::cell::Cell<Duration>>>,
+) {
+    let source = waited.map_or(WaitSource::Overshoot, WaitSource::Injected);
+    let recorder = SlotRecorder::new(monitor, source);
+    RECORDER.with(|cell| *cell.borrow_mut() = Some(recorder));
+}
+
+/// Unregister this slot thread (thread exit).
+pub fn unbind_capacity() {
+    let recorder = RECORDER.with(|cell| cell.borrow_mut().take());
+    drop(recorder);
+}
+
+/// This thread's class from the latest observe.
+pub fn set_service_class(class: ServiceClass) {
+    with_recorder(|recorder| recorder.set_class(class));
+}
+
+pub(crate) fn begin_services(ticks: u64) {
+    with_recorder(|recorder| recorder.begin(ticks));
+}
+
+pub(crate) fn end_services() {
+    with_recorder(|recorder| recorder.set_class(ServiceClass::Parked));
+}
+
+pub(crate) fn record_service(at: Instant, overshoot: Duration, ticks: u64) {
+    with_recorder(|recorder| recorder.record(at, overshoot, ticks));
+}
+
+/// Per-play registry of slot records and the warning's hysteresis.
+pub struct CapacityMonitor {
+    epoch: Instant,
+    registry: Mutex<Registry>,
+}
+
+#[derive(Default)]
+struct Registry {
+    slots: Vec<Entry>,
+    warning: bool,
+    /// Newest delay of [`CALM`] or more seen from an active bot, ms.
+    last_unrest: Option<u64>,
+    /// Reused buffers: no allocation per evaluate once warm.
+    delays: Vec<u64>,
+    periods: Vec<u64>,
+}
+
+/// Evaluator-side state per slot: tick marks `WINDOW` apart, so the tick
+/// period spans 10–20 s of real ticks.
+struct Entry {
+    slot: Arc<SlotCapacity>,
+    base: u64,
+    mid: u64,
+}
+
+impl Entry {
+    fn reset_ticks(&mut self) {
+        self.base = 0;
+        self.mid = 0;
     }
 
-    fn counts(&self) -> bool {
-        self.class == ServiceClass::Active
-    }
-
-    fn packet_recent(&self, now: Instant) -> bool {
-        self.last_packet
-            .is_some_and(|at| now.saturating_duration_since(at) <= WINDOW)
-    }
-
-    fn tick_ms(&self, now: Instant) -> Option<u32> {
-        if self.packet_n == 0 {
+    /// ms per processed game tick, between real tick instants.
+    fn tick_period(&mut self, now_ms: u64) -> Option<u64> {
+        let tick = self.slot.tick.load(Ordering::Relaxed);
+        let Some((at, count)) = unpack(tick) else {
+            self.reset_ticks();
+            return None;
+        };
+        if now_ms.saturating_sub(at) > WINDOW_MS {
+            self.reset_ticks();
             return None;
         }
-        let elapsed = now.saturating_duration_since(self.packet_origin);
-        if elapsed.is_zero() {
+        let Some((mid_at, _)) = unpack(self.mid) else {
+            self.base = tick;
+            self.mid = tick;
             return None;
+        };
+        if at.saturating_sub(mid_at) >= WINDOW_MS {
+            self.base = self.mid;
+            self.mid = tick;
         }
-        Some((elapsed.as_millis() as u32) / u32::from(self.packet_n))
+        let (base_at, base_count) = unpack(self.base)?;
+        let ticks = count.wrapping_sub(base_count) & LOW_MASK;
+        (ticks > 0 && at > base_at).then(|| (at - base_at) / ticks)
     }
 }
 
@@ -220,431 +530,144 @@ impl Default for CapacityMonitor {
 }
 
 impl CapacityMonitor {
-    /// Empty tracker.
+    /// Empty registry.
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(Inner {
-                slots: HashMap::new(),
-                warning: None,
-            }),
+            epoch: Instant::now(),
+            registry: Mutex::new(Registry::default()),
         }
     }
 
-    /// One service. First call for a name allocates the slot row; later
-    /// calls are a mutex acquire and integer stores.
-    pub fn record(
-        &self,
-        name: &str,
-        now: Instant,
-        delay: Duration,
-        class: ServiceClass,
-        saw_tick: bool,
-    ) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(slot) = inner.slots.get_mut(name) {
-            slot.observe(now, delay, class, saw_tick);
-            return;
-        }
-        let mut slot = SlotTrack::new(now);
-        slot.observe(now, delay, class, saw_tick);
-        inner.slots.insert(name.to_owned(), slot);
+    fn ms(&self, at: Instant) -> u64 {
+        u64::try_from(at.saturating_duration_since(self.epoch).as_millis()).unwrap_or(u64::MAX)
     }
 
-    /// Slot thread exit: drop its ring.
-    pub fn remove(&self, name: &str) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .slots
-            .remove(name);
+    fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
+        self.registry.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Decide whether to show the warning. `render` is display-only.
-    pub fn evaluate(&self, now: Instant, render: RenderPolicyLabel) -> CapacityEval {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.slots.retain(|_, slot| {
-            now.saturating_duration_since(slot.last_seen) <= WINDOW + CLEAR_AFTER
+    fn register(&self) -> Arc<SlotCapacity> {
+        let slot = Arc::new(SlotCapacity::new());
+        self.lock().slots.push(Entry {
+            slot: Arc::clone(&slot),
+            base: 0,
+            mid: 0,
         });
+        slot
+    }
 
-        let mut active = 0usize;
-        let mut late_bots = 0usize;
-        let mut packets = 0usize;
-        let mut last_delays = [0u16; LAST_DELAY_BOTS];
-        let mut n_delays = 0usize;
-        let mut tick_ms = [0u32; LAST_DELAY_BOTS];
-        let mut n_ticks = 0usize;
-        let mut unrest: Option<Instant> = None;
+    fn unregister(&self, slot: &Arc<SlotCapacity>) {
+        self.lock()
+            .slots
+            .retain(|entry| !Arc::ptr_eq(&entry.slot, slot));
+    }
 
-        for slot in inner.slots.values() {
-            if !slot.counts() {
-                continue;
+    /// Slot threads currently registered.
+    pub fn registered(&self) -> usize {
+        self.lock().slots.len()
+    }
+
+    /// Every stored delay (ms) across registered slots, sorted.
+    #[cfg(test)]
+    pub(crate) fn recorded_delays(&self) -> Vec<u64> {
+        let mut delays: Vec<u64> = self
+            .lock()
+            .slots
+            .iter()
+            .flat_map(|entry| entry.slot.samples.iter())
+            .filter_map(|cell| unpack(cell.load(Ordering::Relaxed)).map(|(_, delay)| delay))
+            .collect();
+        delays.sort_unstable();
+        delays
+    }
+
+    /// Decide whether to show the warning. Call at UI cadence; `render` is
+    /// display-only.
+    pub fn evaluate(&self, now: Instant, render: RenderPolicyLabel) -> CapacityEval {
+        let now_ms = self.ms(now);
+        let mut guard = self.lock();
+        let Registry {
+            slots,
+            warning,
+            last_unrest,
+            delays,
+            periods,
+        } = &mut *guard;
+        delays.clear();
+        periods.clear();
+        let (mut active, mut quiet, mut late_bots) = (0usize, 0usize, 0usize);
+        for entry in slots.iter_mut() {
+            match entry.slot.class() {
+                ServiceClass::Active => {}
+                ServiceClass::Quiet => {
+                    quiet += 1;
+                    entry.reset_ticks();
+                    continue;
+                }
+                _ => {
+                    entry.reset_ticks();
+                    continue;
+                }
             }
             active += 1;
-            if slot.late_in_window(now) >= MIN_LATE_SERVICES {
+            let mut lates = 0u32;
+            for cell in &entry.slot.samples {
+                let Some((at, delay_ms)) = unpack(cell.load(Ordering::Relaxed)) else {
+                    continue;
+                };
+                if last_unrest.is_none_or(|newest| at > newest) {
+                    *last_unrest = Some(at);
+                }
+                if now_ms.saturating_sub(at) > WINDOW_MS {
+                    continue;
+                }
+                delays.push(delay_ms);
+                if delay_ms >= LATE_MS {
+                    lates += 1;
+                }
+            }
+            if lates >= MIN_LATE_SERVICES {
                 late_bots += 1;
             }
-            if slot.packet_recent(now) {
-                packets += 1;
-            }
-            if n_delays < LAST_DELAY_BOTS {
-                last_delays[n_delays] = slot.last_delay_ms;
-                n_delays += 1;
-            }
-            if let Some(ms) = slot.tick_ms(now) {
-                if n_ticks < LAST_DELAY_BOTS {
-                    tick_ms[n_ticks] = ms;
-                    n_ticks += 1;
-                }
-            }
-            match (unrest, slot.last_unrest) {
-                (None, Some(u)) => unrest = Some(u),
-                (Some(a), Some(b)) if b > a => unrest = Some(b),
-                _ => {}
+            if let Some(period) = entry.tick_period(now_ms) {
+                periods.push(period);
             }
         }
-
-        if active > 0 && packets == 0 {
-            return CapacityEval::Silence;
+        if active == 0 {
+            *warning = false;
+            return if quiet > 0 {
+                CapacityEval::Silence
+            } else {
+                CapacityEval::Clear
+            };
         }
-
         let threshold = MIN_LATE_BOTS.max(active.div_ceil(LATE_BOT_PERCENT));
-        let fire = active > 0 && late_bots >= threshold;
-        let warning = match inner.warning {
-            None if fire => {
-                inner.warning = Some(now);
-                true
-            }
-            Some(_) if fire => true,
-            Some(_) => {
-                let calm = unrest
-                    .map(|at| now.saturating_duration_since(at) >= CLEAR_AFTER)
-                    .unwrap_or(true);
-                if calm {
-                    inner.warning = None;
-                    false
-                } else {
-                    true
-                }
-            }
-            None => false,
-        };
-        if !warning {
+        let calm = last_unrest.is_none_or(|at| now_ms.saturating_sub(at) >= CLEAR_AFTER_MS);
+        *warning = late_bots >= threshold || (*warning && !calm);
+        if !*warning {
             return CapacityEval::Clear;
         }
-
-        last_delays[..n_delays].sort_unstable();
-        let p95_ms = if n_delays == 0 {
-            0
-        } else {
-            last_delays[(n_delays - 1) * 95 / 100]
-        };
-        tick_ms[..n_ticks].sort_unstable();
-        let tick = if n_ticks == 0 {
-            600
-        } else {
-            tick_ms[n_ticks / 2]
-        };
-        CapacityEval::Warn(CapacityWarning {
-            late_bots: u16::try_from(late_bots).unwrap_or(u16::MAX),
-            active_bots: u16::try_from(active).unwrap_or(u16::MAX),
-            threshold: u16::try_from(threshold).unwrap_or(u16::MAX),
-            p95_delay: Duration::from_millis(u64::from(p95_ms)),
-            tick_ms: tick,
+        let p95 = (!delays.is_empty()).then(|| {
+            delays.sort_unstable();
+            // Nearest rank: the smallest delay at or above 95% of them.
+            delays[(delays.len() * 95).div_ceil(100) - 1]
+        });
+        let tick = (!periods.is_empty()).then(|| {
+            periods.sort_unstable();
+            periods[periods.len() / 2]
+        });
+        let count = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
+        CapacityEval::Warn(CapacityWarning::new(
+            count(late_bots),
+            count(active),
+            count(threshold),
+            p95.map(Duration::from_millis),
+            tick.map(Duration::from_millis),
             render,
-        })
+        ))
     }
-}
-
-fn millis_u16(delay: Duration) -> u16 {
-    u16::try_from(delay.as_millis().min(u128::from(u16::MAX))).unwrap_or(u16::MAX)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rec(
-        mon: &CapacityMonitor,
-        name: &str,
-        at: Instant,
-        delay_ms: u64,
-        class: ServiceClass,
-        tick: bool,
-    ) {
-        mon.record(name, at, Duration::from_millis(delay_ms), class, tick);
-    }
-
-    fn late_n(
-        mon: &CapacityMonitor,
-        name: &str,
-        t0: Instant,
-        n: u32,
-        class: ServiceClass,
-        tick: bool,
-    ) {
-        for i in 0..n {
-            rec(
-                mon,
-                name,
-                t0 + Duration::from_millis(u64::from(i) * 200),
-                700,
-                class,
-                tick,
-            );
-        }
-    }
-
-    fn eval(mon: &CapacityMonitor, at: Instant) -> CapacityEval {
-        mon.evaluate(at, RenderPolicyLabel::OnlySelected)
-    }
-
-    fn is_warn(eval: CapacityEval) -> bool {
-        matches!(eval, CapacityEval::Warn(_))
-    }
-
-    #[test]
-    fn three_bots_trip_the_floor_two_do_not() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        late_n(&mon, "a", t0, 3, ServiceClass::Active, true);
-        late_n(&mon, "b", t0, 3, ServiceClass::Active, true);
-        let t = t0 + Duration::from_millis(600);
-        assert!(
-            !is_warn(eval(&mon, t)),
-            "2 late bots is below the floor of 3"
-        );
-        late_n(&mon, "c", t0, 3, ServiceClass::Active, true);
-        assert!(is_warn(eval(&mon, t)), "3 late bots meet the floor");
-    }
-
-    #[test]
-    fn ten_percent_beats_the_floor_on_a_large_fleet() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for i in 0..40 {
-            rec(&mon, &format!("ok{i}"), t0, 50, ServiceClass::Active, true);
-        }
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, true);
-        }
-        let t = t0 + Duration::from_millis(600);
-        assert!(
-            !is_warn(eval(&mon, t)),
-            "3 of 43 is below 10% (threshold 5)"
-        );
-        late_n(&mon, "d", t0, 3, ServiceClass::Active, true);
-        late_n(&mon, "e", t0, 3, ServiceClass::Active, true);
-        assert!(is_warn(eval(&mon, t)), "5 of 45 meets 10%");
-    }
-
-    #[test]
-    fn two_delays_do_not_count_a_bot_three_do() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 2, ServiceClass::Active, true);
-        }
-        let t = t0 + Duration::from_millis(500);
-        assert!(
-            !is_warn(eval(&mon, t)),
-            "2 delays of 700 ms are below the 3-delay bar"
-        );
-        for name in ["a", "b", "c"] {
-            rec(
-                &mon,
-                name,
-                t0 + Duration::from_millis(400),
-                700,
-                ServiceClass::Active,
-                true,
-            );
-        }
-        assert!(is_warn(eval(&mon, t0 + Duration::from_millis(500))));
-    }
-
-    #[test]
-    fn parked_paused_and_suspended_bots_are_excluded() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        late_n(&mon, "parked", t0, 3, ServiceClass::Parked, true);
-        late_n(&mon, "paused", t0, 3, ServiceClass::Paused, true);
-        late_n(&mon, "held", t0, 3, ServiceClass::Suspended, true);
-        late_n(&mon, "a", t0, 3, ServiceClass::Active, true);
-        late_n(&mon, "b", t0, 3, ServiceClass::Active, true);
-        let t = t0 + Duration::from_millis(600);
-        assert!(
-            !is_warn(eval(&mon, t)),
-            "only 2 active late bots; the others must not count"
-        );
-        late_n(&mon, "c", t0, 3, ServiceClass::Active, true);
-        assert!(is_warn(eval(&mon, t)));
-    }
-
-    #[test]
-    fn parked_bots_are_not_in_the_active_denominator() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for i in 0..30 {
-            rec(
-                &mon,
-                &format!("live{i}"),
-                t0,
-                40,
-                ServiceClass::Active,
-                true,
-            );
-        }
-        for i in 0..10 {
-            late_n(&mon, &format!("park{i}"), t0, 3, ServiceClass::Parked, true);
-        }
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, true);
-        }
-        let t = t0 + Duration::from_millis(600);
-        // 33 active (30 calm + 3 late); 10% is 4, so 3 late must not fire.
-        // If parked inflated the denominator to 43, 10% would be 5 — still no
-        // fire — so assert the threshold on the warning once it does fire.
-        late_n(&mon, "d", t0, 3, ServiceClass::Active, true);
-        match eval(&mon, t) {
-            CapacityEval::Warn(w) => {
-                assert_eq!(w.active_bots, 34, "parked bots must not be active");
-                assert_eq!(w.threshold, 4);
-                assert_eq!(w.late_bots, 4);
-            }
-            other => panic!("expected warn, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn warning_clears_after_thirty_seconds_under_300ms() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, true);
-        }
-        let fired = t0 + Duration::from_millis(600);
-        assert!(is_warn(eval(&mon, fired)));
-        rec(
-            &mon,
-            "a",
-            fired + Duration::from_secs(1),
-            200,
-            ServiceClass::Active,
-            true,
-        );
-        rec(
-            &mon,
-            "b",
-            fired + Duration::from_secs(1),
-            200,
-            ServiceClass::Active,
-            true,
-        );
-        rec(
-            &mon,
-            "c",
-            fired + Duration::from_secs(1),
-            200,
-            ServiceClass::Active,
-            true,
-        );
-        for name in ["a", "b", "c"] {
-            rec(
-                &mon,
-                name,
-                fired + Duration::from_secs(28),
-                200,
-                ServiceClass::Active,
-                true,
-            );
-        }
-        assert!(
-            is_warn(eval(&mon, fired + Duration::from_secs(29))),
-            "29 s of calm is not enough"
-        );
-        assert_eq!(
-            eval(&mon, fired + Duration::from_secs(31)),
-            CapacityEval::Clear
-        );
-    }
-
-    #[test]
-    fn a_delay_of_400ms_extends_the_calm_timer() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, true);
-        }
-        let fired = t0 + Duration::from_millis(600);
-        assert!(is_warn(eval(&mon, fired)));
-        let unrest = fired + Duration::from_secs(5);
-        rec(&mon, "a", unrest, 400, ServiceClass::Active, true);
-        rec(&mon, "b", unrest, 200, ServiceClass::Active, true);
-        rec(&mon, "c", unrest, 200, ServiceClass::Active, true);
-        for name in ["a", "b", "c"] {
-            rec(
-                &mon,
-                name,
-                unrest + Duration::from_secs(28),
-                200,
-                ServiceClass::Active,
-                true,
-            );
-        }
-        assert!(
-            is_warn(eval(&mon, unrest + Duration::from_secs(29))),
-            "400 ms is not calm"
-        );
-        assert_eq!(
-            eval(&mon, unrest + Duration::from_secs(31)),
-            CapacityEval::Clear
-        );
-    }
-
-    #[test]
-    fn server_silence_does_not_blame_the_host() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, false);
-        }
-        assert_eq!(
-            eval(&mon, t0 + Duration::from_millis(600)),
-            CapacityEval::Silence
-        );
-    }
-
-    #[test]
-    fn warning_carries_counts_p95_and_render_policy() {
-        let mon = CapacityMonitor::new();
-        let t0 = Instant::now();
-        for name in ["a", "b", "c"] {
-            late_n(&mon, name, t0, 3, ServiceClass::Active, true);
-        }
-        rec(
-            &mon,
-            "a",
-            t0 + Duration::from_millis(800),
-            900,
-            ServiceClass::Active,
-            true,
-        );
-        match mon.evaluate(
-            t0 + Duration::from_millis(800),
-            RenderPolicyLabel::RenderAll,
-        ) {
-            CapacityEval::Warn(w) => {
-                assert_eq!(w.late_bots, 3);
-                assert_eq!(w.active_bots, 3);
-                assert_eq!(w.threshold, 3);
-                assert_eq!(w.render, RenderPolicyLabel::RenderAll);
-                assert!(
-                    w.p95_delay >= Duration::from_millis(700),
-                    "{:?}",
-                    w.p95_delay
-                );
-            }
-            other => panic!("{other:?}"),
-        }
-    }
-}
+#[path = "capacity_tests.rs"]
+mod tests;

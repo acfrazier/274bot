@@ -4377,7 +4377,7 @@ mod s2b_admission_contract {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
         let assert_frozen = |expected| {
-            let state = crate::script_runtime::script_frame_state(&scripts, "alice");
+            let state = crate::script_runtime::script_frame(&scripts, "alice").state;
             assert_eq!(state, Some(expected));
             assert!(crate::play_slots::project_slot_frame_host_move_owned(
                 state, false
@@ -4410,7 +4410,7 @@ mod s2b_admission_contract {
             slot.observe_lifecycle();
             slot.state() == script::RunState::Idle
         }));
-        let state = crate::script_runtime::script_frame_state(&scripts, "alice");
+        let state = crate::script_runtime::script_frame(&scripts, "alice").state;
         assert_eq!(state, Some(script::RunState::Idle));
         assert!(
             !crate::play_slots::project_slot_frame_host_move_owned(state, false),

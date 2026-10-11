@@ -334,7 +334,14 @@ pub struct OperatorSession<Io> {
     capacity: Option<CapacityNotice>,
     capacity_kind: CapacityKind,
     capacity_render: RenderPolicyLabel,
+    /// Next evaluate ([`CAPACITY_EVAL_EVERY`] apart).
+    capacity_due: Option<Instant>,
+    /// Moves whenever [`Self::capacity_notice`] changes.
+    capacity_generation: u64,
 }
+
+/// How often the session evaluates host capacity.
+const CAPACITY_EVAL_EVERY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CapacityKind {
@@ -393,6 +400,8 @@ impl<Io> OperatorSession<Io> {
             capacity: None,
             capacity_kind: CapacityKind::Clear,
             capacity_render: RenderPolicyLabel::OnlySelected,
+            capacity_due: None,
+            capacity_generation: 0,
         }
     }
 
@@ -534,15 +543,20 @@ impl<Io> OperatorSession<Io> {
         self.capacity.as_ref()
     }
 
+    /// Moves whenever [`Self::capacity_notice`] changed, so a front end
+    /// copies the line only then.
+    pub fn capacity_generation(&self) -> u64 {
+        self.capacity_generation
+    }
+
     /// What the front end is rendering, included in the capacity warning.
     pub fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
         self.capacity_render = render;
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inject_capacity_notice(&mut self, notice: CapacityNotice) {
-        self.capacity_kind = CapacityKind::Warn;
-        self.capacity = Some(notice);
+    pub fn inject_capacity_warning(&mut self, warning: host::CapacityWarning) {
+        self.apply_capacity(CapacityEval::Warn(warning));
     }
 
     /// Moves whenever a sample changed [`Self::resources`].
@@ -1281,33 +1295,58 @@ impl<Io> OperatorSession<Io> {
         self.refresh_capacity(now);
     }
 
+    /// Evaluate host capacity once per [`CAPACITY_EVAL_EVERY`]; the notice
+    /// text is rebuilt only when the warning's figures change.
     fn refresh_capacity(&mut self, now: Instant) {
-        let eval = self
-            .play
-            .as_ref()
-            .map(|play| play.capacity().evaluate(now, self.capacity_render))
-            .unwrap_or(CapacityEval::Clear);
-        match eval {
+        if self.capacity_due.is_some_and(|due| now < due) {
+            return;
+        }
+        self.capacity_due = Some(now + CAPACITY_EVAL_EVERY);
+        let eval = self.play.as_ref().map_or(CapacityEval::Clear, |play| {
+            play.capacity().evaluate(now, self.capacity_render)
+        });
+        self.apply_capacity(eval);
+    }
+
+    /// Show, keep, hide or clear the warning, logging each transition into
+    /// or out of it once.
+    fn apply_capacity(&mut self, eval: CapacityEval) {
+        let was_warning = self.capacity_kind == CapacityKind::Warn;
+        let kind = match eval {
             CapacityEval::Warn(warning) => {
-                let notice = CapacityNotice::from_warning(warning);
-                if self.capacity_kind != CapacityKind::Warn {
-                    host_log!(Category::Lifecycle, Level::Warn, "{}", notice.notice_text());
+                if self.capacity.as_ref().map(CapacityNotice::warning) != Some(warning) {
+                    self.capacity = Some(CapacityNotice::from_warning(warning));
+                    self.capacity_generation = self.capacity_generation.wrapping_add(1);
                 }
-                self.capacity = Some(notice);
-                self.capacity_kind = CapacityKind::Warn;
+                if !was_warning {
+                    if let Some(notice) = self.capacity.as_ref() {
+                        host_log!(Category::Lifecycle, Level::Warn, "{}", notice.notice_text());
+                    }
+                }
+                CapacityKind::Warn
             }
             CapacityEval::Silence => {
-                self.capacity = None;
-                self.capacity_kind = CapacityKind::Silence;
+                if was_warning {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Info,
+                        "Host warning hidden: no game packets for 10 s, so the game server is \
+                         quiet, not this machine"
+                    );
+                }
+                CapacityKind::Silence
             }
             CapacityEval::Clear => {
-                if self.capacity_kind == CapacityKind::Warn {
-                    host_log!(Category::Lifecycle, Level::Info, "host is keeping up again");
+                if was_warning {
+                    host_log!(Category::Lifecycle, Level::Info, "Host is keeping up again");
                 }
-                self.capacity = None;
-                self.capacity_kind = CapacityKind::Clear;
+                CapacityKind::Clear
             }
+        };
+        if kind != CapacityKind::Warn && self.capacity.take().is_some() {
+            self.capacity_generation = self.capacity_generation.wrapping_add(1);
         }
+        self.capacity_kind = kind;
     }
 
     /// Move the operation outcomes recorded since the last take onto each

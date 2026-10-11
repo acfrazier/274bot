@@ -4048,15 +4048,13 @@ fn capacity_warning_is_on_the_panel_banner() {
     let mut session = crate::session::Session::new();
     session
         .core
-        .inject_capacity_notice(frontend_core::CapacityNotice::from_warning(
-            frontend_core::CapacityWarning {
-                late_bots: 5,
-                active_bots: 20,
-                threshold: 3,
-                p95_delay: std::time::Duration::from_millis(800),
-                tick_ms: 900,
-                render: frontend_core::RenderPolicyLabel::RenderAll,
-            },
+        .inject_capacity_warning(frontend_core::CapacityWarning::new(
+            5,
+            20,
+            3,
+            Some(std::time::Duration::from_millis(800)),
+            Some(std::time::Duration::from_millis(900)),
+            frontend_core::RenderPolicyLabel::RenderAll,
         ));
     let mut ctx = dear_imgui_rs::Context::create();
     let drawn = DrawnText::default();
