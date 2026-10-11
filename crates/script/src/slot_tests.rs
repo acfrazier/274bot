@@ -1697,6 +1697,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
     iso.on_game_tick(n);
     iso.probe("true").unwrap();
     let facts = slot.drain_lifecycle();
+    slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(here), &[], false, true, &facts);
 }
 
@@ -1717,14 +1718,16 @@ fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
 
     assert!(slot.reconnect_session_work(), "the script walk is carried");
     slot.on_is_up(true);
-    held_walk_tick(&mut slot, 2, now);
+    let reconnected_at = Instant::now();
+    held_walk_tick(&mut slot, 2, reconnected_at);
     assert!(
         slot.watchdog().wait_active(),
         "the held walk is still the parked wait"
     );
+    slot.note_game_packet_tick(reconnected_at + Duration::from_secs(5));
     assert_eq!(
         slot.feed_watchdog(
-            now + crate::watchdog::SCHEDULER_WARN + Duration::from_secs(1),
+            reconnected_at + crate::watchdog::SCHEDULER_WARN + Duration::from_secs(1),
             Some((2823, 3555, 0)),
             &[],
             false,
@@ -1859,4 +1862,307 @@ fn ignored_mime_still_terminal_stops_a_running_load() {
         receipt.reason
     );
     wait_state(&mut slot, RunState::Idle);
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+
+    let now = Instant::now();
+    let inside_pen = (3340, 3250, 0);
+    let settled = [crate::shim::InteractReq::LoopSettled];
+    slot.note_game_packet_tick(now);
+    slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE);
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::WEDGE,
+            Some(inside_pen),
+            &[],
+            false,
+            true,
+            &settled,
+        ),
+        crate::watchdog::WatchdogAction::RequestAnchor
+    );
+
+    let anchor = [
+        crate::shim::InteractReq::RecoveryAnchor {
+            x: 3368,
+            z: 3274,
+            level: 0,
+        },
+        crate::shim::InteractReq::LoopSettled,
+    ];
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(1));
+    let action = slot.feed_watchdog(
+        now + crate::watchdog::WEDGE + Duration::from_secs(1),
+        Some(inside_pen),
+        &[],
+        false,
+        true,
+        &anchor,
+    );
+    assert_eq!(
+        format!("{action:?}"),
+        "HoldInFightPen",
+        "a Load script must not walk toward an unreachable lobby anchor"
+    );
+    assert!(
+        !slot.watchdog().holds_script_actions(),
+        "the script's already-waiting isolate keeps running while recovery is held"
+    );
+    let logs = slot.take_pending_logs();
+    assert_eq!(logs.len(), 1, "entering the hold is logged once: {logs:?}");
+    assert_eq!(
+        logs[0],
+        "watchdog: holding recovery in a Duel Arena fight pen; the recovery anchor is outside the pen"
+    );
+
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(20));
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::WEDGE + Duration::from_secs(20),
+            Some(inside_pen),
+            &[],
+            false,
+            true,
+            &settled,
+        ),
+        crate::watchdog::WatchdogAction::None,
+        "the pen hold must not repeatedly request the same recovery"
+    );
+    assert!(slot.take_pending_logs().is_empty());
+
+    let outside_pen = (3368, 3274, 0);
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(30));
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::WEDGE + Duration::from_secs(30),
+            Some(outside_pen),
+            &[],
+            false,
+            true,
+            &settled,
+        ),
+        crate::watchdog::WatchdogAction::None
+    );
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE * 2 + Duration::from_secs(30));
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::WEDGE * 2 + Duration::from_secs(30),
+            Some(outside_pen),
+            &[],
+            false,
+            true,
+            &settled,
+        ),
+        crate::watchdog::WatchdogAction::RequestAnchor,
+        "ordinary recovery resumes after leaving the pen"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+
+    let now = Instant::now();
+    let inside_pen = (3340, 3250, 0);
+    let settled = [crate::shim::InteractReq::LoopSettled];
+    slot.note_game_packet_tick(now);
+    slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
+    for seconds in (5..=crate::watchdog::WEDGE.as_secs()).step_by(5) {
+        let tick_at = now + Duration::from_secs(seconds);
+        slot.note_game_packet_tick(tick_at);
+        let action = slot.feed_watchdog(tick_at, Some(inside_pen), &[], false, true, &[]);
+        if seconds == crate::watchdog::WEDGE.as_secs() {
+            assert_eq!(action, crate::watchdog::WatchdogAction::RequestAnchor);
+        }
+    }
+
+    let anchor = crate::watchdog::Tile {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    };
+    let anchor_reply = [crate::shim::InteractReq::RecoveryAnchor {
+        x: anchor.x,
+        z: anchor.z,
+        level: anchor.level,
+    }];
+    let held_at = now + crate::watchdog::WEDGE + Duration::from_secs(1);
+    slot.note_game_packet_tick(held_at);
+    assert_eq!(
+        slot.feed_watchdog(held_at, Some(inside_pen), &[], false, true, &anchor_reply),
+        crate::watchdog::WatchdogAction::HoldInFightPen
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    let frozen_at = held_at + Duration::from_secs(1);
+    slot.note_game_packet_tick(frozen_at);
+    assert_eq!(
+        slot.feed_watchdog(frozen_at, Some(inside_pen), &[], true, true, &[]),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+
+    let thawed_at = held_at + Duration::from_secs(2);
+    slot.note_game_packet_tick(thawed_at);
+    assert_eq!(
+        slot.feed_watchdog(thawed_at, Some(inside_pen), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    let reset_at = held_at + Duration::from_secs(3);
+    assert_eq!(
+        slot.watchdog.on_session_reset(reset_at),
+        crate::watchdog::WatchdogAction::None
+    );
+    assert_eq!(slot.watchdog().held_fight_pen_anchor(), Some(anchor));
+    assert!(slot.watchdog().last_recovery().is_none());
+
+    for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
+        let tick_at = reset_at + Duration::from_secs(seconds);
+        slot.note_game_packet_tick(tick_at);
+        slot.feed_watchdog(tick_at, Some(inside_pen), &[], false, true, &[]);
+    }
+    let stalled_at = reset_at + crate::watchdog::HARD_STALL;
+    slot.note_game_packet_tick(stalled_at);
+    assert_eq!(
+        slot.feed_watchdog(stalled_at, Some(inside_pen), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::Restart {
+            reason: crate::watchdog::RestartReason::Stall,
+        },
+        "a held fight-pen recovery does not disable the hard-stall restart"
+    );
+    assert!(slot.watchdog().last_recovery().is_none());
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+
+    let now = Instant::now();
+    let here = (3200, 3274, 0);
+    slot.note_game_packet_tick(now);
+    assert_eq!(
+        slot.feed_watchdog(now, Some(here), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::None
+    );
+    let outside_anchor = [crate::shim::InteractReq::RecoveryAnchor {
+        x: 3220,
+        z: 3274,
+        level: 0,
+    }];
+    for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
+        let tick_at = now + Duration::from_secs(seconds);
+        slot.note_game_packet_tick(tick_at);
+        let lifecycle: &[crate::shim::InteractReq] =
+            if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
+                &outside_anchor
+            } else {
+                &[]
+            };
+        let action = slot.feed_watchdog(tick_at, Some(here), &[], false, true, lifecycle);
+        if seconds == crate::watchdog::SCHEDULER_WARN.as_secs() {
+            assert_eq!(action, crate::watchdog::WatchdogAction::WarnHungLoop);
+        } else if seconds == crate::watchdog::WEDGE.as_secs() {
+            assert_eq!(action, crate::watchdog::WatchdogAction::RequestAnchor);
+        } else if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
+            assert_eq!(
+                action,
+                crate::watchdog::WatchdogAction::ArmWalk {
+                    x: 3220,
+                    z: 3274,
+                    level: 0,
+                },
+                "outside-pen anchor replies must reach normal recovery, not be held"
+            );
+        } else {
+            assert_eq!(action, crate::watchdog::WatchdogAction::None);
+        }
+    }
+    let stalled_at = now + crate::watchdog::HARD_STALL;
+    slot.note_game_packet_tick(stalled_at);
+    assert_eq!(
+        slot.feed_watchdog(stalled_at, Some(here), &[], false, true, &[]),
+        crate::watchdog::WatchdogAction::Restart {
+            reason: crate::watchdog::RestartReason::Stall,
+        },
+        "the fight-pen hold must not disable genuine scheduler-stall recovery"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn load_watchdog_logs_packet_silence_and_clears_it_on_resume() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+
+    let now = Instant::now();
+    let here = (3200, 3274, 0);
+    let settled = [crate::shim::InteractReq::LoopSettled];
+    slot.note_game_packet_tick(now);
+    slot.feed_watchdog(now, Some(here), &[], false, true, &settled);
+
+    let quiet_at = now + crate::watchdog::SCHEDULER_WARN;
+    assert_eq!(
+        format!(
+            "{:?}",
+            slot.feed_watchdog(quiet_at, Some(here), &[], false, true, &settled)
+        ),
+        "WarnNoGamePackets"
+    );
+    assert_eq!(
+        slot.take_pending_logs(),
+        ["watchdog: no game packets for 10 s"]
+    );
+
+    let resumed_at = quiet_at + Duration::from_secs(1);
+    slot.note_game_packet_tick(resumed_at);
+    assert_eq!(
+        slot.feed_watchdog(resumed_at, Some(here), &[], false, true, &settled),
+        crate::watchdog::WatchdogAction::None
+    );
+    slot.stop();
 }

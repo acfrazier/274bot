@@ -1,10 +1,10 @@
-//! Progress watchdog shared by Load isolates and compiled cards: dual
-//! monotonic clocks, freeze, and fenced plane-aware recovery/restart. Host
-//! `Instant` is the only clock; scripts never stamp policy.
+//! Progress watchdog shared by Load isolates and compiled cards: scheduler,
+//! game-input and gameplay clocks, freeze, and fenced plane-aware recovery.
+//! Host `Instant` is the only clock; scripts never stamp policy.
 
 use std::time::{Duration, Instant};
 
-/// Warning-only hung-loop threshold (scheduler channel).
+/// Warning window for local scheduler stalls and silent game-packet input.
 pub const SCHEDULER_WARN: Duration = Duration::from_secs(10);
 /// Hard scheduler stall: recreate the isolate.
 pub const HARD_STALL: Duration = Duration::from_secs(15 * 60);
@@ -43,6 +43,7 @@ pub enum WatchdogState {
     Armed,
     SamplingAnchor,
     Recovering { anchor: Tile, started: Instant },
+    HeldInFightPen { anchor: Tile },
     RestartPending { reason: RestartReason },
 }
 
@@ -50,6 +51,8 @@ pub enum WatchdogState {
 pub enum WatchdogAction {
     None,
     WarnHungLoop,
+    WarnNoGamePackets,
+    HoldInFightPen,
     RequestAnchor,
     ArmWalk { x: i32, z: i32, level: i32 },
     AbortWalk,
@@ -97,6 +100,8 @@ struct RunProgress {
 pub struct ProgressWatchdog {
     state: WatchdogState,
     last_scheduler: Option<Instant>,
+    scheduler_warn_from: Option<Instant>,
+    last_game_packet_tick: Option<Instant>,
     last_gameplay: Option<Instant>,
     pair_wait_since: Option<Instant>,
     last_recovery: Option<Instant>,
@@ -104,6 +109,7 @@ pub struct ProgressWatchdog {
     last_xp: Vec<i32>,
     wait_inflight: u32,
     warned: bool,
+    warned_no_game_packets: bool,
     frozen: bool,
     /// The recovery an operator Pause interrupted: re-armed on Resume
     /// instead of waiting out a fresh [`WEDGE`] ([`Self::defer_recovery`]).
@@ -125,6 +131,8 @@ impl ProgressWatchdog {
         Self {
             state: WatchdogState::Idle,
             last_scheduler: None,
+            scheduler_warn_from: None,
+            last_game_packet_tick: None,
             last_gameplay: None,
             pair_wait_since: None,
             last_recovery: None,
@@ -132,6 +140,7 @@ impl ProgressWatchdog {
             last_xp: Vec::new(),
             wait_inflight: 0,
             warned: false,
+            warned_no_game_packets: false,
             frozen: false,
             deferred: None,
             rearm_walk: false,
@@ -252,6 +261,8 @@ impl ProgressWatchdog {
         self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
+        self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.pair_wait_since = None;
         self.progress = Some(Box::new(RunProgress {
@@ -265,6 +276,7 @@ impl ProgressWatchdog {
         self.last_xp.clear();
         self.wait_inflight = 0;
         self.warned = false;
+        self.warned_no_game_packets = false;
         self.frozen = false;
     }
 
@@ -275,12 +287,15 @@ impl ProgressWatchdog {
         self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
+        self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.pair_wait_since = None;
         self.last_tile = None;
         self.last_xp.clear();
         self.wait_inflight = 0;
         self.warned = false;
+        self.warned_no_game_packets = false;
         self.frozen = false;
     }
 
@@ -297,6 +312,7 @@ impl ProgressWatchdog {
         let abort = matches!(self.state, WatchdogState::Recovering { .. });
         self.state = match self.state {
             WatchdogState::Idle => WatchdogState::Idle,
+            WatchdogState::HeldInFightPen { anchor } => WatchdogState::HeldInFightPen { anchor },
             _ => WatchdogState::Armed,
         };
         self.wait_inflight = 0;
@@ -354,7 +370,23 @@ impl ProgressWatchdog {
             return;
         }
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
         self.warned = false;
+    }
+
+    /// Record a fresh server `PLAYER_INFO` tick. After a quiet interval, give
+    /// the local scheduler a fresh warning window without changing the
+    /// hard-stall clock.
+    pub fn stamp_game_packet_tick(&mut self, now: Instant) {
+        if self.state == WatchdogState::Idle {
+            return;
+        }
+        if self.game_packet_elapsed(now) >= SCHEDULER_WARN {
+            self.scheduler_warn_from = Some(now);
+            self.warned = false;
+        }
+        self.last_game_packet_tick = Some(now);
+        self.warned_no_game_packets = false;
     }
 
     pub fn stamp_gameplay(&mut self, now: Instant) {
@@ -448,6 +480,33 @@ impl ProgressWatchdog {
         }
     }
 
+    /// Hold a Load run's gameplay recovery while its anchor is beyond a
+    /// walled Duel Arena fight pen. The script continues to receive ticks.
+    pub fn hold_in_fight_pen(&mut self, anchor: Tile) -> WatchdogAction {
+        if self.state != WatchdogState::SamplingAnchor || self.frozen {
+            return WatchdogAction::None;
+        }
+        self.rearm_walk = false;
+        self.state = WatchdogState::HeldInFightPen { anchor };
+        WatchdogAction::HoldInFightPen
+    }
+
+    pub fn held_fight_pen_anchor(&self) -> Option<Tile> {
+        match self.state {
+            WatchdogState::HeldInFightPen { anchor } => Some(anchor),
+            _ => None,
+        }
+    }
+
+    /// Leaving the pen starts a fresh watchdog window and restores the
+    /// ordinary gameplay recovery policy.
+    pub fn resume_after_fight_pen(&mut self, now: Instant) {
+        if self.held_fight_pen_anchor().is_some() {
+            self.state = WatchdogState::Armed;
+            self.restamp(now);
+        }
+    }
+
     pub fn on_walk_arrived(&mut self, now: Instant) -> WatchdogAction {
         if !matches!(self.state, WatchdogState::Recovering { .. }) {
             return WatchdogAction::None;
@@ -520,21 +579,19 @@ impl ProgressWatchdog {
         if self.scheduler_elapsed(now) >= HARD_STALL {
             return self.enter_restart(now, RestartReason::Stall);
         }
+        if !self.warned_no_game_packets && self.game_packet_elapsed(now) >= SCHEDULER_WARN {
+            self.warned_no_game_packets = true;
+            return WatchdogAction::WarnNoGamePackets;
+        }
         match self.state {
             WatchdogState::Armed => {
                 if !waiting && self.gameplay_elapsed(now) >= WEDGE && self.cooldown_ok(now) {
                     self.state = WatchdogState::SamplingAnchor;
                     return WatchdogAction::RequestAnchor;
                 }
-                if !self.wait_active()
-                    && !self.warned
-                    && self.scheduler_elapsed(now) >= SCHEDULER_WARN
-                {
-                    self.warned = true;
-                    return WatchdogAction::WarnHungLoop;
-                }
-                WatchdogAction::None
+                self.warn_scheduler_stall(now)
             }
+            WatchdogState::HeldInFightPen { .. } => self.warn_scheduler_stall(now),
             WatchdogState::SamplingAnchor | WatchdogState::Recovering { .. } => {
                 WatchdogAction::None
             }
@@ -550,8 +607,11 @@ impl ProgressWatchdog {
 
     fn restamp(&mut self, now: Instant) {
         self.last_scheduler = Some(now);
+        self.scheduler_warn_from = Some(now);
+        self.last_game_packet_tick = Some(now);
         self.last_gameplay = Some(now);
         self.warned = false;
+        self.warned_no_game_packets = false;
     }
 
     fn scheduler_elapsed(&self, now: Instant) -> Duration {
@@ -560,10 +620,35 @@ impl ProgressWatchdog {
             .unwrap_or(Duration::ZERO)
     }
 
+    fn scheduler_warning_elapsed(&self, now: Instant) -> Duration {
+        self.scheduler_warn_from
+            .map(|t| now.saturating_duration_since(t))
+            .unwrap_or(Duration::ZERO)
+    }
+
     fn gameplay_elapsed(&self, now: Instant) -> Duration {
         self.last_gameplay
             .map(|t| now.saturating_duration_since(t))
             .unwrap_or(Duration::ZERO)
+    }
+
+    fn game_packet_elapsed(&self, now: Instant) -> Duration {
+        self.last_game_packet_tick
+            .map(|t| now.saturating_duration_since(t))
+            .unwrap_or(Duration::ZERO)
+    }
+
+    fn warn_scheduler_stall(&mut self, now: Instant) -> WatchdogAction {
+        if !self.wait_active()
+            && !self.warned
+            && self.game_packet_elapsed(now) < SCHEDULER_WARN
+            && self.scheduler_warning_elapsed(now) >= SCHEDULER_WARN
+        {
+            self.warned = true;
+            WatchdogAction::WarnHungLoop
+        } else {
+            WatchdogAction::None
+        }
     }
 
     fn cooldown_ok(&self, now: Instant) -> bool {
@@ -586,6 +671,16 @@ mod tests {
         Instant::now()
     }
 
+    // Model a live server with PLAYER_INFO ticks no more than five seconds
+    // apart, without advancing local scheduler progress.
+    fn stamp_packets(w: &mut ProgressWatchdog, from: Instant, until: Instant) {
+        let mut tick = from;
+        while tick < until {
+            tick = (tick + Duration::from_secs(5)).min(until);
+            w.stamp_game_packet_tick(tick);
+        }
+    }
+
     fn assert_no_recover(action: WatchdogAction) {
         assert!(
             !matches!(
@@ -603,6 +698,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + Duration::from_secs(60));
         w.on_tile(
             t + Duration::from_secs(60),
             Tile {
@@ -612,6 +708,7 @@ mod tests {
             },
         );
         w.stamp_scheduler(t + Duration::from_secs(60));
+        stamp_packets(&mut w, t + Duration::from_secs(60), t + WEDGE);
         assert_no_recover(w.observe(t + WEDGE, true));
         assert_eq!(w.state(), WatchdogState::Armed);
     }
@@ -622,8 +719,10 @@ mod tests {
         let t = t0();
         w.arm_fresh(t);
         w.on_xp(t, &[10]);
+        stamp_packets(&mut w, t, t + Duration::from_secs(60));
         w.on_xp(t + Duration::from_secs(60), &[20]);
         w.stamp_scheduler(t + Duration::from_secs(60));
+        stamp_packets(&mut w, t + Duration::from_secs(60), t + WEDGE);
         assert_no_recover(w.observe(t + WEDGE, true));
         assert_eq!(w.state(), WatchdogState::Armed);
     }
@@ -633,8 +732,11 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + Duration::from_secs(60));
         w.stamp_note_progress(t + Duration::from_secs(60));
+        stamp_packets(&mut w, t + Duration::from_secs(60), t + WEDGE);
         assert_no_recover(w.observe(t + WEDGE, true));
+        stamp_packets(&mut w, t + WEDGE, t + Duration::from_secs(60) + HARD_STALL);
         assert_eq!(
             w.observe(t + Duration::from_secs(60) + HARD_STALL, true),
             WatchdogAction::Restart {
@@ -648,6 +750,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         assert_eq!(w.observe(t + WEDGE, true), WatchdogAction::RequestAnchor);
         assert_eq!(w.state(), WatchdogState::SamplingAnchor);
     }
@@ -659,8 +762,10 @@ mod tests {
         w.arm_fresh(t);
         w.on_restart_applied(t + WEDGE);
         w.stamp_scheduler(t + WEDGE + Duration::from_secs(60));
+        w.stamp_game_packet_tick(t + WEDGE + Duration::from_secs(60));
         assert_no_recover(w.observe(t + WEDGE + Duration::from_secs(60), true));
         w.stamp_scheduler(t + WEDGE + RECOVERY_COOLDOWN);
+        w.stamp_game_packet_tick(t + WEDGE + RECOVERY_COOLDOWN);
         assert_eq!(
             w.observe(t + WEDGE + RECOVERY_COOLDOWN, true),
             WatchdogAction::RequestAnchor
@@ -673,6 +778,7 @@ mod tests {
         let t = t0();
         w.arm_fresh(t);
         assert!(w.last_recovery().is_none());
+        stamp_packets(&mut w, t, t + WEDGE);
         assert_eq!(w.observe(t + WEDGE, true), WatchdogAction::RequestAnchor);
     }
 
@@ -690,6 +796,11 @@ mod tests {
             WatchdogAction::None
         );
         w.set_frozen(false, t + Duration::from_secs(20 * 60));
+        stamp_packets(
+            &mut w,
+            t + Duration::from_secs(20 * 60),
+            t + Duration::from_secs(21 * 60),
+        );
         assert_no_recover(w.observe(t + Duration::from_secs(21 * 60), true));
         assert!(!matches!(w.state(), WatchdogState::RestartPending { .. }));
         assert_ne!(w.state(), WatchdogState::SamplingAnchor);
@@ -703,9 +814,19 @@ mod tests {
         w.set_frozen(true, t);
         assert_eq!(w.observe(t + HARD_STALL, true), WatchdogAction::None);
         w.set_frozen(false, t + HARD_STALL);
+        stamp_packets(
+            &mut w,
+            t + HARD_STALL,
+            t + HARD_STALL + Duration::from_secs(60),
+        );
         assert_no_recover(w.observe(t + HARD_STALL + Duration::from_secs(60), true));
         let abort = w.on_session_reset(t + HARD_STALL + Duration::from_secs(120));
         assert_eq!(abort, WatchdogAction::None);
+        stamp_packets(
+            &mut w,
+            t + HARD_STALL + Duration::from_secs(120),
+            t + HARD_STALL + Duration::from_secs(180),
+        );
         assert_no_recover(w.observe(t + HARD_STALL + Duration::from_secs(180), true));
     }
 
@@ -730,10 +851,16 @@ mod tests {
         w.arm_fresh(t);
         w.on_wait_enqueued(t + Duration::from_millis(1));
         assert!(w.wait_active());
+        stamp_packets(&mut w, t, t + SCHEDULER_WARN + Duration::from_secs(1));
         assert_eq!(
             w.observe(t + SCHEDULER_WARN + Duration::from_secs(1), true),
             WatchdogAction::None,
             "10s warning suppressed while a wait is active"
+        );
+        stamp_packets(
+            &mut w,
+            t + SCHEDULER_WARN + Duration::from_secs(1),
+            t + Duration::from_millis(1) + HARD_STALL,
         );
         assert_eq!(
             w.observe(t + Duration::from_millis(1) + HARD_STALL, true),
@@ -748,6 +875,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        w.stamp_game_packet_tick(t + Duration::from_secs(5));
         w.stamp_gameplay(t + Duration::from_secs(1));
         assert_eq!(
             w.observe(t + SCHEDULER_WARN, true),
@@ -761,6 +889,93 @@ mod tests {
     }
 
     #[test]
+    fn packet_silence_is_not_reported_as_a_hung_loop() {
+        let mut watchdog = ProgressWatchdog::new();
+        let now = t0();
+        watchdog.arm_fresh(now);
+
+        let action = watchdog.observe(now + SCHEDULER_WARN, true);
+
+        assert_eq!(
+            format!("{action:?}"),
+            "WarnNoGamePackets",
+            "silence in game input is not evidence of a local scheduler hang"
+        );
+        assert_eq!(
+            watchdog.observe(now + SCHEDULER_WARN + Duration::from_secs(1), true),
+            WatchdogAction::None,
+            "one quiet period produces one warning"
+        );
+        watchdog.stamp_game_packet_tick(now + SCHEDULER_WARN + Duration::from_secs(2));
+        assert_eq!(
+            watchdog.observe(now + SCHEDULER_WARN + Duration::from_secs(2), true),
+            WatchdogAction::None,
+            "fresh packet input clears the quiet-period warning"
+        );
+    }
+
+    #[test]
+    fn flowing_packets_keep_local_stall_warning_and_restart() {
+        let mut watchdog = ProgressWatchdog::new();
+        let now = t0();
+        watchdog.arm_fresh(now);
+        watchdog.stamp_game_packet_tick(now + Duration::from_secs(5));
+        assert_eq!(
+            watchdog.observe(now + SCHEDULER_WARN, true),
+            WatchdogAction::WarnHungLoop
+        );
+
+        for seconds in (10..HARD_STALL.as_secs()).step_by(5) {
+            watchdog.stamp_game_packet_tick(now + Duration::from_secs(seconds));
+        }
+        assert_eq!(
+            watchdog.observe(now + HARD_STALL, true),
+            WatchdogAction::Restart {
+                reason: RestartReason::Stall
+            },
+            "flowing game packets do not mask a real local scheduler stall"
+        );
+    }
+
+    #[test]
+    fn packet_gaps_do_not_extend_the_hard_scheduler_stall_deadline() {
+        let mut watchdog = ProgressWatchdog::new();
+        let start = t0();
+        watchdog.arm_fresh(start);
+
+        for seconds in 1..=60 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        let first_resume = start + Duration::from_secs(72);
+        watchdog.stamp_game_packet_tick(first_resume);
+        assert_eq!(watchdog.observe(first_resume, true), WatchdogAction::None);
+        for seconds in 73..=82 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        assert_eq!(
+            watchdog.observe(start + Duration::from_secs(82), true),
+            WatchdogAction::WarnHungLoop,
+            "packet resumption gives only the warning clock a fresh window"
+        );
+
+        for seconds in 83..=660 {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+        watchdog.stamp_game_packet_tick(start + Duration::from_secs(672));
+        for seconds in 673..=HARD_STALL.as_secs() {
+            watchdog.stamp_game_packet_tick(start + Duration::from_secs(seconds));
+        }
+
+        assert_eq!(
+            watchdog.observe_with_pair_wait(start + HARD_STALL, true, true),
+            WatchdogAction::Restart {
+                reason: RestartReason::Stall
+            },
+            "two 12-second packet gaps do not move the raw scheduler deadline"
+        );
+    }
+
+    #[test]
     fn settle_and_repark_both_stamp_scheduler() {
         let mut w = ProgressWatchdog::new();
         let t = t0();
@@ -769,6 +984,11 @@ mod tests {
         w.on_wait_settled(t + Duration::from_secs(5));
         w.on_wait_enqueued(t + Duration::from_secs(5));
         assert!(w.wait_active());
+        stamp_packets(
+            &mut w,
+            t,
+            t + Duration::from_secs(5) + SCHEDULER_WARN - Duration::from_secs(1),
+        );
         assert_eq!(
             w.observe(
                 t + Duration::from_secs(5) + SCHEDULER_WARN - Duration::from_secs(1),
@@ -810,6 +1030,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         assert_eq!(
             w.on_anchor(
@@ -832,6 +1053,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         let anchor = Tile {
             x: 100,
@@ -859,6 +1081,7 @@ mod tests {
         let mut watchdog = ProgressWatchdog::new();
         let now = t0();
         watchdog.arm_fresh(now);
+        stamp_packets(&mut watchdog, now, now + WEDGE);
         watchdog.observe(now + WEDGE, true);
         let anchor = Tile {
             x: 100,
@@ -881,6 +1104,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         let anchor = Tile {
             x: 200,
@@ -915,6 +1139,7 @@ mod tests {
         assert_eq!(w.state(), WatchdogState::Armed);
         assert!(w.last_recovery().is_some());
         w.stamp_scheduler(t + WEDGE + Duration::from_secs(30));
+        w.stamp_game_packet_tick(t + WEDGE + Duration::from_secs(30) + WEDGE);
         assert_no_recover(w.observe(t + WEDGE + Duration::from_secs(30) + WEDGE, true));
     }
 
@@ -923,6 +1148,7 @@ mod tests {
         let mut watchdog = ProgressWatchdog::new();
         let now = t0();
         watchdog.arm_fresh(now);
+        stamp_packets(&mut watchdog, now, now + WEDGE);
         watchdog.observe(now + WEDGE, true);
         let anchor = Tile {
             x: 200,
@@ -954,6 +1180,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
@@ -976,6 +1203,7 @@ mod tests {
         );
         w.on_restart_applied(t + WEDGE + Duration::from_secs(5));
         w.stamp_scheduler(t + WEDGE + Duration::from_secs(5) + WEDGE);
+        w.stamp_game_packet_tick(t + WEDGE + Duration::from_secs(5) + WEDGE);
         assert_no_recover(w.observe(t + WEDGE + Duration::from_secs(5) + WEDGE, true));
     }
 
@@ -984,6 +1212,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
@@ -1003,6 +1232,7 @@ mod tests {
         assert!(w.last_recovery().is_none());
         w.set_frozen(true, t + WEDGE + Duration::from_secs(1));
         w.set_frozen(false, t + WEDGE + Duration::from_secs(2));
+        w.stamp_game_packet_tick(t + WEDGE + Duration::from_secs(2) + WEDGE);
         assert_eq!(
             w.observe(t + WEDGE + Duration::from_secs(2) + WEDGE, true),
             WatchdogAction::RequestAnchor,
@@ -1015,6 +1245,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         w.on_anchor(t + WEDGE, None, None);
         w.on_restart_applied(t + WEDGE);
@@ -1053,6 +1284,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
@@ -1082,6 +1314,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         let anchor = Tile {
             x: 50,
@@ -1117,6 +1350,7 @@ mod tests {
         // A session reset while paused drops the deferred recovery.
         let mut w = ProgressWatchdog::new();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
@@ -1142,6 +1376,7 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         let t = t0();
         w.arm_fresh(t);
+        stamp_packets(&mut w, t, t + WEDGE);
         w.observe(t + WEDGE, true);
         let anchor = Tile {
             x: 50,
@@ -1167,6 +1402,7 @@ mod tests {
         assert!(!w.rearm_pending());
 
         let wedged = resumed + WEDGE;
+        w.stamp_game_packet_tick(wedged);
         assert_eq!(w.observe(wedged, true), WatchdogAction::RequestAnchor);
         assert_eq!(
             w.on_anchor(
@@ -1193,6 +1429,7 @@ mod tests {
         let t = t0();
         w.arm_fresh(t);
         assert!(!w.holds_script_actions());
+        stamp_packets(&mut w, t, t + WEDGE);
         assert_eq!(w.observe(t + WEDGE, true), WatchdogAction::RequestAnchor);
         assert!(w.holds_script_actions());
         assert_eq!(w.abort_owned_recovery(), WatchdogAction::None);
@@ -1321,6 +1558,8 @@ mod tests {
             WatchdogAction::None
         );
         let later = t + WEDGE * 2;
+        stamp_packets(&mut waiting, t + Duration::from_secs(1), later);
+        stamp_packets(&mut acting, t, later);
         waiting.stamp_scheduler(later);
         acting.stamp_scheduler(later);
         assert_eq!(

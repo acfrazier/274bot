@@ -123,7 +123,9 @@ fn recovery_r2_watchdog_walks_to_the_last_quest_stand_without_recreating() {
     let before = slot.native_run();
     let now = Instant::now();
     let displaced = Some((stand.x + 20, stand.z, stand.level));
+    slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, displaced, &[], false, true, &[]);
+    slot.note_game_packet_tick(now + crate::watchdog::WEDGE);
     let action = slot.feed_watchdog(
         now + crate::watchdog::WEDGE,
         displaced,
