@@ -136,14 +136,41 @@ pub(crate) fn post_script_snapshot(
     accepted
 }
 
+fn watchdog_pending_event(slot: &SlotScript) -> Option<Arc<str>> {
+    slot.native_status().and_then(|status| {
+        status.fields.iter().find_map(|field| {
+            if field.key != "last_event" {
+                return None;
+            }
+            match &field.value {
+                script::native::StatusValue::Text(text)
+                    if !text.is_empty() && text.as_ref() != "started" =>
+                {
+                    Some(Arc::clone(text))
+                }
+                _ => None,
+            }
+        })
+    })
+}
+
+fn watchdog_restart_line(pending: Option<&str>) -> String {
+    match pending.filter(|reason| !reason.is_empty() && *reason != "started") {
+        Some(reason) => format!("restarted the script ({reason})"),
+        None => "restarted the script".to_owned(),
+    }
+}
+
 /// Restart a script the watchdog gave up on and log the outcome.
 fn watchdog_restart(slot: &mut SlotScript, name: &str, now: Instant) {
+    let pending = watchdog_pending_event(slot);
     match slot.restart_from_identity(now) {
         Ok(()) => host_log!(
             Category::Watchdog,
             Level::Warn,
             slot = name,
-            "restarted the script"
+            "{}",
+            watchdog_restart_line(pending.as_deref())
         ),
         Err(e) => host_log!(
             stderr;
@@ -2082,5 +2109,25 @@ where
         project()
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod watchdog_restart_tests {
+    #[test]
+    fn restart_line_includes_pending_event() {
+        assert_eq!(
+            super::watchdog_restart_line(Some("waiting for world")),
+            "restarted the script (waiting for world)"
+        );
+        assert_eq!(super::watchdog_restart_line(None), "restarted the script");
+        assert_eq!(
+            super::watchdog_restart_line(Some("")),
+            "restarted the script"
+        );
+        assert_eq!(
+            super::watchdog_restart_line(Some("started")),
+            "restarted the script"
+        );
     }
 }

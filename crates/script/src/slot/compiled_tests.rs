@@ -2206,7 +2206,7 @@ fn native_status_logs_gatherer_method_area_target_and_reason() {
         Some(ScriptFailure {
             code: Arc::from("resource-unavailable"),
             message: Arc::from(
-                "resource-unavailable: absent: 2; method=fishing.saltfish.op1; site=—; area=Custom (3086,3229,0) r12; planning=3092,3243,0",
+                "resource-unavailable: absent: 2; method=fishing.saltfish.op1; area=Custom (3086,3229,0) r12; planning=3092,3243,0",
             ),
         }),
     );
@@ -2239,7 +2239,42 @@ fn native_status_logs_gatherer_method_area_target_and_reason() {
     assert_eq!(lines.len(), 1);
     assert_eq!(
         lines[0].message,
-        "native Gatherer phase=blocked failure=resource-unavailable failure_message=resource-unavailable: absent: 2; method=fishing.saltfish.op1; site=—; area=Custom (3086,3229,0) r12; planning=3092,3243,0 method=Net area=Custom (3086,3229,0) r12 target=— last_event=target gone"
+        "native Gatherer phase=blocked failure=resource-unavailable failure_message=resource-unavailable: absent: 2; method=fishing.saltfish.op1; area=Custom (3086,3229,0) r12; planning=3092,3243,0 method=Net last_event=target gone"
+    );
+}
+
+#[test]
+fn native_status_logs_gatherer_last_event_at_info() {
+    const SLOT: &str = "status-last-event-info";
+    install_status_line_sink();
+    let mut output = Output {
+        account: SLOT.to_owned(),
+        ..Output::default()
+    };
+    let mut first = status_line_test_status(NativePhase::Working, None);
+    first.fields = vec![crate::native::StatusField {
+        key: "last_event",
+        label: "Last event",
+        value: crate::native::StatusValue::Text(Arc::from("started")),
+    }]
+    .into();
+    output.status(first);
+    let mut second = status_line_test_status(NativePhase::Working, None);
+    second.fields = vec![crate::native::StatusField {
+        key: "last_event",
+        label: "Last event",
+        value: crate::native::StatusValue::Text(Arc::from("waiting for world")),
+    }]
+    .into();
+    output.status(second);
+
+    let lines = status_lines_for(SLOT);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[1].level, api::hostlog::Level::Info);
+    assert!(
+        lines[1].message.contains("last_event=waiting for world"),
+        "{}",
+        lines[1].message
     );
 }
 

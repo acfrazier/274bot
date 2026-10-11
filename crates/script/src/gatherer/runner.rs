@@ -129,19 +129,65 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
     }
 }
 
-/// Nearest walkable stand within [`HAZARD_RETREAT_RADIUS`] of `here`, ranked
-/// toward the away-from-hazard direction. Packed collision decides reach;
-/// missing collision treats every in-bound tile as walkable so the one-step
-/// away tile still wins.
+/// Nearest stand within [`HAZARD_RETREAT_RADIUS`] of `here` that is walkable
+/// and reachable from `here` inside that bound, ranked toward the
+/// away-from-hazard direction. Missing collision treats every in-bound tile
+/// as reachable so the one-step away tile still wins.
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
     collision: Option<&nav::collision::WorldCollision>,
 ) -> Option<WorldTile> {
+    const SPAN: usize = (HAZARD_RETREAT_RADIUS as usize) * 2 + 1;
     let mut dx = here.x.saturating_sub(hazard.x).signum();
     let dz = here.z.saturating_sub(hazard.z).signum();
     if dx == 0 && dz == 0 {
         dx = 1;
+    }
+    let mut reachable = [[collision.is_none(); SPAN]; SPAN];
+    if let Some(collision) = collision {
+        let mut queue = [(0i32, 0i32); SPAN * SPAN];
+        let mut head = 0usize;
+        let mut tail = 1usize;
+        let origin = HAZARD_RETREAT_RADIUS as usize;
+        reachable[origin][origin] = true;
+        queue[0] = (0, 0);
+        while head < tail {
+            let (ox, oz) = queue[head];
+            head += 1;
+            for (step_x, step_z) in [
+                (0, 1),
+                (0, -1),
+                (1, 0),
+                (-1, 0),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+                (1, 1),
+            ] {
+                let next_x = ox + step_x;
+                let next_z = oz + step_z;
+                if next_x.abs() > HAZARD_RETREAT_RADIUS || next_z.abs() > HAZARD_RETREAT_RADIUS {
+                    continue;
+                }
+                let index_x = (next_x + HAZARD_RETREAT_RADIUS) as usize;
+                let index_z = (next_z + HAZARD_RETREAT_RADIUS) as usize;
+                if reachable[index_x][index_z] {
+                    continue;
+                }
+                let tile = WorldTile {
+                    x: here.x.saturating_add(next_x),
+                    z: here.z.saturating_add(next_z),
+                    level: here.level,
+                };
+                if !collision.walkable(tile) {
+                    continue;
+                }
+                reachable[index_x][index_z] = true;
+                queue[tail] = (next_x, next_z);
+                tail += 1;
+            }
+        }
     }
     let walkable = |tile: WorldTile| collision.is_none_or(|collision| collision.walkable(tile));
     let mut best = None;
@@ -155,7 +201,9 @@ fn hazard_retreat_stand(
                 z: here.z.saturating_add(oz),
                 level: here.level,
             };
-            if tile == hazard || !walkable(tile) {
+            let index_x = (ox + HAZARD_RETREAT_RADIUS) as usize;
+            let index_z = (oz + HAZARD_RETREAT_RADIUS) as usize;
+            if tile == hazard || !walkable(tile) || !reachable[index_x][index_z] {
                 continue;
             }
             let away = i64::from(ox.signum() == dx) + i64::from(oz.signum() == dz);
@@ -381,6 +429,15 @@ impl Gatherer {
     }
 
     fn return_to_resources(&mut self, tick: &mut NativeTick<'_>) {
+        let now = tick.cx.evidence().tick;
+        if self.wait_until.is_some_and(|until| now < until)
+            && self
+                .last_event
+                .as_ref()
+                .starts_with("waiting for excluded resource")
+        {
+            return;
+        }
         let Some(area) = self.area else {
             self.fail("return-failed", "the resource work area is unavailable");
             return;
@@ -417,6 +474,7 @@ impl Gatherer {
                 self.method = Arc::clone(&target.alias);
                 self.target = Some(target);
                 self.trip_walk(stand, RESOURCE_APPROACH_RADIUS, ArrivalKind::Area, tick);
+                self.set_event("returning to work area");
                 self.dirty = true;
             }
             ResourceReturn::ExcludedUntil { until } => {
@@ -426,13 +484,10 @@ impl Gatherer {
                     &format!("waiting for excluded resource until {until}"),
                 ));
             }
-            ResourceReturn::Unavailable => {
+            ResourceReturn::Unavailable { reason } => {
                 self.fail(
                     "return-failed",
-                    self.block_context(
-                        Some(here.value),
-                        "no usable resource observation stand in the work area",
-                    ),
+                    self.block_context(Some(here.value), reason),
                 );
             }
         }
@@ -606,29 +661,39 @@ impl Gatherer {
     }
 
     fn block_context(&self, here: Option<WorldTile>, reason: &str) -> String {
-        let method = self
-            .prepared
-            .methods
-            .iter()
-            .filter_map(|&index| self.prepared.catalog.methods().get(index))
-            .map(|method| method.id.0.as_ref())
-            .collect::<Vec<_>>()
-            .join(",");
-        let site = self
+        use std::fmt::Write;
+        let mut out = String::from(reason);
+        let mut methods = self.prepared.methods.iter().filter_map(|&index| {
+            self.prepared
+                .catalog
+                .methods()
+                .get(index)
+                .map(|method| method.id.0.as_ref())
+        });
+        if let Some(first) = methods.next() {
+            let _ = write!(out, "; method={first}");
+            for id in methods {
+                let _ = write!(out, ",{id}");
+            }
+        }
+        if let Some(site) = self
             .prepared
             .site()
             .map(|site| site.id.as_str())
             .filter(|id| !id.is_empty())
-            .unwrap_or("—");
-        let area = self
-            .area
-            .map(WorkArea::label)
-            .unwrap_or_else(|| "unresolved".to_owned());
-        let planning = here.map_or_else(
-            || "—".to_owned(),
-            |tile| format!("{},{},{}", tile.x, tile.z, tile.level),
-        );
-        format!("{reason}; method={method}; site={site}; area={area}; planning={planning}")
+        {
+            let _ = write!(out, "; site={site}");
+        }
+        match self.area {
+            Some(area) => {
+                let _ = write!(out, "; area={}", area.label());
+            }
+            None => out.push_str("; area=unresolved"),
+        }
+        if let Some(tile) = here {
+            let _ = write!(out, "; planning={},{},{}", tile.x, tile.z, tile.level);
+        }
+        out
     }
 
     fn cancel_active(&mut self) {
@@ -835,7 +900,10 @@ impl Gatherer {
         let retained_anchor = self.retained.anchor;
         let area = match WorkArea::resolve(self.settings(), retained_anchor, Some(here.value)) {
             Ok(area) => area,
-            Err(AreaError::NotReady) => return Validation::Pending,
+            Err(AreaError::NotReady) => {
+                self.set_event("waiting for work-area anchor");
+                return Validation::Pending;
+            }
             Err(AreaError::Invalid) => {
                 self.fail("area-invalid", "the configured work area is invalid");
                 return Validation::Pending;
@@ -1650,9 +1718,18 @@ impl Gatherer {
             (snapshot.world(), snapshot.locs(), snapshot.here())
         else {
             self.needs_validate = true;
+            self.set_event(if snapshot.world().is_none() {
+                "waiting for world"
+            } else if snapshot.locs().is_none() {
+                "waiting for locations"
+            } else {
+                "waiting for player tile"
+            });
             return;
         };
         let Some(npcs) = snapshot.npcs() else {
+            self.needs_validate = true;
+            self.set_event("waiting for npcs");
             return;
         };
         if let Some(plan) = self.target.take() {
@@ -1809,6 +1886,15 @@ impl Gatherer {
         tick: &mut NativeTick<'_>,
         collision: Option<&nav::collision::WorldCollision>,
     ) {
+        let now = tick.cx.evidence().tick;
+        if self
+            .last_event
+            .as_ref()
+            .starts_with("waiting for hazard to clear")
+            && self.avoid.iter().any(|entry| u64::from(entry.until) > now)
+        {
+            return;
+        }
         let Some(here) = tick.cx.snapshot().here().map(|row| row.value) else {
             return;
         };
@@ -1816,7 +1902,6 @@ impl Gatherer {
             return;
         };
         let Some(target) = hazard_retreat_stand(here, hazard, collision) else {
-            let now = tick.cx.evidence().tick;
             if self.avoid.iter().any(|entry| u64::from(entry.until) > now) {
                 self.set_event(&self.block_context(Some(here), "waiting for hazard to clear"));
             } else {
@@ -1901,6 +1986,9 @@ impl Gatherer {
             return ("recovering", NativePhase::Working);
         }
         if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
+            if self.wait_until.is_some() {
+                return ("waiting", NativePhase::Waiting);
+            }
             return ("banking", NativePhase::Working);
         }
         match self.active {
@@ -3010,12 +3098,26 @@ mod tests {
         );
         assert!(ledger.is_none(), "waiting must not arm a walk");
         assert_eq!(gatherer.trip, TripStep::Return);
+        assert_eq!(gatherer.phase(), ("waiting", NativePhase::Waiting));
+
+        with_tick(&snapshot, &mut ledger, 118, |tick| {
+            let allocations = allocation_counter::measure(|| {
+                gatherer.return_to_resources(tick);
+            });
+            assert_eq!(
+                allocations.count_total, 0,
+                "waiting on a known exclusion deadline must not allocate: {allocations:?}"
+            );
+        });
+        assert!(ledger.is_none(), "mid-wait ticks must not arm a walk");
+        assert_eq!(gatherer.wait_until, Some(167));
 
         with_tick(&snapshot, &mut ledger, 167, |tick| {
             gatherer.return_to_resources(tick);
         });
         assert!(gatherer.failure.is_none());
         assert!(gatherer.wait_until.is_none());
+        assert_eq!(gatherer.last_event.as_ref(), "returning to work area");
         let action = &ledger
             .as_ref()
             .expect("return walk after the deadline")
@@ -3026,6 +3128,107 @@ mod tests {
         assert_ne!(request.target, bank);
         assert_eq!(request.radius, 1);
         assert_eq!(request.arrival, ArrivalKind::Area);
+    }
+
+    #[test]
+    fn death_return_waits_out_an_active_exclusion() {
+        use crate::quester::families::tests::with_tick;
+
+        let mut gatherer = draynor_net_gatherer();
+        gatherer.retained.recovery = RecoveryState::Pending { step: 5 };
+        gatherer.avoid[0] = AvoidedTile {
+            tile: WorldTile {
+                x: 3085,
+                z: 3231,
+                level: 0,
+            },
+            until: 167,
+        };
+        let bank = WorldTile {
+            x: 3092,
+            z: 3243,
+            level: 0,
+        };
+        let snapshot = bank_snapshot(bank);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 117, |tick| {
+            gatherer.poll_recovery(tick);
+        });
+        assert!(
+            gatherer.failure.is_none(),
+            "death return must wait out an exclusion: {:?}",
+            gatherer.failure
+        );
+        assert!(
+            ledger.is_none(),
+            "step 5 must not arm a walk while excluded"
+        );
+        assert_eq!(
+            gatherer.retained.recovery,
+            RecoveryState::Pending { step: 5 }
+        );
+        assert_eq!(gatherer.wait_until, Some(167));
+        assert!(
+            gatherer
+                .last_event
+                .contains("waiting for excluded resource until 167"),
+            "{}",
+            gatherer.last_event
+        );
+        assert_eq!(gatherer.phase(), ("recovering", NativePhase::Working));
+
+        with_tick(&snapshot, &mut ledger, 167, |tick| {
+            gatherer.poll_recovery(tick);
+        });
+        assert!(gatherer.failure.is_none());
+        assert!(gatherer.wait_until.is_none());
+        assert_eq!(gatherer.last_event.as_ref(), "returning after death");
+        assert_eq!(
+            gatherer.retained.recovery,
+            RecoveryState::Pending { step: 5 }
+        );
+        let action = &ledger
+            .as_ref()
+            .expect("death return walk after the deadline")
+            .outbox[0];
+        let crate::native::HostEffect::Walk(request) = &action.effect else {
+            panic!("expiry must arm the death-return walk");
+        };
+        assert_ne!(request.target, bank);
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+    }
+
+    #[test]
+    fn validate_pending_names_the_missing_observation() {
+        use crate::quester::families::tests::with_tick;
+
+        let mut gatherer = draynor_net_gatherer();
+        gatherer.needs_validate = true;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let validation = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.validate(&mut tick.cx)
+        });
+        assert_eq!(validation, Validation::Pending);
+        assert_eq!(gatherer.last_event.as_ref(), "waiting for local player");
+    }
+
+    #[test]
+    fn idle_without_world_names_the_pending_reason() {
+        use crate::quester::families::tests::with_tick;
+
+        let mut gatherer = draynor_net_gatherer();
+        let snapshot = bank_snapshot(WorldTile {
+            x: 3092,
+            z: 3243,
+            level: 0,
+        });
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.tick(tick).unwrap();
+        });
+        assert_eq!(gatherer.last_event.as_ref(), "waiting for world");
     }
 
     #[test]
@@ -3127,6 +3330,118 @@ mod tests {
             gatherer.last_event.contains("planning=3087,3228,0"),
             "{}",
             gatherer.last_event
+        );
+
+        with_tick(&snapshot, &mut ledger, 121, |tick| {
+            let allocations = allocation_counter::measure(|| {
+                gatherer.retreat_from_hazard(tick, Some(&collision));
+            });
+            assert_eq!(
+                allocations.count_total, 0,
+                "waiting on a known hazard deadline must not allocate: {allocations:?}"
+            );
+        });
+        assert!(ledger.is_none(), "mid-wait ticks must not arm a walk");
+        assert_eq!(gatherer.hazard_escape, Some(hazard));
+    }
+
+    #[test]
+    fn hazard_retreat_ignores_walkable_tiles_in_another_component() {
+        let here = WorldTile {
+            x: 3087,
+            z: 3228,
+            level: 0,
+        };
+        let hazard = WorldTile {
+            x: 3086,
+            z: 3228,
+            level: 0,
+        };
+        let island = WorldTile {
+            x: 3091,
+            z: 3228,
+            level: 0,
+        };
+        let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| tile.x == 3089);
+        assert!(collision.walkable(island));
+        assert_eq!(
+            nav::paint::flood_component_id(&collision, &[here], island),
+            None
+        );
+        let stand =
+            hazard_retreat_stand(here, hazard, Some(&collision)).expect("a reachable stand");
+        assert_ne!(stand, island);
+        assert_eq!(
+            nav::paint::flood_component_id(&collision, &[here], stand),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
+        use crate::quester::families::tests::with_tick;
+
+        let here = WorldTile {
+            x: 3087,
+            z: 3228,
+            level: 0,
+        };
+        let hazard = WorldTile {
+            x: 3086,
+            z: 3228,
+            level: 0,
+        };
+        let blocked_away = WorldTile {
+            x: 3088,
+            z: 3228,
+            level: 0,
+        };
+        let blocked_north = WorldTile {
+            x: 3088,
+            z: 3231,
+            level: 0,
+        };
+        let world = crate::gatherer::select::test_real_nav_world();
+        assert!(
+            !world.collision.walkable(blocked_away),
+            "S10 away tile must stay blocked on the reference pack"
+        );
+        assert!(!world.collision.walkable(blocked_north));
+        let stand = hazard_retreat_stand(here, hazard, Some(&world.collision))
+            .expect("Draynor S10 must have a reachable stand");
+        assert_ne!(stand, blocked_away);
+        assert_ne!(stand, blocked_north);
+        assert_ne!(stand, here);
+        assert_ne!(stand, hazard);
+        assert!(world.collision.walkable(stand));
+        assert_eq!(
+            nav::paint::flood_component_id(&world.collision, &[here], stand),
+            Some(0)
+        );
+        assert!(
+            stand.x.abs_diff(here.x).max(stand.z.abs_diff(here.z)) <= HAZARD_RETREAT_RADIUS as u32
+        );
+
+        let mut gatherer = draynor_net_gatherer();
+        gatherer.hazard_escape = Some(hazard);
+        let snapshot = bank_snapshot(here);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.retreat_from_hazard(tick, Some(&world.collision));
+        });
+        assert!(gatherer.failure.is_none());
+        let action = &ledger.as_ref().expect("hazard retreat walk").outbox[0];
+        let crate::native::HostEffect::Walk(request) = &action.effect else {
+            panic!("the retreat must arm a walk");
+        };
+        assert_eq!(request.target, stand);
+        assert_eq!(
+            request.options.allow_danger_zones,
+            crate::native::WalkBit::Inherit
+        );
+        assert_eq!(
+            request.options.allow_teleports,
+            crate::native::WalkBit::Forbid
         );
     }
 }

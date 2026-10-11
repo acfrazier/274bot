@@ -91,6 +91,7 @@ impl Gatherer {
             return;
         }
         if self.fence.sealed {
+            self.set_event("waiting for the next tick");
             return;
         }
         if let Some(revision) = self.apply_pending(false) {
