@@ -878,9 +878,12 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
         PairPrepStage::WaitRelog => {
             // The 289 engine retries pending `player_logout` saves every
             // 15s (`engine/src/engine/World.ts:795-803`) and rejects a login
-            // while that save is pending (`World.ts:812-821`). The host honors
-            // response 5 with its 60s retry (`crates/host-play/src/play_login.rs:
-            // 1093-1109`), so sending logout or sleeping is not release evidence.
+            // while that save is pending (`World.ts:812-821`). The host paces a
+            // same-world clean relog from its exit and probes response 5 at 5s
+            // intervals within a 30s budget, under shared admission limits
+            // (`crates/host-play/src/play_login.rs`, `clean_release_admission_at`
+            // and `defer_clean_release_at`); generic fallback still waits 60s.
+            // Sending logout or sleeping is therefore not release evidence.
             // Require the successful new session to publish scene2 and the
             // inventory tab before seeding.
             let logout_observed = pair_relog_seen(
