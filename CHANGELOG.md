@@ -35,6 +35,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - A watchdog restart names what the Gatherer was waiting for, and every
   pending observation wait shows that reason on the status line.
 
+### Random-event guardian
+
+- Lamp auto now uses every genie lamp you hold, not just the first. With
+  several lamps (a stack, or lamps you collect at once), each one is rubbed
+  for the skill you picked and its XP lands, without turning lamp auto off and
+  on again. When a Rub's skill window doesn't open (a script rearranging your
+  pack can move the lamp), the bot pauses briefly and rubs again instead of
+  stopping until you toggle lamp auto. If the final confirm is refused or the
+  chosen skill can't be picked, lamp auto still waits for the lamp to leave
+  your pack or for lamp auto to be turned off and on.
+
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
 ### Scripts
