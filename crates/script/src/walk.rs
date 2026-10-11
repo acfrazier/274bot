@@ -795,6 +795,7 @@ impl Walk {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn begin_with_intent(
         dest: WorldTile,
         radius: i32,

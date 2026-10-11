@@ -3484,6 +3484,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         Some(authority),
         None,
         nav::arrival::ArrivalKind::Area,
+        false,
     ));
     assert!(
         wait_until(5_000, || {
