@@ -1,5 +1,14 @@
 use super::*;
 
+#[test]
+fn missing_bootstrap_error_names_the_entrypoint() {
+    let message = LoadIsolateError::PlatformNotBootstrapped.to_string();
+    assert!(
+        message.contains("script::bootstrap_v8_platform()"),
+        "{message}"
+    );
+}
+
 fn run_exact_child(test: &str, env: &str) {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
@@ -224,7 +233,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
 
 #[test]
 fn shim_prelude_defines_globals_for_compat_fixture() {
-    ensure_platform();
+    crate::load::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
@@ -246,7 +255,7 @@ fn shim_prelude_defines_globals_for_compat_fixture() {
 
 #[test]
 fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
-    ensure_platform();
+    crate::load::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let report: serde_json::Value = runtime
@@ -757,7 +766,7 @@ export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; 
 /// in order, so the newest are the ones still worth running.
 #[test]
 fn compat_event_queue_is_capped_and_keeps_the_newest_events() {
-    ensure_platform();
+    crate::load::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     let first: Vec<_> = (0..300).map(xp_event).collect();
     dispatch_native_events(&mut runtime, &first).unwrap();

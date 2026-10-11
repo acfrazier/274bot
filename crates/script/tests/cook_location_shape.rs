@@ -8,7 +8,7 @@ use std::sync::Arc;
 use api::game_data::SelectedGameData;
 use api::named_banks::{NamedBankFacts, BANK_CATALOG};
 use nav::named_banks::resolve;
-use script::{LoadIsolate, LoadShape};
+use script::{LoadIsolate, LoadIsolateError, LoadShape};
 
 fn data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
@@ -27,7 +27,7 @@ fn spawn_with(
     src: &str,
     game_data: Option<Arc<SelectedGameData>>,
     facts: NamedBankFacts,
-) -> Result<LoadIsolate, String> {
+) -> Result<LoadIsolate, LoadIsolateError> {
     LoadIsolate::spawn_with_content(
         src.to_string(),
         LoadShape::CompatClass,
