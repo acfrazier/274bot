@@ -1416,6 +1416,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
         });
     }
+    let debug_actions = state.session.debug_ui();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
     for ((row, labels), [cx, cy, cw, ch]) in rows.iter().zip(&labels).zip(cells) {
@@ -1451,6 +1452,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 width: cw,
                 preview,
                 restart_required,
+                debug_actions,
             },
             &mut marked,
         );
@@ -1544,7 +1546,10 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
                 match id.as_str() {
                     "status" => status_section(ui, session),
                     "resource" => {
-                        if !session.multibox {
+                        // The rail's own resource card is the readout while the
+                        // rail is shown; with it hidden (single bot, Grid) the
+                        // strip carries the same sample.
+                        if !session.rail_shown() {
                             resource_section(ui, session);
                         }
                     }
@@ -1777,7 +1782,15 @@ fn kv_row(ui: &Ui, key: &str, value: &str) {
     ui.text_wrapped(value);
 }
 
+#[cfg(test)]
+std::thread_local! {
+    /// Resource readouts drawn so far on this test thread.
+    static TEST_RESOURCE_READOUTS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
+    #[cfg(test)]
+    TEST_RESOURCE_READOUTS.set(TEST_RESOURCE_READOUTS.get() + 1);
     kv_row(ui, "bots", &format_bots(view.bots, view.ingame));
     if show_background && view.background > 0 {
         kv_row(ui, "background", &format_background(view.background));
@@ -2294,7 +2307,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .core
         .fleet_view()
         .detail()
-        .and_then(|detail| detail.native_status.as_deref());
+        .and_then(|detail| detail.native_status());
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
@@ -4031,6 +4044,15 @@ fn status_section(ui: &Ui, session: &mut Session) {
 
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", &d.state);
+    if let Some(script) = d.script_phase() {
+        kv_row(ui, "script", script.label());
+        if let Some(phase) = script.phase() {
+            kv_row(ui, "phase", phase);
+        }
+        if let Some(reason) = script.reason() {
+            kv_row(ui, "reason", reason);
+        }
+    }
     kv_row(
         ui,
         "player",
@@ -4370,12 +4392,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     let current = session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
     if ui.checkbox("only render selected", &mut only) {
-        let (next, open_warn) = apply_only_render_selected(current, only);
-        session.focus.lock().unwrap().only_render_selected = next;
-        if open_warn {
-            session.wall.render_all_warn_open = true;
-        }
-        session.wake_all_slots();
+        only_render_selected_clicked(session, only);
     }
     let live = session.scenario.lock().unwrap().is_some();
     if live {
@@ -4485,17 +4502,35 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 
 /// Apply an "only render selected" checkbox change: re-checking on is
 /// immediate; unchecking keeps the safe default and opens the scary
-/// confirm instead. Returns `(new_only_render_selected, open_warn)`.
-pub fn apply_only_render_selected(current: bool, checked: bool) -> (bool, bool) {
+/// confirm instead, unless the operator saved "Don't show again" (`acked`),
+/// when it applies at once. Returns `(new_only_render_selected, open_warn)`.
+pub fn apply_only_render_selected(current: bool, checked: bool, acked: bool) -> (bool, bool) {
     if checked && !current {
         // user just checked "only render selected" — apply immediately
         return (true, false);
     }
     if !checked && current {
+        if acked {
+            return (false, false);
+        }
         // user just unchecked — do not apply; open warning
         return (true, true);
     }
     (current, false)
+}
+
+/// The "only render selected" checkbox was clicked to `checked`. The policy
+/// flips every wall member's draw state, so the slots are kicked and parked
+/// threads apply the change within a frame (slot threads read it every frame).
+fn only_render_selected_clicked(session: &mut Session, checked: bool) {
+    let current = session.focus.lock().unwrap().only_render_selected;
+    let (next, open_warn) =
+        apply_only_render_selected(current, checked, session.ui.render_all_warning_ack);
+    session.focus.lock().unwrap().only_render_selected = next;
+    if open_warn {
+        session.wall.render_all_warn_open = true;
+    }
+    session.wake_all_slots();
 }
 
 /// Sticky bulk row: Login all / Logout all, then the only-render-selected
@@ -4527,14 +4562,7 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     let current = state.session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
     if ui.checkbox("only render selected", &mut only) {
-        let (next, open_warn) = apply_only_render_selected(current, only);
-        state.session.focus.lock().unwrap().only_render_selected = next;
-        if open_warn {
-            state.session.wall.render_all_warn_open = true;
-        }
-        // The policy flips every wall member's draw state; kick the slots
-        // so parked threads apply the change within a frame.
-        state.session.wake_all_slots();
+        only_render_selected_clicked(&mut state.session, only);
     }
 }
 
@@ -4616,10 +4644,11 @@ pub fn status_value_visible(label: &str, value: &str) -> bool {
     !matches!(label, "walk" | "queue" | "modals") || !matches!(value.trim(), "" | "—" | "-1")
 }
 
-/// Scary confirm before "only render selected" can be unchecked: OK stays
-/// disabled until "I understand" is ticked, then writes
-/// `only_render_selected = false`. Cancel keeps the safe default; the
-/// box that triggered this stays checked either way.
+/// Scary confirm before "only render selected" can be unchecked: OK and
+/// "Don't show again" stay disabled until "I understand" is ticked. Both
+/// write `only_render_selected = false`; "Don't show again" also saves the
+/// acknowledgement so the box unchecks at once from then on. Cancel keeps the
+/// safe default; the box that triggered this stays checked either way.
 fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     if !session.wall.render_all_warn_open {
         return;
@@ -4643,22 +4672,49 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
             if ui.checkbox("I understand", &mut understood) {
                 session.wall.render_all_understood = understood;
             }
+            #[cfg(test)]
+            record_test_render_all_item(ui);
             ui.spacing();
             let avail = ui.content_region_avail()[0];
-            let (w, stack) = scaled_button_row_layout(ui, avail, 2);
+            let gap = scale_px(ui, BUTTON_GAP);
+            let remember_w = ui.current_font().calc_text_size(
+                ui.current_font_size(),
+                f32::MAX,
+                0.0,
+                "Don't show again",
+            )[0] + 2.0 * ui.clone_style().frame_padding()[0];
+            let side_w = ((avail - remember_w - 2.0 * gap) / 2.0).max(1.0);
+            let stack = side_w < scale_px(ui, MIN_BUTTON);
+            let (side_w, remember_w) = if stack {
+                (avail, avail)
+            } else {
+                (side_w, remember_w)
+            };
             let ok_clicked = {
                 let _disabled = ui.begin_disabled_with_cond(!understood);
-                ui.button_with_size("OK", [w, 0.0])
+                ui.button_with_size("OK", [side_w, 0.0])
             };
-            if ok_clicked && understood {
-                session.focus.lock().unwrap().only_render_selected = false;
-                session.wake_all_slots();
-                session.wall.render_all_warn_open = false;
-            }
+            #[cfg(test)]
+            record_test_render_all_item(ui);
             if !stack {
-                ui.same_line();
+                gap_line(ui);
             }
-            if ui.button_with_size("Cancel", [w, 0.0]) {
+            let cancelled = ui.button_with_size("Cancel", [side_w, 0.0]);
+            #[cfg(test)]
+            record_test_render_all_item(ui);
+            if !stack {
+                gap_line(ui);
+            }
+            let remember_clicked = {
+                let _disabled = ui.begin_disabled_with_cond(!understood);
+                ui.button_with_size("Don't show again", [remember_w, 0.0])
+            };
+            #[cfg(test)]
+            record_test_render_all_item(ui);
+            if (ok_clicked || remember_clicked) && understood {
+                session.confirm_render_all(remember_clicked);
+            }
+            if cancelled {
                 session.wall.render_all_warn_open = false;
             }
         });
@@ -4668,6 +4724,27 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     if !session.wall.render_all_warn_open {
         session.wall.render_all_understood = false;
     }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_RENDER_ALL_ITEMS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn record_test_render_all_item(ui: &Ui) {
+    let bounds = item_bounds(ui);
+    TEST_RENDER_ALL_ITEMS.with_borrow_mut(|items| items.push(bounds));
+}
+
+/// One frame of the render-all warning. Returns the bounds of its controls in
+/// order: "I understand", OK, Cancel, "Don't show again"; empty while closed.
+#[cfg(test)]
+fn draw_test_render_all_warning(ui: &Ui, session: &mut Session) -> Vec<[f32; 4]> {
+    TEST_RENDER_ALL_ITEMS.with_borrow_mut(Vec::clear);
+    render_all_warn_window(ui, session);
+    TEST_RENDER_ALL_ITEMS.with_borrow_mut(std::mem::take)
 }
 
 fn background_ack_window(ui: &Ui, session: &mut Session) {
@@ -4713,6 +4790,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sync_fleet();
     let rows = std::mem::take(&mut state.fleet);
     let labels = std::mem::take(&mut state.fleet_labels);
+    let debug_actions = state.session.debug_ui();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
@@ -4753,6 +4831,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 width: avail,
                 preview,
                 restart_required,
+                debug_actions,
             },
             &mut marked,
         );
@@ -4789,6 +4868,8 @@ struct CapDrawState {
     width: f32,
     preview: bool,
     restart_required: bool,
+    /// The profile's server allows Debug, so a mark also feeds Debug actions.
+    debug_actions: bool,
 }
 
 fn rail_cap(
@@ -4829,7 +4910,10 @@ fn rail_cap(
     ui.checkbox("##rail-mark", marked);
     #[cfg(test)]
     record_test_rail_item(ui);
-    ui.set_item_tooltip("mark for Fleet and Debug actions");
+    let mark_tip = rail_mark_tooltip(draw.debug_actions);
+    ui.set_item_tooltip(mark_tip);
+    #[cfg(test)]
+    TEST_RAIL_MARK_TOOLTIP.set(mark_tip);
     ui.same_line_with_pos(marker_x + dot_w + gap + mark_w + gap);
     let name_w =
         (draw.width - btn * 2.0 - dot_w - mark_w - gap * 4.0 - restart_w).max(scale_px(ui, 10.0));
@@ -4904,11 +4988,56 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
             width,
             preview: false,
             restart_required: false,
+            debug_actions: true,
         },
         &mut marked,
     );
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
+}
+
+/// Tooltip of a cap's mark checkbox. Debug actions exist only on servers that
+/// allow Debug, so the others don't mention them.
+fn rail_mark_tooltip(debug_actions: bool) -> &'static str {
+    if debug_actions {
+        "mark for Fleet and Debug actions"
+    } else {
+        "mark for Fleet actions"
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_RAIL_MARK_TOOLTIP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+/// The tooltip a cap's mark checkbox gets for a server that does or doesn't
+/// allow Debug, as `rail_cap` draws it.
+#[cfg(test)]
+fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
+    let row = FleetRow {
+        name: "mark-tip".into(),
+        ..FleetRow::default()
+    };
+    let labels = CapLabels {
+        title: "mark-tip".into(),
+        ..CapLabels::default()
+    };
+    let mut marked = false;
+    let _ = rail_cap(
+        ui,
+        &row,
+        &labels,
+        CapDrawState {
+            is_focused: false,
+            width: 300.0,
+            preview: false,
+            restart_required: false,
+            debug_actions,
+        },
+        &mut marked,
+    );
+    TEST_RAIL_MARK_TOOLTIP.get()
 }
 
 #[cfg(test)]

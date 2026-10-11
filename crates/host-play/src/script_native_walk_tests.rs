@@ -4041,10 +4041,10 @@ mod s2b_admission_contract {
         );
         let reason = first.detail.as_deref().unwrap();
         assert!(
-            reason.contains("not armed") && reason.contains("waiting alone"),
+            reason.contains("Poison status is unknown until the bot can track it"),
             "{reason}"
         );
-        assert!(reason.contains("S2c"), "{reason}");
+        assert!(!reason.contains("S2c"), "{reason}");
         let request = rig.navs.lock().unwrap()["alice"].walk_outcome_request_id;
         rig.snapshot.seed_tick(32);
         rig.shared.lock().rewalk = true;

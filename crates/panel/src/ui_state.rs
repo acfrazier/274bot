@@ -56,6 +56,17 @@ pub struct PanelUiState {
     /// Operator acknowledged that other profiles keep running in the background.
     #[serde(default)]
     pub background_bots_ack: bool,
+    /// The operator pressed "Don't show again" on the render-all warning.
+    /// Absent = ask every time. "Only render selected" itself is never saved.
+    #[serde(default)]
+    pub render_all_warning_ack: bool,
+    /// "sidecar 50 fps": unfocused wall members at 50 fps. Absent = off.
+    #[serde(default)]
+    pub sidecar_50: bool,
+    /// "focused 50 fps": the Game pane's bot at 50 fps. Absent = on, as it
+    /// was before the choice was saved.
+    #[serde(default = "default_true")]
+    pub focused_50: bool,
     /// Panel CRT palette (named theme consts). Absent = amber defaults.
     #[serde(default)]
     pub chrome: crate::theme::ChromeColors,
@@ -134,6 +145,9 @@ impl Default for PanelUiState {
             panel_sections: HashMap::new(),
             config_collapsed: HashMap::new(),
             background_bots_ack: false,
+            render_all_warning_ack: false,
+            sidecar_50: false,
+            focused_50: true,
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
             session_log_file: false,
@@ -751,6 +765,42 @@ mod tests {
             !back.background_bots_ack,
             "missing background ack defaults to show the notice"
         );
+    }
+
+    /// An old file has none of the new keys: the render-all warning is still
+    /// asked, sidecar 50 fps is off and focused 50 fps stays on, as before the
+    /// choices were saved.
+    #[test]
+    fn missing_render_ack_and_50_fps_keys_behave_as_before() {
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(!old.render_all_warning_ack);
+        assert!(!old.sidecar_50);
+        assert!(old.focused_50);
+    }
+
+    /// The acknowledgement and both 50 fps choices survive a save and a
+    /// reload through the preferences file, next to the keys other features
+    /// wrote.
+    #[test]
+    fn render_ack_and_50_fps_choices_round_trip_through_the_file() {
+        let dir = TestDir::new("ui-render-ack");
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            render_all_warning_ack: true,
+            sidecar_50: true,
+            focused_50: false,
+            capture: false,
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        let back = load_at(&p);
+        assert!(back.render_all_warning_ack);
+        assert!(back.sidecar_50);
+        assert!(!back.focused_50);
+        assert!(!back.capture, "other keys are kept");
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(value["render_all_warning_ack"], true);
     }
 
     #[test]

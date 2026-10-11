@@ -2022,7 +2022,7 @@ impl TuiApp {
         .with_reload_confirm(self.reload_confirm)
         .with_native_status(
             self.focused_detail()
-                .and_then(|detail| detail.native_status.as_deref()),
+                .and_then(|detail| detail.native_status()),
         )
         .with_walk_risk(
             self.focused_detail()
