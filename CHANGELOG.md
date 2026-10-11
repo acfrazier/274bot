@@ -19,8 +19,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - A script waiting inside a Duel Arena fight pen is no longer restarted over and
   over trying to walk back to the lobby (the pen's walls make that impossible);
   the watchdog waits until the bot leaves the pen.
-- On Linux with recent processors, running several bots no longer crashes the
-  whole program when a second bot starts or restarts a script.
 
 ### Gatherer
 
@@ -87,6 +85,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 - A bot on a WebSocket world no longer disconnects and reconnects when its
   connection is briefly congested.
+
+## [0.2.0.1.1] — 2026-10-11 — Beta 1 Linux patch
+
+This patch is for Linux only. macOS and Windows aren't affected and stay on
+0.2.0.1.
+
+### Scripts
+
+- On Linux with recent processors, running several bots no longer crashes the
+  whole program when a second bot starts or restarts a script.
 
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
