@@ -332,7 +332,7 @@ pub struct ReturnObservation<'a> {
 pub enum ResourceReturn {
     Ready(TargetPlan),
     ExcludedUntil { until: u64 },
-    Unavailable,
+    Unavailable { reason: &'static str },
 }
 
 impl ResourceReturn {
@@ -340,7 +340,7 @@ impl ResourceReturn {
     pub fn plan(self) -> Option<TargetPlan> {
         match self {
             Self::Ready(plan) => Some(plan),
-            Self::ExcludedUntil { .. } | Self::Unavailable => None,
+            Self::ExcludedUntil { .. } | Self::Unavailable { .. } => None,
         }
     }
 }
@@ -349,7 +349,33 @@ impl ResourceReturn {
 enum ReturnStand {
     Ready(WorldTile),
     Excluded(u64),
-    None,
+    Access,
+    Metadata,
+    Area,
+    Collision,
+}
+
+const RETURN_UNAVAILABLE_COLLISION: &str = "no standable observation tile in the work area";
+const RETURN_UNAVAILABLE_ACCESS: &str = "no accessible resource in the work area";
+const RETURN_UNAVAILABLE_AREA: &str = "no resource placement in the work area";
+const RETURN_UNAVAILABLE_METADATA: &str = "resource metadata does not name a usable target";
+
+fn note_unavailable(slot: &mut Option<&'static str>, reason: &'static str) {
+    const ORDER: [&str; 4] = [
+        RETURN_UNAVAILABLE_COLLISION,
+        RETURN_UNAVAILABLE_ACCESS,
+        RETURN_UNAVAILABLE_AREA,
+        RETURN_UNAVAILABLE_METADATA,
+    ];
+    let rank = |reason: &str| {
+        ORDER
+            .iter()
+            .position(|entry| *entry == reason)
+            .unwrap_or(ORDER.len())
+    };
+    if slot.is_none_or(|current| rank(reason) < rank(current)) {
+        *slot = Some(reason);
+    }
 }
 
 pub struct PlacementScene<'a> {
@@ -900,15 +926,19 @@ pub fn resource_return_target(
     let preference = settings.target_preference_kind();
     let mut best = None;
     let mut excluded_until: Option<u64> = None;
+    let mut unavailable = None;
     for &method_index in method_indices {
         let Some(method) = catalog.methods().get(method_index) else {
+            note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
             continue;
         };
         let Ok(method_index) = u16::try_from(method_index) else {
+            note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
             continue;
         };
         if method.skill == GatherSkill::Fishing {
             let Some(spots) = complete_spots(method) else {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
                 continue;
             };
             for spot in spots {
@@ -931,18 +961,38 @@ pub fn resource_return_target(
                         excluded_until =
                             Some(excluded_until.map_or(until, |current| current.min(until)));
                     }
-                    ReturnStand::None => {}
+                    ReturnStand::Access => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_ACCESS);
+                    }
+                    ReturnStand::Metadata => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
+                    }
+                    ReturnStand::Area => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
+                    }
+                    ReturnStand::Collision => {
+                        note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_COLLISION);
+                    }
                 }
             }
         } else {
             let Ok(spots) = catalog.spots(method, &area.region()) else {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
                 continue;
             };
+            let mut saw_spot = false;
             for spot in spots {
-                if !known_resource_target(method, spot.entity)
-                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-                    || !has_area_arrival(observation.collision, spot.origin)
-                {
+                saw_spot = true;
+                if !known_resource_target(method, spot.entity) {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
+                    continue;
+                }
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_ACCESS);
+                    continue;
+                }
+                if !has_area_arrival(observation.collision, spot.origin) {
+                    note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_COLLISION);
                     continue;
                 }
                 let until = avoid_until(spot, method.skill, observation.avoided);
@@ -966,6 +1016,9 @@ pub fn resource_return_target(
                     observation.skill_stat,
                 );
             }
+            if !saw_spot {
+                note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_AREA);
+            }
         }
     }
     if let Some((method_index, method, spot, _, tile, npc_index, _)) = best {
@@ -981,7 +1034,9 @@ pub fn resource_return_target(
     } else if let Some(until) = excluded_until {
         ResourceReturn::ExcludedUntil { until }
     } else {
-        ResourceReturn::Unavailable
+        ResourceReturn::Unavailable {
+            reason: unavailable.unwrap_or(RETURN_UNAVAILABLE_METADATA),
+        }
     }
 }
 
@@ -992,11 +1047,14 @@ fn fishing_return_stand(
     area: WorkArea,
     observation: &ReturnObservation<'_>,
 ) -> ReturnStand {
-    if !fishing_spot_eligible(spot, area)
-        || !known_resource_target(method, spot.entity)
-        || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-    {
-        return ReturnStand::None;
+    if !known_resource_target(method, spot.entity) {
+        return ReturnStand::Metadata;
+    }
+    if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+        return ReturnStand::Access;
+    }
+    if !fishing_spot_eligible(spot, area) {
+        return ReturnStand::Area;
     }
     let until = avoid_until(spot, method.skill, observation.avoided);
     if until > observation.now {
@@ -1008,7 +1066,7 @@ fn fishing_return_stand(
     // goals reuse `standable` over radius one; an all-water origin clamp is
     // replaced by the nearest observation-safe stand Walk can arrive at.
     let Some(bounds) = movement_bounds(spot) else {
-        return ReturnStand::None;
+        return ReturnStand::Metadata;
     };
     observation_cells(bounds)
         .filter_map(|cell| {
@@ -1021,7 +1079,7 @@ fn fishing_return_stand(
             )
         })
         .map(ReturnStand::Ready)
-        .unwrap_or(ReturnStand::None)
+        .unwrap_or(ReturnStand::Collision)
 }
 
 fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: WorldTile) -> bool {
@@ -1344,6 +1402,22 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 }
 
 #[cfg(test)]
+pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
+    static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
+        let pack = std::env::var_os("NAV_PACK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(
+                    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+                )
+            });
+        nav::world::NavWorld::load_pack(&pack)
+            .unwrap_or_else(|error| panic!("load real 289 nav pack {}: {error}", pack.display()))
+    });
+    &WORLD
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use api::gather_methods::{GatherTarget, SpotId};
@@ -1655,19 +1729,8 @@ mod tests {
         z: 3412,
         level: 0,
     };
-    const REFERENCE_NAV_PACK: &str =
-        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
-
     fn real_nav_world() -> &'static nav::world::NavWorld {
-        static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
-            let pack = std::env::var_os("NAV_PACK")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from(REFERENCE_NAV_PACK));
-            nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
-                panic!("load real 289 nav pack {}: {error}", pack.display())
-            })
-        });
-        &WORLD
+        super::test_real_nav_world()
     }
 
     fn fishing_guild_spot(

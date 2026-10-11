@@ -144,6 +144,12 @@ struct StatusDetails<'a> {
     last_event: Option<&'a str>,
 }
 
+fn distinct_status_field<'a>(value: Option<&'a str>, occupied: &[&str]) -> Option<&'a str> {
+    value.filter(|value| {
+        !value.is_empty() && *value != "—" && occupied.iter().all(|text| !text.contains(value))
+    })
+}
+
 impl std::fmt::Display for StatusDetails<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(value) = self.failure_message {
@@ -155,13 +161,17 @@ impl std::fmt::Display for StatusDetails<'_> {
         if let Some(value) = self.action_state {
             write!(f, " action_state={value}")?;
         }
-        if let Some(value) = self.method {
+        let occupied = [
+            self.failure_message.unwrap_or(""),
+            self.last_event.unwrap_or(""),
+        ];
+        if let Some(value) = distinct_status_field(self.method, &occupied) {
             write!(f, " method={value}")?;
         }
-        if let Some(value) = self.area {
+        if let Some(value) = distinct_status_field(self.area, &occupied) {
             write!(f, " area={value}")?;
         }
-        if let Some(value) = self.target {
+        if let Some(value) = distinct_status_field(self.target, &occupied) {
             write!(f, " target={value}")?;
         }
         if let Some(value) = self.last_event {
@@ -219,7 +229,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         return;
     }
 
-    let level = if phase_changed || failure_changed {
+    let level = if phase_changed || failure_changed || last_event_changed {
         api::hostlog::Level::Info
     } else {
         api::hostlog::Level::Debug
