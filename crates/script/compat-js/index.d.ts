@@ -2188,6 +2188,8 @@ export interface Rect {
 /** The duel-arena fight pens. */
 export const DUEL_FIGHT_ARENAS: readonly Rect[];
 export function fightArenaAt(tile: WorldTile | null): Rect | null;
+/** Whether a tile is in the level-zero challenge area outside every fight pen. */
+export function inDuelChallengeArea(tile: WorldTile | null): boolean;
 
 }
 

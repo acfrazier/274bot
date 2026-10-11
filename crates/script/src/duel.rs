@@ -136,6 +136,16 @@ pub(crate) fn pen_at(tile: Tile) -> Option<usize> {
     })
 }
 
+/// Frozen upstream `inDuelChallengeArea`, excluding every fight pen.
+fn in_challenge_area(tile: Tile) -> bool {
+    tile.level == 0
+        && tile.x >= 3328
+        && tile.x <= 3393
+        && tile.z >= 3203
+        && tile.z <= 3325
+        && pen_at(tile).is_none()
+}
+
 fn within(here: Tile, dest: Tile, radius: i32) -> bool {
     here.level == dest.level && (here.x - dest.x).abs().max((here.z - dest.z).abs()) <= radius
 }
@@ -217,6 +227,9 @@ pub(crate) fn dispatch(value: &Value) -> Value {
         "pen" => json_tile(value.get("tile"))
             .and_then(pen_at)
             .map_or(Value::Null, |index| json!(index)),
+        "challenge-area" => {
+            json!(json_tile(value.get("tile")).is_some_and(in_challenge_area))
+        }
         "crosses" => {
             let Some(dest) = json_tile(value.get("tile")) else {
                 return json!(false);
@@ -1114,6 +1127,36 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn challenge_area_op_matches_upstream_contract() {
+        let check = |tile: Value| dispatch(&json!({ "op": "challenge-area", "tile": tile }));
+
+        assert_eq!(
+            check(json!({ "x": 3360, "z": 3274, "level": 0 })),
+            json!(true)
+        );
+        for tile in [
+            json!({ "x": 3328, "z": 3274, "level": 0 }),
+            json!({ "x": 3393, "z": 3274, "level": 0 }),
+            json!({ "x": 3360, "z": 3203, "level": 0 }),
+            json!({ "x": 3360, "z": 3325, "level": 0 }),
+        ] {
+            assert_eq!(check(tile), json!(true));
+        }
+        for tile in [
+            json!({ "x": 3327, "z": 3274, "level": 0 }),
+            json!({ "x": 3394, "z": 3274, "level": 0 }),
+            json!({ "x": 3360, "z": 3202, "level": 0 }),
+            json!({ "x": 3360, "z": 3326, "level": 0 }),
+            json!({ "x": 3360, "z": 3274, "level": 1 }),
+            json!({ "x": 3340, "z": 3250, "level": 0 }),
+            Value::Null,
+            json!({ "x": 3360, "z": 3274 }),
+        ] {
+            assert_eq!(check(tile), json!(false));
+        }
     }
 
     #[test]
