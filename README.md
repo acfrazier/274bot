@@ -4,6 +4,14 @@
 
 The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start / Pause / Stop, bulk Start all / Stop all, catalog refresh, manual Reload, and JS/TS loading share the Rust host kernel. Catalog compatibility is **partial**: implemented banking, food, loadout and traversal helpers run through Rust; unsupported operations fail closed. This is not a claim that every catalog script or option matrix passes. See [CHANGELOG.md](CHANGELOG.md), [docs/api/script.md](docs/api/script.md), and the [reusable live harness](docs/harness.md) / [native suite runner](docs/e2e-suite.md).
 
+## Built on rs2b0t
+
+274bot wouldn't be where it is without **[rs2b0t](https://github.com/rs2b2t/rs2b0t)** and the people who built it. rs2b0t showed what a bot client for Lost City servers could be: many headless clients, a typed script API, world walking, and quest and clue engines. 274bot keeps rs2b0t's script API so its catalog of scripts runs here unchanged, our quest Paths started from its AIOQuester, and parts of our game data come from it (MIT, © 2026 N64Jive; details in [NOTICE.md](NOTICE.md)).
+
+Thank you to everyone who has contributed to rs2b0t: Elliot T ([@ejtriple](https://github.com/ejtriple)), Dan G ([@dginovker](https://github.com/dginovker)), Austen Frazier ([@acfrazier](https://github.com/acfrazier)), Shon Czinner ([@shonczinner](https://github.com/shonczinner)), [@eaglepurerocketgrape](https://github.com/eaglepurerocketgrape), [@36y](https://github.com/36y), [@Benzymee](https://github.com/Benzymee), [@Manowah](https://github.com/Manowah), [@oldm8clint](https://github.com/oldm8clint) and [@mahinkhan-commits](https://github.com/mahinkhan-commits).
+
+It also stands on **[Lost City](https://github.com/LostCityRS)**: the open 2004-era engine, content and client work every server and client here descends from. And on the **[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust)** Rust client, which our bot-host client fork is built from.
+
 ## What 0.2.0 does
 
 Native scripts compiled into the host, driven through the panel or TUI script chrome like any other card:
