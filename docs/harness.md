@@ -328,8 +328,10 @@ fresh offer provenance, the same named counterpart and session, and matching
 independent delivery observations from both actors. The content's explicit
 stop-transmit handoff may advance each captured offer-container generation
 once; an intervening content mutation or missing source is not that handoff.
-Unrelated inventory updates cannot refresh an offer's provenance. Replacement offers,
-refunds, stale observations and one-sided completion cannot qualify. The
+Unrelated inventory updates cannot refresh an offer's provenance. Empty
+counteroffer packets may precede modal-open and stay unchanged; the contributing
+container must have fresh contents. A stale positive counteroffer is refused.
+Replacement offers, refunds, stale observations and one-sided completion cannot qualify. The
 bank/deposit/return and second-delivery predicates remain ordered after the
 first proven delivery.
 
