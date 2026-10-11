@@ -260,6 +260,7 @@ enum Prep {
     TutSkip,
     WaitTutorial,
     Relog,
+    WaitRelogReady,
     ReseedTutorial,
     WaitReseedConfirm,
     Seed,
@@ -354,6 +355,15 @@ impl LiveState {
             })
         );
         Ok(())
+    }
+
+    fn advance_post_relog_ready(&mut self, observation: &Observation) -> bool {
+        if self.prep != Prep::WaitRelogReady || !observation.ingame || observation.scene_state != 2
+        {
+            return false;
+        }
+        self.prep = Prep::ReseedTutorial;
+        true
     }
 
     fn start_script(&mut self) -> Result<(), String> {
@@ -475,27 +485,31 @@ impl LiveState {
                 self.relogger.tick_with_hold(client, hold);
                 match self.relogger.status() {
                     RunnerStatus::Passed => {
-                        let session_after = client.gens.session;
-                        println!(
-                            "{}",
-                            json!({
-                                "phase": "after-relog",
-                                "observation": observation,
-                                "session_before": self.relog_session_before,
-                                "session_after": session_after,
-                                "session_changed": self
-                                    .relog_session_before
-                                    .is_some_and(|session| session != session_after),
-                                "offline_seen": self.relog_offline_seen,
-                                "hold": hold,
-                            })
-                        );
-                        self.prep = Prep::ReseedTutorial;
+                        self.prep = Prep::WaitRelogReady;
                     }
                     RunnerStatus::Failed(error) => {
                         return Err(format!("tutorial relog failed: {error}"));
                     }
                     RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                }
+            }
+            Prep::WaitRelogReady => {
+                if self.advance_post_relog_ready(observation) {
+                    let session_after = client.gens.session;
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "after-relog",
+                            "observation": observation,
+                            "session_before": self.relog_session_before,
+                            "session_after": session_after,
+                            "session_changed": self
+                                .relog_session_before
+                                .is_some_and(|session| session != session_after),
+                            "offline_seen": self.relog_offline_seen,
+                            "hold": hold,
+                        })
+                    );
                 }
             }
             Prep::ReseedTutorial => {
@@ -904,6 +918,62 @@ mod tests {
             eq_scimitar: 0,
             eq_scimitar_slot: None,
         }
+    }
+
+    fn state_for_prep(prep: Prep) -> LiveState {
+        LiveState {
+            account: "provision".into(),
+            snapshot: GameSnapshot::new(),
+            pump: Pump::new(),
+            start_handle: None,
+            prep,
+            relogger: tutorial_relog_runner(),
+            relog_session_before: Some(1),
+            relog_offline_seen: true,
+            baseline: None,
+            witness: None,
+            start_error: None,
+            started: false,
+            last_action: Instant::now(),
+            last_hold: false,
+            tutorial_reseed: None,
+        }
+    }
+
+    #[test]
+    fn post_relog_gate_waits_for_ingame_scene_two() {
+        let mut state = state_for_prep(Prep::WaitRelogReady);
+        let mut offline = observation();
+        offline.ingame = false;
+        assert!(!state.advance_post_relog_ready(&offline));
+        assert_eq!(state.prep, Prep::WaitRelogReady);
+
+        let mut loading_scene = observation();
+        loading_scene.scene_state = 1;
+        assert!(!state.advance_post_relog_ready(&loading_scene));
+        assert_eq!(state.prep, Prep::WaitRelogReady);
+
+        assert!(state.advance_post_relog_ready(&observation()));
+        assert_eq!(state.prep, Prep::ReseedTutorial);
+    }
+
+    #[test]
+    fn start_baseline_rejects_offline_or_loading_scene() {
+        let mut state = state_for_prep(Prep::Ready);
+        let mut offline = observation();
+        offline.ingame = false;
+        assert!(state
+            .capture_baseline(&offline)
+            .unwrap_err()
+            .contains("not attached ingame scene2"));
+
+        let mut loading_scene = observation();
+        loading_scene.scene_state = 1;
+        assert!(state
+            .capture_baseline(&loading_scene)
+            .unwrap_err()
+            .contains("not attached ingame scene2"));
+        assert!(state.capture_baseline(&observation()).is_ok());
     }
 
     #[test]
