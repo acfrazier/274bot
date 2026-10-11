@@ -749,6 +749,11 @@ impl<Io> OperatorSession<Io> {
 
     /// Load every profile (vault plus running slots) that is not a member
     /// yet. Returns the operation and how many were newly added.
+    ///
+    /// Membership only: this never changes the selected bot, and later
+    /// logins of the new members do not either. Front ends must not apply
+    /// focus after this call. Single-row Load / clicking a bot still focus
+    /// that member; when nothing is selected, it stays that way.
     pub fn load_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> (OperationId, usize) {
         let op = self.operations.open(ActionKind::Load);
         let mut added = 0;
