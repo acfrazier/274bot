@@ -2472,6 +2472,222 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     assert!(!arm.login_applies_memory());
 }
 
+/// A hosted R289 client in game on a built scene: zone (400, 400), one loc
+/// at local tile (10, 10). `addr` serves the next login.
+fn hosted_client_on_a_built_scene(addr: std::net::SocketAddr) -> Client {
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_external_reconnect_owner(true);
+    client.ingame = true;
+    client.login_user = "bob".into();
+    client.login_pass = "pw".into();
+    client.map_build_centre_zone_x = 400;
+    client.map_build_centre_zone_z = 400;
+    client.scene_state = 2;
+    assert!(client.world.add_scenery(
+        0,
+        10,
+        10,
+        0,
+        0x4000_0000 | (8 << 14),
+        10,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+    ));
+    client
+}
+
+fn scene_has_the_loc(client: &Client) -> bool {
+    client.world.get_scene(0, 10, 10).is_some()
+}
+
+/// One login on `listener`, answered as Engine A does for a player it still
+/// holds (`World.ts:825-856`): a reconnect (opcode 18) is granted with 15 and
+/// keeps the session; a fresh login (16) is answered 2 here, as it is once
+/// the old session has gone (`World.ts:858-905`).
+fn serve_one_relog(listener: TcpListener) -> std::thread::JoinHandle<u8> {
+    std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut header = [0u8; 2];
+        s.read_exact(&mut header).unwrap();
+        s.write_all(&[0; 8]).unwrap();
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0; 8]).unwrap();
+        let mut block = [0u8; 512];
+        let n = s.read(&mut block).unwrap();
+        assert!(n > 0);
+        let opcode = block[0];
+        match opcode {
+            18 => s.write_all(&[15]).unwrap(),
+            16 => s.write_all(&[2, 0, 0]).unwrap(),
+            other => panic!("unexpected login opcode {other}"),
+        }
+        // Hold the socket until the client has applied the grant.
+        std::thread::sleep(Duration::from_millis(200));
+        opcode
+    })
+}
+
+/// The server's first packet after either grant: `REBUILD_NORMAL` for the
+/// zone the player stands in (`Player.onReconnect` / login, `BuildArea.ts`).
+fn rebuild_same_zone(client: &mut Client) {
+    let mut payload = client::io::Packet::new(vec![0x01, 0x90, 0x01, 0x90]);
+    client.psize = 4;
+    client.ptype = client::io::ServerProt289::REBUILD_NORMAL;
+    client.handle_packet(client::io::ServerProt289::REBUILD_NORMAL, &mut payload);
+}
+
+/// Kurian 2026-10-09 (DIAG-PROTO-74, DIAG-BLACK-WATER): a T1 unknown opcode
+/// logs out, which clears the map. Upstream (`Client.ts:7380-7381`, Java
+/// `client.java` default branch) returns to the title, so the next login is
+/// a fresh one; a reconnect would be answered with a same-zone rebuild the
+/// client skips, leaving the bot in an empty world.
+#[test]
+fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = serve_one_relog(listener);
+    let mut client = hosted_client_on_a_built_scene(addr);
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    client.ptype = 74;
+    client.psize = 0;
+    client.handle_packet(74, &mut client::io::Packet::new(vec![]));
+    assert!(!client.ingame);
+    assert!(
+        !scene_has_the_loc(&client),
+        "T1 logs out and clears the map"
+    );
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(should_handshake(&arm, false), "the bot logs back in");
+    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    assert!(!reconnect, "a protocol error is followed by a fresh login");
+    assert!(arm.login_applies_memory());
+
+    client.login("bob", "pw", reconnect).unwrap();
+    assert_eq!(server.join().unwrap(), 16);
+    rebuild_same_zone(&mut client);
+    assert_eq!(
+        client.scene_state, 1,
+        "the same-zone rebuild loads the scene again instead of being skipped"
+    );
+}
+
+/// T2 (a decode exception) takes the same logout as T1.
+#[test]
+fn protocol_error_t2_logs_in_fresh() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut client = hosted_client_on_a_built_scene(addr);
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    // A one-byte frame for a zero-length opcode fails the fixed-length check.
+    client.ptype = 74;
+    client.psize = 1;
+    client.handle_packet(74, &mut client::io::Packet::new(vec![0]));
+    assert!(!client.ingame);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(should_handshake(&arm, false));
+    assert!(
+        !arm.reconnect.load(Ordering::Relaxed),
+        "a decode exception is followed by a fresh login"
+    );
+}
+
+/// An ordinary connection loss keeps the world and reconnects into it; the
+/// server's same-zone rebuild is skipped because the scene is still there.
+#[test]
+fn connection_loss_reconnects_and_keeps_the_world() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = serve_one_relog(listener);
+    let mut client = hosted_client_on_a_built_scene(addr);
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    client.lost_con();
+    assert!(scene_has_the_loc(&client));
+    assert!(!tick_flags(&mut client, &[], &arm));
+    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    assert!(reconnect, "a lost connection reconnects (opcode 18)");
+
+    client.login("bob", "pw", reconnect).unwrap();
+    assert_eq!(server.join().unwrap(), 18);
+    rebuild_same_zone(&mut client);
+    assert_eq!(client.scene_state, 2);
+    assert!(scene_has_the_loc(&client), "the reconnect keeps the world");
+}
+
+/// SOAK-90-1010 Hans 06:04:06: the 15 s dead-server deadline is a lost
+/// connection, not a logout. It keeps the world, so the reconnect's
+/// same-zone rebuild is rightly skipped (scene 2 with no scene 1).
+#[test]
+fn dead_server_deadline_reconnects_and_keeps_the_world() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = serve_one_relog(listener);
+    let mut client = hosted_client_on_a_built_scene(addr);
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    client.last_response = Some(Instant::now() - Duration::from_secs(16));
+    client.game_loop();
+    assert!(!client.ingame);
+    assert!(scene_has_the_loc(&client), "the deadline keeps the map");
+    assert!(!tick_flags(&mut client, &[], &arm));
+    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    assert!(reconnect);
+
+    client.login("bob", "pw", reconnect).unwrap();
+    assert_eq!(server.join().unwrap(), 18);
+    rebuild_same_zone(&mut client);
+    assert_eq!(client.scene_state, 2);
+    assert!(scene_has_the_loc(&client), "the reconnect keeps the world");
+}
+
+/// A connection lost while a logout is pending logs out (Java `lostCon`,
+/// `Client.ts:2679-2683`) and clears the map, so the next login is fresh.
+#[test]
+fn dead_server_deadline_with_a_pending_logout_logs_in_fresh() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut client = hosted_client_on_a_built_scene(addr);
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+
+    client.logout_timer = 250;
+    client.last_response = Some(Instant::now() - Duration::from_secs(16));
+    client.game_loop();
+    assert!(!client.ingame);
+    assert!(
+        !scene_has_the_loc(&client),
+        "the pending logout clears the map"
+    );
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(
+        !arm.reconnect.load(Ordering::Relaxed),
+        "a cleared map is never reconnected into"
+    );
+}
+
 #[test]
 fn idle_correlated_server_logout_relogs_an_active_script_without_auto_login() {
     let mut client = client_after_observed_idle_logout();
