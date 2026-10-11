@@ -793,10 +793,8 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     );
     assert!(unknown_assessment
         .reason
-        .contains("waiting alone does not clear it"));
-    assert!(unknown_assessment
-        .reason
-        .contains("separate safe-only walk"));
+        .contains("Poison status is unknown until the bot can track it"));
+    assert!(!unknown_assessment.reason.contains("S2c"));
 
     let override_admission = make_admission(RiskPolicy::Proceed, uncertain);
     let (overridden, override_kernels) = count_kernels(|| {
@@ -817,7 +815,7 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     );
     assert!(override_assessment
         .reason
-        .contains("when a crossing is refused"));
+        .starts_with("Poison status is unknown until the bot can track it; "));
 
     let safe_world = empty_corridor();
     let safe_to = tile(10, 1);

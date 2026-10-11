@@ -1488,7 +1488,7 @@ pub(crate) fn walkto_unavailable_text(play_attached: bool) -> &'static str {
 /// The map window. `open` is the window's live open flag; confirm Walk closes
 /// it. Headless tests wrap the body in a window.
 #[cfg(test)]
-fn picker_map_window(
+pub(crate) fn picker_map_window(
     ui: &Ui,
     session: &mut Session,
     world: &NavWorld,
@@ -1597,6 +1597,7 @@ fn picker_map_body(
     // map-layer choice.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
         session.route_through_zones = false;
+        session.walk_send.open = false;
         map.show_special_areas = session.ui.nav.show_special_areas;
         let observed = session
             .focused_tile()
@@ -1641,6 +1642,7 @@ fn picker_map_body(
     };
     let teleport = session.map_teleport_authorized();
     let spacing = ui.clone_style().item_spacing()[0];
+    session.walk_send.sync_walk_label(&session.fleet_selection);
     let walk_label = session.walk_send.walk_label();
     let labels = walkto_footer_labels(teleport);
     let cluster = labels
@@ -1684,7 +1686,7 @@ fn picker_map_body(
     let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), teleport);
     let group = session.walk_send.mode == crate::session::WalkSendMode::Group;
     let walk_ready = if group {
-        can_walk && session.walk_send.checked_count() > 0
+        can_walk && session.walk_send.checked_count(&session.fleet_selection) > 0
     } else {
         can_walk
     };
@@ -1706,9 +1708,9 @@ fn picker_map_body(
     ui.same_line();
     if ui.button("Send") {
         session.refresh_walk_send();
-        ui.open_popup("##walkto-send");
+        session.walk_send.open = true;
     }
-    draw_walk_send_popup(ui, session);
+    draw_walk_send_window(ui, session);
     if teleport {
         ui.same_line();
         let _off = ui.begin_disabled_with_cond(!can_teleport);
@@ -1728,51 +1730,137 @@ fn picker_map_body(
     );
 }
 
-fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {
-    ui.popup("##walkto-send", || {
-        use crate::session::WalkSendMode;
-        use crate::theme::TEXT_DIM;
-        use host_play::walk_map::WalkSlotStatus;
-        if ui.radio_button(
-            "Focused bot",
-            session.walk_send.mode == WalkSendMode::Focused,
-        ) {
-            session.set_walk_send_mode(WalkSendMode::Focused);
-        }
-        if ui.radio_button("Group", session.walk_send.mode == WalkSendMode::Group) {
-            session.set_walk_send_mode(WalkSendMode::Group);
-        }
-        if session.walk_send.mode == WalkSendMode::Group {
-            if ui.button("All eligible") {
-                session.walk_send_all_eligible();
+/// Fixed width of the Send window at scale 1.
+const WALK_SEND_W: f32 = 320.0;
+/// Share of the screen's height the Send window may take before its list
+/// scrolls; the rest keeps its title bar and bottom edge on screen.
+const WALK_SEND_MAX_H: f32 = 0.8;
+
+/// The Send window: pick the focused bot or a group, and check the bots to
+/// walk. It opens on screen (top centre of the work area, never past its
+/// bottom) and grows to show the whole list, scrolling only once the list is
+/// taller than the screen. The checks are the shared marked-bots set.
+fn draw_walk_send_window(ui: &Ui, session: &mut Session) {
+    if !session.walk_send.open {
+        return;
+    }
+    use crate::session::WalkSendMode;
+    use crate::theme::{scale_size, TEXT_DIM};
+    use host_play::walk_map::WalkSlotStatus;
+    let viewport = ui.main_viewport();
+    let (work_pos, work_size) = (viewport.work_pos(), viewport.work_size());
+    let width = scale_px(ui, WALK_SEND_W).min(work_size[0]);
+    let [min_size, _] = scale_size(ui, [WALK_SEND_W, 0.0]);
+    let mut open = true;
+    ui.window("Send walk to bots###walkto-send")
+        .opened(&mut open)
+        .flags(
+            WindowFlags::NO_COLLAPSE
+                | WindowFlags::NO_DOCKING
+                | WindowFlags::NO_SAVED_SETTINGS
+                | WindowFlags::ALWAYS_AUTO_RESIZE,
+        )
+        .position(
+            [
+                work_pos[0] + (work_size[0] - width) * 0.5,
+                work_pos[1] + work_size[1] * 0.1,
+            ],
+            Condition::Appearing,
+        )
+        .size_constraints(
+            [min_size.min(width), 0.0],
+            [width, work_size[1] * WALK_SEND_MAX_H],
+        )
+        .build(|| {
+            if ui.radio_button(
+                "Focused bot",
+                session.walk_send.mode == WalkSendMode::Focused,
+            ) {
+                session.set_walk_send_mode(WalkSendMode::Focused);
             }
-            ui.same_line();
-            if ui.button("None") {
-                session.walk_send_none();
+            if ui.radio_button("Group", session.walk_send.mode == WalkSendMode::Group) {
+                session.set_walk_send_mode(WalkSendMode::Group);
             }
-            let n = session.walk_send.rows().len();
-            for i in 0..n {
-                let _id = ui.push_id(i);
-                let eligible = session.walk_send.rows()[i].status.is_eligible();
-                if eligible {
-                    let mut checked = session.walk_send.rows()[i].checked;
-                    let changed =
-                        ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut checked);
-                    if changed {
-                        session.set_walk_send_checked(i, checked);
+            if session.walk_send.mode == WalkSendMode::Group {
+                if ui.button("All eligible") {
+                    session.walk_send_all_eligible();
+                }
+                ui.same_line();
+                if ui.button("None") {
+                    session.walk_send_none();
+                }
+                let n = session.walk_send.rows().len();
+                for i in 0..n {
+                    let _id = ui.push_id(i);
+                    if session.walk_send.rows()[i].status.is_eligible() {
+                        let mut checked =
+                            session.walk_send.rows()[i].checked(&session.fleet_selection);
+                        let changed =
+                            ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut checked);
+                        if changed {
+                            session.set_walk_send_checked(i, checked);
+                        }
+                    } else {
+                        let _off = ui.begin_disabled_with_cond(true);
+                        let mut dummy = false;
+                        ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut dummy);
+                        ui.same_line();
+                        if let WalkSlotStatus::Excluded(reason) = session.walk_send.rows()[i].status
+                        {
+                            ui.text_colored(TEXT_DIM, reason.as_str());
+                        }
                     }
-                } else {
-                    let _off = ui.begin_disabled_with_cond(true);
-                    let mut dummy = false;
-                    ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut dummy);
-                    ui.same_line();
-                    if let WalkSlotStatus::Excluded(reason) = session.walk_send.rows()[i].status {
-                        ui.text_colored(TEXT_DIM, reason.as_str());
-                    }
+                    #[cfg(test)]
+                    record_send_bot_row(ui);
                 }
             }
-        }
+            #[cfg(test)]
+            record_send_window(ui);
+        });
+    session.walk_send.open = open;
+}
+
+/// What a test sees of the Send window after one frame.
+#[cfg(test)]
+#[derive(Debug, Default, Clone)]
+pub(crate) struct SendWindowFrame {
+    /// The window's top-left and size on screen.
+    pub pos: [f32; 2],
+    pub size: [f32; 2],
+    /// How far the window's list scrolls; 0 when every name shows.
+    pub scroll_max_y: f32,
+    /// Item rectangles `[min_x, min_y, max_x, max_y]` of the bot rows, in order.
+    pub bot_rows: Vec<[f32; 4]>,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static SEND_WINDOW_FRAME: std::cell::RefCell<SendWindowFrame> =
+        std::cell::RefCell::new(SendWindowFrame::default());
+}
+
+#[cfg(test)]
+fn record_send_bot_row(ui: &Ui) {
+    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+    SEND_WINDOW_FRAME
+        .with_borrow_mut(|frame| frame.bot_rows.push([min[0], min[1], max[0], max[1]]));
+}
+
+#[cfg(test)]
+fn record_send_window(ui: &Ui) {
+    SEND_WINDOW_FRAME.with_borrow_mut(|frame| {
+        frame.pos = ui.window_pos();
+        frame.size = ui.window_size();
+        frame.scroll_max_y = ui.scroll_max_y();
     });
+}
+
+/// Draw only the Send window for a test and return what it laid out.
+#[cfg(test)]
+pub(crate) fn draw_test_walk_send(ui: &Ui, session: &mut Session) -> SendWindowFrame {
+    SEND_WINDOW_FRAME.with_borrow_mut(|frame| *frame = SendWindowFrame::default());
+    draw_walk_send_window(ui, session);
+    SEND_WINDOW_FRAME.with_borrow_mut(std::mem::take)
 }
 
 /// Write a search-row caption (display name, then tile) into `out`, which the
