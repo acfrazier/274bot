@@ -253,8 +253,8 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
             },
             StatusField {
                 key: "block_reason",
-                label: "Queue block reason",
-                value: StatusValue::Text(Arc::from("queue position 5 of 9")),
+                label: "Blocked",
+                value: StatusValue::Text(Arc::from("no step for stage")),
             },
         ]),
         failure: None,
@@ -270,7 +270,7 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
         "{shown}"
     );
     assert!(
-        shown.contains("reason") && shown.contains("queue position 5 of 9"),
+        shown.contains("reason") && shown.contains("no step for stage"),
         "{shown}"
     );
 
