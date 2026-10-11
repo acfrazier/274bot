@@ -186,3 +186,12 @@ Local stays TCP on the profile's game/asset ports.
 Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
 `~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. `--vault PATH` still
 wins. Unit tests do not verify public login.
+
+## Credits
+
+274bot is built on the work of [rs2b0t](https://github.com/rs2b2t/rs2b0t) and
+its contributors: its script API, which lets the rs2b0t catalog run here, its
+AIOQuester (where our quest Paths started) and parts of our game data come from
+it. It also builds on [Lost City](https://github.com/LostCityRS) and the
+[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust) client. The full
+list of contributors is in the README; licenses are in NOTICE.md.
