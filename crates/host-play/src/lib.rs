@@ -136,10 +136,10 @@ pub use play_bootstrap::{
 #[cfg(test)]
 use play_login::{
     apply_queue_wait, configure_slot_world, drop_queue_place, enqueue_queue_place,
-    granted_permit_may_start_login, granted_permit_world_is_current, login_and_acknowledge_permit,
-    login_retry_wait, on_login_success, permit_wait_cancelled, plan_login_retry,
-    publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake, tick_flags,
-    wait_for_permit, wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
+    granted_permit_may_start_login, granted_permit_world_is_current, login_retry_wait,
+    on_login_success, permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
+    refresh_slot_world_preference, server_hold, should_handshake, tick_flags, wait_for_permit,
+    wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
     UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
 };
 use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};

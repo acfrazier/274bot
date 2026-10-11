@@ -11,18 +11,21 @@
 //!   `node.production` is true. Local default is `production: false`, so a
 //!   loopback engine does not apply these at all.
 //! - `src/engine/World.ts:120,384,809-957` — the world admits new players
-//!   once per 600 ms tick (`processLogins`, which sends response 2). Logins
-//!   started closer together than that only queue behind each other in the
-//!   same tick's batch.
+//!   in `processLogins`, once per 600 ms tick, and answers them there
+//!   (response 2).
+//! - `src/server/tcp/TcpServer.ts:19,61-67` — the engine destroys a socket
+//!   that has been silent for 30 s.
 //!
 //! The host stays under the production numbers (so flipping
 //! `NODE_PRODUCTION` does not 16 us), and it does not burst: at most one
-//! handshake is in flight, and starts are at least [`LOGIN_START_SPACING`]
-//! apart. The engine has no spacing rule of its own; the spacing is this
-//! host's "don't hammer the server" policy, sized from the tick above.
+//! handshake is in flight, attempts start at least [`LOGIN_START_SPACING`]
+//! apart, and one handshake holds the in-flight slot for at most
+//! [`HANDSHAKE_HOLD`] (plus [`LEASE_SLACK`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+
+use client::io::client_stream::READ_TIMEOUT;
 
 /// Permit outcome of [`LoginQueue::poll_owner`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,15 +71,36 @@ impl AdmitBlocker {
 /// One server tick (`World.TICKRATE`, `World.ts:120`).
 const SERVER_TICK: Duration = Duration::from_millis(600);
 
-/// Default minimum gap between two login starts: two server ticks, so two
-/// of our logins never land in the same tick's admission batch even with a
-/// tick of timer or network jitter.
+/// Minimum gap between two login attempts, measured from the moment each
+/// attempt starts (its connect). This is a host policy, not a server rule:
+/// the engine has no spacing requirement, and two ticks of spacing alone
+/// would not keep two attempts in separate admission batches, because
+/// network delay can bunch or split them. Batches are kept apart by the
+/// one-in-flight rule instead: a successful handshake returns only after
+/// `processLogins` answered it, so the next attempt starts after that
+/// tick. The spacing only stops a fleet of fast handshakes (about 0.4 s
+/// on a local engine) from following each other back to back.
 pub const LOGIN_START_SPACING: Duration = Duration::from_millis(2 * SERVER_TICK.as_millis() as u64);
+
+/// Longest one login handshake may hold the in-flight slot, measured from
+/// its start. Both ends give up on a silent socket after 30 s: the engine
+/// destroys it (`TcpServer.ts:19,61-67`), and the original client's read
+/// timeout is 30 s (`ClientStream.java:47`, this client's
+/// [`READ_TIMEOUT`]). The slot worker hands the deadline from
+/// [`LoginQueue::start_attempt`] to the client, which stops the connect and
+/// every read and write of the handshake at it.
+pub const HANDSHAKE_HOLD: Duration = READ_TIMEOUT;
+
+/// How long after a handshake's deadline the queue still treats its slot as
+/// taken: the client's last socket call returns at the deadline, and it
+/// then closes the socket. A grant that never started counts from the grant.
+pub const LEASE_SLACK: Duration = Duration::from_secs(1);
 
 /// Production `rateLimitDeviceLogin` is 5 in a 15 s TTL (`>= 5` rejects,
 /// so 4 grants then wait the remaining TTL). Each grant refreshes the
 /// host reservation count; cooldown is measured conservatively from the
-/// latest `client.login` return while any unreturned grant prevents expiry.
+/// latest `client.login` return (or lease end) while any unreturned grant
+/// prevents expiry.
 const UID_GRANT_CAP: usize = 4;
 const UID_COOLDOWN: Duration = Duration::from_secs(15);
 
@@ -101,15 +125,19 @@ pub struct QueuePos {
 pub struct LoginQueue {
     spacing: Duration,
     max_in_flight: usize,
+    handshake_hold: Duration,
     ip_cap: usize,
     ip_window: Duration,
     queue: VecDeque<QueueEntry>,
     preferred: Option<u64>,
-    last_grant: Option<Instant>,
-    /// The start before `last_grant`, restored when that grant is abandoned.
-    previous_grant: Option<Instant>,
+    /// When the latest attempt started (its grant, until it starts).
+    last_start: Option<Instant>,
+    /// The start before `last_start`, restored when an unused grant is
+    /// abandoned.
+    previous_start: Option<Instant>,
+    /// Granted logins that have not returned, abandoned or expired.
+    flights: Vec<Flight>,
     ip_count: usize,
-    ip_pending: usize,
     ip_last: Option<Instant>,
     throttle_until: Option<Instant>,
     by_uid: HashMap<i32, UidState>,
@@ -121,36 +149,62 @@ struct QueueEntry {
     uid: i32,
 }
 
+/// One granted login, owned by its slot owner until it returns.
+#[derive(Debug, Clone, Copy)]
+struct Flight {
+    owner: u64,
+    uid: i32,
+    granted: Instant,
+    /// When the slot worker started the attempt ([`LoginQueue::start_attempt`]).
+    started: Option<Instant>,
+}
+
+impl Flight {
+    /// When this flight stops holding the in-flight slot even if it never
+    /// returns: its client stops at `start + hold`, and the slack covers
+    /// closing the socket.
+    fn lease_end(&self, hold: Duration) -> Instant {
+        self.started.unwrap_or(self.granted) + hold + LEASE_SLACK
+    }
+}
+
 #[derive(Debug)]
 struct UidState {
     count: usize,
-    pending: usize,
     last: Option<Instant>,
 }
 
 impl LoginQueue {
     /// Construct a queue with an explicit start spacing, address permit
     /// cap, and address idle TTL. At most one granted login is in flight at
-    /// a time. `ip_cap` counts completed attempts plus pending reservations;
-    /// a full `ip_window` starts at the latest login return only after no
-    /// reservation remains in flight.
+    /// a time, for at most [`HANDSHAKE_HOLD`]. `ip_cap` counts completed
+    /// attempts plus pending reservations; a full `ip_window` starts at the
+    /// latest login return only after no reservation remains in flight.
     pub fn new(spacing: Duration, ip_cap: usize, ip_window: Duration) -> Self {
         assert!(ip_cap > 0, "ip_cap must be positive");
         Self {
             spacing,
             max_in_flight: 1,
+            handshake_hold: HANDSHAKE_HOLD,
             ip_cap,
             ip_window,
             queue: VecDeque::new(),
             preferred: None,
-            last_grant: None,
-            previous_grant: None,
+            last_start: None,
+            previous_start: None,
+            flights: Vec::new(),
             ip_count: 0,
-            ip_pending: 0,
             ip_last: None,
             throttle_until: None,
             by_uid: HashMap::new(),
         }
+    }
+
+    /// Replace [`HANDSHAKE_HOLD`] (regressions that wait for a lease to run
+    /// out use a short one).
+    pub fn with_handshake_hold(mut self, hold: Duration) -> Self {
+        self.handshake_hold = hold;
+        self
     }
 
     /// Accounting tests that need several unreturned grants at once.
@@ -244,54 +298,62 @@ impl LoginQueue {
         }
     }
 
-    /// Record completion of one granted `uid` login call. Success and error
-    /// returns both acknowledge conservatively: the client may have sent the
-    /// server attempt before either result. Duplicate-uid reservations are
-    /// fungible counts, so one return consumes exactly one pending grant.
-    pub fn acknowledge_login_return(&mut self, uid: i32, now: Instant) -> bool {
-        let Some(state) = self.by_uid.get_mut(&uid) else {
+    /// Mark `owner`'s granted login as started now, its connect about to
+    /// begin. Start spacing counts from here, so a worker delayed between
+    /// its grant and its connect cannot start closer than the spacing to the
+    /// previous attempt. Returns the deadline by which the attempt must stop
+    /// all socket I/O, or `None` if the grant's lease already ran out
+    /// (nothing may be attempted on it; the owner queues again).
+    pub fn start_attempt(&mut self, owner: u64, now: Instant) -> Option<Instant> {
+        self.expire(now);
+        let flight = self
+            .flights
+            .iter_mut()
+            .find(|flight| flight.owner == owner && flight.started.is_none())?;
+        flight.started = Some(now);
+        self.last_start = Some(self.last_start.map_or(now, |last| last.max(now)));
+        Some(now + self.handshake_hold)
+    }
+
+    /// Record the return of `owner`'s login call. Success and error returns
+    /// both count as an attempt: the client may have reached the server
+    /// before either result. `false` when the owner holds no grant, which
+    /// is the case after its lease ran out (it was counted then).
+    pub fn acknowledge_login_return(&mut self, owner: u64, now: Instant) -> bool {
+        let Some(i) = self.flights.iter().position(|flight| flight.owner == owner) else {
             return false;
         };
-        if state.pending == 0 {
-            return false;
-        }
-
-        state.pending -= 1;
-        state.last = Some(state.last.map_or(now, |last| last.max(now)));
-        self.ip_pending = self
-            .ip_pending
-            .checked_sub(1)
-            .expect("uid pending grant is also address pending");
-        self.ip_last = Some(self.ip_last.map_or(now, |last| last.max(now)));
+        let flight = self.flights.remove(i);
+        self.settle(flight.uid, now);
         true
     }
 
-    /// Release one granted `uid` permit that never entered `client.login`.
-    /// This removes its reservation without refreshing either server TTL,
-    /// and the start spacing runs from the previous real start again.
-    pub fn abandon_permit(&mut self, uid: i32) -> bool {
-        let Some(state) = self.by_uid.get_mut(&uid) else {
+    /// Give back `owner`'s grant that never started a login. This removes its
+    /// reservation without refreshing either server TTL, and the start
+    /// spacing runs from the previous real start again.
+    pub fn abandon_permit(&mut self, owner: u64) -> bool {
+        let Some(i) = self
+            .flights
+            .iter()
+            .position(|flight| flight.owner == owner && flight.started.is_none())
+        else {
             return false;
         };
-        if state.pending == 0 {
-            return false;
-        }
-
-        state.pending -= 1;
+        let flight = self.flights.remove(i);
+        let state = self
+            .by_uid
+            .get_mut(&flight.uid)
+            .expect("a granted uid is tracked");
         state.count = state
             .count
             .checked_sub(1)
             .expect("pending uid grant is counted");
-        self.ip_pending = self
-            .ip_pending
-            .checked_sub(1)
-            .expect("uid pending grant is also address pending");
         self.ip_count = self
             .ip_count
             .checked_sub(1)
             .expect("pending address grant is counted");
-        if self.ip_pending == 0 {
-            self.last_grant = self.previous_grant;
+        if self.flights.is_empty() {
+            self.last_start = self.previous_start;
         }
         true
     }
@@ -311,9 +373,27 @@ impl LoginQueue {
         );
     }
 
-    /// Forget limits whose time has passed: the response-16 hold, an idle
-    /// address count and idle device rows.
+    /// The server TTLs run from an attempt's return (or its lease end).
+    fn settle(&mut self, uid: i32, at: Instant) {
+        if let Some(state) = self.by_uid.get_mut(&uid) {
+            state.last = Some(state.last.map_or(at, |last| last.max(at)));
+        }
+        self.ip_last = Some(self.ip_last.map_or(at, |last| last.max(at)));
+    }
+
+    /// Forget limits whose time has passed: logins whose lease ran out (each
+    /// counted as an attempt that returned at its lease end), the
+    /// response-16 hold, an idle address count and idle device rows.
     fn expire(&mut self, now: Instant) {
+        let hold = self.handshake_hold;
+        while let Some(i) = self
+            .flights
+            .iter()
+            .position(|flight| flight.lease_end(hold) <= now)
+        {
+            let flight = self.flights.remove(i);
+            self.settle(flight.uid, flight.lease_end(hold));
+        }
         self.prune_uid(now);
         if self.throttle_until.is_some_and(|until| until <= now) {
             self.throttle_until = None;
@@ -326,7 +406,7 @@ impl LoginQueue {
 
     /// The address count has gone a whole idle TTL without an attempt.
     fn address_idle(&self, now: Instant) -> bool {
-        self.ip_pending == 0
+        self.flights.is_empty()
             && self
                 .ip_last
                 .is_some_and(|last| now.saturating_duration_since(last) >= self.ip_window)
@@ -343,10 +423,15 @@ impl LoginQueue {
             }
         };
 
-        if self.ip_pending >= self.max_in_flight {
+        let in_flight = self
+            .flights
+            .iter()
+            .filter(|flight| flight.lease_end(self.handshake_hold) > now)
+            .count();
+        if in_flight >= self.max_in_flight {
             consider(AdmitBlocker::Handshake, now);
         } else if let Some(until) = self
-            .last_grant
+            .last_start
             .map(|last| last + self.spacing)
             .filter(|until| *until > now)
         {
@@ -356,14 +441,11 @@ impl LoginQueue {
             consider(AdmitBlocker::ServerHold { until }, until);
         }
         if self.ip_count >= self.ip_cap && !self.address_idle(now) {
-            let until = match self.ip_pending {
-                0 => Some(
-                    self.ip_last
-                        .expect("address ack time exists when cap is reached")
-                        + self.ip_window,
-                ),
-                _ => None,
-            };
+            let until = self.flights.is_empty().then(|| {
+                self.ip_last
+                    .expect("address ack time exists when cap is reached")
+                    + self.ip_window
+            });
             consider(
                 AdmitBlocker::AddressBudget {
                     attempts: self.ip_count as u32,
@@ -377,7 +459,7 @@ impl LoginQueue {
             .get(&uid)
             .filter(|state| state.count >= UID_GRANT_CAP)
         {
-            if state.pending > 0 {
+            if self.flights.iter().any(|flight| flight.uid == uid) {
                 consider(
                     AdmitBlocker::DeviceBudget { until: None },
                     now + UID_COOLDOWN,
@@ -399,32 +481,37 @@ impl LoginQueue {
             Some((owner, uid))
         );
         self.queue.pop_front();
-        self.previous_grant = self.last_grant;
-        self.last_grant = Some(now);
+        self.previous_start = self.last_start;
+        self.last_start = Some(now);
         self.ip_count += 1;
-        self.ip_pending += 1;
 
+        let pending = self.flights.iter().any(|flight| flight.uid == uid);
         let state = self.by_uid.entry(uid).or_insert(UidState {
             count: 0,
-            pending: 0,
             last: None,
         });
         if state.count >= UID_GRANT_CAP {
             // Cooldown has elapsed; restart the uid window.
-            debug_assert_eq!(state.pending, 0);
+            debug_assert!(!pending);
             state.count = 0;
             state.last = None;
         }
         state.count += 1;
-        state.pending += 1;
+        self.flights.push(Flight {
+            owner,
+            uid,
+            granted: now,
+            started: None,
+        });
     }
 
     /// Drop every uid accounting row after 15 s idle when it has no pending
     /// permit. Queue identity is stored separately, so an expired waiting uid
     /// keeps its FIFO place while its partial counter resets.
     fn prune_uid(&mut self, now: Instant) {
-        self.by_uid.retain(|_, state| {
-            state.pending > 0
+        let flights = &self.flights;
+        self.by_uid.retain(|uid, state| {
+            flights.iter().any(|flight| flight.uid == *uid)
                 || state
                     .last
                     .is_some_and(|last| now.saturating_duration_since(last) < UID_COOLDOWN)
@@ -466,10 +553,15 @@ impl LoginBackoff {
     /// Delay after a response-16 (too many login attempts) rejection:
     /// 20 s + 45 s per prior hit.
     pub fn throttle_delay(&mut self) -> Duration {
-        let delay =
-            Duration::from_secs(20) + Duration::from_secs(45 * u64::from(self.throttle_hits));
+        let delay = self.next_throttle_delay();
         self.throttle_hits += 1;
         delay
+    }
+
+    /// What the next [`Self::throttle_delay`] returns, without counting a
+    /// hit: the shared hold a response 16 publishes when its login returns.
+    pub fn next_throttle_delay(&self) -> Duration {
+        Duration::from_secs(20) + Duration::from_secs(45 * u64::from(self.throttle_hits))
     }
 
     /// Delay after a failed connection or a full world: 5, 10, 20, 40, then
@@ -509,6 +601,18 @@ mod tests {
         q.enqueue_owner(owner, uid);
         q.poll_owner(owner, uid, now)
     }
+
+    fn ack(q: &mut LoginQueue, uid: i32, now: Instant) -> bool {
+        q.acknowledge_login_return(test_owner(uid), now)
+    }
+
+    fn abandon(q: &mut LoginQueue, uid: i32) -> bool {
+        q.abandon_permit(test_owner(uid))
+    }
+
+    /// Long enough that the accounting cases with logins still in flight
+    /// never reach a lease end.
+    const NO_LEASE_END: Duration = Duration::from_secs(3600);
 
     /// Unpaced queue for the address/device accounting cases.
     fn unpaced(ip_cap: usize) -> LoginQueue {
@@ -551,7 +655,7 @@ mod tests {
         while attempts.len() < owners as usize || !in_flight.is_empty() {
             in_flight.retain(|&(uid, end)| {
                 if end <= now {
-                    assert!(q.acknowledge_login_return(uid, end));
+                    assert!(ack(&mut q, uid, end));
                     false
                 } else {
                     true
@@ -562,6 +666,7 @@ mod tests {
                     continue;
                 }
                 if q.poll_owner(test_owner(uid), uid, now) == Permit::Grant {
+                    assert!(q.start_attempt(test_owner(uid), now).is_some());
                     in_flight.push((uid, now + handshake));
                     attempts.push(Attempt {
                         uid,
@@ -580,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn default_starts_one_handshake_at_a_time_two_ticks_apart() {
+    fn default_starts_one_handshake_at_a_time_1200ms_apart() {
         let attempts = simulate_default(20, Duration::from_millis(100));
         assert_eq!(attempts.len(), 20, "every bot gets its login");
         assert_eq!(
@@ -591,8 +696,8 @@ mod tests {
         for pair in attempts.windows(2) {
             let gap = pair[1].start.saturating_duration_since(pair[0].start);
             assert!(
-                gap >= 2 * TICK,
-                "starts {gap:?} apart; the default spaces them two ticks"
+                gap >= LOGIN_START_SPACING,
+                "starts {gap:?} apart; the default spaces them 1.2 s"
             );
             assert!(
                 pair[1].start >= pair[0].end,
@@ -641,7 +746,7 @@ mod tests {
         );
 
         let returned = base + Duration::from_millis(300);
-        assert!(q.acknowledge_login_return(1, returned));
+        assert!(ack(&mut q, 1, returned));
         assert_eq!(
             q.head_blocker(test_owner(2), returned),
             Some(AdmitBlocker::Spacing {
@@ -668,7 +773,7 @@ mod tests {
             q.head_blocker(test_owner(9), base),
             Some(AdmitBlocker::Handshake)
         );
-        assert!(q.acknowledge_login_return(1, base));
+        assert!(ack(&mut q, 1, base));
         q.leave_owner(test_owner(9));
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
         assert!(matches!(request(&mut q, 9, base), Permit::Wait(_)));
@@ -681,7 +786,7 @@ mod tests {
             "the budget is spent; its idle period starts when the login returns"
         );
         let returned = base + Duration::from_secs(2);
-        assert!(q.acknowledge_login_return(2, returned));
+        assert!(ack(&mut q, 2, returned));
         assert_eq!(
             q.head_blocker(test_owner(9), returned),
             Some(AdmitBlocker::AddressBudget {
@@ -713,7 +818,7 @@ mod tests {
             matches!(request(&mut q, 4, base), Permit::Wait(_)),
             "focus does not start a second handshake"
         );
-        assert!(q.acknowledge_login_return(1, base + TICK));
+        assert!(ack(&mut q, 1, base + TICK));
         assert!(
             matches!(request(&mut q, 4, base + TICK), Permit::Wait(_)),
             "focus does not skip the start spacing"
@@ -731,7 +836,7 @@ mod tests {
         let mut q = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
         q.prefer_owner(test_owner(1));
         assert_eq!(request(&mut q, 1, now), Permit::Grant);
-        assert!(q.acknowledge_login_return(1, now));
+        assert!(ack(&mut q, 1, now));
         assert!(q.queued_uids().is_empty());
         assert!(matches!(request(&mut q, 2, now), Permit::Wait(_)));
         assert!(matches!(request(&mut q, 1, now), Permit::Wait(_)));
@@ -740,7 +845,7 @@ mod tests {
             request(&mut q, 1, now + Duration::from_secs(1)),
             Permit::Grant
         );
-        assert!(q.acknowledge_login_return(1, now + Duration::from_secs(1)));
+        assert!(ack(&mut q, 1, now + Duration::from_secs(1)));
         assert_eq!(
             request(&mut q, 2, now + Duration::from_secs(2)),
             Permit::Grant
@@ -757,7 +862,7 @@ mod tests {
         assert_eq!(q.queued_uids(), vec![7, 7]);
 
         assert_eq!(q.poll_owner(11, 7, now), Permit::Grant);
-        assert!(q.acknowledge_login_return(7, now));
+        assert!(q.acknowledge_login_return(11, now));
         assert_eq!(
             q.status_owner(22),
             Some(QueuePos {
@@ -766,7 +871,7 @@ mod tests {
             })
         );
         assert_eq!(q.poll_owner(22, 7, later), Permit::Grant);
-        assert!(q.acknowledge_login_return(7, later));
+        assert!(q.acknowledge_login_return(22, later));
         assert!(q.queued_uids().is_empty());
     }
 
@@ -779,9 +884,9 @@ mod tests {
         q.enqueue_owner(11, 1);
         assert_eq!(q.queued_uids(), vec![2, 1]);
         assert_eq!(q.poll_owner(22, 2, now), Permit::Grant);
-        assert!(q.acknowledge_login_return(2, now));
+        assert!(q.acknowledge_login_return(22, now));
         assert_eq!(q.poll_owner(11, 1, later), Permit::Grant);
-        assert!(q.acknowledge_login_return(1, later));
+        assert!(q.acknowledge_login_return(11, later));
     }
 
     #[test]
@@ -829,7 +934,7 @@ mod tests {
         for i in 0..50 {
             if let Permit::Grant = request(&mut q, i, now) {
                 grants.push(now);
-                assert!(q.acknowledge_login_return(i, now));
+                assert!(ack(&mut q, i, now));
             }
             now += Duration::from_millis(1);
         }
@@ -840,7 +945,7 @@ mod tests {
         for i in 29..50 {
             assert!(matches!(request(&mut q, i, now), Permit::Grant));
             grants.push(now);
-            assert!(q.acknowledge_login_return(i, now));
+            assert!(ack(&mut q, i, now));
             now += Duration::from_millis(1);
         }
         assert_eq!(grants.len(), 50);
@@ -852,12 +957,12 @@ mod tests {
         let base = Instant::now();
         let mut q = unpaced(2);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        assert!(q.acknowledge_login_return(1, base));
+        assert!(ack(&mut q, 1, base));
         assert_eq!(
             request(&mut q, 2, base + Duration::from_secs(30)),
             Permit::Grant
         );
-        assert!(q.acknowledge_login_return(2, base + Duration::from_secs(30)));
+        assert!(ack(&mut q, 2, base + Duration::from_secs(30)));
 
         match request(&mut q, 3, base + Duration::from_secs(60)) {
             Permit::Wait(wait) => assert_eq!(wait, Duration::from_secs(30)),
@@ -873,7 +978,7 @@ mod tests {
             request(&mut q, 3, base + Duration::from_secs(90)),
             Permit::Grant
         );
-        assert!(q.acknowledge_login_return(3, base + Duration::from_secs(90)));
+        assert!(ack(&mut q, 3, base + Duration::from_secs(90)));
         assert_eq!(
             request(&mut q, 4, base + Duration::from_secs(90)),
             Permit::Grant
@@ -881,29 +986,120 @@ mod tests {
     }
 
     #[test]
-    fn unacked_reservation_does_not_expire_without_a_server_attempt_clock() {
+    fn unreturned_login_counts_until_its_lease_ends_then_waits_the_idle_ttl() {
         let base = Instant::now();
         let mut q = unpaced(1);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-
+        assert!(q.start_attempt(test_owner(1), base).is_some());
+        let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
         assert!(
             matches!(
-                request(&mut q, 2, base + Duration::from_secs(120)),
+                request(&mut q, 2, lease_end - Duration::from_millis(1)),
                 Permit::Wait(_)
             ),
-            "a delayed in-flight attempt can still refresh the server TTL"
+            "the attempt may still reach the server until its deadline"
+        );
+        assert_eq!(
+            request(&mut q, 2, lease_end),
+            Permit::Wait(Duration::from_secs(60)),
+            "the spent budget's idle period runs from the lease end"
+        );
+        assert_eq!(
+            request(&mut q, 2, lease_end + Duration::from_secs(60)),
+            Permit::Grant
+        );
+    }
+
+    /// A login that never returns holds the only in-flight slot until its
+    /// lease ends, not forever. The next bot then starts, and the late
+    /// return cannot free the slot a second time.
+    #[test]
+    fn a_handshake_that_never_returns_frees_the_slot_at_its_lease_end() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        assert_eq!(
+            q.start_attempt(test_owner(1), base),
+            Some(base + HANDSHAKE_HOLD),
+            "the client gets the handshake deadline"
+        );
+        let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
+        let before = lease_end - Duration::from_millis(1);
+        assert!(matches!(request(&mut q, 2, before), Permit::Wait(_)));
+        assert_eq!(
+            q.head_blocker(test_owner(2), before),
+            Some(AdmitBlocker::Handshake)
+        );
+        assert_eq!(
+            request(&mut q, 2, lease_end),
+            Permit::Grant,
+            "the next bot starts at the lease end"
+        );
+        assert!(matches!(request(&mut q, 3, lease_end), Permit::Wait(_)));
+        let late = lease_end + Duration::from_secs(5);
+        assert!(
+            !ack(&mut q, 1, late),
+            "the expired attempt was counted at its lease end"
+        );
+        assert_eq!(
+            q.head_blocker(test_owner(3), late),
+            Some(AdmitBlocker::Handshake),
+            "the late return does not free bot 2's slot"
+        );
+    }
+
+    /// A worker stalled between its grant and its connect loses the grant at
+    /// the lease end and must queue again instead of starting late.
+    #[test]
+    fn a_grant_never_started_expires_and_cannot_start_afterwards() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
+        assert_eq!(request(&mut q, 2, lease_end), Permit::Grant);
+        assert_eq!(q.start_attempt(test_owner(1), lease_end), None);
+        assert!(!abandon(&mut q, 1));
+    }
+
+    /// Spacing counts from when each attempt really starts: a worker that
+    /// starts two seconds after its grant and fails at once does not let the
+    /// next attempt start right behind it.
+    #[test]
+    fn spacing_counts_from_the_attempt_start_not_the_grant() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        let started = base + Duration::from_secs(2);
+        assert!(q.start_attempt(test_owner(1), started).is_some());
+        let returned = started + Duration::from_millis(1);
+        assert!(ack(&mut q, 1, returned));
+        assert_eq!(
+            request(&mut q, 2, returned),
+            Permit::Wait(LOGIN_START_SPACING - Duration::from_millis(1))
+        );
+        assert_eq!(
+            q.head_blocker(test_owner(2), returned),
+            Some(AdmitBlocker::Spacing {
+                until: started + LOGIN_START_SPACING
+            })
+        );
+        assert_eq!(
+            request(&mut q, 2, started + LOGIN_START_SPACING),
+            Permit::Grant
         );
     }
 
     #[test]
     fn reordered_login_returns_keep_the_latest_monotonic_ack_clock() {
         let base = Instant::now();
-        let mut q = unpaced(2).with_max_in_flight(2);
+        let mut q = unpaced(2)
+            .with_max_in_flight(2)
+            .with_handshake_hold(NO_LEASE_END);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
 
-        assert!(q.acknowledge_login_return(2, base + Duration::from_secs(120)));
-        assert!(q.acknowledge_login_return(1, base + Duration::from_secs(61)));
+        assert!(ack(&mut q, 2, base + Duration::from_secs(120)));
+        assert!(ack(&mut q, 1, base + Duration::from_secs(61)));
         match request(&mut q, 3, base + Duration::from_secs(121)) {
             Permit::Wait(wait) => assert_eq!(wait, Duration::from_secs(59)),
             Permit::Grant => panic!("an older completion must not move the ack clock backward"),
@@ -917,10 +1113,12 @@ mod tests {
     #[test]
     fn one_old_ack_cannot_reset_count_while_another_attempt_is_pending() {
         let base = Instant::now();
-        let mut q = unpaced(2).with_max_in_flight(2);
+        let mut q = unpaced(2)
+            .with_max_in_flight(2)
+            .with_handshake_hold(NO_LEASE_END);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
-        assert!(q.acknowledge_login_return(1, base));
+        assert!(ack(&mut q, 1, base));
 
         assert!(
             matches!(
@@ -929,7 +1127,7 @@ mod tests {
             ),
             "the pending attempt can still refresh all address accounting"
         );
-        assert!(q.acknowledge_login_return(2, base + Duration::from_secs(130)));
+        assert!(ack(&mut q, 2, base + Duration::from_secs(130)));
         assert!(matches!(
             request(&mut q, 3, base + Duration::from_secs(189)),
             Permit::Wait(_)
@@ -945,8 +1143,8 @@ mod tests {
         let base = Instant::now();
         let mut q = unpaced(1);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        assert!(q.abandon_permit(1));
-        assert!(!q.abandon_permit(1), "cleanup is exactly once");
+        assert!(abandon(&mut q, 1));
+        assert!(!abandon(&mut q, 1), "cleanup is exactly once");
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
     }
 
@@ -955,13 +1153,13 @@ mod tests {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        assert!(q.abandon_permit(1));
+        assert!(abandon(&mut q, 1));
         assert_eq!(
             request(&mut q, 2, base),
             Permit::Grant,
             "no socket opened, so there is nothing to space from"
         );
-        assert!(q.acknowledge_login_return(2, base));
+        assert!(ack(&mut q, 2, base));
         assert!(
             matches!(request(&mut q, 3, base), Permit::Wait(_)),
             "a real start is spaced"
@@ -975,9 +1173,9 @@ mod tests {
         assert_eq!(request(&mut q, 7, base), Permit::Grant);
         assert_eq!(request(&mut q, 7, base), Permit::Grant);
 
-        assert!(q.acknowledge_login_return(7, base + Duration::from_secs(10)));
-        assert!(q.abandon_permit(7));
-        assert!(!q.abandon_permit(7), "both pending grants were resolved");
+        assert!(ack(&mut q, 7, base + Duration::from_secs(10)));
+        assert!(abandon(&mut q, 7));
+        assert!(!abandon(&mut q, 7), "both pending grants were resolved");
         assert_eq!(
             request(&mut q, 8, base + Duration::from_secs(10)),
             Permit::Grant,
@@ -988,7 +1186,9 @@ mod tests {
     #[test]
     fn pending_uid_reservations_do_not_expire_before_login_returns() {
         let base = Instant::now();
-        let mut q = unpaced(10).with_max_in_flight(10);
+        let mut q = unpaced(10)
+            .with_max_in_flight(10)
+            .with_handshake_hold(NO_LEASE_END);
         for _ in 0..UID_GRANT_CAP {
             assert_eq!(request(&mut q, 7, base), Permit::Grant);
         }
@@ -998,7 +1198,7 @@ mod tests {
         ));
 
         for _ in 0..UID_GRANT_CAP {
-            assert!(q.abandon_permit(7));
+            assert!(abandon(&mut q, 7));
         }
         assert_eq!(
             request(&mut q, 7, base + Duration::from_secs(120)),
@@ -1012,7 +1212,7 @@ mod tests {
         let mut q = unpaced(29);
         for _ in 0..4 {
             assert!(matches!(request(&mut q, 7, base), Permit::Grant));
-            assert!(q.acknowledge_login_return(7, base));
+            assert!(ack(&mut q, 7, base));
         }
         match request(&mut q, 7, base) {
             Permit::Wait(d) => assert_eq!(d, Duration::from_secs(15), "fifth wait {d:?}"),
@@ -1044,7 +1244,7 @@ mod tests {
         let mut q = unpaced(29);
         for _ in 0..4 {
             assert!(matches!(request(&mut q, 7, base), Permit::Grant));
-            assert!(q.acknowledge_login_return(7, base));
+            assert!(ack(&mut q, 7, base));
         }
         assert!(matches!(request(&mut q, 7, base), Permit::Wait(_)));
         let retry = base + UID_COOLDOWN + Duration::from_millis(3);
@@ -1057,7 +1257,7 @@ mod tests {
         let mut now = Instant::now();
         for i in 0..29 {
             assert!(matches!(request(&mut q, i, now), Permit::Grant));
-            assert!(q.acknowledge_login_return(i, now));
+            assert!(ack(&mut q, i, now));
             now += LOGIN_START_SPACING;
         }
         now -= LOGIN_START_SPACING;
@@ -1084,7 +1284,7 @@ mod tests {
         let now = Instant::now();
         for _ in 0..4 {
             assert!(matches!(request(&mut q, 7, now), Permit::Grant));
-            assert!(q.acknowledge_login_return(7, now));
+            assert!(ack(&mut q, 7, now));
         }
         assert!(q.tracks(7));
         let now = now + UID_COOLDOWN;
@@ -1121,11 +1321,11 @@ mod tests {
         let mut q = unpaced(29);
         for _ in 0..3 {
             assert_eq!(request(&mut q, 7, base), Permit::Grant);
-            assert!(q.acknowledge_login_return(7, base));
+            assert!(ack(&mut q, 7, base));
         }
         let fresh = base + Duration::from_secs(100);
         assert_eq!(request(&mut q, 7, fresh), Permit::Grant);
-        assert!(q.acknowledge_login_return(7, fresh));
+        assert!(ack(&mut q, 7, fresh));
         assert_eq!(request(&mut q, 7, fresh), Permit::Grant);
     }
 

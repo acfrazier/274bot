@@ -26,24 +26,29 @@ or `login_key.engine_dir` in `~/.274bot/servers.json`):
 | `src/util/WorldConfig.ts` | defaults `rateLimitAddressLogin: 30`, `rateLimitDeviceLogin: 5`; `NODE_RATELIMIT_ADDRESS_LOGIN` / `NODE_RATELIMIT_DEVICE_LOGIN` override |
 | `src/engine/World.ts` | `loginAddressAttempts` TTL **60 s**, `loginDeviceAttempts` TTL **15 s**. Counters increment on opcode 14 (address) and 16/18 (device = `uid@ip`). **`>=` the cap sends response 16.** Both run **only** when `node.production` is true. |
 | `src/engine/World.ts` | `processLogins` admits new players once per 600 ms world tick (`TICKRATE`, `:120`; called from the tick at `:384`; sends response 2 at `:809-957`). |
+| `src/server/tcp/TcpServer.ts` | `s.setTimeout(30000)` (`:19`): a socket silent for 30 s is destroyed (`:61-67`). The original client's read timeout is also 30 s (`javaclient/.../jagex2/io/ClientStream.java:47`). |
 
 Local default is `production: false` (`NODE_PRODUCTION`). A loopback engine
 does **not** apply these counters. The host still stays under the production
 numbers so flipping production on does not 16 the wall.
 
-The engine has **no** inter-login spacing rule. The host's spacing is its own
-"don't hammer the server" policy: two world ticks between starts, so two of
-our logins never land in the same tick's admission batch.
+The engine has **no** inter-login spacing rule. The host's 1.2 s spacing is
+its own policy, not a protocol requirement. Spacing alone would not keep two
+attempts in different admission ticks (network delay can bunch or split
+them). The one-in-flight rule does that: a successful handshake returns only
+after `processLogins` answered it, so the next attempt starts after that tick.
+The spacing only keeps fast handshakes (about 0.4 s on a local engine) from
+following each other back to back.
 
 ## Constants (the numbers agents must respect)
 
 | Rule | Value | Meaning |
 | --- | --- | --- |
-| handshakes in flight | **1** | the next login starts only after the previous `client.login` returned (or its unused grant was abandoned); scene loading and the response-21 countdown do not hold it |
-| start spacing | **1.2 s** (two ticks) | measured between grants; not-head polls every **20 ms** |
+| handshakes in flight | **1**, for at most **30 s + 1 s** | the next login starts only after the previous `client.login` returned (or its unused grant was given back); scene loading and the response-21 countdown do not hold it. The client stops the connect and every read and write of the handshake 30 s (`HANDSHAKE_HOLD`, from the 30 s timeouts above) after the attempt started, however much WebSocket control traffic arrives; the queue frees the slot 1 s (`LEASE_SLACK`) later even if the call never returns, and counts the attempt as returned then |
+| start spacing | **1.2 s** (host policy) | measured between attempt starts (the moment each connect begins), not grants; not-head polls every **20 ms** |
 | per-IP window | **29 attempts / 60 s idle** | production threshold is 30 and rejects the attempt that reaches it; pending reservations count |
 | per-uid cap | **4 attempts, then remaining of 15 s idle** | production device threshold is 5 (`>= 5` rejects); partial counts expire after the same idle TTL |
-| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall; `LoginBackoff::reset()` clears per-slot escalation |
+| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall, published in the same queue update that frees the in-flight slot; `LoginBackoff::reset()` clears per-slot escalation |
 | backoff (connection failure, response 7) | **5, 10, 20, 40, then 60 s**, each ×0.8–1.2 jitter, never above 60 s | per slot; 60 s is the engine's address-attempt TTL |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
@@ -63,7 +68,8 @@ and Game image queue card) and the TUI show, e.g. `waiting in login queue
 
 `LoginBackoff` delays generic retries after response 16 (“Login attempts
 exceeded”): first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A
-response-16 hold is also published to the shared queue so sibling slots pause.
+response-16 hold is also published to the shared queue, in the same update
+that acknowledges the refused login, so no sibling starts in between.
 A failed connection (the client's code -1, see below) and a full world
 (response 7) use the slot's escalating jittered delay instead of a fixed 5 s.
 These generic retry waits run to their deadline and exit early only for Stop,
@@ -78,7 +84,9 @@ stage (`connect`, `send_hello`, `read_hello`, `read_seed`, `send_login`,
 `read_response`, `read_transfer_delay`, `read_accept`), the I/O error kind, the
 OS error number when there is one, and the bounded error text
 (`LoginError::transport`). A server that hangs up instead of answering is an
-`UnexpectedEof` at the stage it hung up in. The slot row shows
+`UnexpectedEof` at the stage it hung up in, and one that stops answering is a
+`TimedOut` (`login handshake deadline passed`) at the stage it reached when
+the handshake deadline passed. The slot row shows
 `Error connecting to server. (connect: Connection refused (os error 111))`
 rather than `code -1`, and the session log adds `stage=… kind=… errno=…`.
 
@@ -177,10 +185,12 @@ Every host-owned socket attempt is preceded by a shared permit, including
 opcode-18 reconnects and a retry after response 1. In external-ownership mode
 the embedded client returns those intents to host-play instead of reconnecting
 or recursively retrying internally; standalone clients retain their
-Java-compatible response-1 retry. A granted attempt is acknowledged on
-success, error, or unwind; an unused grant is abandoned before any socket
-call. Host-play keeps transient response 1 in Connecting rather than
-publishing phase Error.
+Java-compatible response-1 retry. The worker owns the grant from the polling
+call that granted it (`GrantedReservation`): an unused grant is given back on
+any return or unwind before the socket call, and a started attempt is
+acknowledged on success, error, or unwind. A grant whose lease ran out before
+its attempt started cannot start; the slot queues again. Host-play keeps
+transient response 1 in Connecting rather than publishing phase Error.
 
 
 ## Panel: Login all vs auto-login

@@ -949,7 +949,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         "the transfer countdown must hold no FIFO place"
     );
     assert!(
-        !play.queue.lock().abandon_permit(42),
+        !play.queue.lock().abandon_permit(arm.queue_owner),
         "the transfer countdown must hold no handshake reservation"
     );
     let paced = Instant::now() + host::login_queue::LOGIN_START_SPACING;
@@ -958,7 +958,10 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         Permit::Grant,
         "a follower can enter while the transfer countdown runs"
     );
-    assert!(play.queue.lock().acknowledge_login_return(43, paced));
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(test_queue_owner(43), paced));
 
     let (second_number, second_attempt, second_endpoint) =
         attempt_rx.recv_timeout(Duration::from_secs(4)).unwrap();
@@ -1317,17 +1320,22 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
         request_shared(&play.queue, 42, Instant::now()),
         Permit::Grant
     ));
+    let permit = GrantedReservation::new(&play.queue, test_queue_owner(42));
     assert!(
-        !granted_permit_world_is_current(&play.queue, 42, Some(&round), &arm),
+        !granted_permit_world_is_current(Some(&round), &arm),
         "a world edit while queued must defer the grant before any handshake"
     );
+    drop(permit);
     {
         let mut queue = play.queue.lock();
-        assert!(matches!(
-            request_test_owner(&mut queue, 43, Instant::now()),
-            Permit::Grant
-        ));
-        assert!(queue.abandon_permit(43), "the stale grant was released");
+        assert!(
+            matches!(
+                request_test_owner(&mut queue, 43, Instant::now()),
+                Permit::Grant
+            ),
+            "the stale grant was released"
+        );
+        assert!(queue.abandon_permit(test_queue_owner(43)));
     }
     assert!(refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
     configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
@@ -2675,7 +2683,7 @@ fn fill_address_window(queue: &SharedLoginQueue) -> Instant {
             request_test_owner(&mut q, 1000 + i, at),
             Permit::Grant
         ));
-        assert!(q.acknowledge_login_return(1000 + i, at));
+        assert!(q.acknowledge_login_return(test_queue_owner(1000 + i), at));
         at += spacing;
     }
     now
@@ -2721,10 +2729,10 @@ fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
     // the worker owner's place.
     queue.lock().leave_owner(arm.queue_owner);
     arm.stop.store(true, Ordering::Relaxed);
-    assert_eq!(
+    assert!(matches!(
         wait_for_permit(&queue, &statuses, "alice", 7, &arm),
         PermitWait::Cancelled
-    );
+    ));
     assert!(
         queue.lock().status_owner(arm.queue_owner).is_none(),
         "stop must not re-enqueue after leave"
@@ -2738,13 +2746,10 @@ fn wait_for_permit_grant_clears_the_published_place() {
     let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, true);
-    assert_eq!(
-        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
-        PermitWait::Granted
-    );
-    assert!(queue.lock().acknowledge_login_return(7, Instant::now()));
+    let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
     assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+    drop(permit);
 }
 
 #[test]
@@ -2772,13 +2777,11 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     )));
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, true);
-    assert_eq!(
-        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
-        PermitWait::Granted
-    );
+    let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.withdraw_login();
-    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
+    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -2795,13 +2798,11 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     )));
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, true);
-    assert_eq!(
-        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
-        PermitWait::Granted
-    );
+    let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
+    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -2818,12 +2819,12 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
         Duration::from_secs(60),
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
-    let mut permit = GrantedReservation::new(&queue, 7);
-    let login: Result<(), &str> =
-        login_and_acknowledge_permit(&mut permit, || Err("connect failed"));
-    assert_eq!(login, Err("connect failed"));
+    let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
+    let login: Option<Result<(), &str>> = permit.attempt(|_| Err("connect failed"), |_| None);
+    assert_eq!(login, Some(Err("connect failed")));
+    drop(permit);
     assert!(
-        !queue.lock().abandon_permit(7),
+        !queue.lock().abandon_permit(test_queue_owner(7)),
         "an error return spent and acknowledged the permit"
     );
     assert_eq!(
@@ -2844,18 +2845,339 @@ fn panic_in_login_attempt_resolves_the_reservation() {
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
 
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let mut permit = GrantedReservation::new(&queue, 7);
-        let _: Result<(), ()> =
-            login_and_acknowledge_permit(&mut permit, || panic!("synthetic client.login unwind"));
+        let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
+        let _: Option<Result<(), ()>> =
+            permit.attempt(|_| panic!("synthetic client.login unwind"), |_| None);
     }));
     assert!(unwind.is_err());
     assert!(
-        !queue.lock().abandon_permit(7),
+        !queue.lock().abandon_permit(test_queue_owner(7)),
         "the unwind guard resolved the pending reservation"
     );
     assert_eq!(
         request_shared(&queue, 8, base + Duration::from_secs(61)),
         Permit::Grant
+    );
+}
+
+/// The reservation a granted permit wait carries.
+fn granted(wait: PermitWait) -> GrantedReservation {
+    match wait {
+        PermitWait::Granted(permit) => permit,
+        PermitWait::Cancelled => panic!("expected a grant"),
+    }
+}
+
+/// Run a granted login that returns at once with `Ok`.
+fn complete(mut permit: GrantedReservation) {
+    assert_eq!(permit.attempt(|_| Ok::<(), ()>(()), |_| None), Some(Ok(())));
+}
+
+/// A failure in the work between the grant and the connect (world check,
+/// script sync, password, memory mode) unwinds with the reservation already
+/// owned, so the grant goes back and the next bot starts.
+#[test]
+fn unwind_between_grant_and_connect_gives_the_grant_back() {
+    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let statuses = rows(&["alice"]);
+    let arm = SlotArm::new(7, true);
+    let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let _permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
+        panic!("synthetic failure between grant and connect");
+    }));
+    assert!(unwind.is_err());
+    assert!(!queue.lock().abandon_permit(arm.queue_owner));
+    assert_eq!(
+        request_shared(&queue, 8, Instant::now()),
+        Permit::Grant,
+        "the unwound worker's grant was given back"
+    );
+}
+
+/// The same gap in the real worker: the grant lands, then the worker's
+/// script sync unwinds on a poisoned script wall. The next bot still starts.
+#[test]
+fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 1,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    // A sibling's login holds the only slot while alice queues.
+    assert_eq!(
+        request_shared(&play.queue, 99, Instant::now()),
+        Permit::Grant
+    );
+    let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    assert!(
+        wait_until(10_000, || play
+            .queue
+            .lock()
+            .status_owner(arm.queue_owner)
+            .is_some()),
+        "alice queues behind the sibling"
+    );
+    let scripts = Arc::clone(&play.scripts);
+    let _ = thread::spawn(move || {
+        let _wall = scripts.lock().unwrap();
+        panic!("poison the script wall");
+    })
+    .join();
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(test_queue_owner(99), Instant::now()));
+    assert!(
+        wait_until(5_000, || play
+            .queue
+            .lock()
+            .status_owner(arm.queue_owner)
+            .is_none()),
+        "alice is granted, then unwinds"
+    );
+    let next = Instant::now() + host::login_queue::LOGIN_START_SPACING;
+    assert!(
+        wait_until(2_000, || matches!(
+            request_shared(&play.queue, 100, next),
+            Permit::Grant
+        )),
+        "the unwound worker's grant went back, so the next bot starts"
+    );
+    play.scripts.clear_poison();
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("alice");
+}
+
+/// A login that never returns holds the only in-flight slot only until its
+/// lease ends; the next bot then proceeds, and the late return does not
+/// free the slot a second time.
+#[test]
+fn a_login_that_never_returns_frees_the_slot_for_the_next_bot() {
+    use std::sync::mpsc;
+
+    let hold = Duration::from_millis(300);
+    let queue = Arc::new(QueueMutex::new(
+        LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60)).with_handshake_hold(hold),
+    ));
+    let statuses = rows(&["alice", "bob"]);
+    let alice = SlotArm::new(7, true);
+    let bob = SlotArm::new(8, true);
+    let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
+    let (deadline_tx, deadline_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let stuck = thread::spawn(move || {
+        // Ignores its deadline and returns only when released.
+        permit.attempt(
+            |deadline| {
+                deadline_tx.send(deadline).unwrap();
+                release_rx.recv().unwrap();
+                Ok::<(), ()>(())
+            },
+            |_| None,
+        )
+    });
+    let deadline = deadline_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let bob_permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
+    let granted_at = Instant::now();
+    assert!(
+        granted_at >= deadline + host::login_queue::LEASE_SLACK,
+        "bob waits for alice's lease to end"
+    );
+    assert!(
+        granted_at < deadline + host::login_queue::LEASE_SLACK + Duration::from_millis(500),
+        "bob starts as soon as alice's lease ends"
+    );
+    release_tx.send(()).unwrap();
+    assert_eq!(stuck.join().unwrap(), Some(Ok(())));
+    let now = Instant::now();
+    assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
+    assert_eq!(
+        queue.lock().head_blocker(test_queue_owner(9), now),
+        Some(host::login_queue::AdmitBlocker::Handshake),
+        "alice's late return does not free bob's slot"
+    );
+    complete(bob_permit);
+}
+
+/// The real worker and client against a server that accepts the login and
+/// then says nothing: the client stops at the queue's deadline, the attempt
+/// is acknowledged, and the next bot proceeds.
+#[test]
+fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        accepted_tx.send(Instant::now()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(10));
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let hold = Duration::from_millis(500);
+    *play.queue.lock() = LoginQueue::default().with_handshake_hold(hold);
+    let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+
+    let accepted = accepted_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        wait_until(3_000, || play
+            .statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|status| status.username == "alice")
+            .and_then(|status| status.error.clone())
+            .is_some_and(
+                |error| error.contains("login handshake deadline passed")
+            )),
+        "the row names the deadline"
+    );
+    let took = accepted.elapsed();
+    assert!(
+        took >= hold - Duration::from_millis(100) && took < hold + Duration::from_secs(2),
+        "the handshake ended {took:?} after the server took it, not at its deadline"
+    );
+    assert!(
+        !play.queue.lock().abandon_permit(arm.queue_owner),
+        "the timed-out attempt was acknowledged"
+    );
+    assert_eq!(
+        request_shared(
+            &play.queue,
+            43,
+            Instant::now() + host::login_queue::LOGIN_START_SPACING
+        ),
+        Permit::Grant,
+        "the next bot proceeds"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    server.join().unwrap();
+}
+
+/// Spacing counts from each attempt's real start: a worker delayed after its
+/// grant, whose connect then fails at once, does not let the next attempt
+/// start right behind it.
+#[test]
+fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
+    let spacing = Duration::from_millis(400);
+    let queue = Arc::new(QueueMutex::new(LoginQueue::new(
+        spacing,
+        29,
+        Duration::from_secs(60),
+    )));
+    let statuses = rows(&["alice", "bob"]);
+    let alice = SlotArm::new(7, true);
+    let bob = SlotArm::new(8, true);
+    let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
+    thread::sleep(spacing + Duration::from_millis(200));
+    let mut alice_start = None;
+    let login = permit.attempt(
+        |_| {
+            alice_start = Some(Instant::now());
+            Err::<(), _>("refused at once")
+        },
+        |_| None,
+    );
+    assert_eq!(login, Some(Err("refused at once")));
+    let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
+    let mut bob_start = None;
+    let login = permit.attempt(
+        |_| {
+            bob_start = Some(Instant::now());
+            Ok::<(), ()>(())
+        },
+        |_| None,
+    );
+    assert_eq!(login, Some(Ok(())));
+    let gap = bob_start.unwrap().duration_since(alice_start.unwrap());
+    assert!(
+        gap >= spacing,
+        "attempts started {gap:?} apart, closer than the {spacing:?} spacing"
+    );
+}
+
+/// Response 16 puts every sibling on hold in the same queue update that frees
+/// the in-flight slot. A sibling polling all through a slow return (logging,
+/// status, formatting) is never granted inside that window.
+#[test]
+fn response_16_hold_reaches_siblings_before_the_slot_frees() {
+    let queue = Arc::new(QueueMutex::new(LoginQueue::new(
+        Duration::ZERO,
+        29,
+        Duration::from_secs(60),
+    )));
+    let statuses = rows(&["alice", "bob"]);
+    let alice = SlotArm::new(7, true);
+    let bob = SlotArm::new(8, true);
+    let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
+    let bob_waiter = {
+        let queue = Arc::clone(&queue);
+        let statuses = Arc::clone(&statuses);
+        let bob = Arc::clone(&bob);
+        thread::spawn(move || wait_for_permit(&queue, &statuses, "bob", 8, &bob))
+    };
+    assert!(wait_until(2_000, || queue
+        .lock()
+        .status_owner(bob.queue_owner)
+        .is_some()));
+    let backoff = LoginBackoff::new();
+    let login = permit.attempt(
+        |_| {
+            Err::<(), _>(LoginError::response(
+                16,
+                "Login attempts exceeded.",
+                "Please wait 1 minute and try again.",
+            ))
+        },
+        |result| {
+            let hold = server_hold(result, &backoff);
+            // Bob polls every 20 ms all through this.
+            thread::sleep(Duration::from_millis(200));
+            hold
+        },
+    );
+    assert!(matches!(&login, Some(Err(error)) if error.code == 16));
+    assert!(matches!(
+        queue.lock().head_blocker(bob.queue_owner, Instant::now()),
+        Some(host::login_queue::AdmitBlocker::ServerHold { .. })
+    ));
+    thread::sleep(Duration::from_millis(100));
+    bob.stop.store(true, Ordering::Relaxed);
+    assert!(
+        matches!(bob_waiter.join().unwrap(), PermitWait::Cancelled),
+        "bob was never granted between the refusal and its hold"
     );
 }
 
@@ -2984,10 +3306,10 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
         Permit::Grant
     );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(8, window_started + Duration::from_secs(61)));
+    assert!(play.queue.lock().acknowledge_login_return(
+        test_queue_owner(8),
+        window_started + Duration::from_secs(61)
+    ));
 
     assert_eq!(play.reap_finished_workers(), vec!["dead"]);
     assert!(play.arm("dead").is_none());
@@ -3099,7 +3421,7 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
 
     arm.set_auto_login(false);
 
-    assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
+    assert!(matches!(waiter.join().unwrap(), PermitWait::Cancelled));
     assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert!(
         !arm.wants_login(),
@@ -3120,11 +3442,8 @@ fn explicit_login_intent_survives_auto_on_then_off() {
         arm.wants_login(),
         "auto toggles must not relabel and withdraw explicit intent"
     );
-    assert_eq!(
-        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
-        PermitWait::Granted
-    );
-    assert!(queue.lock().abandon_permit(7));
+    let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
+    drop(permit);
 }
 
 #[test]
@@ -3161,7 +3480,7 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
     // Credentials Logout withdraws login and arms the IF logout atomically.
     alice.request_logout();
 
-    assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
+    assert!(matches!(waiter.join().unwrap(), PermitWait::Cancelled));
     assert!(queue.lock().status_owner(alice.queue_owner).is_none());
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
     let bob = queue
@@ -3187,11 +3506,9 @@ fn retried_login_re_enters_at_the_fifo_tail() {
     )));
     let statuses = rows(&["alice", "bob"]);
     let alice = SlotArm::new(7, true);
-    assert_eq!(
-        wait_for_permit(&queue, &statuses, "alice", 7, &alice),
-        PermitWait::Granted
-    );
-    assert!(queue.lock().acknowledge_login_return(7, Instant::now()));
+    complete(granted(wait_for_permit(
+        &queue, &statuses, "alice", 7, &alice,
+    )));
     assert!(
         queue.lock().status_owner(alice.queue_owner).is_none(),
         "a granted login holds no place while it backs off"
@@ -3215,7 +3532,7 @@ fn retried_login_re_enters_at_the_fifo_tail() {
     assert_eq!(queue.lock().queued_uids(), vec![8, 7]);
 
     alice.stop.store(true, Ordering::Relaxed);
-    assert_eq!(retry.join().unwrap(), PermitWait::Cancelled);
+    assert!(matches!(retry.join().unwrap(), PermitWait::Cancelled));
     queue.lock().leave_owner(test_queue_owner(8));
 }
 
@@ -3264,14 +3581,13 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
     // Alice owns a granted reservation and is between client.login and the
     // first ready observation when Login all lands.
     let alice_login = alice.login_command(false).unwrap();
-    assert_eq!(
-        wait_for_permit(&play.queue, &play.statuses, "alice", 1, &alice),
-        PermitWait::Granted
-    );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(1, Instant::now()));
+    complete(granted(wait_for_permit(
+        &play.queue,
+        &play.statuses,
+        "alice",
+        1,
+        &alice,
+    )));
     on_login_success(&alice, alice_login);
     set_startup_phase(&play.statuses, "alice", StartupPhase::LoadingScene);
 
@@ -3285,22 +3601,20 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
     );
     assert_eq!(row_queue(&play.statuses, "alice"), (-1, -1));
 
-    assert_eq!(
-        wait_for_permit_bounded(&play.queue, &play.statuses, "bob", 2, &bob),
-        PermitWait::Granted
-    );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(2, Instant::now()));
-    assert_eq!(
-        wait_for_permit_bounded(&play.queue, &play.statuses, "carol", 2, &carol),
-        PermitWait::Granted
-    );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(2, Instant::now()));
+    complete(granted(wait_for_permit_bounded(
+        &play.queue,
+        &play.statuses,
+        "bob",
+        2,
+        &bob,
+    )));
+    complete(granted(wait_for_permit_bounded(
+        &play.queue,
+        &play.statuses,
+        "carol",
+        2,
+        &carol,
+    )));
     assert!(play.login_queue_uids().is_empty());
 }
 
