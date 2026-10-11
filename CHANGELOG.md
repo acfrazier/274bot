@@ -14,11 +14,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   error.
 - When a bot's assigned script isn't in the loaded catalog, Start now says
   which catalog folder was searched.
-
-- Watchdog warnings now distinguish missing game packets from a locally stalled
-  script. A Load script stuck waiting inside a Duel Arena fight pen is held
-  instead of repeatedly restarting because it can't walk back to the Duel Arena
-  lobby; normal recovery resumes after it leaves the pen.
+- When the game server stops sending updates, the watchdog now says "no game
+  packets" instead of reporting that the script is hung.
+- A script waiting inside a Duel Arena fight pen is no longer restarted over and
+  over trying to walk back to the lobby (the pen's walls make that impossible);
+  the watchdog waits until the bot leaves the pen.
 
 ## [0.2.0.1] — 2026-10-10 — Beta 1 patch
 
