@@ -13878,10 +13878,9 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
 }
 
 /// The BankBudget session unit: unrelated backpack items stay carried and
-/// the knife is in the **bank snapshot**. The strict
-/// `find_with` stays fail-closed (no knife worn); the diagnosis
-/// names only the worn knife; the session plans walk → open →
-/// withdraw the knife shortage → close → wear; and the
+/// the knife is in the **bank snapshot**. Strict `find_with` stays fail-closed
+/// (no knife worn); the diagnosis names only the worn knife; the session plans
+/// walk → open → withdraw → Wear, which closes the bank on 289; and the
 /// post-session strict re-find crosses. `find` itself never fetches.
 #[test]
 fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
@@ -13956,10 +13955,9 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
             },
             nav::bank_fetch::BankStep::Open,
             nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
-            nav::bank_fetch::BankStep::Close,
             nav::bank_fetch::BankStep::Wear { id: 2 },
         ],
-        "retain the pack, withdraw the knife shortage, close, then wear it"
+        "retain the pack, withdraw the knife, then Wear to equip and close"
     );
     let r = find_with(
         &world.collision,
@@ -15099,7 +15097,10 @@ fn bank_fetch_wear_aborts_after_bounded_wait() {
     c.bump_gens(ServerProt::IF_OPENMAIN);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    assert!(snap.bank_component_id() < 0, "wearing needs a closed bank");
+    assert!(
+        snap.bank_component_id() < 0,
+        "this bounded-wait case starts with the bank closed"
+    );
     assert!(
         snap.inventory().iter().any(|it| it.def.id == 1),
         "fixture carries the obj Wear attempts"
@@ -15382,17 +15383,32 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         cache.objs[2].iop[1] = Some("Wield".into());
     }
-    c.main_modal_id = -1;
-    c.side_modal_id = -1;
-    c.bump_gens(ServerProt::IF_OPENMAIN);
+    snap = GameSnapshot::new();
     set_rows(&mut c, 500, vec![3, 0], vec![1, 0]);
+    set_rows(&mut c, 701, vec![3, 0], vec![1, 0]);
     snap.rebuild(&c);
-    assert!(snap.bank_component_id() < 0, "wearing needs a closed bank");
+    assert!(
+        snap.bank_component_id() >= 0,
+        "BankBudget Wear is sent while the bank is open"
+    );
+    assert!(
+        snap.inventory().iter().any(|it| it.def.id == 2),
+        "the fixture exposes the Knife in inventory while the bank is open"
+    );
+    assert!(
+        snap.bank_side().iter().any(|it| it.def.id == 2),
+        "the bank-side view exposes the same Knife carried in the open-bank pack"
+    );
     let mut bot = session(BankStep::Wear { id: 2 });
     let before = c.out.pos;
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
     assert!(c.out.pos > before, "Wear is sent");
+    assert_eq!(
+        c.main_modal_id, 600,
+        "the open bank remains local until the engine handles the Wear packet"
+    );
     set_rows(&mut c, 500, vec![0, 0], vec![0, 0]);
+    set_rows(&mut c, 701, vec![0, 0], vec![0, 0]);
     snap.rebuild(&c);
     assert!(snap.inventory().is_empty() && snap.equipment().is_empty());
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
@@ -15554,9 +15570,9 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
             },
             nav::bank_fetch::BankStep::Open,
             nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
-            nav::bank_fetch::BankStep::Close,
             nav::bank_fetch::BankStep::Wear { id: 2 },
-        ]
+        ],
+        "the open-bank Wear follows withdrawal and closes the bank as it equips"
     );
 }
 
@@ -25292,7 +25308,6 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
                 },
                 BankStep::Open,
                 BankStep::Withdraw { id: 3, count: 1 },
-                BankStep::Close,
                 BankStep::Wear { id: 3 },
             ],
         ),

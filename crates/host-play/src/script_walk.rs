@@ -1528,7 +1528,6 @@ fn step_bank_action<D: Driver>(
         {
             Some("the open bank does not hold the obj")
         }
-        BankStep::Wear { .. } if bank_open => Some("the bank is open; wearing needs it closed"),
         BankStep::Wear { id } if !sent && backpack_count(snapshot, *id) < 1 => {
             Some("the obj is not in the backpack")
         }

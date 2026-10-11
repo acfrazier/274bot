@@ -7,14 +7,14 @@
 //! session is the only thing that may fetch, and the host re-runs the
 //! strict search after the steps land.
 //!
-//! The session is a **plan**: ordered steps the host pump executes
-//! through the [`crate::traveller::Traveller`] and the `api::interact`
-//! bank path (open/withdraw/close/wear), plus the [`WorldState`]
-//! those steps leave behind for the post-session re-find. A `worn_req`
-//! alternative already carried plans a bare [`BankStep::Wear`] — no
-//! bank walk. Anything the plan cannot supply (neither carried nor
-//! bankable, or the relaxed diagnosis shows a skill/quest/varp/worn-all gate) is
-//! `None`: the caller reports `NoPath`.
+//! The session is a **plan**: ordered steps the host pump executes through
+//! the [`crate::traveller::Traveller`] and `api::interact` bank path (open,
+//! withdraw, then Wear or Close), plus the [`WorldState`] those steps leave
+//! behind for the post-session re-find. A `worn_req` alternative already
+//! carried plans a bare [`BankStep::Wear`] — no bank walk. Anything the plan
+//! cannot supply (neither carried nor bankable, or the relaxed diagnosis
+//! shows a skill/quest/varp/worn-all gate) is `None`: the caller reports
+//! `NoPath`.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -195,9 +195,8 @@ pub enum BankStep {
     WithdrawX { id: i32 },
     /// Answer the open Withdraw-X dialog with the exact amount.
     WithdrawXAmount { id: i32, count: i32 },
-    /// Wear/wield the obj from the inventory (`worn_req`). A bank trip
-    /// wears only after [`BankStep::Close`]: the client cannot wear from
-    /// the backpack while the bank is open.
+    /// Wear/wield the obj from the inventory (`worn_req`). A Wear sent while
+    /// the bank is open is accepted by 289, which closes it as it equips.
     Wear { id: i32 },
     /// Close the bank.
     Close,
@@ -211,7 +210,7 @@ pub struct BankFetch {
     pub steps: Vec<BankStep>,
     /// The world-state the steps leave behind: every carried item is
     /// preserved, short Carry stacks are topped up, and each selected
-    /// `worn_req` alternative is worn after the bank closes.
+    /// `worn_req` alternative is worn.
     pub state: WorldState,
 }
 
@@ -233,13 +232,14 @@ pub struct BankFetch {
 /// standable access neighbour ([`nearest_bank_access`]).
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
-/// — no bank walk. Otherwise the plan walks to that access tile, opens
-/// the bank, withdraws only each Carry or worn-item deficit, closes, and
-/// then wears each selected `worn_req` item. `worn_all_req` is never
-/// synthesized or worn by this session. Existing carried inventory is
-/// never deposited or cleared. Every required amount must be covered
-/// by bank + carried stacks combined. `None` when the plan cannot be
-/// built — the caller reports [`crate::router::RouteError::NoPath`].
+/// — no bank walk. Otherwise the plan walks to that access tile, opens the
+/// bank, withdraws only each Carry or worn-item deficit, and sends Wear for
+/// each selected alternative without a separate Close; on 289, Wear closes
+/// the bank as it equips. If no Wear is needed, the plan closes after
+/// withdrawals. `worn_all_req` is never synthesized or worn by this session.
+/// Existing carried inventory is never deposited or cleared. Every required
+/// amount must be covered by bank + carried stacks combined. `None` when the
+/// plan cannot be built — the caller reports [`crate::router::RouteError::NoPath`].
 pub fn plan_bank_fetch(
     missing: &[MissingReq],
     state: &WorldState,
@@ -365,7 +365,9 @@ pub fn plan_bank_fetch(
                 steps.push(BankStep::WithdrawXAmount { id, count });
             }
         }
-        steps.push(BankStep::Close);
+        if wear.is_empty() {
+            steps.push(BankStep::Close);
+        }
     }
     for &id in &wear {
         steps.push(BankStep::Wear { id });

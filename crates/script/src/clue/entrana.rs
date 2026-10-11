@@ -369,10 +369,10 @@ impl ClueRuntime {
     /// pack holds goes back on (`wear`, the landed equip-from-pack verb); and
     /// what is left is claimed at the bank — the walk to the nearest stand, the
     /// posted booth's own `open-booth`, the frozen make-room deposit while the
-    /// pack is too full to take the claim, one `Withdraw-1` per missing name,
-    /// and the interface's close — after which the wear pass runs again. The
-    /// read is by display name, the way the frozen `Equipment.contains` and
-    /// `Bank.withdraw` read it, and by nothing else.
+    /// pack is too full to take the claim, and one `Withdraw-1` per missing
+    /// name. A Wear may close the bank on 289; a later missing name starts a
+    /// new bank cycle. The read is by display name, the way the frozen
+    /// `Equipment.contains` and `Bank.withdraw` read it, and by nothing else.
     ///
     /// `None` is the restore's own completion: the list is empty and the
     /// caller's next step may go out. One attempt is bounded by this machine's
@@ -405,22 +405,18 @@ impl ClueRuntime {
                 Restore::default()
             }
         };
-        // The wear pass: a listed name the posted worn page does not show but
-        // the posted pack holds goes back on now, one per call — and only after
-        // this attempt's own bank interface is closed, so nothing is equipped
-        // behind an open bank. A wear verb the page never settles is the whole
-        // attempt's window running out: the frozen `could not re-equip … — will
-        // retry` over the names that are still not back on.
+        // The wear pass: a listed name absent from the posted worn page but
+        // held in the posted pack goes back on now, one per call. Wear is
+        // accepted with the bank open; 289 closes the bank as it equips.
+        // A wear verb the page never settles is the whole attempt's window
+        // running out: the frozen `could not re-equip … — will retry` over the
+        // names that are still not back on.
         if let Some(name) = self
             .stripped
             .iter()
             .find(|name| !worn_name(input, name) && pack_holds_name(input, name))
             .cloned()
         {
-            if state.bank.opened && bank_open(input) {
-                self.restore = Some(state);
-                return Some(close_verb(self.token));
-            }
             if self.clock.bound_reached() {
                 return Some(self.incomplete(input));
             }

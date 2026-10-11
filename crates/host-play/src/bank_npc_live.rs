@@ -1,15 +1,15 @@
 //! Live BankBudget fetch at real packed banks, from the street.
 //!
-//! Every leg runs a real planned session — Walk, Open, Withdraw, Close, Wear —
-//! through the production pump: the script pump
+//! Every leg runs a real planned session — Walk, Open, Withdraw, Wear (which
+//! closes the bank on 289) — through the production pump: the script pump
 //! ([`super::step_nav_bot`]) or the panel/TUI pump
 //! ([`super::step_walk_arm_follow`]), once per player tick. Legs cover
 //! Varrock West, Draynor, Falador East and Al Kharid, each with the booth
-//! (a booth-only stand table, so Open can only click a booth) and with the
-//! banker (the real table, whose Open tries the tellers first), through
-//! both owners. A leg passes only when the bronze dagger seeded into the
-//! bank ends up worn, the seeded bones remain carried, and Open used the
-//! expected access: the booth next to the player, or a banker.
+//! (a booth-only stand table, so Open can only click a booth) and banker
+//! (the real table, whose Open tries the tellers first), through both owners.
+//! A leg passes only when the bronze dagger seeded into the bank ends up worn,
+//! the seeded bones remain carried, and Open used the expected access: the
+//! booth next to the player, or a banker.
 //!
 //! Sets a throwaway `HOME` it removes on the way out, points cache at the
 //! engine with `BOT_CACHE_DIR`, and defaults the game port to the
@@ -513,7 +513,6 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
                     id: DAGGER,
                     count: 1,
                 },
-                BankStep::Close,
                 BankStep::Wear { id: DAGGER },
             ];
             if fetch.steps[1..] != expected {
