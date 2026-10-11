@@ -336,6 +336,7 @@ fn walk_near(tile: Tile, radius: i32) -> InteractReq {
         z: tile.z,
         level: tile.level,
         radius,
+        compat_tile_intent: false,
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: true,

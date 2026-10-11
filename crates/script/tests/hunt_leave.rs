@@ -833,6 +833,7 @@ export default class T extends LoopingBot {
                 z: 1,
                 level: 0,
                 radius: 3,
+                compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,

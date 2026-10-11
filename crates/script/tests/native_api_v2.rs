@@ -756,6 +756,7 @@ export function tick(api) {
                 z: 4,
                 level: 2,
                 radius: 5,
+                compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,

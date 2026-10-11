@@ -1136,7 +1136,15 @@ impl Recover {
         if interrupted(cx) {
             return Err(false);
         }
-        match Walk::begin(facts.luthas_anchor, 2, TALK_WALK_MS, false, cx) {
+        match Walk::begin_compat_avoiding(
+            facts.luthas_anchor,
+            2,
+            TALK_WALK_MS,
+            false,
+            Vec::new(),
+            Vec::new(),
+            cx,
+        ) {
             Ok(walk) => Ok(Stage::TalkWalk { second, walk }),
             Err(true) => Ok(Stage::Talk {
                 second,
@@ -1364,7 +1372,7 @@ impl Family for WalkTo {
         let allow_teleports = args.allow_teleports(dest);
         let avoid = args.avoid_zones;
         let cross = args.cross_zones;
-        match Walk::begin_avoiding(
+        match Walk::begin_compat_avoiding(
             dest,
             radius,
             timeout_ms,
@@ -1488,7 +1496,7 @@ impl WalkTo {
             WalkToPhase::Recover(recover) => match recover.step(cx, &mut self.logs) {
                 None => {}
                 Some(false) => self.result = Some(false),
-                Some(true) => match Walk::begin_avoiding(
+                Some(true) => match Walk::begin_compat_avoiding(
                     self.dest,
                     self.radius,
                     self.timeout_ms,

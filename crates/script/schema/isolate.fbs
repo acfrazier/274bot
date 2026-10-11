@@ -728,6 +728,8 @@ table Interact {
   cross: [string];
   // Present only for combat-fight.
   combat: CombatFight;
+  // Compat tile walks route to their requested walkable tile; radius is for arrival.
+  compat_tile_intent: bool = false;
 }
 
 // The tick's shim interact queue, forwarded to the host.

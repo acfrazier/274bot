@@ -179,6 +179,81 @@ fn open_rig(blocked: bool) -> Rig {
     rig(Some(Arc::new(open_world(40, 1))), blocked)
 }
 #[test]
+fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
+    let mut rig = open_rig(false);
+    let target = WorldTile {
+        x: 20,
+        z: 0,
+        level: 0,
+    };
+    let compat_arm = crate::script_runtime::ScriptWalkArm {
+        here: Some((0, 0, 0)),
+        world: rig.world.clone(),
+        navs: Arc::clone(&rig.navs),
+        name: "alice".to_owned(),
+        state: None,
+        bank: BankRows::default(),
+    };
+    assert!(compat_arm.queue_route_in_snapshot_avoiding(
+        &rig.snapshot,
+        target.x,
+        target.z,
+        target.level,
+        nav::router::FindOptions::default(),
+        1,
+        900,
+        true,
+        crate::script_runtime::ScriptRouteExclusions::default(),
+    ));
+    assert!(
+        wait_until(5_000, || queued(&rig.navs) == Some(target)),
+        "the compatibility walk first routes to its requested tile"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"].route_compat_tile_intent,
+        "the preceding compatibility walk owns tile intent"
+    );
+    let compatibility_generation = rig.navs.lock().unwrap()["alice"].route_generation;
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(target);
+        shared.radius = 1;
+        shared.arrival = nav::arrival::ArrivalKind::Reach;
+    }
+
+    rig.observe(1);
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_generation != compatibility_generation
+                    && bot.route_request_id == bot.walk_request_id
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.is_some()
+            })
+        }),
+        "the native route replaces the preceding compatibility route"
+    );
+    let navs = rig.navs.lock().unwrap();
+    let bot = &navs["alice"];
+    let route = bot.route.as_ref().expect("the native walk is routed");
+    assert!(
+        !bot.route_compat_tile_intent,
+        "native requests reset the previous compatibility intent"
+    );
+    assert_ne!(route.dest, target);
+    assert_eq!(
+        route
+            .dest
+            .x
+            .abs_diff(target.x)
+            .max(route.dest.z.abs_diff(target.z)),
+        1,
+        "native radius walking still ends on its arrival-side approach tile"
+    );
+}
+
+#[test]
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
     let mut rig = open_rig(false);
     rig.observe(1);
@@ -3099,6 +3174,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
             z: 0,
             level: 0,
             radius: 1,
+            compat_tile_intent: false,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
@@ -3483,6 +3559,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         Some(authority),
         None,
         nav::arrival::ArrivalKind::Area,
+        false,
     ));
     assert!(
         wait_until(5_000, || {
@@ -3565,6 +3642,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
+        compat_tile_intent: false,
         completion: Default::default(),
     };
     let (area, _) = request.calculate();
