@@ -3,7 +3,7 @@ use super::{reach, walk_step_evidence, NoArgs};
 use crate::combat::RaisedPrayers;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
-use crate::native_bank::{BankAction, BankItem, BankReceipt, Close};
+use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
@@ -836,66 +836,19 @@ struct EquipmentPlan {
 }
 impl StepPlan for EquipmentPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let mut run = EquipmentRun {
-            request: Some(self.request.clone()),
-            closing: None,
-            equipment: None,
-        };
-        run.start(cx)?;
-        Ok(Box::new(run))
+        let equipment = cx
+            .tick
+            .actions
+            .begin::<EquipmentMachine>(self.request.clone(), &mut cx.tick.cx)?;
+        Ok(Box::new(EquipmentRun { equipment }))
     }
 }
 struct EquipmentRun {
-    request: Option<EquipmentRequest>,
-    closing: Option<ActionHandle<Close>>,
-    equipment: Option<ActionHandle<EquipmentMachine>>,
-}
-impl EquipmentRun {
-    fn start(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
-        let wear = matches!(self.request.as_ref(), Some(EquipmentRequest::Wear { .. }));
-        let bank_open = cx
-            .tick
-            .cx
-            .snapshot()
-            .bank_session()
-            .is_some_and(|session| session.value.open);
-        if wear && bank_open {
-            self.closing = Some(cx.tick.actions.begin::<Close>((), &mut cx.tick.cx)?);
-        } else {
-            let request = self
-                .request
-                .take()
-                .expect("equipment request is still pending");
-            self.equipment = Some(
-                cx.tick
-                    .actions
-                    .begin::<EquipmentMachine>(request, &mut cx.tick.cx)?,
-            );
-        }
-        Ok(())
-    }
+    equipment: ActionHandle<EquipmentMachine>,
 }
 impl StepRun for EquipmentRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.closing {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.closing = None,
-            }
-        }
-        if self.equipment.is_none() {
-            if let Err(error) = self.start(cx) {
-                return Poll::Ready(Err(error));
-            }
-            if self.equipment.is_none() {
-                return Poll::Pending;
-            }
-        }
-        let Some(handle) = self.equipment.as_ref() else {
-            return Poll::Pending;
-        };
-        match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        match cx.tick.actions.poll(&self.equipment, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
@@ -1171,8 +1124,7 @@ impl LoadoutPlan {
                 worn.push(Arc::from(items));
             }
             // No `Close` here: the trip leaves the bank open for the next
-            // step's run to reuse (design-bank-snapshot §4 F3); the run
-            // closes it only right before an equipment request.
+            // step's run to reuse (design-bank-snapshot §4 F3).
         }
         Ok(LoadoutRun {
             bank: (!bank_actions.is_empty()).then(|| {
@@ -1184,7 +1136,6 @@ impl LoadoutPlan {
                     cx,
                 )
             }),
-            closing: None,
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),
             worn_index: 0,
@@ -1260,8 +1211,6 @@ impl StepRun for LoadoutObservationWait {
 
 struct LoadoutRun {
     bank: Option<BankRun>,
-    /// The `Close` sent before an equipment request at an open bank.
-    closing: Option<ActionHandle<Close>>,
     worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
@@ -1273,25 +1222,11 @@ struct LoadoutRun {
     receipt: Option<Arc<dyn FamilyReceipt>>,
 }
 impl LoadoutRun {
-    /// Begins `request` once the bank is shut: a Wear, Unequip or Strip
-    /// acts on the regular inventory widget, which an open bank hides, so
-    /// an open bank is closed first and the request re-planned on the next
-    /// poll (design-bank-snapshot §4 F3: no `Close` inside the trip).
     fn begin_equipment(
         &mut self,
         request: EquipmentRequest,
         cx: &mut StepContext<'_, '_>,
     ) -> Result<(), ActionError> {
-        let bank_open = cx
-            .tick
-            .cx
-            .snapshot()
-            .bank_session()
-            .is_some_and(|session| session.value.open);
-        if bank_open {
-            self.closing = Some(cx.tick.actions.begin::<Close>((), &mut cx.tick.cx)?);
-            return Ok(());
-        }
         self.removing = matches!(request, EquipmentRequest::Unequip { .. });
         self.equipment = Some(
             cx.tick
@@ -1303,13 +1238,6 @@ impl LoadoutRun {
 }
 impl StepRun for LoadoutRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.closing {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.closing = None,
-            }
-        }
         if let Some(handle) = &self.equipment {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,

@@ -12,9 +12,6 @@ use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
-use crate::bank::ops::{
-    close_progress, observed_wait_expired, CloseBaseline, CloseScan, TRANSFER_OBSERVED_TICK_LIMIT,
-};
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
 use api::prayer::PrayerObservation;
@@ -69,12 +66,6 @@ struct PendingRow {
     row: PlanRow,
     baseline: i16,
     age: u8,
-}
-#[derive(Clone, Copy)]
-struct BankCloseWait {
-    baseline: CloseBaseline,
-    started_tick: u64,
-    started_at: Duration,
 }
 struct MeleeState {
     anim_id: i32,
@@ -179,10 +170,10 @@ pub struct Combat {
     counters: Counters,
     style_state: StyleState,
     plan: TickPlan,
-    // Receipt id, or the bank-close start time in microseconds when tagged.
+    // Receipt id for the emitted plan.
     plan_first_id: u64,
     pending: [PendingRow; 5],
-    // Bits 0-4 stage dispatch slots; bit 7 selects the plan's bank-close payload.
+    // Bits 0-4 stage dispatch slots.
     staged_pending: u8,
     // Three-tick deadlines are retired every observed tick, before byte wrap.
     prayer_ready: [u8; 15],
@@ -229,7 +220,6 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-const BANK_CLOSE_WAIT: u8 = 1 << 7;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
@@ -512,13 +502,6 @@ impl NativeMachine for Combat {
                 }
             }
         }
-        if self.bank_close_active() {
-            match self.close_bank_before_wear(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => {}
-            }
-        }
         // Onsets/settles/ends above commit even when this tick must be silent.
         if self.schedule.locked(tick) {
             let danger = self.threats.danger(
@@ -536,20 +519,8 @@ impl NativeMachine for Combat {
         }
         self.schedule.unlock_observed(tick);
         self.plan = TickPlan::default();
-        let phase_before_plan = self.phase;
         match self.plan(&frame, tick, cx) {
             Ok(plan) => {
-                if plan.iter().any(|row| row.kind == RowKind::Wear) {
-                    match self.close_bank_before_wear(cx) {
-                        Poll::Pending => {
-                            // Planning may advance Prep before this Wear is dispatched.
-                            self.phase = phase_before_plan;
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Ready(Ok(())) => {}
-                    }
-                }
                 self.plan = plan;
                 if plan.len == 0 {
                     if self.phase == Phase::WindDown
@@ -1296,113 +1267,6 @@ impl Combat {
     fn pending_row(&self, kind: RowKind) -> bool {
         self.pending.iter().any(|pending| pending.row.kind == kind)
     }
-    fn bank_close_active(&self) -> bool {
-        self.staged_pending & BANK_CLOSE_WAIT != 0
-    }
-
-    /// While tagged, PlanRow ids 0-4 encode generation low/high, side, and tick
-    /// low/high; `plan_first_id` holds active-clock microseconds. Wear plans are
-    /// still local and recomputed once the close settles.
-    fn bank_close_wait(&self) -> Option<BankCloseWait> {
-        if !self.bank_close_active() {
-            return None;
-        }
-        let rows = self.plan.rows;
-        let generation = u64::from(rows[0].id as u32) | (u64::from(rows[1].id as u32) << 32);
-        let started_tick = u64::from(rows[3].id as u32) | (u64::from(rows[4].id as u32) << 32);
-        Some(BankCloseWait {
-            baseline: CloseBaseline {
-                generation,
-                side: rows[2].id,
-            },
-            started_tick,
-            started_at: Duration::from_micros(self.plan_first_id),
-        })
-    }
-
-    fn start_bank_close_wait(&mut self, wait: BankCloseWait) {
-        // The plan being considered is still local and receipts are settled;
-        // the next poll recomputes it after this wait has closed.
-        self.plan = TickPlan::default();
-        self.plan.rows[0].id = wait.baseline.generation as u32 as i32;
-        self.plan.rows[1].id = (wait.baseline.generation >> 32) as u32 as i32;
-        self.plan.rows[2].id = wait.baseline.side;
-        self.plan.rows[3].id = wait.started_tick as u32 as i32;
-        self.plan.rows[4].id = (wait.started_tick >> 32) as u32 as i32;
-        self.plan_first_id = wait.started_at.as_micros().min(u128::from(u64::MAX)) as u64;
-        self.staged_pending = BANK_CLOSE_WAIT;
-    }
-
-    fn clear_bank_close_wait(&mut self) {
-        self.plan = TickPlan::default();
-        self.plan_first_id = 0;
-        self.staged_pending = 0;
-    }
-
-    /// Do not dispatch a Combat Wear batch until the bank close is observed.
-    fn close_bank_before_wear(
-        &mut self,
-        cx: &mut ActionContext<'_>,
-    ) -> Poll<Result<(), ActionError>> {
-        let session = cx.snapshot().bank_session().map(|row| row.value);
-        if let Some(wait) = self.bank_close_wait() {
-            let evidence = cx.evidence();
-            let deadline_reached = observed_wait_expired(
-                wait.started_tick,
-                evidence.tick,
-                cx.active_now().saturating_sub(wait.started_at),
-                TRANSFER_OBSERVED_TICK_LIMIT,
-            );
-            match close_progress(
-                session.as_ref().is_some_and(|session| session.open),
-                session.as_ref().map_or(-1, |session| session.side),
-                session
-                    .as_ref()
-                    .map_or(wait.baseline.generation, |session| session.generation),
-                wait.baseline,
-                session.is_some(),
-                deadline_reached,
-            ) {
-                CloseScan::Complete | CloseScan::AlreadyShut => {
-                    self.clear_bank_close_wait();
-                    return Poll::Ready(Ok(()));
-                }
-                CloseScan::Waiting | CloseScan::SideHeld => return Poll::Pending,
-                CloseScan::SessionReplaced => {
-                    self.clear_bank_close_wait();
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                        "bank session replaced before the close settled",
-                    ))));
-                }
-                CloseScan::TimedOut => {
-                    self.clear_bank_close_wait();
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from("bank did not close"))));
-                }
-            }
-        }
-        let Some(session) = session.filter(|session| session.open) else {
-            return Poll::Ready(Ok(()));
-        };
-        let evidence = cx.evidence();
-        let started_tick = evidence.tick;
-        let started_at = cx.active_now();
-        let baseline = CloseBaseline {
-            generation: session.generation,
-            side: session.side,
-        };
-        match cx.emit(InteractReq::Close) {
-            Ok(_) => {
-                self.start_bank_close_wait(BankCloseWait {
-                    baseline,
-                    started_tick,
-                    started_at,
-                });
-                Poll::Pending
-            }
-            Err(ActionError::BudgetExhausted) => Poll::Pending,
-            Err(error) => Poll::Ready(Err(error)),
-        }
-    }
     fn pending_wear(&self, slot: u8) -> bool {
         self.pending
             .iter()
@@ -1436,7 +1300,7 @@ impl Combat {
     }
     fn projected_schedule(&self) -> Schedule {
         let mut schedule = self.schedule;
-        if !self.bank_close_active() && self.plan_first_id != 0 {
+        if self.plan_first_id != 0 {
             for row in self.plan.iter() {
                 if row.kind == RowKind::Arm && row.aux & arbiter::ARM_SIDE_TAB_FLAG != 0 {
                     continue;
@@ -1473,9 +1337,6 @@ impl Combat {
             .map(|row| row.varp)
     }
     fn receipts(&mut self, cx: &ActionContext<'_>) -> bool {
-        if self.bank_close_active() {
-            return true;
-        }
         if self.plan_first_id == 0 {
             return true;
         }
@@ -2060,17 +1921,13 @@ impl Combat {
         (BASELINE_READY - 1) & !projected
     }
     pub(crate) fn prayer_plan_first_id(&self) -> u64 {
-        if self.bank_close_active() {
-            0
-        } else {
-            self.plan_first_id
-        }
+        self.plan_first_id
     }
     /// Include accepted dispatches that a cancellation interrupted before poll.
     /// Planned, queued, missing and refused receipts confer no ownership.
     pub(crate) fn prayer_cleanup(&self, accepted_prefix: usize) -> RaisedPrayers {
         let mut raised = self.raised_prayers;
-        if !self.bank_close_active() && self.plan_first_id != 0 {
+        if self.plan_first_id != 0 {
             for row in self.plan.iter().take(accepted_prefix) {
                 if row.kind == RowKind::Prayer {
                     let varp = self.prayer_varp(row.id).expect("planned prayer component");

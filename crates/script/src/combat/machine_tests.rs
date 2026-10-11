@@ -2019,43 +2019,6 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
 }
 
 #[test]
-fn combat_closes_open_bank_before_wearing_gear() {
-    let mut scene = Scene::new("imp");
-    let item = scene.held("bronze_scimitar", 0);
-    let id = item.def.id;
-    scene.inventory.push(item);
-    scene.refresh();
-    scene
-        .snapshot
-        .seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
-    let mut request = scene.request();
-    request.kit = Some(Arc::new(CompiledKit {
-        worn: Arc::from([(3, id)]),
-        ..CompiledKit::default()
-    }));
-    let mut harness = Harness::new(&scene, request);
-
-    let first = harness.pending_batch(&scene, 1);
-    assert_len(&first, 1);
-    assert!(matches!(
-        first.get(0),
-        Some(HostEffect::Interaction(InteractReq::Close))
-    ));
-    assert!(harness.pending(&scene, 2).is_none());
-
-    scene
-        .snapshot
-        .seed_bank_observation(-1, 2, None, Vec::new());
-    let after_close = harness.pending_batch(&scene, 3);
-    assert_len(&after_close, 2);
-    assert!(matches!(
-        after_close.get(0),
-        Some(HostEffect::Interaction(InteractReq::Wear { .. }))
-    ));
-    attack_row(&after_close, 1);
-}
-
-#[test]
 fn case12_prep_boosts_once_each_then_respects_cycle_and_target_quarter() {
     let mut scene = Scene::new("khazard_warlord");
     for (slot, alias) in ["1dose2attack", "1dose2strength", "1dose2defense"]

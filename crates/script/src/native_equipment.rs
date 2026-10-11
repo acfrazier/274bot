@@ -69,14 +69,9 @@ impl NativeMachine for EquipmentMachine {
                         changed: self.changed,
                     }));
                 }
-                if snapshot
-                    .bank_session()
-                    .is_some_and(|session| session.value.open)
-                {
-                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
-                        "cannot wear equipment while bank is open",
-                    ))));
-                }
+                // 289 accepts inventory OPHELD with the bank open: OpHeldHandler.ts:54-56
+                // runs content/scripts/interface_bank/scripts/bank.rs2:16, then
+                // content/scripts/player/scripts/equip.rs2:1 equips on that same packet.
                 let held = cx.snapshot().inventory().is_some_and(|rows| {
                     rows.value
                         .iter()
@@ -234,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn wear_is_blocked_while_bank_is_open() {
+    fn wear_dispatches_while_bank_is_open_without_closing_first() {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
@@ -255,14 +250,19 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
 
-        assert!(matches!(
-            result,
-            Poll::Ready(Err(ActionError::Blocked(message)))
-                if message.as_ref() == "cannot wear equipment while bank is open"
-        ));
         assert!(
-            ledger.as_ref().unwrap().outbox.is_empty(),
-            "a blocked wear must not emit an interaction"
+            result.is_pending(),
+            "the emitted Wear waits for equipment observation"
         );
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(
+            outbox.len(),
+            1,
+            "Wear must be the first and only interaction"
+        );
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Wear { name }) if name == "Equipment"
+        ));
     }
 }

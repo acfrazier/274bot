@@ -3246,57 +3246,6 @@ fn unequip_all_keeps_shared_protected_equipment() {
 }
 
 #[test]
-fn standalone_equip_closes_bank_before_wearing() {
-    compile_context_test(|cx| {
-        let item_id = resolve_obj(cx, "bronze_axe").unwrap();
-        let plan = s2::compile_equip(
-            test_args::<s2::EquipArgs>(serde_json::json!({"obj": "bronze_axe"})),
-            cx,
-        )
-        .unwrap();
-        let mut snapshot = ready();
-        snapshot.seed_inventory(
-            vec![ItemView {
-                def: def(item_id, "Bronze axe"),
-                container: ItemContainer::Inventory,
-                action_family: ItemActionFamily::Held,
-                slot: 0,
-                count: 1,
-                actions: vec![],
-                component_id: 3214,
-            }],
-            28,
-        );
-        snapshot.seed_equipment(vec![]);
-        snapshot.seed_bank_observation(700, 1, Some(vec![]), Vec::new());
-        let mut ledger = None;
-        let (mut run, initial) = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            let mut run = with_step(tick, |step| plan.begin(step).unwrap());
-            let initial = with_step(tick, |step| run.poll(step));
-            (run, initial)
-        });
-        assert!(initial.is_pending());
-
-        assert!(matches!(emitted(&ledger), InteractReq::Close));
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |step| run.poll(step))
-        })
-        .is_pending());
-        assert!(matches!(emitted(&ledger), InteractReq::Close));
-
-        snapshot.seed_bank_observation(-1, 2, None, Vec::new());
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            with_step(tick, |step| run.poll(step))
-        })
-        .is_pending());
-        assert!(matches!(
-            emitted(&ledger),
-            InteractReq::Wear { name } if name == "Bronze axe"
-        ));
-    });
-}
-
-#[test]
 fn npc_near_uses_observed_tiles_and_preserves_unknown() {
     compile_context_test(|cx| {
         let id = resolve_npc(cx, "sir_vyvin").unwrap();
