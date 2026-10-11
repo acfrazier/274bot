@@ -2820,7 +2820,7 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-    let login: Option<Result<(), &str>> = permit.attempt(|_| Err("connect failed"), |_| None);
+    let login: Option<Result<(), &str>> = permit.attempt(|_, _| Err("connect failed"), |_| None);
     assert_eq!(login, Some(Err("connect failed")));
     drop(permit);
     assert!(
@@ -2847,7 +2847,7 @@ fn panic_in_login_attempt_resolves_the_reservation() {
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
         let _: Option<Result<(), ()>> =
-            permit.attempt(|_| panic!("synthetic client.login unwind"), |_| None);
+            permit.attempt(|_, _| panic!("synthetic client.login unwind"), |_| None);
     }));
     assert!(unwind.is_err());
     assert!(
@@ -2870,7 +2870,10 @@ fn granted(wait: PermitWait) -> GrantedReservation {
 
 /// Run a granted login that returns at once with `Ok`.
 fn complete(mut permit: GrantedReservation) {
-    assert_eq!(permit.attempt(|_| Ok::<(), ()>(()), |_| None), Some(Ok(())));
+    assert_eq!(
+        permit.attempt(|_, _| Ok::<(), ()>(()), |_| None),
+        Some(Ok(()))
+    );
 }
 
 /// A failure in the work between the grant and the connect (world check,
@@ -2959,13 +2962,25 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
     play.stop_slot("alice");
 }
 
-/// A login that never returns holds the only in-flight slot only until its
-/// lease ends; the next bot then proceeds, and the late return does not
-/// free the slot a second time.
+/// A login that ignores its deadline and never returns on its own, over a
+/// real socket: at its lease end the queue shuts that socket before it
+/// grants the next bot, so the server has already read end of stream when
+/// the next handshake may start. The late return reports the cancel and does
+/// not free the next bot's slot.
 #[test]
-fn a_login_that_never_returns_frees_the_slot_for_the_next_bot() {
+fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
+    use client::io::client_stream::ClientStream;
     use std::sync::mpsc;
 
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        // Then the server says nothing.
+        socket
+    });
     let hold = Duration::from_millis(300);
     let queue = Arc::new(QueueMutex::new(
         LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60)).with_handshake_hold(hold),
@@ -2975,21 +2990,36 @@ fn a_login_that_never_returns_frees_the_slot_for_the_next_bot() {
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
     let (deadline_tx, deadline_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel::<()>();
     let stuck = thread::spawn(move || {
-        // Ignores its deadline and returns only when released.
         permit.attempt(
-            |deadline| {
+            |deadline, cancel| {
                 deadline_tx.send(deadline).unwrap();
-                release_rx.recv().unwrap();
-                Ok::<(), ()>(())
+                // A client that ignores the queue's deadline: its own is a
+                // minute away, so only the cancel can end this read.
+                let mut stream = ClientStream::connect_until(
+                    client::Transport::Tcp,
+                    &endpoint.ip().to_string(),
+                    endpoint.port(),
+                    Instant::now() + Duration::from_secs(60),
+                    Some(&cancel),
+                )?;
+                stream.write(&[14, 0], 2)?;
+                stream.read()
             },
             |_| None,
         )
     });
     let deadline = deadline_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let mut alice_socket = server.join().unwrap();
     let bob_permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let granted_at = Instant::now();
+    alice_socket.set_nonblocking(true).unwrap();
+    let mut byte = [0; 1];
+    assert_eq!(
+        alice_socket.read(&mut byte).unwrap(),
+        0,
+        "the server has read alice's end of stream when bob is granted"
+    );
     assert!(
         granted_at >= deadline + host::login_queue::LEASE_SLACK,
         "bob waits for alice's lease to end"
@@ -2998,8 +3028,12 @@ fn a_login_that_never_returns_frees_the_slot_for_the_next_bot() {
         granted_at < deadline + host::login_queue::LEASE_SLACK + Duration::from_millis(500),
         "bob starts as soon as alice's lease ends"
     );
-    release_tx.send(()).unwrap();
-    assert_eq!(stuck.join().unwrap(), Some(Ok(())));
+    let error = stuck
+        .join()
+        .unwrap()
+        .expect("alice's attempt started")
+        .unwrap_err();
+    assert_eq!(error.to_string(), "login cancelled by its host");
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3104,7 +3138,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     thread::sleep(spacing + Duration::from_millis(200));
     let mut alice_start = None;
     let login = permit.attempt(
-        |_| {
+        |_, _| {
             alice_start = Some(Instant::now());
             Err::<(), _>("refused at once")
         },
@@ -3114,7 +3148,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let mut bob_start = None;
     let login = permit.attempt(
-        |_| {
+        |_, _| {
             bob_start = Some(Instant::now());
             Ok::<(), ()>(())
         },
@@ -3154,7 +3188,7 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
         .is_some()));
     let backoff = LoginBackoff::new();
     let login = permit.attempt(
-        |_| {
+        |_, _| {
             Err::<(), _>(LoginError::response(
                 16,
                 "Login attempts exceeded.",

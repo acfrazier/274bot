@@ -10,6 +10,7 @@ use api::hostlog::{Category, Level};
 use client::client::client::SessionExitReason;
 use client::client::{Client, LoginError};
 use client::config::IfType;
+use client::io::client_stream::LoginCancel;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::Profile;
@@ -831,17 +832,24 @@ impl GrantedReservation {
 
     /// Start the attempt: the queue marks its start (spacing counts from
     /// here) and `login` runs with the deadline by which the client must stop
-    /// all socket I/O. `server_hold` sees the result while the attempt still
-    /// holds the in-flight slot; a hold it returns is published in the same
-    /// queue update that frees the slot, so no sibling can be granted in
-    /// between. `None`: the grant's lease ran out before the attempt started
-    /// (a stalled worker), so nothing was attempted and the slot queues again.
+    /// all socket I/O, and the [`LoginCancel`] the queue fires to shut the
+    /// attempt's socket if its lease ends before it returns. `server_hold`
+    /// sees the result while the attempt still holds the in-flight slot; a
+    /// hold it returns is published in the same queue update that frees the
+    /// slot, so no sibling can be granted in between. `None`: the grant's
+    /// lease ran out before the attempt started (a stalled worker), so
+    /// nothing was attempted and the slot queues again.
     pub(super) fn attempt<T, E>(
         &mut self,
-        login: impl FnOnce(Instant) -> Result<T, E>,
+        login: impl FnOnce(Instant, LoginCancel) -> Result<T, E>,
         server_hold: impl FnOnce(&Result<T, E>) -> Option<Duration>,
     ) -> Option<Result<T, E>> {
-        let Some(deadline) = self.queue.lock().start_attempt(self.owner, Instant::now()) else {
+        let cancel = LoginCancel::new();
+        let started = self
+            .queue
+            .lock()
+            .start_attempt(self.owner, Instant::now(), cancel.clone());
+        let Some(deadline) = started else {
             self.state = ReservationState::Resolved;
             host_log!(
                 Category::Login,
@@ -851,7 +859,7 @@ impl GrantedReservation {
             return None;
         };
         self.state = ReservationState::Attempted;
-        let result = login(deadline);
+        let result = login(deadline, cancel);
         let hold = server_hold(&result);
         let acknowledged = {
             let mut queue = self.queue.lock();

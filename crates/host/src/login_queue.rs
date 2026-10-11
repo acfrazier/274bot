@@ -20,12 +20,13 @@
 //! `NODE_PRODUCTION` does not 16 us), and it does not burst: at most one
 //! handshake is in flight, attempts start at least [`LOGIN_START_SPACING`]
 //! apart, and one handshake holds the in-flight slot for at most
-//! [`HANDSHAKE_HOLD`] (plus [`LEASE_SLACK`]).
+//! [`HANDSHAKE_HOLD`] (plus [`LEASE_SLACK`]). A handshake still running at
+//! its lease end has its socket shut before the slot goes to the next one.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use client::io::client_stream::READ_TIMEOUT;
+use client::io::client_stream::{LoginCancel, READ_TIMEOUT};
 
 /// Permit outcome of [`LoginQueue::poll_owner`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,17 +84,20 @@ const SERVER_TICK: Duration = Duration::from_millis(600);
 pub const LOGIN_START_SPACING: Duration = Duration::from_millis(2 * SERVER_TICK.as_millis() as u64);
 
 /// Longest one login handshake may hold the in-flight slot, measured from
-/// its start. Both ends give up on a silent socket after 30 s: the engine
-/// destroys it (`TcpServer.ts:19,61-67`), and the original client's read
-/// timeout is 30 s (`ClientStream.java:47`, this client's
-/// [`READ_TIMEOUT`]). The slot worker hands the deadline from
-/// [`LoginQueue::start_attempt`] to the client, which stops the connect and
-/// every read and write of the handshake at it.
+/// its start. This is a host policy. The 30 s matches the read timeouts on
+/// both ends: the original client's `setSoTimeout(30000)`
+/// (`ClientStream.java:47`, this client's [`READ_TIMEOUT`]) and the engine
+/// destroying a socket silent for 30 s (`TcpServer.ts:19,61-67`). Neither
+/// bounds a whole multi-step handshake; this deadline does. The slot worker
+/// hands the deadline from [`LoginQueue::start_attempt`] to the client,
+/// which stops the connect and every read and write of the handshake at it.
 pub const HANDSHAKE_HOLD: Duration = READ_TIMEOUT;
 
 /// How long after a handshake's deadline the queue still treats its slot as
-/// taken: the client's last socket call returns at the deadline, and it
-/// then closes the socket. A grant that never started counts from the grant.
+/// taken. This is host policy, not a measured bound: it gives the client
+/// time to fail at its own deadline and report that. A handshake still
+/// running at the lease end does not rely on it: the queue shuts the
+/// attempt's socket ([`LoginCancel`]) before it frees the slot.
 pub const LEASE_SLACK: Duration = Duration::from_secs(1);
 
 /// Production `rateLimitDeviceLogin` is 5 in a 15 s TTL (`>= 5` rejects,
@@ -150,19 +154,21 @@ struct QueueEntry {
 }
 
 /// One granted login, owned by its slot owner until it returns.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Flight {
     owner: u64,
     uid: i32,
     granted: Instant,
     /// When the slot worker started the attempt ([`LoginQueue::start_attempt`]).
     started: Option<Instant>,
+    /// Shuts the started attempt's socket if its lease ends first.
+    cancel: Option<LoginCancel>,
 }
 
 impl Flight {
     /// When this flight stops holding the in-flight slot even if it never
-    /// returns: its client stops at `start + hold`, and the slack covers
-    /// closing the socket.
+    /// returns: its client stops at `start + hold`, and the queue shuts its
+    /// socket at the lease end in any case.
     fn lease_end(&self, hold: Duration) -> Instant {
         self.started.unwrap_or(self.granted) + hold + LEASE_SLACK
     }
@@ -303,14 +309,22 @@ impl LoginQueue {
     /// its grant and its connect cannot start closer than the spacing to the
     /// previous attempt. Returns the deadline by which the attempt must stop
     /// all socket I/O, or `None` if the grant's lease already ran out
-    /// (nothing may be attempted on it; the owner queues again).
-    pub fn start_attempt(&mut self, owner: u64, now: Instant) -> Option<Instant> {
+    /// (nothing may be attempted on it; the owner queues again). The queue
+    /// keeps `cancel`: if the attempt has not returned when its lease ends,
+    /// the queue shuts its socket before the next login can be granted.
+    pub fn start_attempt(
+        &mut self,
+        owner: u64,
+        now: Instant,
+        cancel: LoginCancel,
+    ) -> Option<Instant> {
         self.expire(now);
         let flight = self
             .flights
             .iter_mut()
             .find(|flight| flight.owner == owner && flight.started.is_none())?;
         flight.started = Some(now);
+        flight.cancel = Some(cancel);
         self.last_start = Some(self.last_start.map_or(now, |last| last.max(now)));
         Some(now + self.handshake_hold)
     }
@@ -383,7 +397,9 @@ impl LoginQueue {
 
     /// Forget limits whose time has passed: logins whose lease ran out (each
     /// counted as an attempt that returned at its lease end), the
-    /// response-16 hold, an idle address count and idle device rows.
+    /// response-16 hold, an idle address count and idle device rows. A
+    /// started login whose lease ran out has its socket shut here, before
+    /// its slot is free: every grant runs after this under the same lock.
     fn expire(&mut self, now: Instant) {
         let hold = self.handshake_hold;
         while let Some(i) = self
@@ -392,6 +408,9 @@ impl LoginQueue {
             .position(|flight| flight.lease_end(hold) <= now)
         {
             let flight = self.flights.remove(i);
+            if let Some(cancel) = &flight.cancel {
+                cancel.cancel();
+            }
             self.settle(flight.uid, flight.lease_end(hold));
         }
         self.prune_uid(now);
@@ -502,6 +521,7 @@ impl LoginQueue {
             uid,
             granted: now,
             started: None,
+            cancel: None,
         });
     }
 
@@ -666,7 +686,9 @@ mod tests {
                     continue;
                 }
                 if q.poll_owner(test_owner(uid), uid, now) == Permit::Grant {
-                    assert!(q.start_attempt(test_owner(uid), now).is_some());
+                    assert!(q
+                        .start_attempt(test_owner(uid), now, LoginCancel::new())
+                        .is_some());
                     in_flight.push((uid, now + handshake));
                     attempts.push(Attempt {
                         uid,
@@ -990,7 +1012,9 @@ mod tests {
         let base = Instant::now();
         let mut q = unpaced(1);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        assert!(q.start_attempt(test_owner(1), base).is_some());
+        assert!(q
+            .start_attempt(test_owner(1), base, LoginCancel::new())
+            .is_some());
         let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
         assert!(
             matches!(
@@ -1011,15 +1035,17 @@ mod tests {
     }
 
     /// A login that never returns holds the only in-flight slot until its
-    /// lease ends, not forever. The next bot then starts, and the late
-    /// return cannot free the slot a second time.
+    /// lease ends, not forever. At the lease end the queue shuts its socket
+    /// before the next bot can start, and the late return cannot free the
+    /// slot a second time. A login that returned in time is never cancelled.
     #[test]
-    fn a_handshake_that_never_returns_frees_the_slot_at_its_lease_end() {
+    fn a_handshake_that_never_returns_is_cancelled_at_its_lease_end() {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        let hung = LoginCancel::new();
         assert_eq!(
-            q.start_attempt(test_owner(1), base),
+            q.start_attempt(test_owner(1), base, hung.clone()),
             Some(base + HANDSHAKE_HOLD),
             "the client gets the handshake deadline"
         );
@@ -1030,11 +1056,20 @@ mod tests {
             q.head_blocker(test_owner(2), before),
             Some(AdmitBlocker::Handshake)
         );
+        assert!(!hung.is_cancelled(), "not before its lease end");
         assert_eq!(
             request(&mut q, 2, lease_end),
             Permit::Grant,
             "the next bot starts at the lease end"
         );
+        assert!(
+            hung.is_cancelled(),
+            "the hung attempt's socket is shut by the poll that grants the next bot"
+        );
+        let next = LoginCancel::new();
+        assert!(q
+            .start_attempt(test_owner(2), lease_end, next.clone())
+            .is_some());
         assert!(matches!(request(&mut q, 3, lease_end), Permit::Wait(_)));
         let late = lease_end + Duration::from_secs(5);
         assert!(
@@ -1045,6 +1080,16 @@ mod tests {
             q.head_blocker(test_owner(3), late),
             Some(AdmitBlocker::Handshake),
             "the late return does not free bot 2's slot"
+        );
+        assert!(ack(&mut q, 2, late));
+        assert_eq!(
+            request(&mut q, 3, late + HANDSHAKE_HOLD + LEASE_SLACK),
+            Permit::Grant,
+            "a poll past bot 2's lease end"
+        );
+        assert!(
+            !next.is_cancelled(),
+            "a returned attempt is never cancelled"
         );
     }
 
@@ -1057,7 +1102,10 @@ mod tests {
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
         assert_eq!(request(&mut q, 2, lease_end), Permit::Grant);
-        assert_eq!(q.start_attempt(test_owner(1), lease_end), None);
+        assert_eq!(
+            q.start_attempt(test_owner(1), lease_end, LoginCancel::new()),
+            None
+        );
         assert!(!abandon(&mut q, 1));
     }
 
@@ -1070,7 +1118,9 @@ mod tests {
         let mut q = LoginQueue::default();
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         let started = base + Duration::from_secs(2);
-        assert!(q.start_attempt(test_owner(1), started).is_some());
+        assert!(q
+            .start_attempt(test_owner(1), started, LoginCancel::new())
+            .is_some());
         let returned = started + Duration::from_millis(1);
         assert!(ack(&mut q, 1, returned));
         assert_eq!(

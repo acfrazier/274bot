@@ -1116,11 +1116,13 @@ fn spawn_slot_thread(
                         }
                     }
                     let handshake_lowmem = client.config.lowmem;
-                    // Spacing counts from the attempt's start, and the client
-                    // stops all handshake I/O at the deadline the queue gives.
+                    // Spacing counts from the attempt's start; the client
+                    // stops all handshake I/O at the deadline the queue gives,
+                    // and the queue shuts the socket if the lease ends first.
                     let Some(login) = permit.attempt(
-                        |deadline| {
+                        |deadline, cancel| {
                             client.set_login_deadline(deadline);
+                            client.set_login_cancel(cancel);
                             client.login(&username, &password, reconnect)
                         },
                         |result| server_hold(result, &backoff),
