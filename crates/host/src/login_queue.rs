@@ -300,10 +300,11 @@ impl LoginQueue {
         })
     }
 
-    /// What keeps `owner` from starting at `now`: its defer while active, or
-    /// the admission blocker for the first eligible queued owner. `None` for
-    /// an eligible owner behind another eligible owner and for an eligible
-    /// head whose next poll would grant.
+    /// What keeps `owner` from starting at `now`: its active defer, its own
+    /// device budget when it yields to another device, or the admission blocker
+    /// for the first eligible queued owner. `None` when it is behind another
+    /// eligible owner and its selected blocker is not its own device budget,
+    /// or the eligible head could start now.
     pub fn head_blocker(&self, owner: u64, now: Instant) -> Option<AdmitBlocker> {
         let index = self.queue.iter().position(|entry| entry.owner == owner)?;
         let entry = self.queue[index];
@@ -313,7 +314,10 @@ impl LoginQueue {
                 .or(Some(AdmitBlocker::Spacing { until }));
         }
         if self.eligible_head_index(now) != Some(index) {
-            return None;
+            return match self.blocker(entry.uid, now) {
+                Some(blocker @ AdmitBlocker::DeviceBudget { .. }) => Some(blocker),
+                _ => None,
+            };
         }
         self.blocker(entry.uid, now)
     }
@@ -788,6 +792,30 @@ mod tests {
             queue.poll_owner(1, 7, last_return + UID_COOLDOWN),
             Permit::Grant,
             "the release owner regains eligibility after its device cooldown"
+        );
+    }
+
+    #[test]
+    fn all_device_blocked_fallback_keeps_first_owner() {
+        let now = Instant::now();
+        let mut queue = unpaced(29);
+        for (owner, uid) in [(test_owner(7), 7), (test_owner(8), 8)] {
+            for _ in 0..UID_GRANT_CAP {
+                assert_eq!(request_owner(&mut queue, owner, uid, now), Permit::Grant);
+                assert!(queue.acknowledge_login_return(owner, now));
+            }
+        }
+
+        let first = test_owner(7);
+        let last = test_owner(8);
+        queue.enqueue_owner(first, 7);
+        queue.enqueue_owner(last, 8);
+        assert_eq!(queue.status_owner(first).unwrap().position, 1);
+        assert_eq!(queue.status_owner(last).unwrap().position, 2);
+        assert_eq!(
+            queue.eligible_head_index(now),
+            Some(0),
+            "when all owners are device-blocked, the first owner remains the fallback head"
         );
     }
 
