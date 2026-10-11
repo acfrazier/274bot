@@ -13,10 +13,42 @@ use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Bank transfers wait this many distinct fresh observed ticks before expiring.
+/// The production world tick duration. Server content advances on the 600 ms
+/// engine tick; observed packet bursts can contain several such ticks at once.
+pub const SERVER_TICK_MS: u64 = 600;
+/// Minimum distinct fresh observed ticks before a transfer may expire; the
+/// elapsed-time floor also requires one 600 ms server interval per tick.
 pub const TRANSFER_OBSERVED_TICK_LIMIT: u64 = 8;
-/// Default wall-clock bound for a bank close when the caller omits one.
-pub const CLOSE_BOUND: Duration = Duration::from_secs(4);
+/// Round a duration up to the first complete production server tick.
+pub const fn observed_ticks_for_millis(millis: u64) -> u64 {
+    millis.saturating_add(SERVER_TICK_MS - 1) / SERVER_TICK_MS
+}
+
+/// A bank wait expires only after both its observed-tick budget and the
+/// corresponding amount of server time have elapsed.
+pub fn observed_wait_expired(
+    started_tick: u64,
+    current_tick: u64,
+    elapsed: Duration,
+    tick_limit: u64,
+) -> bool {
+    observed_wait_expired_with_time_bound(
+        started_tick,
+        current_tick,
+        elapsed >= Duration::from_millis(tick_limit.saturating_mul(SERVER_TICK_MS)),
+        tick_limit,
+    )
+}
+
+/// The same dual bound when a pause-aware clock owns the elapsed-time floor.
+pub fn observed_wait_expired_with_time_bound(
+    started_tick: u64,
+    current_tick: u64,
+    time_bound_reached: bool,
+    tick_limit: u64,
+) -> bool {
+    current_tick.saturating_sub(started_tick) >= tick_limit && time_bound_reached
+}
 /// Frozen wait for a usable side backpack before an until-empty deposit fails.
 pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 /// Frozen `for (let guard = 0; guard < 32; guard++)` deposit rounds.
@@ -718,11 +750,6 @@ pub fn deposit_capacity_next<R: BankRow>(
 }
 
 // --- close -----------------------------------------------------------------
-
-/// The caller's explicit bound, else [`CLOSE_BOUND`].
-pub fn close_deadline(timeout_ms: Option<u64>) -> Duration {
-    timeout_ms.map_or(CLOSE_BOUND, Duration::from_millis)
-}
 
 /// The bank session and side root seen when the Close verb was sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
