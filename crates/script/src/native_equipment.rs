@@ -69,6 +69,9 @@ impl NativeMachine for EquipmentMachine {
                         changed: self.changed,
                     }));
                 }
+                // 289 accepts inventory OPHELD with the bank open: OpHeldHandler.ts:54-56
+                // runs content/scripts/interface_bank/scripts/bank.rs2:16, then
+                // content/scripts/player/scripts/equip.rs2:1 equips on that same packet.
                 let held = cx.snapshot().inventory().is_some_and(|rows| {
                     rows.value
                         .iter()
@@ -223,5 +226,43 @@ mod tests {
                 assert_eq!(handle.inspect(|machine| machine.pending_id), Some(Some(2)));
             }
         }
+    }
+
+    #[test]
+    fn wear_dispatches_while_bank_is_open_without_closing_first() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());
+        snapshot.seed_inventory(vec![item(1, ItemContainer::Inventory)], 28);
+        snapshot.seed_equipment(Vec::new());
+        let mut ledger = None;
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<EquipmentMachine>(
+                    EquipmentRequest::Wear {
+                        id: 1,
+                        name: Arc::from("Equipment"),
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        assert!(
+            result.is_pending(),
+            "the emitted Wear waits for equipment observation"
+        );
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(
+            outbox.len(),
+            1,
+            "Wear must be the first and only interaction"
+        );
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Wear { name }) if name == "Equipment"
+        ));
     }
 }

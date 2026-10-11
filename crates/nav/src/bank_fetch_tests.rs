@@ -169,9 +169,8 @@ fn worn_req_with_knife_in_inventory_wears_in_place() {
 }
 
 /// The knife is in the bank snapshot while the backpack holds unrelated
-/// items. The plan withdraws only the knife, closes the bank, then wears it;
-/// carried inventory is preserved, and the post-session strict re-find
-/// crosses.
+/// items. The plan withdraws only the knife, then sends Wear while the bank
+/// is open; on 289 the Wear equips it and closes the bank.
 #[test]
 fn bank_trip_withdraws_wears_then_finds() {
     let wc = walled_5x5();
@@ -202,10 +201,9 @@ fn bank_trip_withdraws_wears_then_finds() {
                 id: KNIFE,
                 count: 1
             },
-            BankStep::Close,
             BankStep::Wear { id: KNIFE },
         ],
-        "walk, open, withdraw the knife, close, wear"
+        "walk, open, withdraw the knife, then Wear (which closes the bank)"
     );
     assert_eq!(
         fetch.state.inv, state.inv,
@@ -403,18 +401,17 @@ fn bank_trip_fetches_any_one_worn_alternative() {
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::Withdraw { id: 1321, count: 1 },
-            BankStep::Close,
             BankStep::Wear { id: 1321 },
         ],
-        "the banked alternative is withdrawn and worn"
+        "the banked alternative is withdrawn and worn directly"
     );
     let r = find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).unwrap();
     assert_eq!(r.dest, to);
 }
 
 /// The carried knife remains in place while the bank trip fetches the
-/// missing coin stack; after the bank closes, the knife is worn.
-/// No carried item is cleared to make room for the fetch.
+/// missing coin stack; Wear is sent before a separate Close and closes the
+/// bank as it equips. No carried item is cleared to make room for the fetch.
 #[test]
 fn bank_trip_keeps_a_carried_wearable() {
     let wc = walled_5x5();
@@ -445,10 +442,9 @@ fn bank_trip_keeps_a_carried_wearable() {
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::Withdraw { id: 995, count: 10 },
-            BankStep::Close,
             BankStep::Wear { id: KNIFE },
         ],
-        "withdraw only the coin deficit and keep the knife until it is worn"
+        "withdraw only the coin deficit, then wear the carried knife"
     );
     assert_eq!(fetch.state.inv.get(&995), Some(&10));
     assert!(

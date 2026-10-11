@@ -695,11 +695,13 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
     let mut local = snapshot.local_player().unwrap().clone();
     let mut ledger = None;
     for (x, expected_kind) in [(3110, "walk"), (3109, "combat")] {
-        local.player.actor.tile = api::WorldTile {
+        let here = api::WorldTile {
             x,
             z: 3346,
             level: 0,
         };
+        local.player.actor.tile = here;
+        local.player.network = here;
         snapshot.seed_local_player(local.clone());
         super::super::tests::with_tick(&snapshot, &mut ledger, x as u64, |tick| {
             let context = PredicateContext {
@@ -857,11 +859,13 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     snapshot.seed_players(Vec::new());
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     let mut local = snapshot.local_player().unwrap().clone();
-    local.player.actor.tile = api::WorldTile {
+    let here = api::WorldTile {
         x: 3093,
         z: 3243,
         level: 0,
     };
+    local.player.actor.tile = here;
+    local.player.network = here;
     snapshot.seed_local_player(local);
     let outcome = unattackable_outcome();
     let mut ledger = None;

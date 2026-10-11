@@ -170,8 +170,10 @@ pub struct Combat {
     counters: Counters,
     style_state: StyleState,
     plan: TickPlan,
+    // Receipt id for the emitted plan.
     plan_first_id: u64,
     pending: [PendingRow; 5],
+    // Bits 0-4 stage dispatch slots.
     staged_pending: u8,
     // Three-tick deadlines are retired every observed tick, before byte wrap.
     prayer_ready: [u8; 15],

@@ -989,12 +989,12 @@ the host plans a fetch-and-wear session from the packed bank stand table
 (`NavWorld::banks()`), walks to a standable access tile of the nearest
 stand — same level first, then Chebyshev distance — (never the booth loc
 or a teller spawn behind the counter), opens
-it, withdraws only shortages, closes the bank, then wears any missing worn
-item (the client cannot wear while the bank is open), and re-runs the strict
-search. It never deposits backpack items: tools, quest items, food, and existing
-route stacks remain carried, including for compatibility-v1 walks, which enable
-fetch by default. Consumed resources use the full route's running budget
-(two 30-coin fares need 60); reusable held gates use their peak requirement.
+it, withdraws only shortages, then wears any missing worn item while the bank
+is still open; the Wear interaction itself closes the bank before the strict
+search is re-run. It never deposits backpack items: tools, quest items, food,
+and existing route stacks remain carried, including for compatibility-v1 walks,
+which enable fetch by default. Consumed resources use the full route's running
+budget (two 30-coin fares need 60); reusable held gates use their peak requirement.
 An item needed both carried and worn reserves a separate copy for wearing.
 Exact withdrawals use fixed bank amounts or Withdraw-X when needed.
 Access tiles come from the one rule

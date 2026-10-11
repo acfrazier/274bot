@@ -351,6 +351,14 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
         animation_update: None,
     }
 }
+pub(crate) fn local_player_with_network(
+    rendered: WorldTile,
+    network: WorldTile,
+) -> api::snapshot::LocalPlayerView {
+    let mut player = local_player(rendered);
+    player.player.network = network;
+    player
+}
 
 pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
     Box::new(AcquireRun {
@@ -2139,6 +2147,58 @@ fn use_on_item_target_emits_inventory_kind() {
 }
 
 #[test]
+fn anchored_use_on_inventory_target_walks_from_network_tile() {
+    compile_context_test(|cx| {
+        let source_id = resolve_obj(cx, "shears").unwrap();
+        let target_id = resolve_obj(cx, "wool").unwrap();
+        let anchor = tile(3200, 3200);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player_with_network(anchor, tile(3190, 3200)));
+        let source = ItemView {
+            def: def(source_id, "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let target = ItemView {
+            def: def(target_id, "Wool"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 7,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        snapshot.seed_inventory(vec![source, target], 28);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears",
+                "target": {"item": "wool"},
+                "anchor": {"tile": [3200, 3200, 0], "source": "network tile fixture"},
+                "radius": 3
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request)) if request.target == anchor
+        ));
+    });
+}
+
+#[test]
 fn same_tick_use_on_admission_waits_after_a_completed_interaction() {
     compile_context_test(|compile| {
         let source_id = resolve_obj(compile, "shears").unwrap();
@@ -2305,6 +2365,60 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
             matches!(emitted(&ledger), InteractReq::Loc { id: Some(id), action, .. }
             if *id == selected.id && action == "Spin")
         );
+    });
+}
+
+#[test]
+fn buy_and_make_approach_from_the_network_tile() {
+    compile_context_test(|compile| {
+        let anchor = serde_json::json!({
+            "tile": [3200, 3200, 0],
+            "source": "network tile fixture"
+        });
+        let plans = [
+            s2::compile_buy(
+                test_args::<s2::BuyArgs>(serde_json::json!({
+                    "shop": {
+                        "npc": "generalshopkeeper1",
+                        "anchor": anchor.clone()
+                    },
+                    "obj": "rope",
+                    "qty": 1
+                })),
+                compile,
+            )
+            .unwrap(),
+            s2::compile_make(
+                test_args::<s2::MakeArgs>(serde_json::json!({
+                    "loc": {"name": "spinningwheel", "op": "Spin"},
+                    "anchor": anchor,
+                    "product": "ball_of_wool",
+                    "menu": {"obj": "wool", "source": "network tile fixture"},
+                    "qty": 1
+                })),
+                compile,
+            )
+            .unwrap(),
+        ];
+        for plan in plans {
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player_with_network(
+                tile(3200, 3200),
+                tile(3193, 3200),
+            ));
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |step| plan.begin(step).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+            assert!(matches!(
+                ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request)) if request.target == tile(3200, 3200)
+            ));
+        }
     });
 }
 
@@ -3236,6 +3350,83 @@ fn npc_near_uses_observed_tiles_and_preserves_unknown() {
             cx
         )
         .is_err());
+    });
+}
+
+#[test]
+fn spatial_predicates_use_the_network_tile() {
+    compile_context_test(|compile| {
+        let network = WorldTile {
+            x: 2984,
+            z: 3336,
+            level: 2,
+        };
+        let rendered = WorldTile {
+            x: 2985,
+            z: 3335,
+            level: 0,
+        };
+        let npc_id = resolve_npc(compile, "sir_vyvin").unwrap();
+        let near = Near {
+            tile: network,
+            radius: 0,
+        };
+        let npc_present = NpcPresent {
+            id: npc_id,
+            radius: Some(0),
+        };
+        let on_level = OnLevel {
+            level: network.level,
+        };
+        let in_area = InArea {
+            boxes: vec![[network.x, network.z, network.x, network.z, network.level]],
+        };
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player_with_network(rendered, network));
+        snapshot.seed_npcs(vec![api::snapshot::NpcView {
+            index: 42,
+            r#type: Some(npc_id as usize),
+            name: Some("Sir Vyvin".into()),
+            actions: vec![],
+            tile: network,
+            distance: 0,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 1,
+            total_health: 1,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+        with_tick(&snapshot, &mut None, 1, |tick| {
+            let context = PredicateContext {
+                cx: &tick.cx,
+                pairs: tick.pairs,
+                quests: compile.quests,
+                progress: &[],
+                required_after: tick.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(near.evaluate(&context), Truth::True);
+            assert_eq!(npc_present.evaluate(&context), Truth::True);
+            assert_eq!(on_level.evaluate(&context), Truth::True);
+            assert_eq!(in_area.evaluate(&context), Truth::True);
+        });
     });
 }
 
@@ -5361,6 +5552,7 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
         let mut snapshot = ready();
         seed_dialogue_combat(&mut snapshot, false);
         let mut player = snapshot.local_player().unwrap().clone();
+        player.player.network = here;
         player.player.actor.tile = here;
         snapshot.seed_local_player(player);
         snapshot.seed_locs(vec![LocView {
@@ -6602,6 +6794,50 @@ fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
 }
 
 #[test]
+fn anchored_use_on_wall_walk_uses_the_network_side() {
+    compile_context_test(|cx| {
+        let wall_tile = tile(3167, 3308);
+        let network = tile(wall_tile.x + 3, wall_tile.z);
+        let rendered = tile(wall_tile.x - 3, wall_tile.z);
+        let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
+        wall.layer = LocLayer::Wall;
+        wall.shape = 0;
+        wall.angle = 2;
+        wall.distance = 3;
+        snapshot.seed_local_player(local_player_with_network(rendered, network));
+        snapshot.seed_locs(vec![wall.clone()]);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain",
+                "target": {"loc": "hopper_lumbridge"},
+                "anchor": {
+                    "tile": [3166, 3308, 0],
+                    "source": "network tile fixture"
+                },
+                "radius": 6
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == tile(wall_tile.x + 1, wall_tile.z)
+                    && request.radius == 0
+                    && request.loc_id.is_none()
+        ));
+    });
+}
+
+#[test]
 fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
@@ -6921,7 +7157,10 @@ fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
         door.angle = 2;
         door.distance = 8;
         let mut snapshot = ready();
-        snapshot.seed_local_player(local_player(tile(2830, 3555)));
+        snapshot.seed_local_player(local_player_with_network(
+            tile(2820, 3555),
+            tile(2830, 3555),
+        ));
         snapshot.seed_locs(vec![door.clone()]);
         let plan = InteractPlan {
             kind: reach::ReachKind::Loc {
