@@ -15,11 +15,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::hostlog::{Level, Source};
-use host::{FrameBuf, SlotInput};
+use api::host_log;
+use api::hostlog::{Category, Level, Source};
+use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, Vault, VaultChange};
 
+use crate::capacity::{CapacityNotice, RenderPolicyLabel};
 use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
@@ -36,6 +38,17 @@ use crate::views::{FleetView, Inputs, QueuePlace, Views};
 const SAVING: &str = "profile is still saving";
 
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Prefer `last` when it is still in `names`; otherwise the first name.
+/// Load all uses this when nothing is selected, matching MultiBox-on.
+pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
+    if let Some(last) = last {
+        if names.iter().any(|n| n == last) {
+            return Some(last.to_string());
+        }
+    }
+    names.first().cloned()
+}
 
 /// A removal is owned by the exact arm that received its clean-logout
 /// request. `io` stays here while that worker drains so re-adding the member
@@ -328,6 +341,25 @@ pub struct OperatorSession<Io> {
     walk_globals_store: Option<std::path::PathBuf>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
+    /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
+    capacity: Option<CapacityNotice>,
+    capacity_kind: CapacityKind,
+    capacity_render: RenderPolicyLabel,
+    /// Next evaluate ([`CAPACITY_EVAL_EVERY`] apart).
+    capacity_due: Option<Instant>,
+    /// Moves whenever [`Self::capacity_notice`] changes.
+    capacity_generation: u64,
+}
+
+/// How often the session evaluates host capacity.
+const CAPACITY_EVAL_EVERY: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CapacityKind {
+    #[default]
+    Clear,
+    Silence,
+    Warn,
 }
 
 impl<Io> OperatorSession<Io> {
@@ -376,6 +408,11 @@ impl<Io> OperatorSession<Io> {
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
             _instance: instance,
+            capacity: None,
+            capacity_kind: CapacityKind::Clear,
+            capacity_render: RenderPolicyLabel::OnlySelected,
+            capacity_due: None,
+            capacity_generation: 0,
         }
     }
 
@@ -510,6 +547,27 @@ impl<Io> OperatorSession<Io> {
     /// The process resource meter as of its last 1 Hz sample.
     pub fn resources(&self) -> &ResourceView {
         self.resources.view()
+    }
+
+    /// Shared host-capacity warning, when the host is behind.
+    pub fn capacity_notice(&self) -> Option<&CapacityNotice> {
+        self.capacity.as_ref()
+    }
+
+    /// Moves whenever [`Self::capacity_notice`] changed, so a front end
+    /// copies the line only then.
+    pub fn capacity_generation(&self) -> u64 {
+        self.capacity_generation
+    }
+
+    /// What the front end is rendering, included in the capacity warning.
+    pub fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
+        self.capacity_render = render;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inject_capacity_warning(&mut self, warning: host::CapacityWarning) {
+        self.apply_capacity(CapacityEval::Warn(warning));
     }
 
     /// Moves whenever a sample changed [`Self::resources`].
@@ -749,12 +807,27 @@ impl<Io> OperatorSession<Io> {
 
     /// Load every profile (vault plus running slots) that is not a member
     /// yet. Returns the operation and how many were newly added.
-    pub fn load_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> (OperationId, usize) {
+    ///
+    /// Never steals an existing selection, and later logins of the new
+    /// members do not either. When nothing is selected, [`pick_focus`]
+    /// chooses a member (last focus if it is now on the wall, else the
+    /// first) so panel and TUI have something to show. Single-row Load /
+    /// clicking a bot still focuses that member.
+    pub fn load_all<S: SlotSurface<Io = Io>>(
+        &mut self,
+        surface: &mut S,
+        last_focus: Option<&str>,
+    ) -> (OperationId, usize) {
         let op = self.operations.open(ActionKind::Load);
         let mut added = 0;
         for name in self.profile_names() {
             if self.load_member(op, &name, surface) {
                 added += 1;
+            }
+        }
+        if self.selected.is_none() {
+            if let Some(name) = pick_focus(self.members(), last_focus) {
+                self.select(&name);
             }
         }
         (op, added)
@@ -1245,6 +1318,61 @@ impl<Io> OperatorSession<Io> {
         self.refresh_views();
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
+        self.refresh_capacity(now);
+    }
+
+    /// Evaluate host capacity once per [`CAPACITY_EVAL_EVERY`]; the notice
+    /// text is rebuilt only when the warning's figures change.
+    fn refresh_capacity(&mut self, now: Instant) {
+        if self.capacity_due.is_some_and(|due| now < due) {
+            return;
+        }
+        self.capacity_due = Some(now + CAPACITY_EVAL_EVERY);
+        let eval = self.play.as_ref().map_or(CapacityEval::Clear, |play| {
+            play.capacity().evaluate(now, self.capacity_render)
+        });
+        self.apply_capacity(eval);
+    }
+
+    /// Show, keep, hide or clear the warning, logging each transition into
+    /// or out of it once.
+    fn apply_capacity(&mut self, eval: CapacityEval) {
+        let was_warning = self.capacity_kind == CapacityKind::Warn;
+        let kind = match eval {
+            CapacityEval::Warn(warning) => {
+                if self.capacity.as_ref().map(CapacityNotice::warning) != Some(warning) {
+                    self.capacity = Some(CapacityNotice::from_warning(warning));
+                    self.capacity_generation = self.capacity_generation.wrapping_add(1);
+                }
+                if !was_warning {
+                    if let Some(notice) = self.capacity.as_ref() {
+                        host_log!(Category::Lifecycle, Level::Warn, "{}", notice.notice_text());
+                    }
+                }
+                CapacityKind::Warn
+            }
+            CapacityEval::Silence => {
+                if was_warning {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Info,
+                        "Host warning hidden: no game packets for 10 s, so the game server is \
+                         quiet, not this machine"
+                    );
+                }
+                CapacityKind::Silence
+            }
+            CapacityEval::Clear => {
+                if was_warning {
+                    host_log!(Category::Lifecycle, Level::Info, "Host is keeping up again");
+                }
+                CapacityKind::Clear
+            }
+        };
+        if kind != CapacityKind::Warn && self.capacity.take().is_some() {
+            self.capacity_generation = self.capacity_generation.wrapping_add(1);
+        }
+        self.capacity_kind = kind;
     }
 
     /// Move the operation outcomes recorded since the last take onto each

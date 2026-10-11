@@ -3228,7 +3228,7 @@ impl Session {
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
         let last = crate::ui_state::load().last_focus;
-        if let Some(name) = crate::ui_state::pick_focus(&names, last.as_deref()) {
+        if let Some(name) = frontend_core::pick_focus(&names, last.as_deref()) {
             self.pick_profile(&name);
         }
     }
@@ -3238,6 +3238,12 @@ impl Session {
     pub fn pump_status(&mut self) {
         self.core
             .set_pause_script_on_manual_walk_abort(self.ui.nav.pause_script_on_manual_walk_abort);
+        let only_selected = self.focus.lock().unwrap().only_render_selected;
+        self.core.set_capacity_render(if only_selected {
+            frontend_core::RenderPolicyLabel::OnlySelected
+        } else {
+            frontend_core::RenderPolicyLabel::RenderAll
+        });
         self.core.advance_removals(Instant::now());
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;
@@ -3342,6 +3348,23 @@ impl Session {
 
     pub fn focused_name(&self) -> Option<String> {
         self.core.selected().map(str::to_owned)
+    }
+
+    /// Focused bot and each member's [`draw_for_slot`]. Tests and headless
+    /// Load-all checks; not a per-frame path.
+    #[cfg(test)]
+    pub(crate) fn focus_draw_state(&self) -> (Option<String>, Vec<(String, bool)>) {
+        let members = self.core.members().to_vec();
+        let focus = self.focus.lock().unwrap();
+        let focused = focus.focused.clone();
+        let draws = members
+            .into_iter()
+            .map(|name| {
+                let draw = draw_for_slot(&focus, &name);
+                (name, draw)
+            })
+            .collect();
+        (focused, draws)
     }
 
     fn map_members(&self) -> bool {
@@ -4232,17 +4255,30 @@ impl Session {
     /// wall member — the chooser's "Load all". Returns how many were newly
     /// added. Login intent still follows each profile's auto-login setting.
     pub fn load_all(&mut self) -> usize {
-        let (core, mut surface) = self.core_and_surface();
-        let (op, added) = core.load_all(&mut surface);
+        let had_focus = self.core.selected().is_some();
+        let last = if !had_focus && self.persist_ui {
+            crate::ui_state::load().last_focus
+        } else {
+            None
+        };
+        let (op, added) = {
+            let (core, mut surface) = self.core_and_surface();
+            core.load_all(&mut surface, last.as_deref())
+        };
         self.report_failure(op);
-        // Each load used to focus its member; the last loaded one keeps it
-        // (a profile still saving is skipped, never focused).
-        if let Some(last) = self.core.members().last() {
-            let last = last.clone();
-            self.apply_focus(&last);
-            self.restore_script_heading(&last);
+        // Never steal an existing focus. When nothing was focused, the core
+        // already picked with `pick_focus`; mirror that onto the Game pane
+        // so the chosen bot draws. Applying last-member focus here used to
+        // turn A's `set_draw` off.
+        if !had_focus {
+            if let Some(name) = self.core.selected().map(str::to_owned) {
+                self.select(&name);
+            }
         }
         self.sync_wall_focus();
+        if !had_focus && self.core.selected().is_some() {
+            self.wake_all_slots();
+        }
         added
     }
 
@@ -4348,8 +4384,7 @@ impl Session {
                 } else {
                     None
                 };
-                if let Some(name) =
-                    crate::ui_state::pick_focus(self.core.members(), last.as_deref())
+                if let Some(name) = frontend_core::pick_focus(self.core.members(), last.as_deref())
                 {
                     self.select(&name);
                 }

@@ -2958,3 +2958,228 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
         "lamp_auto flipped live: next guardian tick must rub"
     );
 }
+
+/// Which clock the measured slot loop reads.
+#[derive(Clone, Copy)]
+enum LoopClock {
+    /// Timed-wake overshoot only.
+    Overshoot,
+    /// Injected run-queue wait (Linux).
+    RunQueue,
+    /// Injected thread CPU time: time off the CPU (macOS, Windows).
+    OffCpu,
+}
+
+/// What each observe does: `own` of its own work (blocking for the
+/// run-queue clock, like a slow script tick on its isolate thread; CPU
+/// for the CPU clock, like a slow compiled tick), `starved` kept off a
+/// CPU, and `bracketed` blocked inside [`capacity::off_cpu_wait`].
+#[derive(Clone, Copy, Default)]
+struct LoopFrame {
+    own: Duration,
+    starved: Duration,
+    bracketed: Duration,
+}
+
+/// Drive four slot-loop services with the capacity recorder bound. Each
+/// observe marks the bot Active and does `frame`. Returns the delays (ms)
+/// recorded before the loop exits (leaving the loop parks the slot, which
+/// drops them).
+fn measured_loop(busy: bool, clock: LoopClock, frame: LoopFrame) -> Vec<u64> {
+    measured_loop_with(busy, clock, frame, || {})
+}
+
+/// [`measured_loop`], with `work` done in each observe after `frame`.
+fn measured_loop_with(
+    busy: bool,
+    clock: LoopClock,
+    frame: LoopFrame,
+    mut work: impl FnMut(),
+) -> Vec<u64> {
+    use capacity::TestClock;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    const SERVICES: u32 = 4;
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let monitor = Arc::new(CapacityMonitor::new());
+    let total = Rc::new(Cell::new(Duration::ZERO));
+    capacity::bind_capacity_for_test(
+        &monitor,
+        match clock {
+            LoopClock::Overshoot => TestClock::Overshoot,
+            LoopClock::RunQueue => TestClock::Waited(Rc::clone(&total)),
+            LoopClock::OffCpu => TestClock::Cpu(Rc::clone(&total)),
+        },
+    );
+    let ran = Cell::new(0u32);
+    let delays = RefCell::new(Vec::new());
+    Host::run_client(
+        &mut c,
+        "alice",
+        ProfileSettings::default(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        ScriptRunPolicy::default(),
+        |_, _, _, _, _| {
+            set_service_class(ServiceClass::Active);
+            match clock {
+                LoopClock::Overshoot => thread::sleep(frame.own + frame.starved),
+                LoopClock::RunQueue => {
+                    thread::sleep(frame.own + frame.starved);
+                    total.set(total.get() + frame.starved);
+                }
+                LoopClock::OffCpu => {
+                    thread::sleep(frame.own + frame.starved);
+                    total.set(total.get() + frame.own);
+                }
+            }
+            capacity::off_cpu_wait(|| thread::sleep(frame.bracketed));
+            work();
+            ran.set(ran.get() + 1);
+            busy
+        },
+        |_| {
+            let done = ran.get() >= SERVICES;
+            if done {
+                *delays.borrow_mut() = monitor.recorded_delays();
+            }
+            done
+        },
+        |_| RandomClaim::Host,
+    );
+    assert_eq!(
+        monitor.recorded_delays(),
+        Vec::<u64>::new(),
+        "leaving the loop drops the slot's delays"
+    );
+    unbind_capacity();
+    assert_eq!(monitor.registered(), 0, "unbind unregisters the slot");
+    delays.into_inner()
+}
+
+/// Delays near `ms` each (real sleeps overshoot a little).
+fn about(delays: &[u64], n: usize, ms: u64) -> bool {
+    delays.len() == n && delays.iter().all(|&d| (ms..ms + 100).contains(&d))
+}
+
+#[test]
+fn slot_loop_does_not_count_its_own_slow_frames() {
+    // 650 ms frames on the 20 ms path: R1 counted each as 630 ms late.
+    let own = LoopFrame {
+        own: Duration::from_millis(650),
+        ..LoopFrame::default()
+    };
+    for (clock, why) in [
+        (
+            LoopClock::Overshoot,
+            "an overrun frame has no timed wake, so no overshoot",
+        ),
+        (LoopClock::RunQueue, "own work is not run-queue wait"),
+        (LoopClock::OffCpu, "own work is CPU time, not time off it"),
+    ] {
+        assert_eq!(measured_loop(true, clock, own), Vec::<u64>::new(), "{why}");
+    }
+}
+
+#[test]
+fn slot_loop_counts_run_queue_wait_on_the_idle_park() {
+    // An idle in-game bot (observe not busy) parks between services; each
+    // wake waits 700 ms for a CPU. The first service is skipped (the class
+    // only became Active during it).
+    let starved = LoopFrame {
+        starved: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
+    assert_eq!(
+        measured_loop(false, LoopClock::RunQueue, starved),
+        [700, 700, 700]
+    );
+    // Time off the CPU sees the same 700 ms on the idle path (the park up
+    // to its bound is the bot's own wait)...
+    let delays = measured_loop(false, LoopClock::OffCpu, starved);
+    assert!(about(&delays, 3, 700), "{delays:?}");
+}
+
+#[test]
+fn slot_loop_counts_time_off_the_cpu_inside_a_busy_frame() {
+    // ...and inside a busy frame, where the overshoot sees nothing.
+    let starved = LoopFrame {
+        own: Duration::from_millis(5),
+        starved: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
+    let delays = measured_loop(true, LoopClock::OffCpu, starved);
+    assert!(about(&delays, 3, 700), "{delays:?}");
+    assert_eq!(
+        measured_loop(true, LoopClock::Overshoot, starved),
+        Vec::<u64>::new()
+    );
+    // A wait the slot brackets (GPU set-up) is its own, not the host's.
+    let bracketed = LoopFrame {
+        bracketed: Duration::from_millis(700),
+        ..LoopFrame::default()
+    };
+    assert_eq!(
+        measured_loop(true, LoopClock::OffCpu, bracketed),
+        Vec::<u64>::new()
+    );
+}
+
+#[test]
+fn slot_loop_does_not_count_a_send_blocked_on_the_peer() {
+    use client::io::client_stream::connect_ws_plain;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    // A WebSocket peer (a slow network or server) that stops reading for
+    // 700 ms when told to, then takes everything.
+    let stall = Duration::from_millis(700);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (tcp, _) = listener.accept().unwrap();
+        let mut ws = tungstenite::accept(tcp).unwrap();
+        stop_rx.recv().unwrap();
+        thread::sleep(stall);
+        let _ = std::io::copy(ws.get_mut(), &mut std::io::sink());
+    });
+    let mut stream = connect_ws_plain("127.0.0.1", address.port()).unwrap();
+    // Larger than both socket buffers, so the send waits for the peer.
+    let payload = vec![0u8; 16 << 20];
+    let mut service = 0;
+    let mut send = None;
+    // The thread's CPU clock stands still, as it does while a real send
+    // is blocked on its socket: without the bracket the 700 ms would be
+    // time off the CPU, as a starved frame is in
+    // `slot_loop_counts_time_off_the_cpu_inside_a_busy_frame`. The send is
+    // in the second service, the first one counted.
+    let delays = measured_loop_with(true, LoopClock::OffCpu, LoopFrame::default(), || {
+        service += 1;
+        if service == 2 {
+            let started = Instant::now();
+            stop_tx.send(()).unwrap();
+            stream.write(&payload, payload.len()).unwrap();
+            send = Some(started.elapsed());
+        }
+    });
+    drop(stream);
+    server.join().unwrap();
+    let send = send.expect("the loop ran the send");
+    assert!(send >= stall, "the send waited for the peer only {send:?}");
+    assert_eq!(
+        delays,
+        Vec::<u64>::new(),
+        "a send blocked on the peer is the network's wait, not the host's"
+    );
+}

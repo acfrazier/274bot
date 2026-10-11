@@ -24,6 +24,8 @@ libc = "0.2"
 client = { workspace = true }
 # Integration tests use the fixture seams behind this crate's test-support.
 frontend-core = { path = ".", features = ["test-support"] }
+# The capacity smoke forces the macOS/Windows measure and reads receipts.
+host = { path = "../host", features = ["test-support"] }
 host-play = { path = "../host-play", features = ["test-support"] }
 scenario = { path = "../scenario" }
 

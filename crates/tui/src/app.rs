@@ -488,6 +488,9 @@ pub struct TuiApp {
     pub resources: ResourceView,
     /// One-line background-bots notice until the operator acks it.
     pub background_notice: Option<String>,
+    /// Shared host-capacity warning from frontend-core, drawn as a wrapped
+    /// banner above the header on every screen.
+    pub capacity: Option<String>,
     /// The shared structured log (Logs tab and the log drawer).
     pub log: crate::log_pane::LogPaneState,
     /// The detail tab shown for the selected bot.
@@ -592,6 +595,7 @@ impl TuiApp {
             error: None,
             resources: ResourceView::default(),
             background_notice: None,
+            capacity: None,
             log: crate::log_pane::LogPaneState::default(),
             screen: Screen::Overview,
             key_focus: Pane::Fleet,

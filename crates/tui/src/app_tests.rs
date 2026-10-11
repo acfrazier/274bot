@@ -1888,3 +1888,44 @@ fn map_search_list_uses_display_name_not_slash_breaks() {
         "drawn search rows must not leak the slash: {drawn}"
     );
 }
+
+/// The host-capacity warning is a wrapped banner above the header: whole
+/// at 80x24 and 120x40, on the fleet and on every detail tab.
+#[test]
+fn capacity_warning_is_whole_above_the_header_at_80x24() {
+    let line = frontend_core::CapacityNotice::from_warning(frontend_core::CapacityWarning::new(
+        18,
+        92,
+        10,
+        Some(std::time::Duration::from_millis(1470)),
+        Some(std::time::Duration::from_millis(750)),
+        frontend_core::RenderPolicyLabel::Headless,
+    ))
+    .notice_text()
+    .to_owned();
+    assert!(line.len() > 80, "the line must need wrapping: {line}");
+    for (width, height, banner) in [(80, 24, 2), (120, 40, 1)] {
+        for screen in [None, Some(KeyCode::F(4)), Some(KeyCode::F(7))] {
+            let mut app = TuiApp::new("274bot headless");
+            app.capacity = Some(line.clone());
+            if let Some(code) = screen {
+                app.on_key(key(code));
+            }
+            let rows = draw(&mut app, width, height);
+            let shown = rows[..banner]
+                .iter()
+                .map(|row| row.trim_end())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(shown, line, "{width}x{height} {screen:?}");
+            assert!(
+                rows[banner].contains("274bot"),
+                "the header follows the banner: {}",
+                text(&rows)
+            );
+        }
+    }
+    let mut app = TuiApp::new("274bot headless");
+    let rows = draw(&mut app, 80, 24);
+    assert!(rows[0].contains("274bot"), "no warning, no banner");
+}

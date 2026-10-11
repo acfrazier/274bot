@@ -162,16 +162,6 @@ pub fn default_section_closed(id: &str) -> bool {
     id == "script" || id == "parameters"
 }
 
-/// Prefer `last` when it is still in `names`; otherwise the first name.
-pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
-    if let Some(l) = last {
-        if names.iter().any(|n| n == l) {
-            return Some(l.to_string());
-        }
-    }
-    names.first().cloned()
-}
-
 /// `~/.274bot/panel-ui.json` (same HOME rule as the vault path).
 pub fn path() -> PathBuf {
     script::bot_file("panel-ui.json")
@@ -339,9 +329,7 @@ thread_local! {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        load, load_at, path, pick_focus, save, save_at, save_at_checked, NavSettings, PanelUiState,
-    };
+    use super::{load, load_at, path, save, save_at, save_at_checked, NavSettings, PanelUiState};
     use crate::test_support::TestDir;
     use std::collections::HashMap;
 
@@ -610,22 +598,6 @@ mod tests {
         assert_eq!(document["nav"]["script_scope_notice_ack"], true);
         assert_eq!(document["nav"]["survivable_routing_notice_ack"], false);
         assert_eq!(document["unrelated"]["keep"], 7);
-    }
-
-    #[test]
-    fn pick_focus_prefers_last_when_present() {
-        let names = vec!["a".into(), "b".into()];
-        assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
-        assert_eq!(pick_focus(&names, Some("z")).as_deref(), Some("a"));
-        assert_eq!(pick_focus(&names, None).as_deref(), Some("a"));
-        assert_eq!(pick_focus(&[], Some("a")), None);
-    }
-
-    #[test]
-    fn focus_first_prefers_last_focus() {
-        // Helper used by Session::focus_first_profile.
-        let names = vec!["a".into(), "b".into()];
-        assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
     }
 
     #[test]

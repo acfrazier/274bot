@@ -51,6 +51,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - If a lamp's skill window doesn't open, the bot pauses briefly and tries
   again instead of stopping until you toggle lamp auto.
 
+### Host
+
+- When this computer can't keep up with the bots it's running, the panel, the
+  TUI and the log say so: how many bots are falling behind, by how much, and
+  whether render-all is on, with a suggestion to run fewer bots or turn
+  render-all off. The warning clears once the computer has kept up for 30
+  seconds. A slow script, a slow network or a quiet game server doesn't
+  trigger it. On macOS and Windows a few other stalls (such as memory being
+  paged back in) can also count, and a bot that's idle between game updates
+  may be missed.
+
 ### Login
 
 - Loading many bots logs them in one at a time, a little over a second
@@ -62,9 +73,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - "World full" names the world and when the bot tries next; on Auto the bot
   moves on to another world. After you log a bot out, its next login is a
   fresh one; a dropped connection still reconnects.
+- When the server sends a bot something the client can't read, the bot now
+  logs in again from the start instead of reconnecting, so it comes back to
+  a complete world. This fixes the 0.2.0.1 known issue where such a bot came
+  back to an empty world until you logged it out and in. The server may still
+  be holding the old session, so this login can take about a minute. A
+  dropped connection, or a server that stops answering for 15 seconds, still
+  reconnects into the running session and keeps its world.
+- The log line for that exit now records the packet's size, the packets just
+  before it and how far into the session it came, to help find the cause.
 
 ### Panel
 
+- Load all leaves the bot you're watching in view. If none is selected, it
+  shows one of the loaded bots. Only profiles with auto-login log in; the
+  others stay at the title screen.
 - The Fleet window is tidier. Its button labels no longer end in "…", its
   table columns share the window's width instead of scrolling sideways, its
   buttons and column checkboxes wrap on a narrow window, and "Sort:" is a
@@ -92,6 +115,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 
 ### TUI
 
+- Load+login all with no bot selected now selects one of the loaded bots.
 - The status pane shows the script's phase and park reason on the same rows
   as the panel. Those rows appear only while a script runs or a script
   refusal is still showing.

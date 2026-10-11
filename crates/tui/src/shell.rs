@@ -49,6 +49,34 @@ fn put(buf: &mut Buffer, x: &mut u16, y: u16, right: u16, text: &str, style: Sty
     }
 }
 
+/// Most rows the host-capacity banner takes.
+const BANNER_MAX_ROWS: u16 = 3;
+
+/// Greedy word wrap: the next row of `rest` within `width` columns and
+/// what follows it. Borrows, so the banner draws without allocating.
+fn wrap_row(rest: &str, width: usize) -> (&str, &str) {
+    let rest = rest.trim_start_matches(' ');
+    match rest.char_indices().nth(width) {
+        None => (rest, ""),
+        Some((cut, ' ')) => (&rest[..cut], &rest[cut + 1..]),
+        Some((cut, _)) => match rest[..cut].rfind(' ') {
+            Some(space) if space > 0 => (&rest[..space], &rest[space + 1..]),
+            _ => (&rest[..cut], &rest[cut..]),
+        },
+    }
+}
+
+/// Rows `text` wraps to in `width` columns.
+fn wrapped_rows(text: &str, width: u16) -> u16 {
+    let mut rows = 0;
+    let mut rest = text;
+    while width > 0 && !rest.trim_start_matches(' ').is_empty() {
+        rest = wrap_row(rest, usize::from(width)).1;
+        rows += 1;
+    }
+    rows
+}
+
 /// Emphasise the border of the pane that has keyboard focus and write a
 /// plain `[keys]` label into it (focus is never shown by colour alone).
 fn mark_focus(buf: &mut Buffer, area: Rect) {
@@ -77,7 +105,27 @@ fn mark_focus(buf: &mut Buffer, area: Rect) {
 impl TuiApp {
     /// Render the whole shell for the frame's size.
     pub fn draw(&mut self, frame: &mut Frame<'_>) {
-        let area = frame.area();
+        // The fleet-wide capacity warning sits above the header on every
+        // screen, wrapped so it is never cut off; the shell takes the rest.
+        let full = frame.area();
+        let banner_h = self
+            .capacity
+            .as_deref()
+            .map_or(0, |line| wrapped_rows(line, full.width))
+            .min(BANNER_MAX_ROWS)
+            .min(full.height / 4);
+        let area = Rect::new(
+            full.x,
+            full.y + banner_h,
+            full.width,
+            full.height - banner_h,
+        );
+        if banner_h > 0 {
+            self.draw_capacity_banner(
+                frame.buffer_mut(),
+                Rect::new(full.x, full.y, full.width, banner_h),
+            );
+        }
         let class = SizeClass::of(area);
         // A pane that is not on screen cannot hold the keyboard.
         if self.key_focus == Pane::Drawer
@@ -138,6 +186,22 @@ impl TuiApp {
             frame.render_widget(pane, settings_area);
         }
         self.draw_modal(frame);
+    }
+
+    fn draw_capacity_banner(&self, buf: &mut Buffer, area: Rect) {
+        let Some(mut rest) = self.capacity.as_deref() else {
+            return;
+        };
+        let style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let right = area.x + area.width;
+        for y in area.y..area.y + area.height {
+            let (row, next) = wrap_row(rest, usize::from(area.width));
+            let mut x = area.x;
+            put(buf, &mut x, y, right, row, style);
+            rest = next;
+        }
     }
 
     /// `BOT <name> | world | phase | script …`, the line above the detail
