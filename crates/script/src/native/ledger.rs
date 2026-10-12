@@ -2,6 +2,7 @@ use super::owner::Owner;
 use super::{ActionError, AssessReceipt, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use crate::shim::InteractReq;
+use api::identity::ActiveClock;
 use api::selected::RunKey;
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -463,32 +464,6 @@ impl TickBudget {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct ActiveClock {
-    elapsed: Duration,
-    eligible_since: Option<Instant>,
-}
-
-impl ActiveClock {
-    pub fn observe(&mut self, now: Instant, eligible: bool) {
-        match (self.eligible_since, eligible) {
-            (Some(since), false) => {
-                self.elapsed += now.saturating_duration_since(since);
-                self.eligible_since = None;
-            }
-            (None, true) => self.eligible_since = Some(now),
-            _ => {}
-        }
-    }
-
-    pub fn now(&self, now: Instant) -> Duration {
-        self.elapsed
-            + self
-                .eligible_since
-                .map_or(Duration::ZERO, |since| now.saturating_duration_since(since))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,28 +772,5 @@ mod tests {
         // A relog's first in-game frame enters its scene.
         budget.observe_frame(9, Some(&scene_frame(0, 3184, 3311, (3120, 3256))));
         assert!(budget.entered_scene());
-    }
-
-    #[test]
-    fn frozen_intervals_do_not_spend_active_deadlines() {
-        let start = Instant::now();
-        let mut clock = ActiveClock::default();
-        clock.observe(start, true);
-        clock.observe(start + Duration::from_secs(2), false);
-        assert_eq!(
-            clock.now(start + Duration::from_secs(60)),
-            Duration::from_secs(2)
-        );
-        clock.observe(start + Duration::from_secs(60), false);
-        clock.observe(start + Duration::from_secs(120), true);
-        assert_eq!(
-            clock.now(start + Duration::from_secs(123)),
-            Duration::from_secs(5)
-        );
-        clock.observe(start + Duration::from_secs(123), false);
-        assert_eq!(
-            clock.now(start + Duration::from_secs(180)),
-            Duration::from_secs(5)
-        );
     }
 }
