@@ -2387,6 +2387,7 @@ dependencies = [
  "libc",
  "num-bigint",
  "parking_lot",
+ "thiserror 2.0.20",
  "tungstenite",
  "vault",
  "windows-sys 0.59.0",
