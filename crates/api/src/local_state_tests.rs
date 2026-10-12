@@ -528,19 +528,17 @@ fn knowledge_invalidation_supersedes_with_operator_provenance() {
     assert_eq!(tombstone.key(), "cook:stage");
     assert!(tombstone.payload().is_empty());
     assert_eq!(tombstone.observed_at(), at(11));
-    assert!(
-        KnowledgeRecord::try_new(
-            account("local-289", "alice"),
-            scope(),
-            None,
-            "",
-            KnowledgeProvenance::Journal,
-            KnowledgeStatus::Partial,
-            knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b""),
-            at(10),
-        )
-        .is_err()
-    );
+    assert!(KnowledgeRecord::try_new(
+        account("local-289", "alice"),
+        scope(),
+        None,
+        "",
+        KnowledgeProvenance::Journal,
+        KnowledgeStatus::Partial,
+        knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b""),
+        at(10),
+    )
+    .is_err());
 }
 
 #[test]
@@ -571,11 +569,8 @@ fn knowledge_refuses_unknown_schemas_before_any_record_exists() {
         "an unknown schema is a schema refusal, never a Known record"
     );
     assert_eq!(
-        validate_knowledge_payload(
-            KNOWLEDGE_SCHEMA_VERSION,
-            &[0u8; MAX_KNOWLEDGE_BYTES + 1]
-        )
-        .unwrap_err(),
+        validate_knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, &[0u8; MAX_KNOWLEDGE_BYTES + 1])
+            .unwrap_err(),
         ErrorCode::Validation {
             domain: LocalStateDomain::Knowledge,
             reason: ValidationReason::TooLong,
