@@ -8,9 +8,10 @@
 //!   re-exported type, or a re-exported free fn) that either takes a `&mut`
 //!   parameter or has no `self` receiver at all (free and associated fns
 //!   such as `persist_map_bake_choice` write files without `&mut`). The
-//!   book itself (`command.rs`, `process_status.rs`) is F0-5's own protocol,
-//!   not an operator entry point. Constructors (`-> Self`) and items under a
-//!   test/test-support `cfg` are excluded by class and listed.
+//!   book itself (`command.rs`, `process_status.rs`) is F0-5's own protocol
+//!   and the census scanner is test support: neither is an operator entry
+//!   point. Constructors (`-> Self`) and items under a test/test-support
+//!   `cfg` are excluded by class and listed.
 //! - **Surface universe:** every fn of `panel` and `tui` whose body calls a
 //!   reachable core entry (through a field or parameter typed as a core
 //!   owner, or a re-exported free fn) or hits an effect probe (a store
