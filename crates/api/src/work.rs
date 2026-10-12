@@ -3,37 +3,87 @@
 //! Frozen here: the [`WorkFamily`] table, identity/revision envelope,
 //! [`WorkCharge`], [`WorkAdmission`] refusals, accepted-job states,
 //! [`Checkpoint`] / [`StepContext`] obligations, cancellation,
-//! [`WorkProgress`], capacity/progress/terminal [`identity::Publication`]s,
-//! and the once-published [`identity::Settlement`] terminal. Numerical
-//! quanta, fairness and the live worker are T1.2 / G2b. Operational
-//! cutover is T5.W / I-work-prep.
+//! [`WorkProgress`], the capacity/progress/terminal
+//! [`WorkPublications`], and the once-published [`identity::Settlement`]
+//! terminal. Numerical quanta, fairness and the live worker are T1.2 / G2b.
+//! Operational cutover is T5.W / I-work-prep.
 //!
-//! [`WorkAdmission`] is the frozen service vocabulary. F0 ships no driving
-//! implementation (§23 §1, §26 §2.6). Protocol fixtures live under
-//! `cfg(test)`.
+//! [`WorkAdmission`] is the frozen caller vocabulary and [`WorkerCustody`]
+//! the frozen worker-side vocabulary. F0 ships no driving implementation
+//! (§23 §1, §26 §2.6). Protocol fixtures live under `cfg(test)`.
 //!
 //! [`crate::selected::FamilyPreparation`] is `!Send` (`selected.rs:324-329`)
 //! and cannot be a [`CooperativeJob`].
 //!
-//! ```compile_fail
+//! ```compile_fail,E0277
 //! fn require_send<T: Send>() {}
 //! require_send::<api::selected::FamilyPreparation>();
 //! ```
 //!
-//! Current producers this vocabulary will migrate (characterization, not
-//! cooperation): T5 map bake `run_job` (`crates/host-play/src/map_cache.rs:1719-1732,1960-1988`,
-//! `MapJobStatus`/`MapProgress` at `:844-868,1939-1946,2045-2052`); T4 walk-map
-//! decode (`crates/panel/src/walk_map.rs:58,1026-1038,1165-1186`); T1
-//! `script_bank.rs` bank-pick; T5 `route_inspect.rs` inspection; card
-//! preparation (`crates/api/src/selected.rs:310-330`).
+//! A ticket is typed by its family: a route ticket cannot be consumed as a
+//! map-bake result.
+//!
+//! ```compile_fail,E0308
+//! use api::identity::{Cancellation, Settlement};
+//! use api::work::{
+//!     InputRevision, MapBakePhase, WorkAdmission, WorkCharge, WorkFamily, WorkFamilySpec,
+//!     WorkTicket,
+//! };
+//!
+//! #[derive(Debug, thiserror::Error)]
+//! #[error("never")]
+//! struct Never;
+//!
+//! struct RouteSpec;
+//! impl WorkFamilySpec for RouteSpec {
+//!     const FAMILY: WorkFamily = WorkFamily::Route;
+//!     type Input = ();
+//!     type Output = u32;
+//!     type Error = Never;
+//!     type Phase = MapBakePhase;
+//!     fn revision(_: &()) -> InputRevision { InputRevision::FIRST }
+//!     fn charge(_: &()) -> WorkCharge { WorkCharge::new(0, 0, 0, 0) }
+//!     fn map_cancellation(reason: Cancellation) -> Cancellation { reason }
+//! }
+//!
+//! struct BakeSpec;
+//! impl WorkFamilySpec for BakeSpec {
+//!     const FAMILY: WorkFamily = WorkFamily::MapBake;
+//!     type Input = ();
+//!     type Output = String;
+//!     type Error = Never;
+//!     type Phase = MapBakePhase;
+//!     fn revision(_: &()) -> InputRevision { InputRevision::FIRST }
+//!     fn charge(_: &()) -> WorkCharge { WorkCharge::new(0, 0, 0, 0) }
+//!     fn map_cancellation(reason: Cancellation) -> Cancellation { reason }
+//! }
+//!
+//! fn consume_as_bake<S: WorkAdmission>(service: &mut S, ticket: &WorkTicket<RouteSpec>) {
+//!     let _: Settlement<String, _> = service.consume::<BakeSpec>(ticket).unwrap();
+//! }
+//! ```
+//!
+//! Current producers this vocabulary will migrate (characterization in the
+//! producers' own crates, not cooperation): T5 map bake `run_job`
+//! (`crates/host-play/src/map_cache.rs:1960-2043`, `MapJobStatus`/`MapProgress`
+//! at `:844-869,1939-1946`, `finish_job` at `:2045-2053`); T4 walk-map decode
+//! (`crates/panel/src/walk_map.rs:109-126,1165-1187`); T1 `script_bank.rs`
+//! bank-pick; T5 `route_inspect.rs` inspection; card preparation
+//! (`crates/api/src/selected.rs:310-330`).
 
 use std::cell::Cell;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::time::Instant;
 
-use crate::identity::{Cancellation, Deadline, RequestId, Scope, Settlement, WorkIdentity};
-use crate::process_condition::{ProcessConditions, UnavailableRefusal, UnavailableTerminal};
+use crate::identity::{
+    Cancellation, Deadline, Publication, RequestId, Scope, Settlement, WorkIdentity,
+};
+use crate::process_condition::{
+    ConditionId, ProcessConditions, UnavailableRefusal, UnavailableTerminal,
+};
 
 /// Physical track owner of a work family (§21 / §23 §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,7 +132,7 @@ pub enum WorkFamily {
     MapBake,
     /// Walk-map decode. Producer T4 panel; T3 core requests. Activation
     /// T5.W(walk-map-decode). Today's PNG length check is not a time bound
-    /// (`crates/panel/src/walk_map.rs:58,1165-1178`).
+    /// (`crates/panel/src/walk_map.rs:58,1165-1170`).
     WalkMapDecode,
     /// Native card preparation. Producer T1 (I-work-prep); T3 callers.
     /// [`crate::selected::FamilyPreparation`] cannot be retained across a
@@ -192,12 +242,22 @@ impl WorkFamily {
         }
     }
 
-    /// Cancellation mapping: WorkAdmission reasons pass through; domain
-    /// pause is not cancellation.
+    /// Cancellation mapping. Every WorkAdmission reason settles as
+    /// [`Settlement::Cancelled`]; the family adapter decides what today's
+    /// consumers observe. For map bake the real producer has exactly one
+    /// stopped-before-done ending, the resumable `MapJobStatus::Paused`:
+    /// `finish_job` maps `MapCacheError::Cancelled` or a set cancel flag to
+    /// `Paused` (`host-play/src/map_cache.rs:2045-2053`), `map_bind.rs:82`
+    /// retries `Paused`, and `MapJobStatus::Cancelled` is matched but never
+    /// constructed. See [`MapBakeStatus::cancellation_observed_as`].
     pub const fn cancellation_mapping(self) -> &'static str {
         match self {
             Self::MapBake => {
-                "Operator/Superseded/ScopeInvalidated/Shutdown → Cancelled; MapJobStatus::Paused is a family result, not Cancelled"
+                "Operator/Superseded/ScopeInvalidated/Shutdown → Settlement::Cancelled(reason); \
+                 observed by today's consumers as the resumable MapJobStatus::Paused with the \
+                 checkpoint receipt retained (finish_job, map_cache.rs:2045-2053; retried at \
+                 map_bind.rs:82). MapJobStatus::Cancelled is never produced today. The \
+                 T5.W(map-bake) adapter translates."
             }
             _ => "Operator/Superseded/ScopeInvalidated/Shutdown → Settlement::Cancelled",
         }
@@ -207,7 +267,9 @@ impl WorkFamily {
     pub const fn charge_rule(self) -> &'static str {
         match self {
             Self::Route => {
-                "request envelope bytes + reserved plan-lease result bytes; scratch/handles 0 until G2b"
+                "request envelope bytes; the plan lease is charged in its T5 owner ledger \
+                 from publication (§26 §2.2: caller-held result leases obey their own bounded \
+                 owner ledger); scratch/handles 0 until G2b"
             }
             Self::MapBake => {
                 "input identity + retained checkpoint receipt bytes + result map handle"
@@ -228,20 +290,29 @@ impl WorkFamily {
     }
 }
 
+/// A family's progress phase: a stable index for [`WorkProgress::phase`].
+pub trait WorkPhase: Copy + Eq + fmt::Debug {
+    /// Stable progress index.
+    fn index(self) -> u16;
+}
+
 /// Per-family typed contract. Implemented for route as
 /// `nav::contract::RouteService`. Other families record phases/units on
 /// [`WorkFamily`] until T5.W supplies their input types.
-pub trait WorkFamilySpec {
+///
+/// Submission derives the family, charge and revision from this spec
+/// ([`WorkAdmission::try_submit`]); the caller cannot substitute its own.
+pub trait WorkFamilySpec: 'static {
     /// Registered family.
     const FAMILY: WorkFamily;
     /// Family input.
     type Input;
     /// Family result (domain outcomes such as NoPath live here).
-    type Output;
+    type Output: Send + 'static;
     /// Family error.
-    type Error: fmt::Debug + std::error::Error;
+    type Error: Send + 'static + fmt::Debug + std::error::Error;
     /// Progress phase.
-    type Phase: Copy + Eq + fmt::Debug;
+    type Phase: WorkPhase;
     /// Input revision stamped on this request.
     fn revision(input: &Self::Input) -> InputRevision;
     /// Charge calculated from the input. Input size alone is not the charge.
@@ -250,7 +321,8 @@ pub trait WorkFamilySpec {
     fn map_cancellation(reason: Cancellation) -> Cancellation;
 }
 
-/// Characterizes `MapStage` (`map_cache.rs:844-868`).
+/// Characterizes `MapStage` (`map_cache.rs:844-851`). The host-play
+/// producer's tests map every real stage onto this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MapBakePhase {
     /// Reading cache archives.
@@ -287,7 +359,15 @@ impl MapBakePhase {
     }
 }
 
-/// Characterizes `MapJobStatus` (`map_cache.rs:862-868,1939-1946`).
+impl WorkPhase for MapBakePhase {
+    fn index(self) -> u16 {
+        Self::index(self)
+    }
+}
+
+/// Characterizes `MapJobStatus` (`map_cache.rs:861-869`) one variant per
+/// variant. The host-play producer's tests map every real variant onto this
+/// enum and drive `finish_job` to pin the cancellation observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MapBakeStatus {
     /// Accepted, not yet running.
@@ -296,15 +376,30 @@ pub enum MapBakeStatus {
     Running,
     /// Domain success.
     Ready,
-    /// Domain pause/checkpoint — a family result, not WorkAdmission cancel.
+    /// Today's one stopped-before-done ending, resumable from the checkpoint
+    /// receipt: `finish_job` maps `MapCacheError::Cancelled` or a set cancel
+    /// flag here (`map_cache.rs:2045-2053`); the bake's own pause
+    /// (`ImageBakeOutcome::Paused` → `MapCacheError::Cancelled`,
+    /// `map_producer.rs:148`) lands here too. `map_bind.rs:82` retries it.
     Paused,
-    /// WorkAdmission cancellation.
+    /// Matched by consumers (`map_bind.rs:154`, `panel/src/session.rs:4612`,
+    /// `tui/src/bin.rs:1415`) but never constructed by the producer.
     Cancelled,
     /// Domain failure.
     Failed,
 }
 
 impl MapBakeStatus {
+    /// Every status, in `MapJobStatus` declaration order.
+    pub const ALL: [Self; 6] = [
+        Self::Queued,
+        Self::Running,
+        Self::Ready,
+        Self::Paused,
+        Self::Cancelled,
+        Self::Failed,
+    ];
+
     /// `is_terminal` in `map_cache.rs:1939-1946`.
     pub const fn is_domain_ending(self) -> bool {
         matches!(
@@ -313,13 +408,27 @@ impl MapBakeStatus {
         )
     }
 
-    /// Settles as [`Settlement::Completed`].
+    /// Whether today's producer ever constructs this status.
+    pub const fn is_produced_today(self) -> bool {
+        !matches!(self, Self::Cancelled)
+    }
+
+    /// Settles as [`Settlement::Completed`] when the bake finished or paused
+    /// itself.
     pub const fn is_family_result(self) -> bool {
         matches!(self, Self::Ready | Self::Paused)
     }
+
+    /// Today's status a WorkAdmission [`Settlement::Cancelled`] is observed
+    /// as: `finish_job` lands a set cancel flag on `Paused`
+    /// (`map_cache.rs:2045-2053`). The T5.W(map-bake) adapter translates;
+    /// it does not produce `Cancelled`.
+    pub const fn cancellation_observed_as() -> Self {
+        Self::Paused
+    }
 }
 
-/// Characterizes `decode_loop` (`walk_map.rs:1165-1186`).
+/// Characterizes `WorkerCmd` / `decode_loop` (`walk_map.rs:123-126,1172-1187`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WalkMapDecodeCommand {
     /// One `decode_checked` job: the interruptible unit.
@@ -346,6 +455,16 @@ pub enum WalkMapDecodePhase {
     Publish,
 }
 
+impl WorkPhase for WalkMapDecodePhase {
+    fn index(self) -> u16 {
+        match self {
+            Self::Receive => 0,
+            Self::Decode => 1,
+            Self::Publish => 2,
+        }
+    }
+}
+
 /// Inspection phases (`route_inspect.rs` queue / search / publish).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InspectionPhase {
@@ -355,6 +474,16 @@ pub enum InspectionPhase {
     Search,
     /// Posted hops/reason.
     Publish,
+}
+
+impl WorkPhase for InspectionPhase {
+    fn index(self) -> u16 {
+        match self {
+            Self::Queue => 0,
+            Self::Search => 1,
+            Self::Publish => 2,
+        }
+    }
 }
 
 /// Bank-pick phases (`script_bank.rs`).
@@ -368,6 +497,16 @@ pub enum BankPickPhase {
     Post,
 }
 
+impl WorkPhase for BankPickPhase {
+    fn index(self) -> u16 {
+        match self {
+            Self::Queue => 0,
+            Self::Search => 1,
+            Self::Post => 2,
+        }
+    }
+}
+
 /// Card/catalogue/profile preparation phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PreparationPhase {
@@ -377,6 +516,16 @@ pub enum PreparationPhase {
     Prepare,
     /// Seal the prepared handle; the capability is dropped.
     Seal,
+}
+
+impl WorkPhase for PreparationPhase {
+    fn index(self) -> u16 {
+        match self {
+            Self::Load => 0,
+            Self::Prepare => 1,
+            Self::Seal => 2,
+        }
+    }
 }
 
 /// Family input revision: a newer revision makes an older result stale.
@@ -408,23 +557,24 @@ impl InputRevision {
     }
 }
 
-/// Identity-bound ticket returned by a successful submit: job, family
-/// and input revision. Display names and table indices are not identities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WorkTicket {
+/// Identity-bound ticket returned by a successful submit: job identity and
+/// input revision, typed by the family `F` it was submitted under. Display
+/// names and table indices are not identities. The service mints tickets;
+/// composing one by hand grants nothing the identity check does not.
+pub struct WorkTicket<F: WorkFamilySpec> {
     identity: WorkIdentity,
-    family: WorkFamily,
     revision: InputRevision,
+    family: PhantomData<fn() -> F>,
 }
 
-impl WorkTicket {
+impl<F: WorkFamilySpec> WorkTicket<F> {
     /// Compose a ticket. Nested identities must already agree on
     /// [`WorkIdentity`].
-    pub const fn new(identity: WorkIdentity, family: WorkFamily, revision: InputRevision) -> Self {
+    pub const fn new(identity: WorkIdentity, revision: InputRevision) -> Self {
         Self {
             identity,
-            family,
             revision,
+            family: PhantomData,
         }
     }
 
@@ -435,7 +585,7 @@ impl WorkTicket {
 
     /// Registered family.
     pub const fn family(self) -> WorkFamily {
-        self.family
+        F::FAMILY
     }
 
     /// Input revision.
@@ -451,6 +601,39 @@ impl WorkTicket {
     /// Originating scope.
     pub const fn scope(self) -> Scope {
         self.identity.scope()
+    }
+}
+
+impl<F: WorkFamilySpec> Clone for WorkTicket<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: WorkFamilySpec> Copy for WorkTicket<F> {}
+
+impl<F: WorkFamilySpec> PartialEq for WorkTicket<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity && self.revision == other.revision
+    }
+}
+
+impl<F: WorkFamilySpec> Eq for WorkTicket<F> {}
+
+impl<F: WorkFamilySpec> Hash for WorkTicket<F> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+        self.revision.hash(state);
+    }
+}
+
+impl<F: WorkFamilySpec> fmt::Debug for WorkTicket<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WorkTicket")
+            .field("identity", &self.identity)
+            .field("family", &F::FAMILY)
+            .field("revision", &self.revision)
+            .finish()
     }
 }
 
@@ -503,11 +686,14 @@ impl WorkCharge {
         self.operation_handles
     }
 
-    /// Bytes counted against the ledger (input + scratch + result).
-    pub const fn total_bytes(self) -> usize {
-        self.input_bytes
-            .saturating_add(self.scratch_bytes)
-            .saturating_add(self.result_bytes)
+    /// Bytes counted against the ledger (input + scratch + result), or
+    /// `None` when the sum cannot be represented: such a charge is refused
+    /// with [`SubmissionRefusal::InvalidArgument`], never saturated.
+    pub const fn total_bytes(self) -> Option<usize> {
+        match self.input_bytes.checked_add(self.scratch_bytes) {
+            Some(partial) => partial.checked_add(self.result_bytes),
+            None => None,
+        }
     }
 }
 
@@ -563,17 +749,53 @@ pub enum SubmissionRefusal {
     /// The service is stopping; no new job is accepted.
     #[error("work admission stopping")]
     Stopping,
-    /// The identity does not belong to this incarnation or is not
-    /// authorised for the family.
+    /// The identity, or the conditions ledger it was checked against,
+    /// belongs to another process incarnation.
     #[error("work admission invalid authority")]
     InvalidAuthority,
-    /// The request cannot be represented (duplicate or reused job id,
-    /// unusable charge).
+    /// The request cannot be represented: a duplicate or reused job id, a
+    /// job id outside the host namespace, or a charge whose sum cannot be
+    /// represented.
     #[error("work admission invalid argument")]
     InvalidArgument,
     /// Process-level [`crate::process_condition::ProcessServiceCode::WorkAdmissionUnavailable`].
     #[error("work admission unavailable: {}", .0.operator_text())]
     Unavailable(UnavailableRefusal),
+}
+
+/// A refused submission: the job comes back to the caller with the refusal
+/// (§26 §2.2 "a refused submission retains the job/input with the caller").
+#[derive(Debug)]
+pub struct Refused<J> {
+    refusal: SubmissionRefusal,
+    job: J,
+}
+
+impl<J> Refused<J> {
+    /// Hand `job` back with `refusal`.
+    pub const fn new(refusal: SubmissionRefusal, job: J) -> Self {
+        Self { refusal, job }
+    }
+
+    /// Why.
+    pub const fn refusal(&self) -> SubmissionRefusal {
+        self.refusal
+    }
+
+    /// The job, still the caller's.
+    pub const fn job(&self) -> &J {
+        &self.job
+    }
+
+    /// Take the job back.
+    pub fn into_job(self) -> J {
+        self.job
+    }
+
+    /// The refusal and the job.
+    pub fn into_parts(self) -> (SubmissionRefusal, J) {
+        (self.refusal, self.job)
+    }
 }
 
 /// Accepted-job state: `Queued → Executing → Yielded → Executing`, then
@@ -591,8 +813,9 @@ pub enum JobState {
 }
 
 /// Finite slice allowance. Nonzero units and an absolute monotonic
-/// deadline; never unlimited. The deadline is a clock that advances; it is
-/// not a snapshot of `now` copied at slice start.
+/// deadline; never unlimited. The deadline is compared against a clock that
+/// advances ([`MonotonicClock`]); it is not a snapshot of `now` copied at
+/// slice start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SliceBudget {
     units: NonZeroU32,
@@ -641,22 +864,57 @@ pub enum StepOutcome<R, E> {
     Failed(E),
 }
 
-/// Monotonic clock a [`StepContext`] reads at every checkpoint. Tests
-/// inject a fake that can advance mid-slice.
+/// Monotonic clock a [`StepContext`] reads at every checkpoint. Production
+/// uses [`SystemClock`]; tests inject a fake that can advance mid-slice. An
+/// `Instant` is a snapshot, not a clock, and deliberately does not implement
+/// this trait: a deadline compared against a snapshot can never expire
+/// mid-slice.
 pub trait MonotonicClock {
     /// Current monotonic instant.
     fn now(&self) -> Instant;
 }
 
-impl MonotonicClock for Instant {
+/// The process monotonic clock: every read is a fresh [`Instant::now`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemClock;
+
+impl MonotonicClock for SystemClock {
     fn now(&self) -> Instant {
-        *self
+        Instant::now()
+    }
+}
+
+/// A progress snapshot a job reported through
+/// [`StepContext::publish_progress`]. The service stamps the identity and
+/// sequence; the job never assigns either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProgressReport {
+    phase: u16,
+    completed: u32,
+    total: Option<u32>,
+}
+
+impl ProgressReport {
+    /// Family phase index.
+    pub const fn phase(self) -> u16 {
+        self.phase
+    }
+
+    /// Completed units of `total`, if known.
+    pub const fn completed(self) -> u32 {
+        self.completed
+    }
+
+    /// Total units, or `None` when unknown.
+    pub const fn total(self) -> Option<u32> {
+        self.total
     }
 }
 
 /// Borrowed only for this `step` invocation. The job must not retain it
 /// across a yield. Cancellation is observed live; time is read from the
-/// clock at each checkpoint.
+/// clock at each checkpoint; progress reported here is published by the
+/// service with a service-assigned sequence.
 pub struct StepContext<'a> {
     clock: &'a dyn MonotonicClock,
     deadline: Deadline,
@@ -666,6 +924,7 @@ pub struct StepContext<'a> {
     units_this_slice: u32,
     yield_seen: bool,
     continued_after_yield: bool,
+    progress: Option<ProgressReport>,
 }
 
 impl<'a> StepContext<'a> {
@@ -686,6 +945,7 @@ impl<'a> StepContext<'a> {
             units_this_slice: 0,
             yield_seen: false,
             continued_after_yield: false,
+            progress: None,
         }
     }
 
@@ -712,6 +972,25 @@ impl<'a> StepContext<'a> {
         self.units_this_slice = self.units_this_slice.saturating_add(1);
         self.remaining_units = self.remaining_units.saturating_sub(1);
         self.checkpoint()
+    }
+
+    /// Report replaceable progress (§26 §2.2). The service stamps the job
+    /// identity and an increasing sequence and publishes the latest report
+    /// of this slice when the slice returns; a later report within the same
+    /// slice replaces an earlier one. Progress never takes terminal custody
+    /// and is not an acknowledgement.
+    pub fn publish_progress<P: WorkPhase>(&mut self, phase: P, completed: u32, total: Option<u32>) {
+        self.progress = Some(ProgressReport {
+            phase: phase.index(),
+            completed,
+            total,
+        });
+    }
+
+    /// The latest report of this slice, for the service to stamp and
+    /// publish.
+    pub const fn reported_progress(&self) -> Option<ProgressReport> {
+        self.progress
     }
 
     /// Units consumed during this invocation.
@@ -750,6 +1029,7 @@ impl fmt::Debug for StepContext<'_> {
             .field("deadline", &self.deadline)
             .field("remaining_units", &self.remaining_units)
             .field("units_this_slice", &self.units_this_slice)
+            .field("progress", &self.progress)
             .finish_non_exhaustive()
     }
 }
@@ -864,6 +1144,11 @@ pub enum JobError<E: fmt::Debug + std::error::Error> {
     Unavailable(UnavailableTerminal),
 }
 
+/// The terminal of a job submitted under family `F`: its typed result or
+/// its [`JobError`].
+pub type JobSettlement<F> =
+    Settlement<<F as WorkFamilySpec>::Output, JobError<<F as WorkFamilySpec>::Error>>;
+
 /// Immediate result of cancel. Requested is not proof the worker returned
 /// or released resources. Not an [`std::error::Error`]: Requested is a
 /// success path.
@@ -881,10 +1166,11 @@ pub enum CancelOutcome {
 /// type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LedgerError {
-    /// Unknown or disagreeing identity/revision.
+    /// Unknown or disagreeing identity/family/revision.
     #[error("work identity is stale or unknown")]
     StaleIdentity,
-    /// A terminal was already published.
+    /// A terminal was already published (an intent's cancellation selected
+    /// first counts: see [`WorkerCustody::fail_unavailable`]).
     #[error("job already has a terminal")]
     AlreadyTerminal,
     /// The worker has not returned, so credit stays charged.
@@ -981,6 +1267,15 @@ impl WorkCapacity {
         handles: 0,
     };
 
+    /// A snapshot of occupied slots, bytes and handles.
+    pub const fn new(jobs: usize, bytes: usize, handles: u32) -> Self {
+        Self {
+            jobs,
+            bytes,
+            handles,
+        }
+    }
+
     /// Occupied job slots.
     pub const fn jobs(self) -> usize {
         self.jobs
@@ -994,6 +1289,44 @@ impl WorkCapacity {
     /// Occupied handles.
     pub const fn handles(self) -> u32 {
         self.handles
+    }
+}
+
+/// The three service publications (§26 §2.5): capacity (every admission
+/// and release), the latest progress snapshot, and the identity of the job
+/// whose terminal was most recently published. Each publishes its state
+/// before notifying; a reader woken by a notice reads that sequence or a
+/// later one.
+#[derive(Debug)]
+pub struct WorkPublications {
+    capacity: Publication<WorkCapacity>,
+    progress: Publication<Option<WorkProgress>>,
+    terminal: Publication<Option<WorkIdentity>>,
+}
+
+impl WorkPublications {
+    /// Empty publications for `scope`.
+    pub fn new(scope: Scope) -> Self {
+        Self {
+            capacity: Publication::new(scope, WorkCapacity::EMPTY),
+            progress: Publication::new(scope, None),
+            terminal: Publication::new(scope, None),
+        }
+    }
+
+    /// Occupied capacity after the latest admission or release.
+    pub const fn capacity(&self) -> &Publication<WorkCapacity> {
+        &self.capacity
+    }
+
+    /// The latest progress snapshot of any job.
+    pub const fn progress(&self) -> &Publication<Option<WorkProgress>> {
+        &self.progress
+    }
+
+    /// The job whose terminal was most recently published.
+    pub const fn terminal(&self) -> &Publication<Option<WorkIdentity>> {
+        &self.terminal
     }
 }
 
@@ -1017,82 +1350,204 @@ pub trait CooperativeJob: Send + 'static {
     fn retained(&self) -> RetainedState;
 }
 
-/// Frozen WorkAdmission operations. T1.2 supplies the worker and numerical
-/// policy. F0 ships no driving implementation.
+/// Frozen WorkAdmission caller operations (§26 §2.2). T1.2 supplies the
+/// worker and numerical policy; F0 ships no driving implementation.
+///
+/// Submission transfers job custody: an accepted job lives in the service
+/// until its terminal is consumed, and a refused submission hands the job
+/// back. Tickets, terminals and progress are typed by the family spec the
+/// job was submitted under; one service serves every registered family
+/// (§21). Worker-side operations are [`WorkerCustody`], never here: a
+/// ticket holder cannot free credit, settle an outage or forge progress.
+///
+/// Methods are generic over the family, so the trait is not
+/// dyn-compatible: callers are generic over `S: WorkAdmission` or hold the
+/// composition's concrete service.
 pub trait WorkAdmission {
-    /// Family result.
-    type Output;
-    /// Family error.
-    type Error: fmt::Debug + std::error::Error;
-
-    /// Never waits for capacity or executes a job on the caller.
-    fn try_submit(
+    /// Never waits for capacity or executes a job on the caller. The family,
+    /// charge and revision come from `F` and `input`, not from the caller.
+    /// Acceptance takes custody of `job`; a refusal returns it.
+    fn try_submit<F, J>(
         &mut self,
         identity: WorkIdentity,
-        family: WorkFamily,
-        revision: InputRevision,
-        charge: WorkCharge,
+        input: &F::Input,
+        job: J,
         conditions: &ProcessConditions,
-    ) -> Result<WorkTicket, SubmissionRefusal>;
+    ) -> Result<WorkTicket<F>, Refused<J>>
+    where
+        F: WorkFamilySpec,
+        J: CooperativeJob<Output = F::Output, Error = F::Error>;
 
     /// Idempotent identity-scoped cancellation.
-    fn cancel(&mut self, ticket: WorkTicket, reason: Cancellation) -> CancelOutcome;
-
-    /// Replaceable progress. Never takes terminal custody.
-    fn publish_progress(
+    fn cancel<F: WorkFamilySpec>(
         &mut self,
-        ticket: &WorkTicket,
-        progress: WorkProgress,
-    ) -> Result<(), LedgerError>;
+        ticket: WorkTicket<F>,
+        reason: Cancellation,
+    ) -> CancelOutcome;
 
-    /// Settle an accepted job the outage made impossible.
+    /// Request cancellation and mark the ticket abandoned: its result is
+    /// discarded when the worker actually returns, and credit is retained
+    /// until then.
+    fn abandon<F: WorkFamilySpec>(
+        &mut self,
+        ticket: WorkTicket<F>,
+        reason: Cancellation,
+    ) -> CancelOutcome;
+
+    /// Poll: borrow the retained terminal without consuming it. `Ok(None)`
+    /// while pending.
+    fn borrow_terminal<F: WorkFamilySpec>(
+        &self,
+        ticket: &WorkTicket<F>,
+    ) -> Result<Option<&JobSettlement<F>>, LedgerError>;
+
+    /// Consume the terminal once, transferring the family result and
+    /// acknowledging custody.
+    fn consume<F: WorkFamilySpec>(
+        &mut self,
+        ticket: &WorkTicket<F>,
+    ) -> Result<JobSettlement<F>, LedgerError>;
+
+    /// The latest progress snapshot of the job, if any.
+    fn progress<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> Option<&WorkProgress>;
+
+    /// Read access to the capacity, progress and terminal publications.
+    fn publications(&self) -> &WorkPublications;
+}
+
+/// Frozen worker-side custody obligations (§26 §2.5, §3.2). Only T1.2's
+/// worker holds this capability; callers never do. Credit is freed only by
+/// an actual worker return, and an outage settles an accepted job through
+/// the §3 condition.
+pub trait WorkerCustody {
+    /// The worker actually returned for `job`. An abandoned job with no
+    /// terminal settles `Cancelled` here; its credit is released only now.
+    fn worker_returned(&mut self, job: WorkIdentity) -> Result<(), LedgerError>;
+
+    /// Settle an accepted job the outage made impossible. If an intent's
+    /// cancellation already selected the terminal, that cancellation is
+    /// published instead and this returns [`LedgerError::AlreadyTerminal`].
     fn fail_unavailable(
         &mut self,
-        ticket: &WorkTicket,
-        condition: crate::process_condition::ConditionId,
+        job: WorkIdentity,
+        condition: ConditionId,
     ) -> Result<(), LedgerError>;
-
-    /// Consume the terminal once.
-    fn consume(
-        &mut self,
-        ticket: &WorkTicket,
-    ) -> Result<Settlement<Self::Output, JobError<Self::Error>>, LedgerError>;
-
-    /// Request cancellation and mark the ticket abandoned.
-    fn abandon(&mut self, ticket: WorkTicket, reason: Cancellation) -> CancelOutcome;
-
-    /// The worker actually returned.
-    fn worker_returned(&mut self, ticket: &WorkTicket) -> Result<(), LedgerError>;
-
-    /// Drop an abandoned, already-terminal result after the worker returned.
-    fn discard_abandoned(&mut self, ticket: &WorkTicket) -> Result<(), LedgerError>;
 }
 
 #[cfg(test)]
 mod ledger {
     use super::*;
+    use std::any::Any;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use crate::identity::{
-        Notice, Notifier, ProcessIncarnation, Publication, PublishSequence, RequestNamespace,
-        Terminal, TerminalError,
+        Notice, Notifier, ProcessIncarnation, PublishSequence, RequestNamespace, Terminal,
+        TerminalError,
     };
     use crate::process_condition::{
         AdmissionRefusal, CustodyError, ProcessCapability, ProcessServiceCode, StrandedCustody,
     };
 
-    struct JobSlot<R, E>
+    /// A [`JobSettlement`] behind the family.
+    type Erased = Box<dyn Any + Send>;
+
+    enum ErasedStep {
+        Yielded,
+        Completed(Erased),
+        Failed(Erased),
+    }
+
+    /// The job in custody, with its family's types erased so one ledger
+    /// serves every family.
+    trait ErasedJob: Send {
+        fn step(&mut self, ctx: &mut StepContext<'_>) -> ErasedStep;
+        fn retained(&self) -> RetainedState;
+    }
+
+    struct Typed<F, J> {
+        job: J,
+        family: PhantomData<fn() -> F>,
+    }
+
+    impl<F, J> ErasedJob for Typed<F, J>
     where
-        E: fmt::Debug + std::error::Error,
+        F: WorkFamilySpec,
+        J: CooperativeJob<Output = F::Output, Error = F::Error>,
     {
-        ticket: WorkTicket,
+        fn step(&mut self, ctx: &mut StepContext<'_>) -> ErasedStep {
+            match self.job.step(ctx) {
+                StepOutcome::Yielded => ErasedStep::Yielded,
+                StepOutcome::Completed(value) => {
+                    ErasedStep::Completed(Box::new(
+                        Settlement::<F::Output, JobError<F::Error>>::Completed(value),
+                    ))
+                }
+                StepOutcome::Failed(error) => ErasedStep::Failed(Box::new(Settlement::<
+                    F::Output,
+                    JobError<F::Error>,
+                >::Failed(
+                    JobError::Family(error),
+                ))),
+            }
+        }
+
+        fn retained(&self) -> RetainedState {
+            self.job.retained()
+        }
+    }
+
+    /// Terminals the service itself selects.
+    enum ServiceTerminal {
+        Cancelled(Cancellation),
+        Cooperation(CooperativeViolation),
+        Unavailable(UnavailableTerminal),
+    }
+
+    fn erase_service_terminal<F: WorkFamilySpec>(terminal: ServiceTerminal) -> Erased {
+        let settlement: JobSettlement<F> = match terminal {
+            ServiceTerminal::Cancelled(reason) => Settlement::Cancelled(reason),
+            ServiceTerminal::Cooperation(violation) => {
+                Settlement::Failed(JobError::Cooperation(violation))
+            }
+            ServiceTerminal::Unavailable(terminal) => {
+                Settlement::Failed(JobError::Unavailable(terminal))
+            }
+        };
+        Box::new(settlement)
+    }
+
+    struct JobSlot {
+        identity: WorkIdentity,
+        family: WorkFamily,
+        revision: InputRevision,
         state: JobState,
         charge: WorkCharge,
-        cancel: Cell<Option<Cancellation>>,
-        terminal: Terminal<Settlement<R, JobError<E>>>,
+        job: Box<dyn ErasedJob>,
+        settle: fn(ServiceTerminal) -> Erased,
+        terminal: Terminal<Erased>,
         progress: Option<WorkProgress>,
         stranded: StrandedCustody,
         abandoned: bool,
+    }
+
+    impl JobSlot {
+        fn matches<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> bool {
+            self.identity == ticket.identity()
+                && self.family == F::FAMILY
+                && self.revision == ticket.revision()
+        }
+
+        fn has_terminal(&self) -> bool {
+            self.terminal.borrow().is_some() || self.terminal.is_consumed()
+        }
+
+        fn publish(&mut self, terminal: ServiceTerminal) {
+            let erased = (self.settle)(terminal);
+            self.terminal
+                .publish(erased)
+                .expect("terminal checked pending before publication");
+        }
     }
 
     struct Silent;
@@ -1101,43 +1556,45 @@ mod ledger {
         fn notify(&self, _notice: Notice) {}
     }
 
-    /// Protocol fixture: bounded admission, cancellation-versus-publication
-    /// order, yield retention checks, charge lifetime, and publish-before-notify.
+    /// Protocol fixture: bounded admission, custody transfer,
+    /// cancellation-versus-publication order, yield retention checks,
+    /// charge lifetime, and publish-before-notify through a real notifier.
     /// Not a shipped executor.
-    pub struct AdmissionLedger<R, E>
-    where
-        E: fmt::Debug + std::error::Error,
-    {
+    pub struct AdmissionLedger {
         incarnation: ProcessIncarnation,
         bounds: AdmissionBounds,
         stopping: bool,
-        jobs: HashMap<RequestId, JobSlot<R, E>>,
+        jobs: HashMap<RequestId, JobSlot>,
         last_job: Option<RequestId>,
-        capacity: Publication<WorkCapacity>,
-        progress_cell: Publication<Option<WorkProgress>>,
-        terminal_cell: Publication<Option<WorkTicket>>,
+        publications: Arc<WorkPublications>,
+        notifier: Arc<dyn Notifier>,
     }
 
-    impl<R, E> AdmissionLedger<R, E>
-    where
-        R: Send + 'static,
-        E: Send + 'static + fmt::Debug + std::error::Error,
-    {
+    impl AdmissionLedger {
         pub fn new(incarnation: ProcessIncarnation, bounds: AdmissionBounds) -> Self {
+            Self::with_notifier(
+                incarnation,
+                bounds,
+                Arc::new(WorkPublications::new(Scope::Process)),
+                Arc::new(Silent),
+            )
+        }
+
+        pub fn with_notifier(
+            incarnation: ProcessIncarnation,
+            bounds: AdmissionBounds,
+            publications: Arc<WorkPublications>,
+            notifier: Arc<dyn Notifier>,
+        ) -> Self {
             Self {
                 incarnation,
                 bounds,
                 stopping: false,
                 jobs: HashMap::new(),
                 last_job: None,
-                capacity: Publication::new(Scope::Process, WorkCapacity::EMPTY),
-                progress_cell: Publication::new(Scope::Process, None),
-                terminal_cell: Publication::new(Scope::Process, None),
+                publications,
+                notifier,
             }
-        }
-
-        pub const fn incarnation(&self) -> ProcessIncarnation {
-            self.incarnation
         }
 
         pub fn begin_stop(&mut self) {
@@ -1147,7 +1604,11 @@ mod ledger {
         pub fn charged_bytes(&self) -> usize {
             self.jobs
                 .values()
-                .map(|slot| slot.charge.total_bytes())
+                .map(|slot| {
+                    slot.charge
+                        .total_bytes()
+                        .expect("admitted charges are representable")
+                })
                 .fold(0usize, usize::saturating_add)
         }
 
@@ -1162,275 +1623,71 @@ mod ledger {
                 .fold(0u32, u32::saturating_add)
         }
 
-        pub fn is_charged(&self, ticket: &WorkTicket) -> bool {
-            self.jobs.contains_key(&ticket.job())
+        fn slot<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> Option<&JobSlot> {
+            self.jobs
+                .get(&ticket.job())
+                .filter(|slot| slot.matches(ticket))
         }
 
-        pub fn job_state(&self, ticket: &WorkTicket) -> Option<JobState> {
-            let slot = self.jobs.get(&ticket.job())?;
-            if slot.ticket != *ticket {
-                return None;
-            }
+        fn slot_mut<F: WorkFamilySpec>(&mut self, ticket: &WorkTicket<F>) -> Option<&mut JobSlot> {
+            self.jobs
+                .get_mut(&ticket.job())
+                .filter(|slot| slot.matches(ticket))
+        }
+
+        fn slot_by_identity(&mut self, job: WorkIdentity) -> Option<&mut JobSlot> {
+            self.jobs
+                .get_mut(&job.job())
+                .filter(|slot| slot.identity == job)
+        }
+
+        pub fn is_charged<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> bool {
+            self.slot(ticket).is_some()
+        }
+
+        pub fn job_state<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> Option<JobState> {
+            let slot = self.slot(ticket)?;
             if slot.terminal.borrow().is_some() {
                 return None;
             }
             Some(slot.state)
         }
 
-        pub fn cancellation(&self, ticket: &WorkTicket) -> Option<Cancellation> {
-            let slot = self.jobs.get(&ticket.job())?;
-            if slot.ticket != *ticket {
-                return None;
-            }
-            slot.cancel.get()
-        }
-
-        pub fn progress(&self, ticket: &WorkTicket) -> Option<&WorkProgress> {
-            let slot = self.jobs.get(&ticket.job())?;
-            if slot.ticket != *ticket {
-                return None;
-            }
-            slot.progress.as_ref()
-        }
-
-        pub fn borrow_terminal(&self, ticket: &WorkTicket) -> Option<&Settlement<R, JobError<E>>> {
-            let slot = self.jobs.get(&ticket.job())?;
-            if slot.ticket != *ticket {
-                return None;
-            }
-            slot.terminal.borrow()
-        }
-
-        pub fn capacity_publication(&self) -> &Publication<WorkCapacity> {
-            &self.capacity
-        }
-
-        pub fn progress_publication(&self) -> &Publication<Option<WorkProgress>> {
-            &self.progress_cell
-        }
-
-        pub fn terminal_publication(&self) -> &Publication<Option<WorkTicket>> {
-            &self.terminal_cell
+        pub fn cancellation<F: WorkFamilySpec>(
+            &self,
+            ticket: &WorkTicket<F>,
+        ) -> Option<Cancellation> {
+            self.slot(ticket)?.stranded.cancellation()
         }
 
         fn snapshot_capacity(&self) -> WorkCapacity {
-            WorkCapacity {
-                jobs: self.charged_jobs(),
-                bytes: self.charged_bytes(),
-                handles: self.charged_handles(),
-            }
+            WorkCapacity::new(
+                self.charged_jobs(),
+                self.charged_bytes(),
+                self.charged_handles(),
+            )
         }
 
-        fn publish_capacity(
+        fn publish_capacity(&self) -> PublishSequence {
+            self.publications
+                .capacity()
+                .publish(self.snapshot_capacity(), &*self.notifier)
+                .expect("capacity sequence not exhausted")
+        }
+
+        fn publish_terminal(&self, job: WorkIdentity) {
+            self.publications
+                .terminal()
+                .publish(Some(job), &*self.notifier)
+                .expect("terminal sequence not exhausted");
+        }
+
+        fn admit<F: WorkFamilySpec>(
             &self,
-            notifier: &dyn Notifier,
-        ) -> Result<PublishSequence, LedgerError> {
-            self.capacity
-                .publish(self.snapshot_capacity(), notifier)
-                .map_err(|_| LedgerError::SequenceExhausted)
-        }
-
-        fn admit_capacity(&self, charge: WorkCharge) -> Result<(), SubmissionRefusal> {
-            if self.jobs.len() >= self.bounds.max_jobs.get() {
-                return Err(SubmissionRefusal::Full);
-            }
-            let bytes = self.charged_bytes().saturating_add(charge.total_bytes());
-            if bytes > self.bounds.max_bytes.get() {
-                return Err(SubmissionRefusal::Full);
-            }
-            let handles = self
-                .charged_handles()
-                .saturating_add(charge.operation_handles());
-            if handles > self.bounds.max_handles.get() {
-                return Err(SubmissionRefusal::Full);
-            }
-            Ok(())
-        }
-
-        fn publish_settlement(
-            slot: &mut JobSlot<R, E>,
-            settlement: Settlement<R, JobError<E>>,
-        ) -> Result<(), TerminalError> {
-            if slot.terminal.borrow().is_some() || slot.terminal.is_consumed() {
-                return Err(TerminalError::AlreadyPublished);
-            }
-            if let (Settlement::Completed(_), Some(reason)) = (&settlement, slot.cancel.get()) {
-                return slot.terminal.publish(Settlement::Cancelled(reason));
-            }
-            slot.terminal.publish(settlement)
-        }
-
-        fn maybe_release(&mut self, job: RequestId) {
-            let free = {
-                let Some(slot) = self.jobs.get(&job) else {
-                    return;
-                };
-                let returned = !slot.stranded.charged();
-                returned
-                    && (slot.terminal.is_consumed()
-                        || (slot.abandoned && !slot.terminal.is_pending()))
-            };
-            if free {
-                let slot = self.jobs.remove(&job).expect("present");
-                let _ = slot.stranded.release();
-                let _ = self.publish_capacity(&Silent);
-            }
-        }
-
-        /// Drive one slice of `job` for `ticket`. The clock and the job's
-        /// revocation cell are borrowed for the step.
-        pub fn drive<J, C>(
-            &mut self,
-            ticket: &WorkTicket,
-            job: &mut J,
-            clock: &C,
-            budget: SliceBudget,
-        ) -> Result<Option<JobState>, LedgerError>
-        where
-            J: CooperativeJob<Output = R, Error = E>,
-            C: MonotonicClock,
-        {
-            enum DriveEnd {
-                Yielded,
-                Terminal,
-                Idle,
-            }
-            let end = {
-                let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
-                    return Err(LedgerError::StaleIdentity);
-                };
-                if slot.ticket != *ticket {
-                    return Err(LedgerError::StaleIdentity);
-                }
-                if slot.terminal.borrow().is_some() || slot.terminal.is_consumed() {
-                    DriveEnd::Idle
-                } else {
-                    slot.state = JobState::Executing;
-                    let (outcome, continued, exceeded) = {
-                        let mut ctx = StepContext::new(clock, budget, &slot.cancel);
-                        let outcome = job.step(&mut ctx);
-                        (
-                            outcome,
-                            ctx.continued_after_yield(),
-                            ctx.exceeded_allowance(),
-                        )
-                    };
-                    if let Some(reason) = slot.cancel.get() {
-                        if matches!(outcome, StepOutcome::Completed(_) | StepOutcome::Yielded) {
-                            let _ = Self::publish_settlement(slot, Settlement::Cancelled(reason));
-                            DriveEnd::Terminal
-                        } else if continued {
-                            let _ = Self::publish_settlement(
-                                slot,
-                                Settlement::Failed(JobError::Cooperation(
-                                    CooperativeViolation::IgnoredYield,
-                                )),
-                            );
-                            DriveEnd::Terminal
-                        } else if exceeded {
-                            let _ = Self::publish_settlement(
-                                slot,
-                                Settlement::Failed(JobError::Cooperation(
-                                    CooperativeViolation::UnboundedSlice,
-                                )),
-                            );
-                            DriveEnd::Terminal
-                        } else {
-                            match outcome {
-                                StepOutcome::Failed(error) => {
-                                    let _ = Self::publish_settlement(
-                                        slot,
-                                        Settlement::Failed(JobError::Family(error)),
-                                    );
-                                    DriveEnd::Terminal
-                                }
-                                StepOutcome::Completed(_) | StepOutcome::Yielded => DriveEnd::Idle,
-                            }
-                        }
-                    } else if continued {
-                        let _ = Self::publish_settlement(
-                            slot,
-                            Settlement::Failed(JobError::Cooperation(
-                                CooperativeViolation::IgnoredYield,
-                            )),
-                        );
-                        DriveEnd::Terminal
-                    } else if exceeded {
-                        let _ = Self::publish_settlement(
-                            slot,
-                            Settlement::Failed(JobError::Cooperation(
-                                CooperativeViolation::UnboundedSlice,
-                            )),
-                        );
-                        DriveEnd::Terminal
-                    } else {
-                        match outcome {
-                            StepOutcome::Yielded => {
-                                let retained = job.retained();
-                                if let Some(kind) = retained.forbidden_item() {
-                                    let _ = Self::publish_settlement(
-                                        slot,
-                                        Settlement::Failed(JobError::Cooperation(
-                                            CooperativeViolation::ForbiddenRetain(kind),
-                                        )),
-                                    );
-                                    DriveEnd::Terminal
-                                } else if retained.bytes() > slot.charge.total_bytes() {
-                                    let _ = Self::publish_settlement(
-                                        slot,
-                                        Settlement::Failed(JobError::Cooperation(
-                                            CooperativeViolation::ChargeExceeded,
-                                        )),
-                                    );
-                                    DriveEnd::Terminal
-                                } else {
-                                    slot.state = JobState::Yielded;
-                                    DriveEnd::Yielded
-                                }
-                            }
-                            StepOutcome::Completed(value) => {
-                                let _ =
-                                    Self::publish_settlement(slot, Settlement::Completed(value));
-                                DriveEnd::Terminal
-                            }
-                            StepOutcome::Failed(error) => {
-                                let _ = Self::publish_settlement(
-                                    slot,
-                                    Settlement::Failed(JobError::Family(error)),
-                                );
-                                DriveEnd::Terminal
-                            }
-                        }
-                    }
-                }
-            };
-            match end {
-                DriveEnd::Yielded => Ok(Some(JobState::Yielded)),
-                DriveEnd::Idle => Ok(None),
-                DriveEnd::Terminal => {
-                    let _ = self.terminal_cell.publish(Some(*ticket), &Silent);
-                    Ok(None)
-                }
-            }
-        }
-    }
-
-    impl<R, E> WorkAdmission for AdmissionLedger<R, E>
-    where
-        R: Send + 'static,
-        E: Send + 'static + fmt::Debug + std::error::Error,
-    {
-        type Output = R;
-        type Error = E;
-
-        fn try_submit(
-            &mut self,
             identity: WorkIdentity,
-            family: WorkFamily,
-            revision: InputRevision,
-            charge: WorkCharge,
+            input: &F::Input,
             conditions: &ProcessConditions,
-        ) -> Result<WorkTicket, SubmissionRefusal> {
+        ) -> Result<(WorkCharge, InputRevision), SubmissionRefusal> {
             if identity.incarnation() != self.incarnation
                 || conditions.incarnation() != self.incarnation
             {
@@ -1462,15 +1719,194 @@ mod ledger {
                     return Err(SubmissionRefusal::InvalidArgument);
                 }
             }
+            let charge = F::charge(input);
             self.admit_capacity(charge)?;
-            let ticket = WorkTicket::new(identity, family, revision);
+            Ok((charge, F::revision(input)))
+        }
+
+        fn admit_capacity(&self, charge: WorkCharge) -> Result<(), SubmissionRefusal> {
+            let total = charge
+                .total_bytes()
+                .ok_or(SubmissionRefusal::InvalidArgument)?;
+            if self.jobs.len() >= self.bounds.max_jobs.get() {
+                return Err(SubmissionRefusal::Full);
+            }
+            let bytes = self
+                .charged_bytes()
+                .checked_add(total)
+                .ok_or(SubmissionRefusal::InvalidArgument)?;
+            if bytes > self.bounds.max_bytes.get() {
+                return Err(SubmissionRefusal::Full);
+            }
+            let handles = self
+                .charged_handles()
+                .checked_add(charge.operation_handles())
+                .ok_or(SubmissionRefusal::InvalidArgument)?;
+            if handles > self.bounds.max_handles.get() {
+                return Err(SubmissionRefusal::Full);
+            }
+            Ok(())
+        }
+
+        fn maybe_release(&mut self, job: RequestId) {
+            let free = {
+                let Some(slot) = self.jobs.get(&job) else {
+                    return;
+                };
+                let returned = !slot.stranded.charged();
+                returned
+                    && (slot.terminal.is_consumed()
+                        || (slot.abandoned && !slot.terminal.is_pending()))
+            };
+            if free {
+                let slot = self.jobs.remove(&job).expect("present");
+                slot.stranded
+                    .release()
+                    .expect("released only after worker return");
+                self.publish_capacity();
+            }
+        }
+
+        /// Drive one slice of the job in custody for `job`. The clock is
+        /// borrowed for the step; the revocation cell is derived from the
+        /// job's custody, which is the one place a cancellation is recorded.
+        pub fn drive(
+            &mut self,
+            job: WorkIdentity,
+            clock: &dyn MonotonicClock,
+            budget: SliceBudget,
+        ) -> Result<Option<JobState>, LedgerError> {
+            let Some(slot) = self.slot_by_identity(job) else {
+                return Err(LedgerError::StaleIdentity);
+            };
+            if slot.has_terminal() {
+                return Ok(None);
+            }
+            slot.state = JobState::Executing;
+            let cancel = Cell::new(slot.stranded.cancellation());
+            let (outcome, continued, exceeded, report) = {
+                let mut ctx = StepContext::new(clock, budget, &cancel);
+                let outcome = slot.job.step(&mut ctx);
+                (
+                    outcome,
+                    ctx.continued_after_yield(),
+                    ctx.exceeded_allowance(),
+                    ctx.reported_progress(),
+                )
+            };
+            let progress = report.map(|report| {
+                let sequence = slot.progress.as_ref().map_or(0, WorkProgress::sequence) + 1;
+                WorkProgress::new(
+                    slot.identity,
+                    sequence,
+                    report.phase(),
+                    report.completed(),
+                    report.total(),
+                )
+            });
+            if let Some(progress) = &progress {
+                slot.progress = Some(progress.clone());
+            }
+            let cooperation = if continued {
+                Some(CooperativeViolation::IgnoredYield)
+            } else if exceeded {
+                Some(CooperativeViolation::UnboundedSlice)
+            } else {
+                None
+            };
+            let terminal: Option<Erased> = match (cancel.get(), outcome) {
+                // Cancellation registered before publication wins over a
+                // late success or a yield.
+                (Some(reason), ErasedStep::Completed(_) | ErasedStep::Yielded) => {
+                    Some((slot.settle)(ServiceTerminal::Cancelled(reason)))
+                }
+                (_, ErasedStep::Failed(error)) => Some(match cooperation {
+                    Some(violation) => (slot.settle)(ServiceTerminal::Cooperation(violation)),
+                    None => error,
+                }),
+                (None, ErasedStep::Completed(value)) => Some(match cooperation {
+                    Some(violation) => (slot.settle)(ServiceTerminal::Cooperation(violation)),
+                    None => value,
+                }),
+                (None, ErasedStep::Yielded) => match cooperation {
+                    Some(violation) => Some((slot.settle)(ServiceTerminal::Cooperation(violation))),
+                    None => {
+                        let retained = slot.job.retained();
+                        if let Some(kind) = retained.forbidden_item() {
+                            Some((slot.settle)(ServiceTerminal::Cooperation(
+                                CooperativeViolation::ForbiddenRetain(kind),
+                            )))
+                        } else if slot
+                            .charge
+                            .total_bytes()
+                            .is_none_or(|total| retained.bytes() > total)
+                        {
+                            Some((slot.settle)(ServiceTerminal::Cooperation(
+                                CooperativeViolation::ChargeExceeded,
+                            )))
+                        } else {
+                            slot.state = JobState::Yielded;
+                            None
+                        }
+                    }
+                },
+            };
+            let state = slot.state;
+            let settled = match terminal {
+                Some(erased) => {
+                    slot.terminal
+                        .publish(erased)
+                        .expect("terminal checked pending before publication");
+                    true
+                }
+                None => false,
+            };
+            if let Some(progress) = progress {
+                self.publications
+                    .progress()
+                    .publish(Some(progress), &*self.notifier)
+                    .map_err(|_| LedgerError::SequenceExhausted)?;
+            }
+            if settled {
+                self.publish_terminal(job);
+                return Ok(None);
+            }
+            Ok(match state {
+                JobState::Yielded => Some(JobState::Yielded),
+                JobState::Queued | JobState::Executing => None,
+            })
+        }
+    }
+
+    impl WorkAdmission for AdmissionLedger {
+        fn try_submit<F, J>(
+            &mut self,
+            identity: WorkIdentity,
+            input: &F::Input,
+            job: J,
+            conditions: &ProcessConditions,
+        ) -> Result<WorkTicket<F>, Refused<J>>
+        where
+            F: WorkFamilySpec,
+            J: CooperativeJob<Output = F::Output, Error = F::Error>,
+        {
+            let (charge, revision) = match self.admit::<F>(identity, input, conditions) {
+                Ok(admitted) => admitted,
+                Err(refusal) => return Err(Refused::new(refusal, job)),
+            };
             self.jobs.insert(
                 identity.job(),
                 JobSlot {
-                    ticket,
+                    identity,
+                    family: F::FAMILY,
+                    revision,
                     state: JobState::Queued,
                     charge,
-                    cancel: Cell::new(None),
+                    job: Box::new(Typed::<F, J> {
+                        job,
+                        family: PhantomData,
+                    }),
+                    settle: erase_service_terminal::<F>,
                     terminal: Terminal::new(),
                     progress: None,
                     stranded: StrandedCustody::new(identity.job(), identity.scope()),
@@ -1478,167 +1914,158 @@ mod ledger {
                 },
             );
             self.last_job = Some(identity.job());
-            let _ = self.publish_capacity(&Silent);
-            Ok(ticket)
+            self.publish_capacity();
+            Ok(WorkTicket::new(identity, revision))
         }
 
-        fn cancel(&mut self, ticket: WorkTicket, reason: Cancellation) -> CancelOutcome {
-            let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
+        fn cancel<F: WorkFamilySpec>(
+            &mut self,
+            ticket: WorkTicket<F>,
+            reason: Cancellation,
+        ) -> CancelOutcome {
+            let Some(slot) = self.slot_mut(&ticket) else {
                 return CancelOutcome::StaleIdentity;
             };
-            if slot.ticket != ticket {
-                return CancelOutcome::StaleIdentity;
-            }
-            if slot.terminal.borrow().is_some() || slot.terminal.is_consumed() {
+            if slot.has_terminal() {
                 return CancelOutcome::AlreadyTerminal;
             }
-            slot.cancel.set(Some(reason));
-            CancelOutcome::Requested
-        }
-
-        fn publish_progress(
-            &mut self,
-            ticket: &WorkTicket,
-            progress: WorkProgress,
-        ) -> Result<(), LedgerError> {
-            {
-                let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
-                    return Err(LedgerError::StaleIdentity);
-                };
-                if slot.ticket != *ticket {
-                    return Err(LedgerError::StaleIdentity);
+            match slot.stranded.cancel(reason) {
+                // Idempotent: the first selection stands.
+                Ok(()) | Err(CustodyError::AlreadyCancelled(_)) => CancelOutcome::Requested,
+                Err(CustodyError::AlreadyFailed | CustodyError::WorkerStillCharged(_)) => {
+                    CancelOutcome::AlreadyTerminal
                 }
-                if progress.identity() != ticket.identity() {
-                    return Err(LedgerError::StaleIdentity);
-                }
-                if slot
-                    .progress
-                    .as_ref()
-                    .is_some_and(|current| progress.sequence() <= current.sequence())
-                {
-                    return Ok(());
-                }
-                slot.progress = Some(progress.clone());
             }
-            self.progress_cell
-                .publish(Some(progress), &Silent)
-                .map_err(|_| LedgerError::SequenceExhausted)?;
-            Ok(())
         }
 
-        fn fail_unavailable(
+        fn abandon<F: WorkFamilySpec>(
             &mut self,
-            ticket: &WorkTicket,
-            condition: crate::process_condition::ConditionId,
-        ) -> Result<(), LedgerError> {
-            if condition.code() != ProcessServiceCode::WorkAdmissionUnavailable
-                || condition.incarnation() != self.incarnation
-            {
-                return Err(LedgerError::WrongCondition);
-            }
-            {
-                let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
-                    return Err(LedgerError::StaleIdentity);
-                };
-                if slot.ticket != *ticket {
-                    return Err(LedgerError::StaleIdentity);
-                }
-                if slot.terminal.borrow().is_some() || slot.terminal.is_consumed() {
-                    return Err(LedgerError::AlreadyTerminal);
-                }
-                let terminal = slot.stranded.fail_unavailable(condition).map_err(|err| {
-                    #[allow(unreachable_patterns)]
-                    match err {
-                        CustodyError::AlreadyFailed => LedgerError::AlreadyTerminal,
-                        CustodyError::WorkerStillCharged(_) => LedgerError::WorkerNotReturned,
-                        // Identity r3 adds AlreadyCancelled; a second
-                        // terminal reason cannot rewrite the published
-                        // failure.
-                        _ => LedgerError::AlreadyTerminal,
-                    }
-                })?;
-                let _ = Self::publish_settlement(
-                    slot,
-                    Settlement::Failed(JobError::Unavailable(terminal)),
-                );
-            }
-            let _ = self.terminal_cell.publish(Some(*ticket), &Silent);
-            Ok(())
-        }
-
-        fn consume(
-            &mut self,
-            ticket: &WorkTicket,
-        ) -> Result<Settlement<R, JobError<E>>, LedgerError> {
-            let settlement = {
-                let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
-                    return Err(LedgerError::StaleIdentity);
-                };
-                if slot.ticket != *ticket {
-                    return Err(LedgerError::StaleIdentity);
-                }
-                slot.terminal.consume().map_err(|err| match err {
-                    TerminalError::NotPublished => LedgerError::NotPublished,
-                    TerminalError::AlreadyConsumed => LedgerError::AlreadyConsumed,
-                    TerminalError::AlreadyPublished => LedgerError::AlreadyTerminal,
-                })?
-            };
-            self.maybe_release(ticket.job());
-            Ok(settlement)
-        }
-
-        fn abandon(&mut self, ticket: WorkTicket, reason: Cancellation) -> CancelOutcome {
+            ticket: WorkTicket<F>,
+            reason: Cancellation,
+        ) -> CancelOutcome {
             let outcome = self.cancel(ticket, reason);
-            if let Some(slot) = self.jobs.get_mut(&ticket.job()) {
-                if slot.ticket == ticket {
-                    slot.abandoned = true;
-                }
+            if let Some(slot) = self.slot_mut(&ticket) {
+                slot.abandoned = true;
             }
             self.maybe_release(ticket.job());
             outcome
         }
 
-        fn worker_returned(&mut self, ticket: &WorkTicket) -> Result<(), LedgerError> {
-            let published = {
-                let Some(slot) = self.jobs.get_mut(&ticket.job()) else {
-                    return Err(LedgerError::StaleIdentity);
-                };
-                if slot.ticket != *ticket {
+        fn borrow_terminal<F: WorkFamilySpec>(
+            &self,
+            ticket: &WorkTicket<F>,
+        ) -> Result<Option<&JobSettlement<F>>, LedgerError> {
+            let slot = self.slot(ticket).ok_or(LedgerError::StaleIdentity)?;
+            if slot.terminal.is_consumed() {
+                return Err(LedgerError::AlreadyConsumed);
+            }
+            match slot.terminal.borrow() {
+                None => Ok(None),
+                Some(erased) => erased
+                    .downcast_ref()
+                    .map(Some)
+                    .ok_or(LedgerError::StaleIdentity),
+            }
+        }
+
+        fn consume<F: WorkFamilySpec>(
+            &mut self,
+            ticket: &WorkTicket<F>,
+        ) -> Result<JobSettlement<F>, LedgerError> {
+            let settlement = {
+                let slot = self.slot_mut(ticket).ok_or(LedgerError::StaleIdentity)?;
+                if slot
+                    .terminal
+                    .borrow()
+                    .is_some_and(|erased| !erased.is::<JobSettlement<F>>())
+                {
                     return Err(LedgerError::StaleIdentity);
                 }
+                let erased = slot.terminal.consume().map_err(|err| match err {
+                    TerminalError::NotPublished => LedgerError::NotPublished,
+                    TerminalError::AlreadyConsumed => LedgerError::AlreadyConsumed,
+                    TerminalError::AlreadyPublished => LedgerError::AlreadyTerminal,
+                })?;
+                *erased
+                    .downcast::<JobSettlement<F>>()
+                    .expect("terminal type checked before consumption")
+            };
+            self.maybe_release(ticket.job());
+            Ok(settlement)
+        }
+
+        fn progress<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> Option<&WorkProgress> {
+            self.slot(ticket)?.progress.as_ref()
+        }
+
+        fn publications(&self) -> &WorkPublications {
+            &self.publications
+        }
+    }
+
+    impl WorkerCustody for AdmissionLedger {
+        fn worker_returned(&mut self, job: WorkIdentity) -> Result<(), LedgerError> {
+            let published = {
+                let Some(slot) = self.slot_by_identity(job) else {
+                    return Err(LedgerError::StaleIdentity);
+                };
                 slot.stranded.worker_returned();
                 if slot.abandoned && slot.terminal.is_pending() {
-                    let reason = slot.cancel.get().unwrap_or(Cancellation::Shutdown);
-                    let _ = slot.terminal.publish(Settlement::Cancelled(reason));
+                    let reason = slot
+                        .stranded
+                        .cancellation()
+                        .unwrap_or(Cancellation::Shutdown);
+                    slot.publish(ServiceTerminal::Cancelled(reason));
                     true
                 } else {
                     false
                 }
             };
             if published {
-                let _ = self.terminal_cell.publish(Some(*ticket), &Silent);
+                self.publish_terminal(job);
             }
-            self.maybe_release(ticket.job());
+            self.maybe_release(job.job());
             Ok(())
         }
 
-        fn discard_abandoned(&mut self, ticket: &WorkTicket) -> Result<(), LedgerError> {
-            let charged = {
-                let Some(slot) = self.jobs.get(&ticket.job()) else {
+        fn fail_unavailable(
+            &mut self,
+            job: WorkIdentity,
+            condition: ConditionId,
+        ) -> Result<(), LedgerError> {
+            if condition.code() != ProcessServiceCode::WorkAdmissionUnavailable
+                || condition.incarnation() != self.incarnation
+            {
+                return Err(LedgerError::WrongCondition);
+            }
+            let result = {
+                let Some(slot) = self.slot_by_identity(job) else {
                     return Err(LedgerError::StaleIdentity);
                 };
-                if slot.ticket != *ticket || !slot.abandoned {
-                    return Err(LedgerError::StaleIdentity);
+                if slot.has_terminal() {
+                    return Err(LedgerError::AlreadyTerminal);
                 }
-                slot.stranded.charged()
+                match slot.stranded.fail_unavailable(condition) {
+                    Ok(terminal) => {
+                        slot.publish(ServiceTerminal::Unavailable(terminal));
+                        Ok(())
+                    }
+                    // The intent's cancellation was selected first (§26
+                    // §3.2 row 2); the worker is gone, so the service
+                    // publishes that selection and the outage cannot
+                    // rewrite it.
+                    Err(CustodyError::AlreadyCancelled(reason)) => {
+                        slot.publish(ServiceTerminal::Cancelled(reason));
+                        Err(LedgerError::AlreadyTerminal)
+                    }
+                    Err(CustodyError::AlreadyFailed) => return Err(LedgerError::AlreadyTerminal),
+                    Err(CustodyError::WorkerStillCharged(_)) => {
+                        return Err(LedgerError::WorkerNotReturned)
+                    }
+                }
             };
-            if charged {
-                return Err(LedgerError::WorkerNotReturned);
-            }
-            let slot = self.jobs.remove(&ticket.job()).expect("present");
-            let _ = slot.stranded.release();
-            let _ = self.publish_capacity(&Silent);
-            Ok(())
+            self.publish_terminal(job);
+            result
         }
     }
 }

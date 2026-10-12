@@ -9,7 +9,7 @@ use api::snapshot::WorldTile;
 use crate::transport::WildernessRules;
 use crate::zones::{ZoneExempt, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
 
-use super::{ContractError, PackId, ZoneClass, ZoneKey};
+use super::{ContractError, PackId, ZoneClass, ZoneKey, MAX_ZONE_KEYS};
 
 /// A [`ZoneKey`] bound to the pack that minted it. Using it against another
 /// pack is [`ContractError::PackMismatch`].
@@ -78,8 +78,9 @@ impl<'a> ZoneTableView<'a> {
     }
 
     /// Bind `key` to this pack, or refuse unknown keys. Not public: a raw
-    /// index must not be laundered into another pack's identity.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// index must not be laundered into another pack's identity. Test-only
+    /// until T5.1 adds a producer that binds raw keys.
+    #[cfg(test)]
     pub(crate) fn bind(self, key: ZoneKey) -> Result<BoundZoneKey, ContractError> {
         if !self.contains_key(key) {
             return Err(ContractError::UnknownKey);
@@ -91,26 +92,32 @@ impl<'a> ZoneTableView<'a> {
     }
 
     /// Pack-bound exemption covering `keys`. Every key must belong to this
-    /// pack; more than [`super::MAX_ZONE_KEYS`] is [`ContractError::TooManyExemptions`].
+    /// pack; more than [`MAX_ZONE_KEYS`] is [`ContractError::TooManyExemptions`].
+    /// Allocates nothing: the bounded key set is staged on the stack.
     pub fn exempt(self, keys: &[BoundZoneKey]) -> Result<BoundZoneExempt, ContractError> {
-        for key in keys {
+        if keys.len() > MAX_ZONE_KEYS {
+            return Err(ContractError::TooManyExemptions);
+        }
+        let mut raw = [ZoneKey::Zone(0); MAX_ZONE_KEYS];
+        for (slot, key) in raw.iter_mut().zip(keys) {
             if key.pack != self.pack {
                 return Err(ContractError::PackMismatch);
             }
             if !self.contains_key(key.key) {
                 return Err(ContractError::UnknownKey);
             }
+            *slot = key.key;
         }
-        let raw: Vec<ZoneKey> = keys.iter().map(|key| key.key).collect();
-        let inner = ZoneExempt::named(&raw).map_err(|_| ContractError::TooManyExemptions)?;
+        let inner =
+            ZoneExempt::named(&raw[..keys.len()]).map_err(|_| ContractError::TooManyExemptions)?;
         Ok(BoundZoneExempt {
             pack: self.pack,
             inner,
         })
     }
 
-    /// Exempt every zone of this pack without constructing a table-sized mask.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Exempt every zone of this pack without constructing a table-sized mask
+    /// (`ZoneExempt::all()`, as `host-play/src/walk_permissions.rs:159` requests).
     pub fn exempt_all(self) -> BoundZoneExempt {
         BoundZoneExempt {
             pack: self.pack,
@@ -182,8 +189,12 @@ impl<'a> ZoneTableView<'a> {
         Ok(self.table.label(bound.key))
     }
 
-    /// Whether `exempt` covers this bound zone. Either side from another
-    /// pack is [`ContractError::PackMismatch`].
+    /// Whether `exempt` covers this bound zone or group, as the router's
+    /// whole-walk mask does (`ZoneFilter::new`, `nav/src/zones.rs:756-793`):
+    /// a zone is covered when named, when its group is named, or when
+    /// everything is exempt; a group is covered only when every member zone
+    /// is covered (one exempt member does not exempt its siblings). Either
+    /// side from another pack is [`ContractError::PackMismatch`].
     pub fn exemption_contains(
         self,
         exempt: BoundZoneExempt,
@@ -196,21 +207,15 @@ impl<'a> ZoneTableView<'a> {
             ZoneKey::Zone(index) if self.table.zones().get(usize::from(index)).is_some() => {
                 Ok(exempt.inner.contains_zone(index, self.table))
             }
-            ZoneKey::Group(group) if self.table.groups().get(usize::from(group)).is_some() => {
-                let mut covered = false;
-                for (i, zone) in self.table.zones().iter().enumerate() {
-                    if zone.group != group {
-                        continue;
-                    }
-                    let index = u16::try_from(i).map_err(|_| ContractError::UnknownKey)?;
-                    if exempt.inner.contains_zone(index, self.table) {
-                        covered = true;
-                        break;
-                    }
-                }
-                Ok(covered)
-            }
-            _ => Err(ContractError::UnknownKey),
+            ZoneKey::Group(group) => match self.table.groups().get(usize::from(group)) {
+                Some(group) => Ok(exempt.inner.is_all()
+                    || group
+                        .members
+                        .iter()
+                        .all(|&member| exempt.inner.contains_zone(member, self.table))),
+                None => Err(ContractError::UnknownKey),
+            },
+            ZoneKey::Zone(_) => Err(ContractError::UnknownKey),
         }
     }
 }

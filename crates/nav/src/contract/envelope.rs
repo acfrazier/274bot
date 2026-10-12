@@ -1,6 +1,7 @@
 //! Service envelope: permissions/admission, typed route terminals, and the
-//! [`RouteService`] binding of [`RouteRequest`] onto [`api::work::WorkFamily::Route`].
-//! Concrete views borrow the originating [`super::NavLease`].
+//! [`RouteService`] binding of [`BoundRouteRequest`] onto
+//! [`api::work::WorkFamily::Route`]. Concrete views borrow the originating
+//! [`super::NavLease`]; a request is bound to the lease it is searched on.
 //!
 //! [`RouteRequest`] freezes endpoints, arrival and the permission flags
 //! production already exposes as booleans. Player facts / quest evidence,
@@ -10,11 +11,11 @@
 use std::mem;
 
 use api::snapshot::WorldTile;
-use api::work::{InputRevision, Track, WorkCharge, WorkFamily, WorkFamilySpec};
+use api::work::{InputRevision, Track, WorkCharge, WorkFamily, WorkFamilySpec, WorkPhase};
 
 use crate::router::{RouteError, TargetError};
 
-use super::{ArrivalSpec, BoundZoneExempt, NavLease, RoutePlanLease};
+use super::{ArrivalSpec, BoundZoneExempt, ContractError, NavLease, PackId, RoutePlanLease};
 
 /// Per-search opt-ins. Essence-session, avoid rects, player/quest evidence
 /// and the expansion budget stay off this surface; T5.W(route) maps them.
@@ -151,6 +152,49 @@ impl RouteRequest {
     }
 }
 
+impl RouteRequest {
+    /// Bind this request to the lease it will be searched on. A request
+    /// carrying another pack's exemption is refused with
+    /// [`ContractError::PackMismatch`]; nothing else can carry a foreign
+    /// pack index into a search. The bound request is
+    /// [`RouteService`]'s input.
+    pub fn bind(self, lease: &NavLease) -> Result<BoundRouteRequest, ContractError> {
+        let pack = lease.identity().pack();
+        if self
+            .permissions
+            .zones()
+            .is_some_and(|zones| zones.pack() != pack)
+        {
+            return Err(ContractError::PackMismatch);
+        }
+        Ok(BoundRouteRequest {
+            pack,
+            request: self,
+        })
+    }
+}
+
+/// A [`RouteRequest`] bound to the pack it will be searched on. Built only
+/// by [`RouteRequest::bind`], so every pack-bound value it carries belongs
+/// to [`Self::pack`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundRouteRequest {
+    pack: PackId,
+    request: RouteRequest,
+}
+
+impl BoundRouteRequest {
+    /// The lease this request is bound to.
+    pub const fn pack(self) -> PackId {
+        self.pack
+    }
+
+    /// The request.
+    pub const fn request(self) -> RouteRequest {
+        self.request
+    }
+}
+
 /// Progress phases of a route search. Numerical allowances are G2b.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RoutePhase {
@@ -167,6 +211,12 @@ impl RoutePhase {
             Self::Search => 0,
             Self::Commit => 1,
         }
+    }
+}
+
+impl WorkPhase for RoutePhase {
+    fn index(self) -> u16 {
+        Self::index(self)
     }
 }
 
@@ -200,14 +250,14 @@ pub enum RouteFamilyError {
 pub struct RouteService;
 
 impl RouteService {
-    /// Producer of this family.
+    /// Producer of this family (the [`WorkFamily::Route`] table row).
     pub const fn producer() -> Track {
-        Track::T5
+        Self::FAMILY.producer()
     }
 
-    /// Consumers of this family (T1 context/host and T2 script).
+    /// Consumers of this family (the [`WorkFamily::Route`] table row).
     pub const fn consumers() -> &'static [Track] {
-        &[Track::T1, Track::T2]
+        Self::FAMILY.consumers()
     }
 
     /// Map a current [`RouteError`] onto the frozen result/error split.
@@ -229,8 +279,9 @@ impl RouteService {
         }
     }
 
-    /// Wrap a backend route as a family result against `lease`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Wrap a backend route as a family result against `lease`. Test-only
+    /// until T5.W(route) drives the search.
+    #[cfg(test)]
     pub(crate) fn path(
         lease: &NavLease,
         identity: api::identity::WorkIdentity,
@@ -243,25 +294,23 @@ impl RouteService {
 
 impl WorkFamilySpec for RouteService {
     const FAMILY: WorkFamily = WorkFamily::Route;
-    type Input = RouteRequest;
+    type Input = BoundRouteRequest;
     type Output = RouteFamilyResult;
     type Error = RouteFamilyError;
     type Phase = RoutePhase;
 
     fn revision(input: &Self::Input) -> InputRevision {
-        input.revision()
+        input.request().revision()
     }
 
+    /// The bound request envelope. The plan lease is not reserved here: it
+    /// is charged in its T5 owner ledger from publication (§26 §2.2,
+    /// "caller-held result leases obey their own bounded owner ledger"), so
+    /// result bytes are 0 rather than the `Arc` handle's size. Scratch and
+    /// handles stay 0 until T1.2 publishes G2b numbers; input size alone is
+    /// not the charge.
     fn charge(input: &Self::Input) -> WorkCharge {
-        // Input envelope plus a reserved result-lease bound. Scratch and
-        // handles stay 0 until T1.2 publishes G2b numbers; input size alone
-        // is not the charge.
-        WorkCharge::new(
-            mem::size_of_val(input),
-            0,
-            mem::size_of::<RoutePlanLease>(),
-            0,
-        )
+        WorkCharge::new(mem::size_of_val(input), 0, 0, 0)
     }
 
     fn map_cancellation(reason: api::identity::Cancellation) -> api::identity::Cancellation {

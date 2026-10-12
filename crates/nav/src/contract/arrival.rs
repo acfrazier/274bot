@@ -1,11 +1,20 @@
 //! Coordinates and arrival: [`api::snapshot::WorldTile`] plus Reach default
 //! (with radius) and Area's plane/radius packed-bake standability rule.
 //!
-//! Packed-bake predicates on [`super::CollisionView`] are Gatherer's use of
-//! the bake (`gatherer/select.rs`). They are not current loaded-scene
-//! standability. Live arrival is `native/walk.rs`: Area uses the scene's
-//! walkability probe; `(Area, Some(loc))` is refused.
+//! Packed-bake predicates on [`super::CollisionView`] answer over the bake,
+//! exactly as the host answers packed route goals: Reach is
+//! [`api::query::is_arrived`] over the bake's walkable word through
+//! [`api::query::CollisionArrivalProbe`] (`host-play/src/script_nav.rs:1912-1917`
+//! via `retain_arrival_candidates`, `api/src/query/reach.rs:1581-1587`), and
+//! Area is [`crate::arrival::area_has_standable_goal`] /
+//! [`crate::arrival::arrived_in_area`] over `WorldCollision::standable`
+//! (`script/src/gatherer/select.rs:1085-1090`). They are not current
+//! loaded-scene standability: live walks answer the same rules over the
+//! scene (`script/src/native/walk.rs:49-62`, `api/src/snapshot/native.rs:110-126`),
+//! and a Reach that names a loc needs the scene (`walk_loc_arrived`), so the
+//! bake refuses it.
 
+use api::query::{is_arrived, CollisionArrivalProbe};
 use api::snapshot::WorldTile;
 
 use super::{ArrivalKind, CollisionView, ContractError};
@@ -24,10 +33,13 @@ impl ArrivalSpec {
     /// Traditional Reach at radius 0: standing on the destination.
     pub const REACH: Self = Self::reach(0);
 
-    /// Reach with Chebyshev radius. Production walks carry this on
-    /// `WalkRequest.radius` (`native.rs`). Radius 0 is on-destination only;
-    /// radius 1 admits the adjacent-solid approach `nav::arrival::arrived`
-    /// uses for a packed bake.
+    /// Reach with Chebyshev radius, the rule production walks carry on
+    /// `WalkRequest.radius` and packed goals filter by
+    /// (`api::query::is_arrived`): same level and within the radius, then
+    /// standing on the destination, exact reach of a walkable destination,
+    /// or adjacent reach of a solid destination through an open edge. The
+    /// radius bounds the distance and the probe budget; it does not widen
+    /// wall tolerance.
     pub const fn reach(radius: u16) -> Self {
         Self {
             kind: ArrivalKind::Reach,
@@ -46,7 +58,9 @@ impl ArrivalSpec {
         }
     }
 
-    /// Name a loc origin. Area + loc is refused (`native/walk.rs:57`).
+    /// Name a loc origin. Area + loc is refused (`native/walk.rs:57`). A
+    /// Reach that names a loc is answered by the scene, never the bake
+    /// ([`ContractError::LocArrivalNeedsScene`]).
     pub const fn with_loc(self, loc_id: i32) -> Result<Self, ContractError> {
         match self.kind {
             ArrivalKind::Area => Err(ContractError::AreaWithLoc),
@@ -84,41 +98,26 @@ pub(super) fn arrived(
     here: WorldTile,
     dest: WorldTile,
     spec: ArrivalSpec,
-) -> bool {
+) -> Result<bool, ContractError> {
     match spec.kind {
         ArrivalKind::Reach => {
-            if here.level != dest.level {
-                return false;
-            }
-            let dist = here.x.abs_diff(dest.x).max(here.z.abs_diff(dest.z));
-            if dist > u32::from(spec.radius) {
-                return false;
-            }
-            if dist == 0 {
-                return true;
-            }
-            let dest_walkable = view.walkable(dest);
-            crate::arrival::arrived(as_tile(here), as_tile(dest), dest_walkable)
-        }
-        ArrivalKind::Area => {
             if spec.loc_id.is_some() {
-                return false;
+                return Err(ContractError::LocArrivalNeedsScene);
             }
-            crate::arrival::arrived_in_area(here, dest, i32::from(spec.radius), |tile| {
-                view.standable(tile)
-            })
+            // `script_nav.rs:1912-1917`: the bake's walkable word is the
+            // collision surface; a tile outside the bake is unprobeable.
+            let probe = CollisionArrivalProbe::new(|tile| view.collision_at(tile));
+            Ok(is_arrived(here, dest, i32::from(spec.radius), || &probe))
         }
+        ArrivalKind::Area => Ok(crate::arrival::arrived_in_area(
+            here,
+            dest,
+            i32::from(spec.radius),
+            |tile| view.standable(tile),
+        )),
     }
 }
 
 pub(super) fn area_has_goal(view: &CollisionView<'_>, centre: WorldTile, radius: u16) -> bool {
     crate::arrival::area_has_standable_goal(centre, i32::from(radius), |tile| view.standable(tile))
-}
-
-fn as_tile(tile: WorldTile) -> crate::tile::Tile {
-    crate::tile::Tile {
-        x: tile.x,
-        z: tile.z,
-        level: tile.level,
-    }
 }

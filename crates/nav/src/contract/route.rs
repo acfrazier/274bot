@@ -28,7 +28,8 @@ pub struct RoutePlanLease {
 }
 
 impl RoutePlanLease {
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Owner-boundary constructor; test-only until T5.1 adds the producer.
+    #[cfg(test)]
     pub(super) fn from_backend(
         pack: PackId,
         identity: WorkIdentity,
