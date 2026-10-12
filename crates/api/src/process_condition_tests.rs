@@ -1,9 +1,13 @@
 use super::*;
-use crate::identity::{ProcessIncarnation, ProcessOrigin, RequestIdMinter, SessionKey, SlotKey};
+use crate::identity::{
+    Cancellation, ExecutionId, ProcessIncarnation, ProcessOrigin, RequestIdMinter, SessionKey,
+    Settlement, SlotKey, Terminal, TerminalError,
+};
 use crate::lifecycle::{
     Acknowledgement, HoldReason, Intent, IntentMailbox, LifecycleFact, LoginIntent, LoginLatch,
-    SessionEndCause, SessionEventOut, SessionGate, WorldChoice,
+    MailboxError, RunEffect, SessionEndCause, SessionEventOut, SessionGate, WorldChoice,
 };
+use crate::selected::RunKey;
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
@@ -340,16 +344,23 @@ fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled()
         })),
         "the clean logout press needs network authority the session lost"
     );
+    assert!(
+        logout.snapshot().logout_wanted(),
+        "blocked: the Logout is not complete while its session is live"
+    );
+    // The reactor ends the session (`SessionEndCause::ServiceUnavailable`):
+    // the exit is the Logout's completion predicate and settles its press.
     logout
         .observe(LifecycleFact::SessionExited {
             clean: false,
             resumable: false,
         })
         .unwrap();
+    assert!(!logout.snapshot().logout_wanted(), "the Logout is complete");
     assert_eq!(
         logout.acknowledge_logout(press),
-        Acknowledgement::Applied,
-        "the logout intent settles as a logout"
+        Acknowledgement::Stale,
+        "a press read before the exit settles nothing afterwards"
     );
     assert_eq!(logout.snapshot().latch(), Some(LoginLatch::OperatorLogout));
     assert!(
@@ -357,15 +368,12 @@ fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled()
         "an outage never turns Logout into a fresh login"
     );
 
-    // Remove precedes the condition: the lifetime closes; no retry.
+    // Remove after the condition is latched: the lifetime closes; no retry.
     let mut removed = IntentMailbox::new(true, WorldChoice::Automatic);
     removed.post(Intent::RemoveSlot).unwrap();
     assert!(removed.snapshot().closed());
     assert!(removed.login_command(false).is_none());
-    assert_eq!(
-        removed.post(Intent::Login),
-        Err(crate::lifecycle::MailboxError::Closed)
-    );
+    assert_eq!(removed.post(Intent::Login), Err(MailboxError::Closed));
     assert!(
         !ledger.retry_allowed(ProcessCapability::Login),
         "and the ledger would refuse the retry anyway"
@@ -548,4 +556,304 @@ fn diagnostics_are_bounded_on_char_boundaries_and_do_not_drive_behaviour() {
     assert!(record.contains("restart_required=true"));
     assert!(record.contains("getaddrinfo failed"));
     assert!(!without.to_string().contains("diagnostic="));
+}
+
+/// A slot with a live session and auto-login on.
+fn live_mailbox() -> IntentMailbox {
+    let mut mailbox = IntentMailbox::new(true, WorldChoice::Automatic);
+    let login = mailbox.login_command(false).unwrap();
+    mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+    assert_eq!(mailbox.acknowledge_login(login), Acknowledgement::Applied);
+    mailbox
+}
+
+/// The capability an accepted in-flight run request needs from each
+/// service.
+fn in_flight_capability(code: ProcessServiceCode) -> ProcessCapability {
+    match code {
+        ProcessServiceCode::ReactorUnavailable => ProcessCapability::NetworkEffect,
+        ProcessServiceCode::ResolverUnavailable => ProcessCapability::NameResolution,
+        ProcessServiceCode::WorkAdmissionUnavailable => ProcessCapability::BackgroundWork,
+    }
+}
+
+/// §26 §3.2: a retirement-dependent command (Stop, Logout, Remove) cannot
+/// report Completed while the stranded worker is charged. Its blocked status
+/// reads the latched condition and the retained custody; no deadline,
+/// terminal or report stands in for the worker's return, after which the
+/// command may complete.
+fn completion_waits_for_the_real_return(
+    ledger: &ProcessConditions,
+    capability: ProcessCapability,
+    condition: ConditionId,
+    custody: StrandedCustody,
+) {
+    let mut report = Terminal::<Settlement<(), UnavailableTerminal>>::new();
+    let mut custody = match custody.release() {
+        Err(CustodyError::WorkerStillCharged(custody)) => custody,
+        other => panic!("the charge outlives the logical terminal: {other:?}"),
+    };
+    assert!(report.is_pending(), "not Completed before its predicate");
+    assert_eq!(
+        ledger.blocks(capability).map(ProcessServiceCondition::id),
+        Some(condition),
+        "the blocked status names the condition"
+    );
+    assert!(custody.charged(), "and the retained retirement");
+    custody.worker_returned();
+    custody.release().unwrap();
+    report.publish(Settlement::Completed(())).unwrap();
+    assert!(report.borrow().is_some_and(Settlement::is_completed));
+}
+
+/// §26 §3.2 "Logout/Stop/Remove intent precedes or races the condition",
+/// Stop with an affected outage: the outage already selected the accepted
+/// request's terminal, Stop keeps its own meaning (it ends the run, implies
+/// no logout and arms no login), the run's work is not retried, and the
+/// stranded charge outlives the consumed terminal.
+#[test]
+fn stop_under_an_affected_outage_keeps_the_outage_terminal_and_schedules_nothing() {
+    for code in ProcessServiceCode::ALL {
+        let incarnation = incarnation(8);
+        let condition_id = ConditionId::new(incarnation, code);
+        let run = RunKey {
+            slot: 12,
+            run: 1,
+            session: 1,
+        };
+        let scope = Scope::Execution(ExecutionId::first(run));
+        let capability = in_flight_capability(code);
+        let mut ledger = ProcessConditions::new(incarnation);
+        let request = RequestIdMinter::new().mint().unwrap();
+        assert_eq!(
+            ledger.admit(capability, Some(request), scope),
+            Ok(()),
+            "{code}: accepted before the outage"
+        );
+        let mut custody = StrandedCustody::new(request, scope);
+        let mut result = Terminal::<Settlement<(), UnavailableTerminal>>::new();
+        let mut mailbox = live_mailbox();
+
+        ledger
+            .publish(condition(incarnation, code, ConditionCause::ProgressLost))
+            .unwrap();
+        let terminal = custody.fail_unavailable(condition_id).unwrap();
+        result.publish(Settlement::Failed(terminal)).unwrap();
+
+        let before = mailbox.snapshot();
+        let receipt = mailbox.post(Intent::StopScript).unwrap();
+        assert_eq!(Intent::StopScript.meaning().run(), RunEffect::Terminate);
+        assert!(
+            !receipt.invalidated_attempt(),
+            "{code}: Stop fires no login attempt"
+        );
+        let after = mailbox.snapshot();
+        assert_eq!(
+            after.login(),
+            before.login(),
+            "{code}: Stop implies no logout and arms no login"
+        );
+        assert_eq!(after.latch(), None);
+        assert!(!after.logout_wanted());
+        assert!(mailbox.logout_command(true).is_none());
+
+        assert_eq!(
+            custody.cancel(Cancellation::Operator),
+            Err(CustodyError::AlreadyFailed),
+            "{code}: the outage selected the terminal first"
+        );
+        assert_eq!(
+            result.publish(Settlement::Cancelled(Cancellation::Operator)),
+            Err(TerminalError::AlreadyPublished)
+        );
+        assert_eq!(result.borrow(), Some(&Settlement::Failed(terminal)));
+        assert_eq!(
+            (terminal.request(), terminal.scope(), terminal.condition()),
+            (request, scope, condition_id),
+            "{code}: the terminal keeps the request's own identity"
+        );
+
+        let AdmissionRefusal::Unavailable(refusal) =
+            ledger.admit(capability, None, Scope::Run(run)).unwrap_err();
+        assert_eq!(
+            refusal.condition(),
+            condition_id,
+            "{code}: Stop is no retry"
+        );
+        assert!(!ledger.retry_allowed(capability));
+
+        assert!(!result.consume().unwrap().is_completed());
+        assert!(
+            custody.charged(),
+            "{code}: consuming the terminal released nothing"
+        );
+        completion_waits_for_the_real_return(&ledger, capability, condition_id, custody);
+    }
+}
+
+/// §26 §3.2 terminal race, both orders, for Logout, Stop and Remove on a
+/// live session whose accepted network request is stranded by the reactor:
+/// whichever of the intent's cancellation and the outage's Failed/Unavailable
+/// is selected first is the one immutable terminal; the intent keeps its
+/// precedence (no fresh login, no retry); a Logout or Remove stays blocked
+/// (logout still wanted) while its session is live and completes its session
+/// side only at the exit; and the stranded charge outlives the consumed
+/// terminal.
+#[test]
+fn an_intent_and_an_outage_select_one_terminal_in_either_order() {
+    for (intent, reason) in [
+        (Intent::Logout, Cancellation::ScopeInvalidated),
+        (Intent::StopScript, Cancellation::Operator),
+        (Intent::RemoveSlot, Cancellation::Shutdown),
+    ] {
+        for intent_first in [true, false] {
+            let label = format!(
+                "{intent:?} {} the outage",
+                if intent_first { "before" } else { "after" }
+            );
+            let incarnation = incarnation(9);
+            let reactor = ConditionId::new(incarnation, ProcessServiceCode::ReactorUnavailable);
+            let slot = SlotKey::from_incarnation(13).unwrap();
+            let scope = Scope::Session(SessionKey::new(slot, 1));
+            let capability = ProcessCapability::NetworkEffect;
+            let mut ledger = ProcessConditions::new(incarnation);
+            let request = RequestIdMinter::new().mint().unwrap();
+            ledger.admit(capability, Some(request), scope).unwrap();
+            let mut custody = StrandedCustody::new(request, scope);
+            let mut result = Terminal::<Settlement<(), UnavailableTerminal>>::new();
+            let mut mailbox = live_mailbox();
+            let outage = |ledger: &mut ProcessConditions| {
+                ledger
+                    .publish(condition(
+                        incarnation,
+                        ProcessServiceCode::ReactorUnavailable,
+                        ConditionCause::Panicked,
+                    ))
+                    .unwrap();
+            };
+
+            let selected = if intent_first {
+                mailbox.post(intent).unwrap();
+                custody.cancel(reason).unwrap();
+                result.publish(Settlement::Cancelled(reason)).unwrap();
+                outage(&mut ledger);
+                assert_eq!(
+                    custody.fail_unavailable(reactor),
+                    Err(CustodyError::AlreadyCancelled(reason)),
+                    "{label}"
+                );
+                assert_eq!(
+                    result.publish(Settlement::Failed(UnavailableTerminal::new(
+                        reactor, request, scope
+                    ))),
+                    Err(TerminalError::AlreadyPublished)
+                );
+                assert_eq!(custody.terminal(), None, "{label}");
+                assert_eq!(custody.cancellation(), Some(reason));
+                Settlement::Cancelled(reason)
+            } else {
+                outage(&mut ledger);
+                let terminal = custody.fail_unavailable(reactor).unwrap();
+                result.publish(Settlement::Failed(terminal)).unwrap();
+                mailbox.post(intent).unwrap();
+                assert_eq!(
+                    custody.cancel(reason),
+                    Err(CustodyError::AlreadyFailed),
+                    "{label}"
+                );
+                assert_eq!(
+                    result.publish(Settlement::Cancelled(reason)),
+                    Err(TerminalError::AlreadyPublished)
+                );
+                assert_eq!(custody.cancellation(), None, "{label}");
+                assert_eq!(
+                    (terminal.request(), terminal.scope(), terminal.condition()),
+                    (request, scope, reactor),
+                    "{label}"
+                );
+                Settlement::Failed(terminal)
+            };
+            assert_eq!(
+                result.borrow(),
+                Some(&selected),
+                "{label}: one immutable terminal"
+            );
+
+            let snapshot = mailbox.snapshot();
+            match intent {
+                Intent::Logout => {
+                    assert_eq!(snapshot.latch(), Some(LoginLatch::OperatorLogout));
+                    assert_eq!(snapshot.login(), LoginIntent::Withdrawn);
+                }
+                Intent::StopScript => {
+                    assert_eq!(snapshot.login(), LoginIntent::Auto, "Stop is no logout");
+                    assert_eq!(snapshot.latch(), None);
+                }
+                _ => {
+                    assert!(snapshot.closed());
+                    assert_eq!(mailbox.post(Intent::Login), Err(MailboxError::Closed));
+                }
+            }
+            let owes_press = intent != Intent::StopScript;
+            assert_eq!(snapshot.logout_wanted(), owes_press, "{label}");
+            if owes_press {
+                let AdmissionRefusal::Unavailable(refusal) = ledger
+                    .admit(capability, None, Scope::Slot(slot))
+                    .unwrap_err();
+                assert_eq!(
+                    SessionEventOut::Unavailable {
+                        capability: refusal.capability(),
+                        condition: refusal.condition(),
+                    },
+                    SessionEventOut::Unavailable {
+                        capability,
+                        condition: reactor
+                    },
+                    "{label}: the press is refused and the slot projects the condition"
+                );
+                assert!(
+                    mailbox.snapshot().logout_wanted(),
+                    "{label}: blocked, not complete, while the session is live"
+                );
+            }
+
+            // The reactor ends the live session.
+            let end = SessionEndCause::ServiceUnavailable { condition: reactor };
+            assert!(!end.is_clean());
+            assert!(!end.counts_toward_repeat_guard());
+            mailbox
+                .observe(LifecycleFact::SessionExited {
+                    clean: false,
+                    resumable: false,
+                })
+                .unwrap();
+            assert!(
+                !mailbox.snapshot().logout_wanted(),
+                "{label}: the exit completes the session side"
+            );
+            if intent == Intent::StopScript {
+                assert!(
+                    mailbox.login_command(false).is_some(),
+                    "{label}: the login intent is preserved"
+                );
+                assert!(ledger
+                    .admit(ProcessCapability::Login, None, Scope::Slot(slot))
+                    .is_err());
+            } else {
+                assert!(
+                    mailbox.login_command(false).is_none(),
+                    "{label}: never a fresh login"
+                );
+            }
+            assert!(!ledger.retry_allowed(ProcessCapability::Login));
+            assert!(!ledger.retry_allowed(capability));
+
+            assert_eq!(result.consume().unwrap(), selected);
+            assert!(
+                custody.charged(),
+                "{label}: consuming the terminal released nothing"
+            );
+            completion_waits_for_the_real_return(&ledger, capability, reactor, custody);
+        }
+    }
 }
