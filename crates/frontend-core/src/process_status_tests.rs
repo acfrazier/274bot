@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 use api::identity::{ProcessIncarnation, ProcessOrigin, RequestIdMinter, Scope, SlotKeyMinter};
@@ -7,7 +8,7 @@ use api::process_condition::{
 };
 
 use super::*;
-use crate::command::{Admission, CommandBook, OperatorCommand};
+use crate::command::{CommandBook, MemberReport, OperatorCommand, Subject};
 use crate::selection::ProfileIdentity;
 
 fn condition(
@@ -21,9 +22,14 @@ fn condition(
     ProcessServiceCondition::new(ConditionId::new(incarnation, code), cause, detected, None)
 }
 
+/// The incarnation composition names by start nonce `nonce`.
+fn incarnation(nonce: u64) -> ProcessIncarnation {
+    ProcessIncarnation::from_start_nonce(NonZeroU64::new(nonce).unwrap())
+}
+
 #[test]
 fn no_condition_means_no_status_and_nothing_refused() {
-    let conditions = ProcessConditions::new(ProcessIncarnation::mint());
+    let conditions = ProcessConditions::new(incarnation(1));
     let status = ProcessStatus::new(&conditions);
     assert!(!status.restart_required());
     assert_eq!(status.lines().count(), 0);
@@ -53,7 +59,7 @@ fn each_condition_maps_to_its_status_line_and_refusals() {
         ),
     ];
     for (code, refused, unaffected) in cases {
-        let incarnation = ProcessIncarnation::mint();
+        let incarnation = incarnation(1);
         let mut conditions = ProcessConditions::new(incarnation);
         conditions
             .publish(condition(
@@ -101,7 +107,7 @@ fn the_status_and_the_command_report_agree_and_the_status_outlives_the_report() 
     // The surfaces read the same two projections: the persistent status and
     // the command's report. They must name the same condition and text, and
     // settling or evicting the command must not clear the status.
-    let incarnation = ProcessIncarnation::mint();
+    let incarnation = incarnation(1);
     let mut conditions = ProcessConditions::new(incarnation);
     conditions
         .publish(condition(
@@ -115,44 +121,48 @@ fn the_status_and_the_command_report_agree_and_the_status_outlives_the_report() 
     let requests = RequestIdMinter::new();
     let slot = SlotKeyMinter::new().mint().unwrap();
     let request = requests.mint().unwrap();
-    book.open(request, OperatorCommand::Login).unwrap();
-    let admission = book
-        .admit(
-            request,
-            ProfileIdentity::uid(9),
-            Scope::Slot(slot),
-            &conditions,
-        )
-        .unwrap();
+    let alice = Subject::Profile(ProfileIdentity::uid(9));
+    book.open(
+        request,
+        OperatorCommand::Login,
+        &[(alice, Scope::Slot(slot))],
+        &conditions,
+    )
+    .unwrap();
 
     let status = ProcessStatus::new(&conditions);
     let line = status.refusing(OperatorCommand::Login).unwrap();
-    let Admission::Refused { condition, .. } = admission else {
-        panic!("Login admitted under a latched reactor condition");
-    };
-    assert_eq!(condition, line.id());
     let report = book.report(request).unwrap();
     assert_eq!(report.command(), OperatorCommand::Login);
-    let failure = match report.members()[0].terminal() {
+    let failure = match report.member(alice).and_then(MemberReport::terminal) {
         Some(api::identity::Settlement::Failed(failure)) => *failure,
-        other => panic!("unexpected terminal {other:?}"),
+        other => panic!("Login admitted under a latched reactor condition: {other:?}"),
     };
+    assert_eq!(failure.condition(), Some(line.id()));
     assert_eq!(failure.operator_text(), Some(line.operator_text()));
 
-    // A later command, a hidden banner or a settled report change nothing:
-    // the ledger has no clear operation and the status still shows it.
-    for _ in 0..crate::command::SETTLED_REPORT_CAP + 1 {
+    // Later refused commands push the report out of the bounded history; a
+    // hidden banner or an evicted report changes nothing: the ledger has no
+    // clear operation and the status still shows the condition.
+    for _ in 0..crate::command::SETTLED_REPORT_CAP {
         let other = requests.mint().unwrap();
-        book.open(other, OperatorCommand::Select).unwrap();
+        book.open(
+            other,
+            OperatorCommand::Teleport,
+            &[(alice, Scope::Slot(slot))],
+            &conditions,
+        )
+        .unwrap();
     }
+    assert!(book.report(request).is_none());
     assert!(ProcessStatus::new(&conditions).restart_required());
     assert_eq!(ProcessStatus::new(&conditions).lines().count(), 1);
 }
 
 #[test]
 fn a_stale_incarnation_never_reaches_the_status() {
-    let current = ProcessIncarnation::mint();
-    let previous = ProcessIncarnation::mint();
+    let current = incarnation(2);
+    let previous = incarnation(1);
     let mut conditions = ProcessConditions::new(current);
     assert_eq!(
         conditions.publish(condition(
@@ -170,7 +180,7 @@ fn a_stale_incarnation_never_reaches_the_status() {
 
 #[test]
 fn all_three_conditions_show_three_lines_in_code_order() {
-    let incarnation = ProcessIncarnation::mint();
+    let incarnation = incarnation(1);
     let mut conditions = ProcessConditions::new(incarnation);
     for code in ProcessServiceCode::ALL.into_iter().rev() {
         conditions
