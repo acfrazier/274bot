@@ -341,8 +341,9 @@ fn a_retired_slot_completes_withdrawals_and_invalidates_the_rest() {
     let mut other = IntentMailbox::new(false, WorldChoice::Automatic);
     mailbox.observe(LifecycleFact::LoginSucceeded);
 
-    let remove = f.dispatch(OperatorCommand::Remove, ALICE, gone, &mut mailbox);
+    // Remove closes the slot's mailbox lifetime, so it is posted last.
     let pause = f.dispatch(OperatorCommand::PauseScript, ALICE, gone, &mut mailbox);
+    let remove = f.dispatch(OperatorCommand::Remove, ALICE, gone, &mut mailbox);
     let login = f.dispatch(OperatorCommand::Login, BOB, kept, &mut other);
     let start = f.open(OperatorCommand::StartScript);
     f.book
