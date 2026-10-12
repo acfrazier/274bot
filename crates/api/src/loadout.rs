@@ -22,6 +22,7 @@
 //! coercion (`21-census-ownership-dag.md` §4.1). The worn-slot visual layout
 //! and labels (`WORN_SLOT_LAYOUT`, `worn_slot_label`) stay with the
 //! presentation owners, not here: they are layout, not identity.
+#![warn(missing_docs)]
 
 use std::collections::BTreeMap;
 
@@ -50,7 +51,9 @@ pub fn is_worn_slot(slot: &str) -> bool {
 /// One carried supply with a required positive quantity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CarryEntry {
+    /// The carried item name.
     pub item: String,
+    /// How many are carried, always at least one.
     pub qty: u32,
 }
 
@@ -67,9 +70,13 @@ impl CarryEntry {
 /// One named equipment/inventory preset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Loadout {
+    /// The preset name.
     pub name: String,
+    /// Worn gear by worn-slot identifier.
     pub worn: BTreeMap<String, String>,
+    /// Gear kept by the preset but in no worn slot.
     pub unassigned: Vec<String>,
+    /// Carried supplies.
     pub carry: Vec<CarryEntry>,
 }
 
