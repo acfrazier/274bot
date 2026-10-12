@@ -1,5 +1,7 @@
 //! Specification state reconstructed from boundary observations, not row leases.
-use super::{Bounds, Class, Id, Origin, Outcome, Refusal, SessionFamily, Step, Trigger, Violation};
+use super::{
+    Bounds, Class, Control, Id, Origin, Outcome, Refusal, SessionFamily, Step, Trigger, Violation,
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Request {
@@ -17,6 +19,9 @@ struct Record {
     outcome: Option<Outcome>,
     terminal_parent: Option<Id>,
     expected_terminal: Option<Outcome>,
+    received: bool,
+    prompt: bool,
+    decisions: u8,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Live {
@@ -58,7 +63,10 @@ pub(super) struct Monitor {
     floor: Id,
     rows: Vec<Option<Row>>,
     queued: Vec<usize>,
+    pending: Vec<Id>,
+    carry: Vec<Control>,
     held: bool,
+    freeze_edge: bool,
     host_action: Option<u8>,
     failure: Option<Violation>,
 }
@@ -122,6 +130,7 @@ impl Monitor {
         class: Class,
         group: u8,
     ) {
+        self.pending.push(id);
         self.record_mut(id).request = Some(Request {
             parent,
             class,
@@ -137,13 +146,14 @@ impl Monitor {
         });
     }
     pub(super) fn input(&mut self, step: &Step) {
+        self.freeze_edge = self.held || matches!(step, Step::SessionHeld | Step::SessionResumed);
         if self.held
             && !matches!(
                 step,
                 Step::HostAction { .. }
                     | Step::SessionHeld
                     | Step::SessionResumed
-                    | Step::Emit { release: true, .. }
+                    | Step::Emit { .. }
                     | Step::Cancel { .. }
                     | Step::Decide { .. }
             )
@@ -154,9 +164,42 @@ impl Monitor {
             );
         }
         match *step {
-            Step::Cancel { of, .. } if self.entry(of).is_none() => {
-                if self.record(of).request.is_some() && self.record(of).outcome.is_none() {
+            Step::Cancel { of, throw } => {
+                if !throw && self.pending.contains(&of) {
                     self.record_mut(of).cancelled = true;
+                }
+                if self.control_target(of) {
+                    self.carry.retain(|c| c.id() != of);
+                    self.carry.push(Control::Cancel { of, throw });
+                }
+            }
+            Step::Decide { of, complete } if self.control_target(of) => {
+                if !self
+                    .carry
+                    .iter()
+                    .any(|c| matches!(c, Control::Cancel { of: id, .. } if *id == of))
+                {
+                    self.carry.retain(|c| c.id() != of);
+                    let seq = if self.entry(of).is_some() {
+                        self.record(of).decisions + 1
+                    } else {
+                        1
+                    };
+                    self.carry.push(Control::Decide { of, seq, complete });
+                }
+            }
+            Step::Prompt(id) => self.record_mut(id).prompt = true,
+            Step::Controls | Step::Batch => {
+                for index in 0..self.carry.len() {
+                    if let Control::Decide { of, seq, .. } = self.carry[index]
+                        && self.entry(of).is_some()
+                        && self.record(of).prompt
+                        && self.record(of).decisions + 1 == seq
+                    {
+                        let record = self.record_mut(of);
+                        record.prompt = false;
+                        record.decisions = seq;
+                    }
                 }
             }
             Step::Revoke { of, trigger }
@@ -200,6 +243,22 @@ impl Monitor {
                 .retain(|&witness| self.rows.get(witness).is_some_and(Option::is_some));
         }
     }
+    fn control_target(&self, id: Id) -> bool {
+        self.entry(id).is_some()
+            || self.pending.contains(&id)
+            || (self.retained.contains(&id) && !self.record(id).received)
+    }
+    fn require_unfrozen(&mut self, event: &'static str) {
+        if self.held || self.freeze_edge {
+            self.fail(
+                "guardian-hold",
+                format!("{event} during guardian hold or its resume edge"),
+            );
+        }
+    }
+    pub(super) fn control_execution(&mut self) {
+        self.require_unfrozen("control execution");
+    }
     pub(super) fn host_refused(&mut self, action: u8) {
         self.fail(
             "host-action-dispatch",
@@ -215,6 +274,7 @@ impl Monitor {
         }
     }
     pub(super) fn finished(&mut self) {
+        self.freeze_edge = false;
         if let Some(action) = self.host_action.take() {
             self.fail(
                 "host-action-dispatch",
@@ -389,6 +449,7 @@ impl Monitor {
         }
     }
     pub(super) fn accepted(&mut self, id: Id) {
+        self.require_unfrozen("admission");
         let request = self
             .record(id)
             .request
@@ -412,6 +473,7 @@ impl Monitor {
         });
     }
     pub(super) fn published(&mut self, id: Id, outcome: Outcome, bounds: Bounds) {
+        self.require_unfrozen("terminal publication");
         let live = self.live.iter().position(|e| e.id == id);
         if live.is_none() && self.live.len() + self.retained.len() >= bounds.credits {
             self.fail(
@@ -483,6 +545,10 @@ impl Monitor {
         }
     }
     pub(super) fn page_result(&mut self, id: Id) {
+        self.require_unfrozen("terminal receipt");
+        self.record_mut(id).received = true;
+        self.pending.retain(|pending| *pending != id);
+        self.carry.retain(|control| control.id() != id);
         if self.record(id).revoked {
             return;
         }
@@ -499,12 +565,27 @@ impl Monitor {
             }
         }
     }
+    pub(super) fn page(&mut self) {
+        self.require_unfrozen("page");
+        self.pending
+            .retain(|id| !self.records[usize::from(*id - 1)].admitted);
+        self.carry.retain(|control| {
+            !matches!(control, Control::Decide { of, seq, .. }
+                if self.live.iter().any(|entry| entry.id == *of)
+                    && *seq <= self.records[usize::from(*of - 1)].decisions)
+        });
+    }
     pub(super) fn settled(&mut self, id: Id, outcome: Outcome) {
+        self.require_unfrozen("local settlement");
+        if !self.record(id).admitted && !self.retained.contains(&id) {
+            self.pending.retain(|pending| *pending != id);
+        }
         if self.record(id).outcome.is_none() {
             self.record_mut(id).outcome = Some(outcome);
         }
     }
     pub(super) fn local_end(&mut self, id: Id, revoked: bool, bounds: Bounds) {
+        self.require_unfrozen("mirror completion");
         let Some(at) = self.mirrors.iter().position(|m| m.id == id) else {
             return;
         };
@@ -516,18 +597,24 @@ impl Monitor {
                 .records
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| {
+                .filter(|(index, r)| {
+                    let child = (*index + 1) as Id;
                     r.request
                         .as_ref()
                         .is_some_and(|p| p.local_parent == Some(id))
-                        && r.outcome.is_none()
+                        && (self.pending.contains(&child) || self.entry(child).is_some())
                 })
                 .map(|(i, _)| (i + 1) as Id)
                 .collect();
             for child in pending {
-                if !self.record(child).admitted {
+                if self.pending.contains(&child) {
                     self.record_mut(child).cancelled = true;
                 }
+                self.carry.retain(|control| control.id() != child);
+                self.carry.push(Control::Cancel {
+                    of: child,
+                    throw: false,
+                });
             }
         } else {
             for mirror in &mut self.mirrors {
@@ -545,9 +632,15 @@ impl Monitor {
         }
     }
     pub(super) fn watermark(&mut self, retired: &[Id]) {
+        self.require_unfrozen("watermark");
         self.retained.retain(|id| !retired.contains(id));
     }
     pub(super) fn emitted(&mut self, owner: Option<Id>, release: bool) -> usize {
+        // A legal in-hold gameplay push has no custody obligation. Returning an
+        // absent witness also detects a mutant that queues it despite the drop.
+        if self.held && !release {
+            return self.rows.len();
+        }
         let owner_record = owner.filter(|id| *id > 0).map(|id| self.record(id));
         let mirror = owner.and_then(|id| self.mirrors.iter().find(|m| m.id == id));
         let live = owner.is_some_and(|id| self.entry(id).is_some()) || mirror.is_some();
@@ -616,6 +709,7 @@ impl Monitor {
     }
     /// The observed Take, not the encoder, determines allowed gameplay overflow.
     pub(super) fn taking(&mut self, gameplay_cap: usize) {
+        self.require_unfrozen("encoder take");
         let mut gameplay = 0;
         for witness in self.queued.drain(..) {
             if self.rows[witness].as_ref().is_some_and(|r| !r.release) {
@@ -628,9 +722,14 @@ impl Monitor {
         self.trim_rows();
     }
     pub(super) fn dispatched(&mut self, witness: usize, actual: bool) {
-        let row = self.rows[witness]
-            .take()
-            .expect("dispatch of an observed row");
+        self.require_unfrozen("seat dispatch");
+        let Some(row) = self.rows.get_mut(witness).and_then(Option::take) else {
+            self.fail(
+                "row-conservation",
+                format!("dispatch of absent or duplicate row witness {witness}"),
+            );
+            return;
+        };
         let expected = row.release
             || (!row.blocked
                 && !row
@@ -667,6 +766,8 @@ impl Monitor {
         self.retained.clear();
         self.history.clear();
         self.floor = floor;
+        self.pending.clear();
+        self.carry.clear();
         for r in &mut self.records {
             r.request = None;
         }
@@ -678,6 +779,8 @@ impl Monitor {
             + (self.retained.capacity() + self.history.capacity()) * std::mem::size_of::<Id>()
             + self.rows.capacity() * std::mem::size_of::<Option<Row>>()
             + self.queued.capacity() * std::mem::size_of::<usize>()
+            + self.pending.capacity() * std::mem::size_of::<Id>()
+            + self.carry.capacity() * std::mem::size_of::<Control>()
             + self
                 .rows
                 .iter()
@@ -717,16 +820,12 @@ impl Monitor {
                 "observed ancestry violates bounds".into(),
             );
         }
-        if self
-            .rows
-            .iter()
-            .enumerate()
-            .any(|(index, row)| row.is_some() && !held.clone().any(|witness| witness == index))
-        {
+        if self.rows.iter().enumerate().any(|(index, row)| {
+            row.is_some() && held.clone().filter(|witness| *witness == index).count() != 1
+        }) {
             return fail(
                 "row-conservation",
-                "accepted row absent from custody, dispatch, and input-derived permitted drop"
-                    .into(),
+                "accepted row custody multiplicity differs from its undischarged obligation".into(),
             );
         }
         if held
@@ -737,6 +836,40 @@ impl Monitor {
                 "row-conservation",
                 "row retained or replayed after an input-derived drop".into(),
             );
+        }
+        Ok(())
+    }
+    pub(super) fn check_custody<'a>(
+        &self,
+        pending: impl Iterator<Item = (Id, bool)> + Clone,
+        carry: impl Iterator<Item = &'a Control> + Clone,
+    ) -> Result<(), Violation> {
+        if self.pending.len() != pending.clone().count()
+            || self.pending.iter().any(|id| {
+                pending
+                    .clone()
+                    .filter(|(actual, cancelled)| {
+                        actual == id && *cancelled == self.record(*id).cancelled
+                    })
+                    .count()
+                    != 1
+            })
+        {
+            return Err(Violation {
+                name: "pending-start-custody",
+                detail: "pending start or cancellation unit differs from observed custody".into(),
+            });
+        }
+        if self.carry.len() != carry.clone().count()
+            || self
+                .carry
+                .iter()
+                .any(|control| carry.clone().filter(|actual| *actual == control).count() != 1)
+        {
+            return Err(Violation {
+                name: "control-custody",
+                detail: "control carry differs from observed enqueue and receipt history".into(),
+            });
         }
         Ok(())
     }
@@ -991,6 +1124,7 @@ mod tests {
             "row-conservation",
         );
         monitor.input(&Step::SessionResumed);
+        monitor.finished();
         monitor.dispatched(release, true);
         monitor.check(Bounds::small(), std::iter::empty()).unwrap();
     }
@@ -1048,5 +1182,176 @@ mod tests {
                 .name,
             "host-action-dispatch",
         );
+    }
+
+    #[test]
+    fn duplicate_custody_and_duplicate_dispatch_are_named_row_failures() {
+        let mut monitor = Monitor::default();
+        let witness = monitor.emitted(None, true);
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), [witness, witness].into_iter())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+        monitor.dispatched(witness, true);
+        monitor.dispatched(witness, true);
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), std::iter::empty())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+    }
+
+    #[test]
+    fn guardian_freeze_and_resume_edge_reject_observed_seat_effects() {
+        for resume in [false, true] {
+            for effect in 0..4 {
+                let mut monitor = Monitor::default();
+                root(&mut monitor, 1);
+                let release = monitor.emitted(None, true);
+                monitor.input(&Step::SessionHeld);
+                monitor.finished();
+                if resume {
+                    monitor.input(&Step::SessionResumed);
+                }
+                match effect {
+                    0 => monitor.published(1, Outcome::Done, Bounds::small()),
+                    1 => monitor.dispatched(release, true),
+                    2 => monitor.control_execution(),
+                    _ => {
+                        monitor.minted();
+                        monitor.start(2, None, None, Class::Capability, 1);
+                        monitor.accepted(2);
+                    }
+                }
+                assert_eq!(
+                    monitor
+                        .check(Bounds::small(), std::iter::empty())
+                        .unwrap_err()
+                        .name,
+                    "guardian-hold",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn custody_is_reconstructed_and_preserved_inside_and_outside_holds() {
+        for held in [false, true] {
+            let mut monitor = Monitor::default();
+            root(&mut monitor, 1);
+            monitor.minted();
+            monitor.start(2, Some(1), None, Class::Capability, 1);
+            monitor.input(&Step::Cancel {
+                of: 2,
+                throw: false,
+            });
+            if held {
+                monitor.input(&Step::SessionHeld);
+            }
+            let control = Control::Cancel {
+                of: 2,
+                throw: false,
+            };
+            monitor
+                .check_custody([(1, false), (2, true)].into_iter(), [&control].into_iter())
+                .unwrap();
+            assert_eq!(
+                monitor
+                    .check_custody([(1, false), (2, true)].into_iter(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "control-custody",
+            );
+            assert_eq!(
+                monitor
+                    .check_custody([(1, false)].into_iter(), [&control].into_iter())
+                    .unwrap_err()
+                    .name,
+                "pending-start-custody",
+            );
+            assert_eq!(
+                monitor
+                    .check_custody([(1, false), (2, false)].into_iter(), [&control].into_iter())
+                    .unwrap_err()
+                    .name,
+                "pending-start-custody",
+            );
+        }
+    }
+
+    #[test]
+    fn held_gameplay_push_cannot_acquire_custody() {
+        let mut monitor = Monitor::default();
+        monitor.input(&Step::SessionHeld);
+        let dropped = monitor.emitted(None, false);
+        monitor.check(Bounds::small(), std::iter::empty()).unwrap();
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), [dropped].into_iter())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+    }
+
+    #[test]
+    fn custody_retires_only_on_receipt_and_cancel_dominates_decide() {
+        let mut monitor = Monitor::default();
+        root(&mut monitor, 1);
+        monitor.page();
+        monitor.input(&Step::Prompt(1));
+        monitor.input(&Step::Decide {
+            of: 1,
+            complete: false,
+        });
+        let decision = Control::Decide {
+            of: 1,
+            seq: 1,
+            complete: false,
+        };
+        monitor
+            .check_custody(std::iter::empty(), [&decision].into_iter())
+            .unwrap();
+        monitor.input(&Step::Controls);
+        monitor
+            .check_custody(std::iter::empty(), [&decision].into_iter())
+            .unwrap();
+        monitor.page();
+        monitor
+            .check_custody(std::iter::empty(), std::iter::empty())
+            .unwrap();
+
+        monitor.input(&Step::Cancel {
+            of: 1,
+            throw: false,
+        });
+        monitor.input(&Step::Decide {
+            of: 1,
+            complete: true,
+        });
+        let cancel = Control::Cancel {
+            of: 1,
+            throw: false,
+        };
+        monitor
+            .check_custody(std::iter::empty(), [&cancel].into_iter())
+            .unwrap();
+        monitor.published(1, Outcome::Aborted(Trigger::ParentAborted), Bounds::small());
+        monitor
+            .check_custody(std::iter::empty(), [&cancel].into_iter())
+            .unwrap();
+        monitor.page_result(1);
+        monitor.input(&Step::Cancel {
+            of: 1,
+            throw: false,
+        });
+        monitor
+            .check_custody(std::iter::empty(), std::iter::empty())
+            .unwrap();
     }
 }

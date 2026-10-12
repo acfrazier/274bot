@@ -125,7 +125,9 @@ fn mutation_admit(state: &mut State, parent: Option<Id>, class: Class) -> Id {
 }
 
 fn expect_mutation_failure(state: &State, name: &str) {
-    let failure = state.check().expect_err("expected a mutation invariant failure");
+    let failure = state
+        .check()
+        .expect_err("expected a mutation invariant failure");
     assert_eq!(failure.name, name, "{failure:?}");
 }
 
@@ -1806,8 +1808,7 @@ fn chosen_held_tick_discards_rows_without_settling_live_entries() {
 #[test]
 fn chosen_mutation_held_cancel_executes_breaks_guardian_hold() {
     let mut state = mutation_state(Mutation::HeldCancelExecutes);
-    let _session = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
-    let target = mutation_admit(&mut state, None, Class::Capability);
+    let target = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
     apply_checked_mutation_step(&mut state, Step::SessionHeld);
     state
         .apply(&Step::Cancel {
@@ -1821,8 +1822,7 @@ fn chosen_mutation_held_cancel_executes_breaks_guardian_hold() {
 #[test]
 fn chosen_mutation_held_decide_executes_breaks_guardian_hold() {
     let mut state = mutation_state(Mutation::HeldDecideExecutes);
-    let _session = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
-    let target = mutation_admit(&mut state, None, Class::Capability);
+    let target = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
     apply_checked_mutation_step(&mut state, Step::Prompt(target));
     apply_checked_mutation_step(&mut state, Step::SessionHeld);
     state
@@ -1966,8 +1966,6 @@ fn chosen_mutation_held_gameplay_queue_breaks_row_conservation() {
         .expect("held gameplay emission is legal");
     expect_mutation_failure(&state, "row-conservation");
 }
-
-
 
 #[test]
 fn chosen_kept_reconnect_preserves_undelivered_release() {
