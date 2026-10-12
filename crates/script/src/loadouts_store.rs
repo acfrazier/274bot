@@ -3,28 +3,15 @@
 //! Wire shape is `{ name, worn: {slot: name}, carry: [{item, qty}], unassigned? }`.
 //! Legacy `{ worn: [name], carry: [name] }` files are read without guessing
 //! slots or dropping items. `optionsFrom: 'loadouts'` fills setting combos
-//! from [`LoadoutsStore::names`].
+//! from [`LoadoutsStore::names`]. The neutral values (`Loadout`,
+//! `CarryEntry`, the worn-slot table) live in `api::loadout`; this module
+//! keeps the store, its file I/O and the behaviour helpers.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use api::loadout::{parse_loadout, CarryEntry, Loadout, WORN_SLOTS};
 use vault::write_private_file;
-
-/// Loadout equipment slots, named as the content wearpos decoder names them.
-pub const WORN_SLOTS: [&str; 11] = [
-    "hat",
-    "back",
-    "front",
-    "righthand",
-    "torso",
-    "lefthand",
-    "legs",
-    "hands",
-    "feet",
-    "ring",
-    "quiver",
-];
 
 /// Compact equipment layout used by the native editor. `None` is a spacer.
 pub const WORN_SLOT_LAYOUT: [[Option<&'static str>; 3]; 5] = [
@@ -50,175 +37,6 @@ pub fn worn_slot_label(slot: &str) -> &'static str {
         "quiver" => "Quiver",
         _ => "Slot",
     }
-}
-
-pub fn is_worn_slot(slot: &str) -> bool {
-    WORN_SLOTS.contains(&slot)
-}
-
-/// One carried supply with a required positive quantity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CarryEntry {
-    pub item: String,
-    pub qty: u32,
-}
-
-impl CarryEntry {
-    pub fn new(item: impl Into<String>, qty: u32) -> Self {
-        Self {
-            item: item.into(),
-            qty: qty.max(1),
-        }
-    }
-}
-
-/// One named equipment/inventory preset.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Loadout {
-    pub name: String,
-    pub worn: BTreeMap<String, String>,
-    pub unassigned: Vec<String>,
-    pub carry: Vec<CarryEntry>,
-}
-
-impl Loadout {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            worn: BTreeMap::new(),
-            unassigned: Vec::new(),
-            carry: Vec::new(),
-        }
-    }
-
-    pub fn with_slot(mut self, slot: &str, item: impl Into<String>) -> Self {
-        if is_worn_slot(slot) {
-            self.worn.insert(slot.to_string(), item.into());
-        } else {
-            self.unassigned.push(item.into());
-        }
-        self
-    }
-
-    pub fn with_carry(mut self, item: impl Into<String>, qty: u32) -> Self {
-        self.carry.push(CarryEntry::new(item, qty));
-        self
-    }
-
-    pub fn set_slot(&mut self, slot: &str, item: Option<String>) {
-        if !is_worn_slot(slot) {
-            return;
-        }
-        match item {
-            Some(name) if !name.trim().is_empty() => {
-                self.worn.insert(slot.to_string(), name);
-            }
-            _ => {
-                self.worn.remove(slot);
-            }
-        }
-    }
-}
-
-impl Serialize for Loadout {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct Wire<'a> {
-            name: &'a str,
-            worn: &'a BTreeMap<String, String>,
-            carry: &'a [CarryEntry],
-            #[serde(skip_serializing_if = "slice_empty")]
-            unassigned: &'a [String],
-        }
-        Wire {
-            name: &self.name,
-            worn: &self.worn,
-            carry: &self.carry,
-            unassigned: &self.unassigned,
-        }
-        .serialize(serializer)
-    }
-}
-
-fn slice_empty(value: &[String]) -> bool {
-    value.is_empty()
-}
-
-impl<'de> Deserialize<'de> for Loadout {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        parse_loadout(&value).ok_or_else(|| serde::de::Error::custom("invalid loadout"))
-    }
-}
-
-fn parse_loadout(value: &serde_json::Value) -> Option<Loadout> {
-    let name = value.get("name")?.as_str()?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let mut worn = BTreeMap::new();
-    let mut unassigned = Vec::new();
-    match value.get("worn") {
-        Some(serde_json::Value::Array(rows)) => {
-            for row in rows {
-                if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                    unassigned.push(item.to_string());
-                }
-            }
-        }
-        Some(serde_json::Value::Object(map)) => {
-            for (slot, raw) in map {
-                let Some(item) = raw.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
-                    continue;
-                };
-                if is_worn_slot(slot) {
-                    worn.insert(slot.clone(), item.to_string());
-                } else {
-                    unassigned.push(item.to_string());
-                }
-            }
-        }
-        _ => {}
-    }
-    if let Some(serde_json::Value::Array(rows)) = value.get("unassigned") {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                unassigned.push(item.to_string());
-            }
-        }
-    }
-    let mut carry = Vec::new();
-    if let Some(serde_json::Value::Array(rows)) = value.get("carry") {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                carry.push(CarryEntry::new(item, 1));
-                continue;
-            }
-            let Some(item) = row
-                .get("item")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let qty = row
-                .get("qty")
-                .and_then(|v| {
-                    v.as_u64()
-                        .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
-                        .or_else(|| v.as_f64().and_then(|n| (n >= 1.0).then_some(n as u64)))
-                })
-                .unwrap_or(1);
-            carry.push(CarryEntry::new(item, qty.min(u32::MAX as u64) as u32));
-        }
-    }
-    Some(Loadout {
-        name: name.to_string(),
-        worn,
-        unassigned,
-        carry,
-    })
 }
 
 /// Default operator loadouts path (`~/.274bot/loadouts.json`).

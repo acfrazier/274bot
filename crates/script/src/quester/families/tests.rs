@@ -6228,7 +6228,7 @@ mod chooser_tests;
 mod extension_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     compile_context_test(|base| {
-        let row = crate::loadouts_store::Loadout::new("cook/disguise")
+        let row = api::loadout::Loadout::new("cook/disguise")
             .with_slot("torso", "Desert shirt")
             .with_slot("feet", "Desert boots");
         let loadouts =
@@ -6276,7 +6276,7 @@ pub(crate) fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameS
 #[test]
 fn loadout_waits_for_inventory_observation_before_bank_plan() {
     compile_context_test(|base| {
-        let row = crate::loadouts_store::Loadout::new("cook/carry").with_carry("Lobster", 1);
+        let row = api::loadout::Loadout::new("cook/carry").with_carry("Lobster", 1);
         let loadouts =
             crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
         let cx = CompileContext {
