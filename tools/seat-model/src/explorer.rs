@@ -87,6 +87,24 @@ pub struct Coverage {
     pub host_action_values: [usize; 2],
     /// Guardian hold edges in continuation states, with or without a foreground.
     pub guardian_hold_edges: usize,
+    /// Continuation gameplay pushes attempted while the guardian hold is active.
+    pub held_gameplay_pushes: usize,
+    /// In-hold gameplay pushes dropped immediately instead of entering the queue.
+    pub held_gameplay_drops: usize,
+    /// Suffix states preserving control carry while the guardian hold is active.
+    pub guardian_hold_control_carry_states: usize,
+    /// Suffix states preserving pending starts while the guardian hold is active.
+    pub guardian_hold_pending_start_states: usize,
+    /// Suffix states containing control carry.
+    pub control_carry_states: usize,
+    /// Suffix states containing pending starts.
+    pub pending_start_states: usize,
+    /// In-hold Cancel inputs explored in the continuation.
+    pub guardian_hold_cancel_steps: usize,
+    /// In-hold Decide inputs explored in the continuation.
+    pub guardian_hold_decide_steps: usize,
+    /// In-hold release pushes explored in the continuation.
+    pub guardian_hold_release_emits: usize,
     /// Resumes preserving the same foreground-owning Session in continuation states.
     pub guardian_resumes_same_foreground: usize,
     /// Resumes preserving the same live Session, including Hunt's no-foreground case.
@@ -115,6 +133,7 @@ struct TransitionContext {
     foreground: Option<Id>,
     session_root: Option<Id>,
     held: bool,
+    dropped: usize,
     stopped: bool,
     host_actions_dispatched: usize,
     releases_dispatched: usize,
@@ -183,11 +202,9 @@ impl TransitionContext {
         } else {
             None
         };
-        let held = matches!(
-            step,
-            Step::HostAction { .. } | Step::SessionHeld | Step::SessionResumed
-        ) && state.session_held();
+        let held = state.session_held();
         let stopped = matches!(step, Step::HostAction { .. }) && state.stopped;
+        let dropped = state.dropped();
         let host_actions_dispatched = if matches!(step, Step::HostAction { .. }) {
             state.host_actions_dispatched()
         } else {
@@ -240,6 +257,7 @@ impl TransitionContext {
             session_root,
             held,
             stopped,
+            dropped,
             host_actions_dispatched,
             releases_dispatched,
             gameplay_dispatched,
@@ -300,6 +318,20 @@ impl Coverage {
         self.max_roots = self.max_roots.max(state.roots());
         self.max_leaves = self.max_leaves.max(state.leaves());
         self.max_history_floor = self.max_history_floor.max(state.history_floor());
+        if state.carry_len() > 0 {
+            self.control_carry_states += 1;
+        }
+        if state.pending() > 0 {
+            self.pending_start_states += 1;
+        }
+        if state.session_held() {
+            if state.carry_len() > 0 {
+                self.guardian_hold_control_carry_states += 1;
+            }
+            if state.pending() > 0 {
+                self.guardian_hold_pending_start_states += 1;
+            }
+        }
     }
 
     fn observe_transition(
@@ -320,6 +352,22 @@ impl Coverage {
             let id = after.next_id().saturating_sub(1);
             if after.outcome(id) == Some(Outcome::Refused(Refusal::ArgsTooLarge)) {
                 self.oversized_start_refusals += 1;
+            }
+        }
+        if before.held {
+            match step {
+                Step::Cancel { .. } => self.guardian_hold_cancel_steps += 1,
+                Step::Decide { .. } => self.guardian_hold_decide_steps += 1,
+                Step::Emit {
+                    release: true, ..
+                } => self.guardian_hold_release_emits += 1,
+                Step::Emit {
+                    release: false, ..
+                } => {
+                    self.held_gameplay_pushes += 1;
+                    self.held_gameplay_drops += after.dropped().saturating_sub(before.dropped);
+                }
+                _ => {}
             }
         }
         if matches!(step, Step::Dispatch) {
@@ -453,6 +501,15 @@ impl Coverage {
             *total += count;
         }
         self.guardian_hold_edges += other.guardian_hold_edges;
+        self.held_gameplay_pushes += other.held_gameplay_pushes;
+        self.held_gameplay_drops += other.held_gameplay_drops;
+        self.guardian_hold_control_carry_states += other.guardian_hold_control_carry_states;
+        self.guardian_hold_pending_start_states += other.guardian_hold_pending_start_states;
+        self.control_carry_states += other.control_carry_states;
+        self.pending_start_states += other.pending_start_states;
+        self.guardian_hold_cancel_steps += other.guardian_hold_cancel_steps;
+        self.guardian_hold_decide_steps += other.guardian_hold_decide_steps;
+        self.guardian_hold_release_emits += other.guardian_hold_release_emits;
         self.guardian_resumes_same_foreground += other.guardian_resumes_same_foreground;
         self.guardian_resumes_same_session += other.guardian_resumes_same_session;
         self.guardian_resume_release_dispatches += other.guardian_resume_release_dispatches;
@@ -550,6 +607,7 @@ pub enum Profile {
     R3SupersededCascade,
     R3ParentAbortedCascade,
     R4GuardianResume(SessionFamily),
+    R5GuardianCustody(SessionFamily),
     R4LineageDepth,
 }
 
@@ -560,7 +618,7 @@ pub const SESSION_FAMILIES: [SessionFamily; 4] = [
     SessionFamily::Progress,
 ];
 
-pub const PROFILES: [Profile; 39] = [
+pub const PROFILES: [Profile; 41] = [
     Profile::V5_01SessionChild,
     Profile::V5_02AdoptedSibling,
     Profile::V5_02BranchPromotion,
@@ -647,6 +705,8 @@ pub const PROFILES: [Profile; 39] = [
     Profile::R3ParentAbortedCascade,
     Profile::R4GuardianResume(SessionFamily::Gather),
     Profile::R4GuardianResume(SessionFamily::Hunt),
+    Profile::R5GuardianCustody(SessionFamily::Gather),
+    Profile::R5GuardianCustody(SessionFamily::Hunt),
     Profile::R4LineageDepth,
 ];
 
@@ -678,6 +738,10 @@ impl Profile {
             Self::R4GuardianResume(SessionFamily::Hunt) => "r4-guardian-resume-hunt",
             Self::R4GuardianResume(SessionFamily::Combat) => "r4-guardian-resume-combat",
             Self::R4GuardianResume(SessionFamily::Progress) => "r4-guardian-resume-progress",
+            Self::R5GuardianCustody(SessionFamily::Hunt) => "r5-guardian-custody-hunt",
+            Self::R5GuardianCustody(SessionFamily::Gather) => "r5-guardian-custody-gather",
+            Self::R5GuardianCustody(SessionFamily::Combat) => "r5-guardian-custody-combat",
+            Self::R5GuardianCustody(SessionFamily::Progress) => "r5-guardian-custody-progress",
             Self::R4LineageDepth => "r4-lineage-depth-suffix",
         }
     }
@@ -687,6 +751,7 @@ impl Profile {
             Self::V5_03MirrorCancel | Self::V5_03CreditDeferred | Self::V5_05LiveBelowFloor => 4,
             Self::R4GuardianResume(_) => 5,
             Self::R4LineageDepth => 2,
+            Self::R5GuardianCustody(_) => 4,
             Self::R3GuardianHoldResume | Self::R3CapabilityThenSession(_) => 3,
             Self::R3SessionHandoff { .. } | Self::R3ExpiredParent => 2,
             Self::R3HostRevokeCascade
@@ -710,6 +775,7 @@ impl Profile {
                 | Self::R3ParentAbortedCascade
                 | Self::R4GuardianResume(_)
                 | Self::R4LineageDepth
+                | Self::R5GuardianCustody(_)
         )
     }
 
@@ -741,6 +807,7 @@ impl Profile {
             | Self::R3ParentAbortedCascade => bounded([2, 3, 2, 5, 3, 3, 4, 2], 3, 2),
             Self::R4GuardianResume(_) => bounded([1, 1, 1, 2, 1, 1, 3, 1], 1, 1),
             Self::R4LineageDepth => bounded([1, 3, 3, 4, 3, 2, 3, 2], 3, 2),
+            Self::R5GuardianCustody(_) => bounded([1, 2, 1, 3, 2, 2, 3, 2], 2, 1),
         }
     }
 
@@ -901,6 +968,16 @@ impl Profile {
                     of: Some(1),
                     release: false,
                 },
+            ],
+            Self::R5GuardianCustody(family) => vec![
+                start(None, None, Class::Session(family), 2, 0, 0),
+                Step::Admit(1),
+                Step::Prompt(1),
+                Step::Decide {
+                    of: 1,
+                    complete: false,
+                },
+                start(Some(1), None, Class::Capability, 1, 0, 0),
             ],
             Self::R4LineageDepth => vec![
                 start(None, None, Class::Capability, 2, 0, 0),
@@ -1821,6 +1898,40 @@ mod tests {
         assert!(!state.session_held());
     }
 
+    fn assert_guardian_custody_seed(profile: Profile, family: SessionFamily) {
+        let mut state = State::new(Rules::Chosen, profile.bounds());
+        for step in profile.prefix() {
+            state
+                .apply(&step)
+                .expect("guardian custody prefix is enabled");
+        }
+        assert_eq!(
+            state.entry(1).map(|entry| entry.class),
+            Some(Class::Session(family))
+        );
+        assert_eq!(
+            state.foreground_session(),
+            family.owns_foreground().then_some(1)
+        );
+        assert_eq!(
+            state.pending(),
+            1,
+            "{} seed has no pending start",
+            profile.name()
+        );
+        assert_eq!(
+            state.carry_len(),
+            1,
+            "{} seed has no control carry",
+            profile.name()
+        );
+        assert!(
+            !state.session_held(),
+            "{} prefix already contains SessionHeld",
+            profile.name()
+        );
+    }
+
     #[test]
     fn named_compositions_pass_and_cover_required_shapes() {
         let mut coverage = Coverage::default();
@@ -1976,6 +2087,52 @@ mod tests {
                     } else {
                         assert_eq!(result.coverage.guardian_resumes_same_foreground, 0);
                     }
+                }
+                Profile::R5GuardianCustody(family) => {
+                    assert_guardian_custody_seed(profile, family);
+                    assert!(
+                        result.coverage.guardian_hold_edges > 0,
+                        "{} did not reach SessionHeld in the continuation",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_hold_control_carry_states > 0,
+                        "{} did not preserve control carry through SessionHeld",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_hold_pending_start_states > 0,
+                        "{} did not preserve a pending start through SessionHeld",
+                        profile.name()
+                    );
+                    assert!(result.coverage.control_carry_states > 0);
+                    assert!(result.coverage.pending_start_states > 0);
+                    assert!(
+                        result.coverage.guardian_hold_cancel_steps > 0,
+                        "{} did not explore Cancel during the hold",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_hold_decide_steps > 0,
+                        "{} did not explore Decide during the hold",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_hold_release_emits > 0,
+                        "{} did not explore release pushes during the hold",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.held_gameplay_pushes > 0,
+                        "{} did not push gameplay during the hold",
+                        profile.name()
+                    );
+                    assert_eq!(
+                        result.coverage.held_gameplay_drops,
+                        result.coverage.held_gameplay_pushes,
+                        "{} did not immediately drop every in-hold gameplay push",
+                        profile.name()
+                    );
                 }
                 Profile::R3ExpiredParent => {
                     assert!(result.coverage.expired_parent_refusals > 0);
@@ -2203,6 +2360,61 @@ mod tests {
                 Mutation::GuardianHold,
                 "guardian-hold",
             ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HeldCancelExecutes,
+                "guardian-hold",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HeldDecideExecutes,
+                "guardian-hold",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HeldReleaseDispatch,
+                "guardian-hold",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HoldClearsCarry,
+                "control-custody",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HoldDropsPending,
+                "pending-start-custody",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::ResumeCompletesForeground,
+                "guardian-hold",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::ControlsClearsCarry,
+                "control-custody",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::ControlsDropsPending,
+                "pending-start-custody",
+            ),
+            (
+                Profile::R3GuardianHoldResume,
+                Mutation::DuplicateRelease,
+                "row-conservation",
+            ),
+            (
+                Profile::R4GuardianResume(SessionFamily::Gather),
+                Mutation::HeldTickKeepsReleases,
+                "row-conservation",
+            ),
+            (
+                Profile::R5GuardianCustody(SessionFamily::Gather),
+                Mutation::HeldGameplayQueue,
+                "row-conservation",
+            ),
         ] {
             assert_mutation_failure(profile, mutation, expected);
         }
@@ -2246,7 +2458,7 @@ mod tests {
             assert!(profile.bounds().ids >= 1);
         }
         assert_eq!(self::profile("missing"), None);
-        assert_eq!(profiles().len(), 39);
+        assert_eq!(profiles().len(), 41);
         assert!(Profile::V5_02AdoptedSibling.bounds().ids >= 5);
     }
     #[test]
