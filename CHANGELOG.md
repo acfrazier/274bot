@@ -259,9 +259,16 @@ that visibly refuse. Each item says where it's headed.
 
 ### Known issues
 
-Unchanged since 0.2.0.1: found while testing that release, not changed by
-this one; fixes are planned for a later release. (The 0.2.0.1 empty-world
-reconnect issue is fixed instead — see Login above.)
+The first item is new in this release. The rest are unchanged since
+0.2.0.1: found while testing that release, not changed by this one. Fixes are
+planned for a later release. (The 0.2.0.1 empty-world reconnect issue is fixed
+instead — see Login above.)
+
+- **Memory (Linux):** an idle bot uses a little more memory than in 0.2.0.1:
+  about 3 MB more for the whole program (the Linux crash fix now prepares the
+  script engine at startup) and about 0.2 MiB more per bot on large fleets
+  (memory the system allocator keeps free after logins). Bots doing work use
+  no more than before. A fix is planned for a later release.
 
 - **Panel:** with MultiBox on, saving a new profile that has auto-login
   enabled logs the bot in but doesn't add it to the wall, so it runs without
