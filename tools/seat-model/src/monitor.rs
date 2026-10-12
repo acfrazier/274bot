@@ -16,6 +16,7 @@ struct Record {
     revoked: bool,
     outcome: Option<Outcome>,
     terminal_parent: Option<Id>,
+    expected_terminal: Option<Outcome>,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Live {
@@ -44,6 +45,8 @@ struct Row {
 pub(super) struct Admission {
     credit: bool,
     eligible: bool,
+    expired_parent: bool,
+    victim: Option<Id>,
 }
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(super) struct Monitor {
@@ -54,6 +57,8 @@ pub(super) struct Monitor {
     history: Vec<Id>,
     floor: Id,
     rows: Vec<Option<Row>>,
+    held: bool,
+    host_action: Option<u8>,
     failure: Option<Violation>,
 }
 impl Monitor {
@@ -86,8 +91,17 @@ impl Monitor {
     fn session(&self) -> Option<Id> {
         self.live
             .iter()
-            .find(|e| e.class == Class::Session)
+            .find(|e| e.class.is_session())
             .map(|e| e.id)
+    }
+    fn foreground(&self) -> Option<Id> {
+        self.live
+            .iter()
+            .find(|e| e.class.owns_foreground())
+            .map(|e| e.id)
+    }
+    pub(super) fn session_held(&self) -> bool {
+        self.held
     }
     pub(super) fn minted(&mut self) {
         self.records.push(Record::default());
@@ -115,27 +129,118 @@ impl Monitor {
         });
     }
     pub(super) fn input(&mut self, step: &Step) {
+        if self.held
+            && !matches!(
+                step,
+                Step::HostAction { .. } | Step::SessionHeld | Step::SessionResumed
+            )
+        {
+            self.fail(
+                "guardian-hold",
+                format!("seat advanced during guardian hold: {step:?}"),
+            );
+        }
         match *step {
             Step::Cancel { of, .. } if self.entry(of).is_none() => {
                 if self.record(of).request.is_some() && self.record(of).outcome.is_none() {
                     self.record_mut(of).cancelled = true;
                 }
             }
-            Step::Revoke {
-                of,
-                trigger: Trigger::ManualWalk,
-            } => {
-                let ids: Vec<_> = self
-                    .live
-                    .iter()
-                    .filter(|e| self.chain(e.id).contains(&of))
-                    .map(|e| e.id)
-                    .collect();
-                for id in ids.into_iter().chain(std::iter::once(of)) {
-                    self.record_mut(id).revoked = true;
+            Step::Revoke { of, trigger }
+                if !matches!(
+                    trigger,
+                    Trigger::Pause | Trigger::GatherSignal | Trigger::Reset | Trigger::Stop
+                ) =>
+            {
+                self.expect_revocation(of, trigger);
+                if trigger == Trigger::ManualWalk {
+                    self.record_mut(of).revoked = true;
                 }
             }
+            Step::HostAction { action } => self.host_action = Some(action),
+            Step::SessionHeld => self.held = true,
+            Step::SessionResumed => self.held = false,
             _ => {}
+        }
+        // Only observable discard boundaries can discharge row obligations.
+        // The implementation does not supply a list of allegedly discarded rows.
+        let discard_releases = matches!(
+            step,
+            Step::Stop
+                | Step::HeldTick
+                | Step::Reconnect { keep: false }
+                | Step::Revoke {
+                    trigger: Trigger::Stop | Trigger::Reset,
+                    ..
+                }
+        );
+        let discard_gameplay = discard_releases || matches!(step, Step::Reconnect { keep: true });
+        if discard_gameplay {
+            for row in &mut self.rows {
+                if row.as_ref().is_some_and(|r| discard_releases || !r.release) {
+                    *row = None;
+                }
+            }
+            self.trim_rows();
+        }
+    }
+    pub(super) fn host_dispatched(&mut self, action: u8) {
+        if self.host_action.take() != Some(action) {
+            self.fail(
+                "host-action-dispatch",
+                format!("host dispatch {action} differs from the next issued action"),
+            );
+        }
+    }
+    pub(super) fn finished(&mut self) {
+        if let Some(action) = self.host_action.take() {
+            self.fail(
+                "host-action-dispatch",
+                format!("host-issued action {action} was dropped or delayed"),
+            );
+        }
+        if let Some((index, record)) = self
+            .records
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.expected_terminal.is_some())
+        {
+            self.fail(
+                "revocation-cascade",
+                format!(
+                    "revocation left {} without {:?}",
+                    index + 1,
+                    record.expected_terminal
+                ),
+            );
+        }
+    }
+    fn expect_revocation(&mut self, of: Id, trigger: Trigger) {
+        let ids: Vec<_> = self
+            .live
+            .iter()
+            .filter(|e| self.chain(e.id).contains(&of))
+            .map(|e| e.id)
+            .collect();
+        for id in ids {
+            let record = self.record_mut(id);
+            record.revoked = true;
+            record.expected_terminal = Some(if id == of && trigger == Trigger::ManualWalk {
+                Outcome::Done
+            } else {
+                Outcome::Aborted(if id == of {
+                    trigger
+                } else {
+                    Trigger::ParentAborted
+                })
+            });
+        }
+    }
+    pub(super) fn prepare_admission(&mut self, before: Admission) {
+        if before.eligible
+            && let Some(victim) = before.victim
+        {
+            self.expect_revocation(victim, Trigger::Superseded);
         }
     }
     fn parent(&self, request: &Request) -> Option<Id> {
@@ -149,17 +254,36 @@ impl Monitor {
             return Admission {
                 credit: false,
                 eligible: false,
+                expired_parent: false,
+                victim: None,
             };
         };
         let parent = self.parent(request);
         let parent_invalid = request.parent.is_some_and(|p| {
             self.entry(p).is_none()
-                && (self.record(p).revoked || (p < self.floor && !self.retained.contains(&p)))
+                && (self.record(p).revoked
+                    || self.mirrors.iter().any(|m| m.id == p)
+                    || (self.record(p).request.is_some()
+                        && !self.record(p).admitted
+                        && self.record(p).outcome.is_none())
+                    || (p < self.floor && !self.retained.contains(&p)))
         });
+        let expired_parent = credit
+            && !record.cancelled
+            && request.parent.is_some_and(|p| {
+                self.entry(p).is_none()
+                    && !self.mirrors.iter().any(|m| m.id == p)
+                    && !(self.record(p).request.is_some()
+                        && !self.record(p).admitted
+                        && self.record(p).outcome.is_none())
+                    && !self.retained.contains(&p)
+                    && !self.history.contains(&p)
+                    && p < self.floor
+            });
         let mut eligible = credit && !record.cancelled && !parent_invalid;
         let mut victim = None;
         if let Some(parent) = parent {
-            eligible &= request.class != Class::Session;
+            eligible &= !request.class.is_session();
             eligible &= !self
                 .chain(parent)
                 .iter()
@@ -214,14 +338,26 @@ impl Monitor {
             .count()
             + 1;
         eligible &= survivors.len() < bounds.live && leaves <= bounds.roots;
-        Admission { credit, eligible }
+        Admission {
+            credit,
+            eligible,
+            expired_parent,
+            victim,
+        }
     }
     pub(super) fn admission_finished(&mut self, id: Id, before: Admission) {
         let record = self.record(id);
-        if before.eligible && record.outcome == Some(Outcome::Refused(Refusal::Busy)) {
+        if before.expired_parent
+            && record.outcome != Some(Outcome::Refused(Refusal::HistoryExpired))
+        {
+            self.fail(
+                "history-expired-parent",
+                format!("expired parent admission {id} did not refuse HistoryExpired"),
+            );
+        } else if before.eligible && !record.admitted {
             self.fail(
                 "reusable-capacity",
-                format!("Busy for independently feasible admission {id}"),
+                format!("independently feasible admission {id} did not admit"),
             );
         } else if before.credit && !record.admitted && !self.retained.contains(&id) {
             self.fail(
@@ -264,14 +400,34 @@ impl Monitor {
         if self.record(id).outcome.is_some() {
             self.fail("one-terminal-per-id", format!("second terminal for {id}"));
         }
+        if self
+            .record(id)
+            .expected_terminal
+            .is_some_and(|expected| expected != outcome)
+        {
+            self.fail(
+                "revocation-cascade",
+                format!("revoked subtree entry {id} published {outcome:?} instead of its required terminal"),
+            );
+        }
+        self.record_mut(id).expected_terminal = None;
+        let revoked = outcome.revoked() || self.record(id).revoked;
+        if live.is_some() && revoked && self.live.iter().any(|child| child.parent == Some(id)) {
+            self.fail(
+                "revocation-cascade",
+                format!("revoked entry {id} published before its live descendants settled"),
+            );
+        }
         if let Some(at) = live {
             let parent = self.live.remove(at).parent;
             self.record_mut(id).terminal_parent = parent;
-            for child in &mut self.live {
-                if child.parent == Some(id) {
-                    child.parent = parent;
-                    if parent.is_some() {
-                        child.origin = Origin::Adopted;
+            if !revoked {
+                for child in &mut self.live {
+                    if child.parent == Some(id) {
+                        child.parent = parent;
+                        if parent.is_some() {
+                            child.origin = Origin::Adopted;
+                        }
                     }
                 }
             }
@@ -410,7 +566,7 @@ impl Monitor {
                             .record(*id)
                             .request
                             .as_ref()
-                            .is_some_and(|r| r.class == Class::Session && r.parent.is_none())
+                            .is_some_and(|r| r.class.is_session() && r.parent.is_none())
                 })
             });
         let blocked = !live
@@ -453,7 +609,7 @@ impl Monitor {
                     .chain(row.ancestors.iter().copied())
                     .any(|id| self.record(id).revoked)
                 && (!row.pending || row.owner.is_some_and(|id| self.record(id).admitted))
-                && (self.session().is_none() || row.session == self.session()));
+                && (self.foreground().is_none() || row.session == self.foreground()));
         if expected != actual {
             self.fail(
                 if row.release {
@@ -473,12 +629,6 @@ impl Monitor {
         while self.rows.last().is_some_and(Option::is_none) {
             self.rows.pop();
         }
-    }
-    pub(super) fn discarded(&mut self, witnesses: impl Iterator<Item = usize>) {
-        for witness in witnesses {
-            self.rows[witness] = None;
-        }
-        self.trim_rows();
     }
     pub(super) fn reset(&mut self, floor: Id) {
         self.live.clear();
@@ -613,5 +763,142 @@ mod tests {
                 .name,
             "ordinary-completion-not-revocation"
         );
+    }
+    #[test]
+    fn feasible_admission_requires_acceptance_under_every_refusal_label() {
+        for refusal in [
+            Refusal::Busy,
+            Refusal::ParentBusy,
+            Refusal::ParentNotLive,
+            Refusal::LineageDepth,
+            Refusal::HistoryExpired,
+        ] {
+            let mut monitor = Monitor::default();
+            monitor.minted();
+            monitor.start(1, None, None, Class::Capability, 0);
+            let before = monitor.admission(1, Bounds::small());
+            monitor.published(1, Outcome::Refused(refusal), Bounds::small());
+            monitor.admission_finished(1, before);
+            assert_eq!(
+                monitor
+                    .check(Bounds::small(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "reusable-capacity",
+            );
+        }
+    }
+
+    #[test]
+    fn release_discard_requires_an_observed_discard_boundary() {
+        for step in [
+            Step::Reconnect { keep: true },
+            Step::SessionHeld,
+            Step::SessionResumed,
+            Step::Dispatch,
+        ] {
+            let mut monitor = Monitor::default();
+            monitor.emitted(None, true);
+            monitor.input(&step);
+            assert_eq!(
+                monitor
+                    .check(Bounds::small(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "encoder-release",
+            );
+        }
+        for step in [Step::Stop, Step::HeldTick, Step::Reconnect { keep: false }] {
+            let mut monitor = Monitor::default();
+            monitor.emitted(None, true);
+            monitor.input(&step);
+            monitor.check(Bounds::small(), std::iter::empty()).unwrap();
+        }
+    }
+
+    #[test]
+    fn revoked_publication_cannot_promote_a_live_child() {
+        for trigger in [
+            Trigger::HostRevoke,
+            Trigger::Superseded,
+            Trigger::ParentAborted,
+        ] {
+            let mut monitor = Monitor::default();
+            root(&mut monitor, 1);
+            monitor.minted();
+            monitor.start(2, Some(1), None, Class::Capability, 2);
+            monitor.accepted(2);
+            monitor.published(1, Outcome::Aborted(trigger), Bounds::small());
+            assert_eq!(
+                monitor
+                    .check(Bounds::small(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "revocation-cascade",
+            );
+        }
+    }
+
+    #[test]
+    fn host_action_observation_requires_immediate_ordered_dispatch() {
+        for dispatched in [None, Some(1)] {
+            let mut monitor = Monitor::default();
+            monitor.input(&Step::SessionHeld);
+            monitor.input(&Step::HostAction { action: 0 });
+            if let Some(action) = dispatched {
+                monitor.host_dispatched(action);
+            }
+            monitor.finished();
+            assert_eq!(
+                monitor
+                    .check(Bounds::small(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "host-action-dispatch",
+            );
+        }
+    }
+    #[test]
+    fn expired_parent_cannot_be_reinterpreted_as_a_completed_root() {
+        let bounds = Bounds {
+            history: 1,
+            ..Bounds::small()
+        };
+        let mut monitor = Monitor::default();
+        root(&mut monitor, 1);
+        monitor.published(1, Outcome::Done, bounds);
+        monitor.watermark(&[1]);
+        for id in [2, 3] {
+            root(&mut monitor, id);
+            monitor.published(id, Outcome::Aborted(Trigger::HostRevoke), bounds);
+            monitor.watermark(&[id]);
+        }
+        monitor.minted();
+        monitor.start(4, Some(1), None, Class::Capability, 0);
+        let before = monitor.admission(4, bounds);
+        monitor.accepted(4);
+        monitor.admission_finished(4, before);
+        assert_eq!(
+            monitor.check(bounds, std::iter::empty()).unwrap_err().name,
+            "history-expired-parent",
+        );
+    }
+    #[test]
+    fn pending_and_local_mirror_are_not_live_seat_parents() {
+        for mirror in [false, true] {
+            let mut monitor = Monitor::default();
+            monitor.minted();
+            if mirror {
+                monitor.mirror(1, None, None);
+            } else {
+                monitor.start(1, None, None, Class::Capability, 0);
+            }
+            monitor.minted();
+            monitor.start(2, Some(1), None, Class::Capability, 1);
+            let before = monitor.admission(2, Bounds::small());
+            monitor.published(2, Outcome::Refused(Refusal::ParentNotLive), Bounds::small());
+            monitor.admission_finished(2, before);
+            monitor.check(Bounds::small(), std::iter::empty()).unwrap();
+        }
     }
 }

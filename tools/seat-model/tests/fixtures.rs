@@ -1,6 +1,6 @@
 use seat_model::{
-    Bounds, Class, Id, MAX_START_CHARGE, Origin, Outcome, Refusal, Rules, START_METADATA, State,
-    Step, Trace, Trigger, run_trace,
+    Bounds, Class, Id, MAX_START_CHARGE, Origin, Outcome, Refusal, Rules, START_METADATA,
+    SessionFamily, State, Step, Trace, Trigger, run_trace,
 };
 
 struct Fixture {
@@ -91,7 +91,7 @@ fn expect_chosen_pass(fixture: &Fixture) -> Trace {
 
 fn v5_01_fixture() -> (Fixture, Id, Id) {
     let mut fixture = Fixture::new(Bounds::production());
-    let session = fixture.admitted(None, Class::Session, 1);
+    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 1);
     let child = fixture.child(session, 2);
     fixture.apply(Step::Emit {
         of: Some(child),
@@ -220,7 +220,7 @@ fn hybrid_completion_fixture(root_parent: bool) -> (Fixture, Id, Id, Id) {
         return (fixture, completing, completing, mirror);
     }
 
-    let session = fixture.admitted(None, Class::Session, 1);
+    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 1);
     let completing = fixture.child(session, 2);
     let mirror = fixture.mirror(Some(completing), None);
     fixture.apply(Step::Complete(completing));
@@ -584,7 +584,8 @@ fn chosen_r5_7_leaf_first_boundaries() {
     );
     assert_eq!(trace.final_state.outcome(root), Some(Outcome::Done));
 
-    let (mut manual_combat, root, child, leaf) = tree_fixture(Class::Session);
+    let (mut manual_combat, root, child, leaf) =
+        tree_fixture(Class::Session(SessionFamily::Gather));
     manual_combat.apply(Step::Revoke {
         of: root,
         trigger: Trigger::ManualCombat,
@@ -731,7 +732,7 @@ fn chosen_page_and_carry_retirement() {
 #[test]
 fn chosen_kept_reset_nonkept_reset_and_stop() {
     let mut kept = Fixture::new(Bounds::production());
-    let request = kept.admitted(None, Class::Session, 110);
+    let request = kept.admitted(None, Class::Session(SessionFamily::Gather), 110);
     kept.apply(Step::Prompt(request));
     kept.apply(Step::Decide {
         of: request,
@@ -752,7 +753,7 @@ fn chosen_kept_reset_nonkept_reset_and_stop() {
     assert_eq!(trace.final_state.dispatched(), 0);
 
     let mut reset = Fixture::new(Bounds::production());
-    let root = reset.admitted(None, Class::Session, 111);
+    let root = reset.admitted(None, Class::Session(SessionFamily::Gather), 111);
     let child = reset.child(root, 112);
     reset.apply(Step::Decide {
         of: root,
@@ -781,7 +782,7 @@ fn chosen_kept_reset_nonkept_reset_and_stop() {
     assert_eq!(trace.final_state.next_id(), next_id);
 
     let mut stopped = Fixture::new(Bounds::production());
-    let root = stopped.admitted(None, Class::Session, 113);
+    let root = stopped.admitted(None, Class::Session(SessionFamily::Gather), 113);
     let child = stopped.child(root, 114);
     stopped.apply(Step::Emit {
         of: Some(root),
@@ -803,7 +804,7 @@ fn chosen_kept_reset_nonkept_reset_and_stop() {
 #[test]
 fn r5_and_chosen_pre_cutover_completing_child_authority() {
     let mut fixture = Fixture::new(Bounds::production());
-    let session = fixture.admitted(None, Class::Session, 1);
+    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 1);
     let child = fixture.mirror(Some(session), None);
     fixture.apply(Step::Emit {
         of: Some(child),
@@ -1017,7 +1018,7 @@ fn chosen_adopted_siblings_cancel_in_lower_id_leaf_order() {
 #[test]
 fn chosen_completion_late_push_and_dispatch_revocation_windows() {
     let mut completed = Fixture::new(Bounds::production());
-    let session = completed.admitted(None, Class::Session, 1);
+    let session = completed.admitted(None, Class::Session(SessionFamily::Gather), 1);
     let child = completed.child(session, 2);
     completed.apply(Step::Emit {
         of: Some(child),
@@ -1190,12 +1191,12 @@ fn chosen_pending_actions_do_not_dispatch_without_admission() {
             bounds.credits = 1;
         }
         let mut fixture = Fixture::new(bounds);
-        let session = fixture.admitted(None, Class::Session, 1);
+        let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 1);
         let pending = fixture.start(
             Some(session),
             None,
             if case == 1 {
-                Class::Session
+                Class::Session(SessionFamily::Gather)
             } else {
                 Class::Capability
             },
@@ -1297,57 +1298,220 @@ fn chosen_history_expired_is_distinct_from_revoked() {
 }
 
 #[test]
-fn chosen_session_foreground_drops_capability_root_rows() {
-    let mut fixture = Fixture::new(Bounds::production());
-    let root = fixture.admitted(None, Class::Capability, 1);
-    fixture.apply(Step::Emit {
-        of: Some(root),
-        release: false,
-    });
-    let session = fixture.admitted(None, Class::Session, 2);
-    fixture.apply(Step::Take);
-    fixture.apply(Step::Dispatch);
-    fixture.apply(Step::Emit {
-        of: Some(root),
-        release: false,
-    });
-    fixture.apply(Step::Take);
-    fixture.apply(Step::Dispatch);
-    let trace = expect_chosen_pass(&fixture);
-    assert_eq!(trace.final_state.live(), 2);
-    assert!(trace.final_state.entry(root).is_some());
-    assert!(trace.final_state.entry(session).is_some());
-    assert_eq!(trace.final_state.dispatched(), 0);
-    assert_eq!(trace.final_state.dropped(), 2);
+fn chosen_session_root_rows_follow_family_and_start_order() {
+    let families = [
+        SessionFamily::Hunt,
+        SessionFamily::Gather,
+        SessionFamily::Combat,
+        SessionFamily::Progress,
+    ];
+    for family in families {
+        let mut capability_first = Fixture::new(Bounds::production());
+        let root = capability_first.admitted(None, Class::Capability, 1);
+        capability_first.apply(Step::Emit {
+            of: Some(root),
+            release: false,
+        });
+        let session = capability_first.admitted(None, Class::Session(family), 2);
+        capability_first.apply(Step::Take);
+        capability_first.apply(Step::Dispatch);
+        capability_first.apply(Step::Emit {
+            of: Some(root),
+            release: false,
+        });
+        capability_first.apply(Step::Take);
+        capability_first.apply(Step::Dispatch);
+        let trace = expect_chosen_pass(&capability_first);
+        let dispatched = usize::from(family == SessionFamily::Hunt) * 2;
+        assert_eq!(trace.final_state.dispatched(), dispatched, "{family:?}");
+        assert_eq!(trace.final_state.dropped(), 2 - dispatched, "{family:?}");
+        assert!(trace.final_state.entry(root).is_some(), "{family:?}");
+        assert!(trace.final_state.entry(session).is_some(), "{family:?}");
+        assert_eq!(
+            trace.final_state.foreground_session(),
+            family.owns_foreground().then_some(session),
+            "{family:?}"
+        );
 
-    let mut reverse = Fixture::new(Bounds::production());
-    let _session = reverse.admitted(None, Class::Session, 3);
-    let root = reverse.start(None, None, Class::Capability, 4, 0, 0);
-    reverse.apply(Step::Admit(root));
-    let trace = expect_chosen_pass(&reverse);
-    assert_eq!(
-        trace.final_state.outcome(root),
-        Some(Outcome::Refused(Refusal::Busy))
-    );
+        let mut session_first = Fixture::new(Bounds::production());
+        let session = session_first.admitted(None, Class::Session(family), 3);
+        let root = session_first.start(None, None, Class::Capability, 4, 0, 0);
+        session_first.apply(Step::Admit(root));
+        let trace = expect_chosen_pass(&session_first);
+        assert_eq!(
+            trace.final_state.outcome(root),
+            Some(Outcome::Refused(Refusal::Busy)),
+            "{family:?}"
+        );
+        assert!(trace.final_state.entry(root).is_none(), "{family:?}");
+        assert!(trace.final_state.entry(session).is_some(), "{family:?}");
+        assert_eq!(
+            trace.final_state.foreground_session(),
+            family.owns_foreground().then_some(session),
+            "{family:?}"
+        );
+    }
 }
 
 #[test]
-fn chosen_session_capture_drops_rows_after_foreground_handoff() {
+fn chosen_session_capture_handoff_covers_all_family_pairs() {
+    let families = [
+        SessionFamily::Hunt,
+        SessionFamily::Gather,
+        SessionFamily::Combat,
+        SessionFamily::Progress,
+    ];
+    for old_family in families {
+        for new_family in families {
+            let mut fixture = Fixture::new(Bounds::production());
+            let root = fixture.admitted(None, Class::Capability, 1);
+            let first = fixture.admitted(None, Class::Session(old_family), 2);
+            fixture.apply(Step::Emit {
+                of: Some(first),
+                release: false,
+            });
+            fixture.apply(Step::Complete(first));
+            let second = fixture.admitted(None, Class::Session(new_family), 3);
+            fixture.apply(Step::Take);
+            fixture.apply(Step::Dispatch);
+            let trace = expect_chosen_pass(&fixture);
+            let should_dispatch = new_family == SessionFamily::Hunt;
+            assert_eq!(
+                trace.final_state.dispatched(),
+                usize::from(should_dispatch),
+                "{old_family:?} -> {new_family:?}"
+            );
+            assert_eq!(
+                trace.final_state.dropped(),
+                usize::from(!should_dispatch),
+                "{old_family:?} -> {new_family:?}"
+            );
+            assert_eq!(trace.final_state.outcome(first), Some(Outcome::Done));
+            assert!(trace.final_state.entry(second).is_some());
+            assert!(trace.final_state.entry(root).is_some());
+            assert_eq!(
+                trace.final_state.foreground_session(),
+                new_family.owns_foreground().then_some(second),
+                "{old_family:?} -> {new_family:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn chosen_guardian_actions_dispatch_outside_session_queue() {
     let mut fixture = Fixture::new(Bounds::production());
-    let first = fixture.admitted(None, Class::Session, 1);
+    let root = fixture.admitted(None, Class::Capability, 1);
+    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 2);
+    for (count, action) in [5, 1, 9].into_iter().enumerate() {
+        fixture.apply(Step::HostAction { action });
+        assert_eq!(fixture.builder.host_actions_dispatched(), count + 1);
+        assert_eq!(fixture.builder.last_host_action(), Some(action));
+        assert_eq!(fixture.builder.dispatched(), 0);
+    }
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    assert!(fixture.builder.entry(root).is_some());
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.host_actions_dispatched(), 3);
+    assert_eq!(trace.final_state.last_host_action(), Some(9));
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert!(trace.final_state.entry(root).is_some());
+    assert_eq!(trace.final_state.foreground_session(), Some(session));
+}
+
+#[test]
+fn chosen_guardian_hold_freezes_seat_and_preserves_rows() {
+    let mut fixture = Fixture::new(Bounds::production());
+    let root = fixture.admitted(None, Class::Capability, 1);
+    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 2);
     fixture.apply(Step::Emit {
-        of: Some(first),
+        of: Some(session),
         release: false,
     });
-    fixture.apply(Step::Complete(first));
-    let second = fixture.admitted(None, Class::Session, 2);
+    fixture.apply(Step::Emit {
+        of: Some(root),
+        release: true,
+    });
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Emit {
+        of: Some(session),
+        release: false,
+    });
+    let pending = fixture.start(Some(session), None, Class::Capability, 3, 0, 0);
+    fixture.apply(Step::SessionHeld);
+    assert!(fixture.builder.session_held());
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+
+    let blocked = [
+        Step::Start {
+            parent: None,
+            local_parent: None,
+            class: Class::Capability,
+            group: 3,
+            bytes: 0,
+            hooks: 0,
+        },
+        Step::Admit(pending),
+        Step::AdmitStamped {
+            of: pending,
+            session: 0,
+        },
+        Step::Dispatch,
+        Step::Complete(session),
+        Step::Controls,
+        Step::Page,
+        Step::Watermark,
+        Step::Emit {
+            of: Some(session),
+            release: false,
+        },
+        Step::Take,
+        Step::Batch,
+        Step::Reconnect { keep: true },
+        Step::Stop,
+        Step::HeldTick,
+        Step::Throw(session),
+        Step::Prompt(session),
+        Step::Cancel {
+            of: pending,
+            throw: false,
+        },
+        Step::Revoke {
+            of: session,
+            trigger: Trigger::HostRevoke,
+        },
+        Step::Mirror {
+            ancestor: Some(session),
+            parent: None,
+        },
+    ];
+    for step in blocked {
+        let before = fixture.builder.clone();
+        assert!(fixture.builder.apply(&step).is_err(), "{step:?}");
+        assert_eq!(fixture.builder, before, "{step:?}");
+    }
+
+    fixture.apply(Step::HostAction { action: 7 });
+    assert_eq!(fixture.builder.host_actions_dispatched(), 1);
+    assert_eq!(fixture.builder.last_host_action(), Some(7));
+    assert!(fixture.builder.session_held());
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    assert!(fixture.builder.entry(root).is_some());
+    fixture.apply(Step::SessionResumed);
+    assert!(!fixture.builder.session_held());
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    fixture.apply(Step::Admit(pending));
+    fixture.apply(Step::Dispatch);
     fixture.apply(Step::Take);
     fixture.apply(Step::Dispatch);
     let trace = expect_chosen_pass(&fixture);
-    assert_eq!(trace.final_state.outcome(first), Some(Outcome::Done));
-    assert!(trace.final_state.entry(second).is_some());
-    assert_eq!(trace.final_state.dispatched(), 0);
-    assert_eq!(trace.final_state.dropped(), 1);
+    assert_eq!(trace.final_state.dispatched(), 2);
+    assert_eq!(trace.final_state.release_dispatched(), 1);
+    assert_eq!(trace.final_state.dropped(), 0);
+    assert_eq!(trace.final_state.host_actions_dispatched(), 1);
+    assert_eq!(trace.final_state.foreground_session(), Some(session));
+    assert!(trace.final_state.entry(root).is_some());
+    assert!(trace.final_state.entry(pending).is_some());
 }
 
 #[test]
