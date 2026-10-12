@@ -30,7 +30,8 @@ mod zones;
 pub use arrival::ArrivalSpec;
 pub use collision::CollisionView;
 pub use envelope::{
-    RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase, RouteRequest, RouteService,
+    BoundRouteRequest, RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase,
+    RouteRequest, RouteService,
 };
 pub use route::{LegView, RoutePlanLease, RouteView};
 pub use transport::TransportView;
@@ -146,6 +147,10 @@ pub enum ContractError {
     /// Area arrival cannot name a loc origin (`native/walk.rs`: `(Area, Some(loc))`).
     #[error("area arrival cannot carry a loc identity")]
     AreaWithLoc,
+    /// A Reach that names a loc is answered by the loaded scene
+    /// (`walk_loc_arrived`), never by the packed bake.
+    #[error("loc arrival needs the loaded scene, not the bake")]
+    LocArrivalNeedsScene,
     /// More than [`MAX_ZONE_KEYS`] named exemptions.
     #[error("more than {MAX_ZONE_KEYS} zone exemptions")]
     TooManyExemptions,
@@ -208,8 +213,9 @@ impl NavLease {
     /// Publish an immutable, identity-bound plan from a backend route.
     /// Owner-boundary constructor; iterating the lease does not expose
     /// `Route`/`Leg` storage. Not part of the frozen public facade
-    /// (hidden storage must not appear in a public signature).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// (hidden storage must not appear in a public signature). Test-only
+    /// until T5.1 adds the producer.
+    #[cfg(test)]
     pub(crate) fn publish_route(
         &self,
         identity: api::identity::WorkIdentity,

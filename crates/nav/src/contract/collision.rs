@@ -4,7 +4,8 @@
 //!
 //! These predicates read the packed bake. They are not current loaded-scene
 //! standability (`native/walk.rs` / `script_walk.rs`). Gatherer uses the bake
-//! (`gatherer/select.rs:1085-1088`).
+//! (`gatherer/select.rs:1085-1090`); the host filters packed Reach goals over
+//! it (`script_nav.rs:1912-1917`).
 
 use std::fmt;
 
@@ -13,7 +14,7 @@ use api::snapshot::WorldTile;
 use crate::collision::WorldCollision;
 
 use super::arrival::{area_has_goal, arrived};
-use super::{ArrivalSpec, PackId};
+use super::{ArrivalSpec, ContractError, PackId};
 
 /// Concrete borrowed collision view. Copying it copies the borrow, not the
 /// bake. Gatherer's fixed-stack local search stays in Gatherer and reads
@@ -47,6 +48,18 @@ impl<'a> CollisionView<'a> {
             && (lz as usize) < self.collision.height
     }
 
+    /// The bake's collision surface for [`api::query::CollisionArrivalProbe`]:
+    /// the walkable word of an in-bake tile, `None` outside the bake or
+    /// off-plane. Byte-for-byte the closure the host hands to
+    /// `retain_arrival_candidates` (`host-play/src/script_nav.rs:1913-1916`).
+    pub(super) fn collision_at(self, tile: WorldTile) -> Option<i32> {
+        let collision = self.collision;
+        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+            .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+    }
+
     /// Packed-bake footprint/ground standability. Face flags do not
     /// disqualify standing (`collision.rs:219-237`). Not live-scene
     /// standability.
@@ -76,10 +89,17 @@ impl<'a> CollisionView<'a> {
         crate::router::step_ok(self.collision, from, d)
     }
 
-    /// Packed-bake Reach or Area arrival. Reach uses bake walkable (solid
-    /// destinations are approached); Area uses bake standable. See
-    /// [`ArrivalSpec`].
-    pub fn arrived(self, here: WorldTile, dest: WorldTile, spec: ArrivalSpec) -> bool {
+    /// Packed-bake Reach or Area arrival. Reach is production
+    /// [`api::query::is_arrived`] over the bake's walkable word (solid
+    /// destinations are approached through an open edge); Area uses bake
+    /// standable. A Reach that names a loc is refused: only the scene can
+    /// answer it. See [`ArrivalSpec`].
+    pub fn arrived(
+        self,
+        here: WorldTile,
+        dest: WorldTile,
+        spec: ArrivalSpec,
+    ) -> Result<bool, ContractError> {
         arrived(&self, here, dest, spec)
     }
 
