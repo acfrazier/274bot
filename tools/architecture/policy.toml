@@ -16,6 +16,8 @@ members = [
     "nav",
     "panel",
     "scenario",
+    # Dev-only executable seat model (contract §27 §8); depends on no workspace crate.
+    "seat-model",
     "script",
     "tui",
     "vault",
