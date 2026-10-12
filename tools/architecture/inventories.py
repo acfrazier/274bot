@@ -605,12 +605,15 @@ def _frontend_module_sources(
     dict[tuple[str, ...], tuple[str, dict[str, Any], bool]],
     dict[tuple[str, ...], list[tuple[tuple[str, ...], bool]]],
     list[str],
+    dict[tuple[str, ...], tuple[str, ...]],
 ]:
+    """Resolve frontend-core modules, their children, and inherited cfg predicates."""
     root_file = (FRONTEND_SRC_RELATIVE / "lib.rs").as_posix()
     if root_file not in parsed:
-        return {}, {}, [f"missing Rust crate root: {root_file}"]
+        return {}, {}, [f"missing Rust crate root: {root_file}"], {}
     modules: dict[tuple[str, ...], tuple[str, dict[str, Any], bool]] = {}
     children: dict[tuple[str, ...], list[tuple[tuple[str, ...], bool]]] = {}
+    module_cfgs: dict[tuple[str, ...], tuple[str, ...]] = {}
     errors: list[str] = []
 
     def visit(
@@ -619,11 +622,13 @@ def _frontend_module_sources(
         module_path: tuple[str, ...],
         base: Path,
         inline: bool,
+        cfgs: tuple[str, ...],
     ) -> None:
         if module_path in modules:
             errors.append(f"{file_key}: duplicate frontend-core module path {'::'.join(module_path)}")
             return
         modules[module_path] = (file_key, container, inline)
+        module_cfgs[module_path] = cfgs
         children[module_path] = []
         for child in _children(container):
             if child.get("kind") != "MODULE" or _test_cfg_expression(child) is not None:
@@ -633,13 +638,14 @@ def _frontend_module_sources(
                 errors.append(f"{file_key}: module declaration has no supported name")
                 continue
             child_path = module_path + (name,)
+            child_cfgs = cfgs + _cfg_attributes(child)
             children[module_path].append((child_path, _is_public(child)))
             item_lists = _direct_children(child, "ITEM_LIST")
             if item_lists:
                 if len(item_lists) != 1:
                     errors.append(f"{file_key}::{name}: unsupported inline module shape")
                     continue
-                visit(file_key, item_lists[0], child_path, base / name, True)
+                visit(file_key, item_lists[0], child_path, base / name, True, child_cfgs)
                 continue
             try:
                 explicit_path = _module_path_attribute(child, file_key)
@@ -680,6 +686,7 @@ def _frontend_module_sources(
                 child_path,
                 _module_base(Path(existing[0])),
                 False,
+                child_cfgs,
             )
 
     visit(
@@ -688,8 +695,9 @@ def _frontend_module_sources(
         (),
         FRONTEND_SRC_RELATIVE,
         False,
+        (),
     )
-    return modules, children, errors
+    return modules, children, errors, module_cfgs
 
 
 def _normalize_source_path(path: Path) -> Path | None:
@@ -898,6 +906,42 @@ def _cfg_attribute(node: dict[str, Any]) -> str | None:
         if len(texts) >= 4 and texts[0] == "#" and texts[1] == "[" and texts[2] == "cfg":
             return "".join(texts[2:-1])
     return None
+
+
+def _cfg_attributes(node: dict[str, Any]) -> tuple[str, ...]:
+    """Every direct `#[cfg(...)]` predicate on a node, in source order."""
+    result: list[str] = []
+    for attribute in _direct_children(node, "ATTR"):
+        texts = [text for _, text in _attribute_tokens(attribute)]
+        if len(texts) >= 4 and texts[0] == "#" and texts[1] == "[" and texts[2] == "cfg":
+            result.append("".join(texts[2:-1]))
+    return tuple(result)
+
+
+def _cfg_attr_predicate(texts: list[str]) -> str | None:
+    """Return `cfg(<predicate>)` for `#[cfg_attr(<predicate>, ...)]` tokens."""
+    if len(texts) < 6 or texts[:4] != ["#", "[", "cfg_attr", "("]:
+        return None
+    depth = 0
+    for index in range(4, len(texts)):
+        text = texts[index]
+        if text in {"(", "["}:
+            depth += 1
+        elif text in {")", "]"}:
+            depth -= 1
+        elif text == "," and depth == 0:
+            return "cfg(" + "".join(texts[4:index]) + ")"
+    return None
+
+
+def _cfg_label(predicates: tuple[str, ...]) -> str:
+    """Exact conditional provenance of a violation; unconditional is production.
+
+    A mixed cfg such as `cfg(any(test, feature = "test-support"))` is not a
+    pure test scope, so it is recorded verbatim. Removing the gate changes
+    the violation id and is therefore a new violation, not an empty delta.
+    """
+    return " & ".join(predicates) if predicates else "production"
 
 
 def _test_cfg_expression(node: dict[str, Any]) -> str | None:
@@ -1257,7 +1301,7 @@ def _type_definitions(
         key = _TypeKey(path, symbol)
         if key in definitions:
             raise _InventoryError(f"{path}::{symbol}: duplicate public seam type")
-        fields: list[tuple[str, bool]] = []
+        fields: list[tuple[str, bool, tuple[str, ...]]] = []
         field_nodes: list[dict[str, Any]] = []
         if kind == "STRUCT":
             for field_list in _children(item):
@@ -1266,11 +1310,11 @@ def _type_definitions(
                         field_name = _first_name(field)
                         if field_name is None:
                             raise _InventoryError(f"{path}::{name}: unsupported record field")
-                        fields.append((field_name, _is_public(field)))
+                        fields.append((field_name, _is_public(field), _cfg_attributes(field)))
                         field_nodes.append(field)
                 elif field_list.get("kind") == "TUPLE_FIELD_LIST":
                     for index, field in enumerate(_direct_children(field_list, "TUPLE_FIELD")):
-                        fields.append((str(index), _is_public(field)))
+                        fields.append((str(index), _is_public(field), _cfg_attributes(field)))
                         field_nodes.append(field)
         else:
             for variant_list in _direct_children(item, "VARIANT_LIST"):
@@ -1278,6 +1322,7 @@ def _type_definitions(
                     variant_name = _first_name(variant)
                     if variant_name is None:
                         raise _InventoryError(f"{path}::{name}: unsupported enum variant")
+                    variant_cfgs = _cfg_attributes(variant)
                     for field_list in _children(variant):
                         if field_list.get("kind") == "RECORD_FIELD_LIST":
                             for field in _direct_children(field_list, "RECORD_FIELD"):
@@ -1286,11 +1331,23 @@ def _type_definitions(
                                     raise _InventoryError(
                                         f"{path}::{name}::{variant_name}: unsupported record field"
                                     )
-                                fields.append((f"{variant_name}::{field_name}", True))
+                                fields.append(
+                                    (
+                                        f"{variant_name}::{field_name}",
+                                        True,
+                                        variant_cfgs + _cfg_attributes(field),
+                                    )
+                                )
                                 field_nodes.append(field)
                         elif field_list.get("kind") == "TUPLE_FIELD_LIST":
                             for index, field in enumerate(_direct_children(field_list, "TUPLE_FIELD")):
-                                fields.append((f"{variant_name}::{index}", True))
+                                fields.append(
+                                    (
+                                        f"{variant_name}::{index}",
+                                        True,
+                                        variant_cfgs + _cfg_attributes(field),
+                                    )
+                                )
                                 field_nodes.append(field)
         attrs = _direct_attributes(item)
         attr_text = [[text for _, text in attr] for attr in attrs]
@@ -1298,17 +1355,27 @@ def _type_definitions(
             texts[:3] == ["#", "[", "derive"] and any(text == "Copy" for text in texts[3:])
             for texts in attr_text
         )
-        derives_clone = any(
-            (
-                texts[:3] == ["#", "[", "derive"] and "Clone" in texts[3:]
-            )
-            or (
-                texts[:3] == ["#", "[", "cfg_attr"]
-                and "derive" in texts
-                and "Clone" in texts
-            )
-            for texts in attr_text
+        unconditional_clone = any(
+            texts[:3] == ["#", "[", "derive"] and "Clone" in texts[3:] for texts in attr_text
         )
+        conditional_clone: set[str] = set()
+        for texts in attr_text:
+            if texts[:3] == ["#", "[", "cfg_attr"] and "derive" in texts and "Clone" in texts:
+                predicate = _cfg_attr_predicate(texts)
+                if predicate is None:
+                    raise _InventoryError(f"{path}::{name}: unsupported cfg_attr derive syntax")
+                conditional_clone.add(predicate)
+        derives_clone = unconditional_clone or bool(conditional_clone)
+        # An unconditional derive dominates. Otherwise Clone exists when any
+        # cfg_attr predicate holds; that exact condition is its provenance.
+        if unconditional_clone or not conditional_clone:
+            clone_cfgs: tuple[str, ...] = ()
+        elif len(conditional_clone) == 1:
+            clone_cfgs = (next(iter(conditional_clone)),)
+        else:
+            clone_cfgs = (
+                "cfg(any(" + ",".join(value[4:-1] for value in sorted(conditional_clone)) + "))",
+            )
         generic_names = _type_parameter_names(item)
         owning_field = False
         borrowed_field = False
@@ -1341,6 +1408,8 @@ def _type_definitions(
             "fields": fields,
             "classification": classification,
             "derived_clone": derives_clone,
+            "cfgs": _cfg_attributes(item),
+            "clone_cfgs": clone_cfgs,
         }
     return definitions
 
@@ -1350,8 +1419,9 @@ def _explicit_clone_impls(
     path: str,
     *,
     direct_only: bool = True,
-) -> set[str]:
-    clones: set[str] = set()
+) -> dict[str, set[tuple[str, ...]]]:
+    """Map each explicit `impl Clone for T` target to the cfg predicates of its impls."""
+    clones: dict[str, set[tuple[str, ...]]] = {}
     for item, scope, module_stack, _, _ in _walk_ast(tree, "production", ()):
         if _is_test_scope(scope) or (direct_only and module_stack):
             continue
@@ -1369,7 +1439,7 @@ def _explicit_clone_impls(
         trait = _path_segments(trait_paths[-1])
         target = _path_segments(target_paths[0])
         if trait and trait[-1] == "Clone" and target:
-            clones.add(target[-1])
+            clones.setdefault(target[-1], set()).add(_cfg_attributes(item))
     return clones
 
 
@@ -1381,7 +1451,7 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
     parsed, parse_errors = _read_frontend_files(root, executable)
     if parse_errors:
         return {}, set(), parse_errors
-    modules, module_children, module_errors = _frontend_module_sources(parsed)
+    modules, module_children, module_errors, module_cfgs = _frontend_module_sources(parsed)
     if module_errors:
         return {}, set(), module_errors
 
@@ -1893,16 +1963,17 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
     declared_by_name: dict[str, set[tuple[tuple[str, ...], str]]] = {}
     for origin in declared_types:
         declared_by_name.setdefault(origin[1], set()).add(origin)
-    explicit_clone_origins: set[tuple[tuple[str, ...], str]] = set()
+    explicit_clone_origins: dict[tuple[tuple[str, ...], str], set[tuple[str, ...]]] = {}
     for module_path, (_, container, _) in modules.items():
-        for name in _explicit_clone_impls(container, modules[module_path][0]):
+        for name, impl_cfgs in _explicit_clone_impls(container, modules[module_path][0]).items():
+            conditions = {module_cfgs[module_path] + cfgs for cfgs in impl_cfgs}
             local_origin = (module_path, name)
             if local_origin in declared_types:
-                explicit_clone_origins.add(local_origin)
+                explicit_clone_origins.setdefault(local_origin, set()).update(conditions)
                 continue
             matches = declared_by_name.get(name, set())
             if len(matches) == 1:
-                explicit_clone_origins.update(matches)
+                explicit_clone_origins.setdefault(next(iter(matches)), set()).update(conditions)
             elif len(matches) > 1:
                 errors.add(
                     f"{modules[module_path][0]}: ambiguous explicit Clone target {name}"
@@ -1959,19 +2030,23 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
                 f"syntax implies {classification}"
             )
 
+    def provenance(*parts: tuple[str, ...]) -> str:
+        return _cfg_label(tuple(dict.fromkeys(predicate for part in parts for predicate in part)))
+
     violations: set[_RecordKey] = set()
     for origin, key in origin_keys.items():
         definition = definitions[key]
         if definition["classification"] != "owning":
             continue
-        for field, public in definition["fields"]:
+        type_cfgs = module_cfgs[origin[0]] + definition.get("cfgs", ())
+        for field, public, field_cfgs in definition["fields"]:
             if public:
                 violations.add(
                     _RecordKey(
                         "owning_public_field",
                         key.path,
                         f"{key.symbol}::{field}",
-                        "production",
+                        provenance(type_cfgs, field_cfgs),
                         "public_field_of_owning_view",
                     )
                 )
@@ -1981,17 +2056,17 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
                     "owning_derived_clone",
                     key.path,
                     key.symbol,
-                    "production",
+                    provenance(type_cfgs, definition.get("clone_cfgs", ())),
                     "derived_Clone_on_owning_view",
                 )
             )
-        if origin in explicit_clone_origins:
+        for impl_cfgs in sorted(explicit_clone_origins.get(origin, ())):
             violations.add(
                 _RecordKey(
                     "owning_explicit_clone",
                     key.path,
                     key.symbol,
-                    "production",
+                    provenance(type_cfgs, impl_cfgs),
                     "explicit_Clone_on_owning_view",
                 )
             )

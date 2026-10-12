@@ -601,6 +601,97 @@ pub struct FleetView<'a> {
         self.assertTrue(any("owning_derived_clone" in finding for finding in bad_findings))
         self.assertEqual(good_findings, [])
 
+    def test_removing_mixed_test_feature_cfg_is_a_new_violation(self) -> None:
+        # Review r1: `cfg(any(test, feature = "test-support"))` is not a pure
+        # test scope. Its exact text is the violation provenance, so deleting
+        # the gate turns registered conditional debt into a new production id.
+        gate = 'cfg(any(test,feature="test-support"))'
+        conditional = self.baseline_views() + """
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone)]
+pub struct Probe {
+    pub name: String,
+}
+
+pub struct FleetRow {
+    label: String,
+    #[cfg(any(test, feature = "test-support"))]
+    pub fail_for: Option<String>,
+}
+"""
+        promoted = self.baseline_views() + """
+#[derive(Clone)]
+pub struct Probe {
+    pub name: String,
+}
+
+pub struct FleetRow {
+    label: String,
+    pub fail_for: Option<String>,
+}
+"""
+        removed = self.baseline_views() + """
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone)]
+pub struct Probe {
+    pub name: String,
+}
+
+pub struct FleetRow {
+    label: String,
+}
+"""
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("Probe", "owning"),
+            ("FleetRow", "owning"),
+        )
+
+        def records(cfg: str, *, field: bool = True) -> tuple[dict[str, str], ...]:
+            rows = [
+                _record("owning_derived_clone", VIEWS_PATH, "Probe", cfg, "derived_Clone_on_owning_view", owner="T3"),
+                _record("owning_public_field", VIEWS_PATH, "Probe::name", cfg, "public_field_of_owning_view", owner="T3"),
+            ]
+            if field:
+                rows.append(
+                    _record(
+                        "owning_public_field",
+                        VIEWS_PATH,
+                        "FleetRow::fail_for",
+                        cfg,
+                        "public_field_of_owning_view",
+                        owner="T3",
+                    )
+                )
+            return tuple(rows)
+
+        base = self.fixture(views=conditional, seam_types=seam_types, violations=records(gate))
+        # The attacker re-registers the same symbols under production ids, so
+        # each tree is internally clean; only the transition can see it.
+        bad = self.fixture(views=promoted, seam_types=seam_types, violations=records("production"))
+        unchanged = self.fixture(views=conditional, seam_types=seam_types, violations=records(gate))
+        good_removal = self.fixture(
+            views=removed,
+            seam_types=seam_types,
+            violations=records(gate, field=False),
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        self.assertEqual(inventories.check_tree(bad), [])
+        bad_findings = inventories.check_transition(base, bad)
+        print(f"BAD removed cfg(any(test, feature)) gate: {bad_findings}")
+        self.assertEqual(
+            bad_findings,
+            sorted(
+                f"new inventory violation: {row['id']}" for row in records("production")
+            ),
+        )
+        unchanged_findings = inventories.check_transition(base, unchanged)
+        removal_findings = inventories.check_transition(base, good_removal)
+        print(f"GOOD gate kept: {unchanged_findings}; GOOD conditional field removed: {removal_findings}")
+        self.assertEqual(unchanged_findings, [])
+        self.assertEqual(removal_findings, [])
+
     def test_owning_seams_cannot_reclassify_as_borrowed_or_scalar(self) -> None:
         base_temp = tempfile.TemporaryDirectory(prefix="f0-reclass-base-")
         borrowed_temp = tempfile.TemporaryDirectory(prefix="f0-reclass-borrowed-")

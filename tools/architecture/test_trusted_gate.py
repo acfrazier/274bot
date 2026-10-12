@@ -2,7 +2,8 @@
 
 Run with: python3 -m unittest discover -s tools/architecture -p 'test_*.py' -v
 The fixture treats product trees as files. It never imports or executes code
-from a candidate tree.
+from a candidate tree. It never launches a nested fixture suite either; the
+real-suite variants live in e2e_trusted_gate.py, outside the qualified corpus.
 """
 from __future__ import annotations
 
@@ -255,7 +256,47 @@ def _approval(
     }
 
 
-class TrustedGateProtocolTests(unittest.TestCase):
+# Review r1 high finding, verbatim: an E' honest only under the qualification
+# flag that the r1 gate set in every qualification child.
+REVIEW_FLAG_POISON = '''
+_honest_admit = admit
+
+def admit(args):
+    if os.environ.get("F0_ARCH_QUALIFICATION_CHILD") == "1":
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+
+'''
+
+# Stronger variant: honest whenever a test imports the module, dishonest only
+# when run as the `admit` executable. Fixture suites cannot see this.
+PRODUCTION_ONLY_POISON = '''
+_honest_admit = admit
+
+def admit(args):
+    if __name__ != "__main__":
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+
+'''
+
+
+class GateFixture(unittest.TestCase):
+    """Fixture repositories and the shared two-merge flow.
+
+    This corpus never launches a nested fixture suite, so no process in it
+    needs to know whether it runs under qualification. `real_suites` is set
+    only by `e2e_trusted_gate.py`, which is outside the qualified corpus.
+    """
+
+    real_suites = False
+
     def setUp(self) -> None:
         TEST_ROOT.mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(prefix="trusted-gate-", dir=TEST_ROOT)
@@ -365,22 +406,19 @@ class TrustedGateProtocolTests(unittest.TestCase):
         return candidate, _commit(candidate, label)
 
     def _prepare_enforcement(self, args: object) -> None:
-        if os.environ.get("F0_ARCH_QUALIFICATION_CHILD") == "1":
-            # This process is already inside the qualified corpus; do not
-            # recursively launch another full corpus, but exercise the rest
-            # of prepare/admit with the same fixture assertions.
-            with mock.patch.object(gate, "_run_child"):
-                gate.prepare_enforcement(args)
+        if self.real_suites:
+            gate.prepare_enforcement(args)
             return
-        gate.prepare_enforcement(args)
+        # Admission-mode probes still run E' as a real `admit` process.
+        with mock.patch.object(gate, "_run_child"):
+            gate.prepare_enforcement(args)
 
     def _ci_check(self, args: object) -> None:
-        if os.environ.get("F0_ARCH_QUALIFICATION_CHILD") == "1":
-            # CI suite execution is already the caller for this child process.
-            with mock.patch.object(gate, "_run_bundle_suite"):
-                gate.ci_check(args)
+        if self.real_suites:
+            gate.ci_check(args)
             return
-        gate.ci_check(args)
+        with mock.patch.object(gate, "_run_bundle_suite"):
+            gate.ci_check(args)
 
     def _assert_denied(self, args: object, *, contains: str | None = None) -> None:
         receipts_before = (self.records / "receipts.jsonl").read_bytes()
@@ -407,69 +445,68 @@ class TrustedGateProtocolTests(unittest.TestCase):
         self.assertEqual(current_after["bundle_digest"], current_before["bundle_digest"])
         self.assertEqual(current_after["runtime_pin"], current_before["runtime_pin"])
 
-    def test_enforcement_checkout_cleanliness_ignores_out_of_bundle_submodule(
-        self,
-    ) -> None:
-        source = self.root / "submodule-source"
-        _init_repo(source)
-        (source / "tracked.txt").write_text("clean\n", encoding="utf-8")
-        _commit(source, "fixture submodule source")
-        _git(source, "branch", gate.SUBMODULE_BRANCH)
-
-        checkout = self.root / "checkout-with-submodule"
-        _init_repo(checkout)
-        (checkout / "root.txt").write_text("clean\n", encoding="utf-8")
-        _commit(checkout, "fixture enforcement checkout")
-        _git(
-            checkout,
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            "--branch",
-            gate.SUBMODULE_BRANCH,
-            str(source),
-            gate.SUBMODULE_PATH,
+    def _poisoned_gate_e_prime(self, label: str, poison: str) -> None:
+        """An exact-approved E' whose trusted_gate.py cheats outside tests must not activate."""
+        proposed = _clone_at(self.enforcement, self.root / f"enforcement-{label}", self.e_sha)
+        path = proposed / gate.ARCH_DIR / "trusted_gate.py"
+        source = path.read_text(encoding="utf-8")
+        anchor = 'if __name__ == "__main__":'
+        self.assertIn(anchor, source)
+        path.write_text(source.replace(anchor, poison + anchor, 1), encoding="utf-8")
+        proposed_sha = _commit(proposed, f"fixture poisoned E-prime {label}")
+        proposed_digest = gate.bundle_digest(proposed)
+        candidate, candidate_sha = self._candidate_from(
+            self.b0, f"H-{label}", lambda root: _sync_executable_surface(proposed, root)
         )
-        _git(
-            checkout,
-            "config",
-            "-f",
-            ".gitmodules",
-            f"submodule.{gate.SUBMODULE_PATH}.url",
-            gate.SUBMODULE_URL,
+        current, _, _ = gate._read_record_store(self.records, TARGET_REF)
+        approval = _approval(
+            kind="enforcement",
+            head_sha=candidate_sha,
+            base_sha=self.b0_sha,
+            candidate_digest=gate.input_digest(candidate),
+            current=current,
+            proposed_sha=proposed_sha,
+            proposed_digest=proposed_digest,
+            delta=gate._evaluate_transition(self.enforcement, self.b0, candidate),
         )
-        checkout_sha = _commit(checkout, "fixture enforcement module pin")
-        gate.verify_checkout(
-            checkout,
-            checkout_sha,
-            "fixture enforcement checkout",
-            check_submodules=False,
+        (self.records / "approvals" / f"{candidate_sha}.json").write_text(
+            json.dumps(approval, sort_keys=True) + "\n", encoding="utf-8"
         )
-
-        (checkout / gate.SUBMODULE_PATH / "tracked.txt").write_text("dirty\n", encoding="utf-8")
-        with self.assertRaises(gate.GateError):
-            gate.verify_checkout(checkout, checkout_sha, "fixture product checkout")
-        gate.verify_checkout(
-            checkout,
-            checkout_sha,
-            "fixture enforcement checkout",
-            check_submodules=False,
+        self._commit_records(f"fixture exact approval for poisoned E-prime {label}")
+        proposal = {"proposed": proposed, "proposed_sha": proposed_sha, "proposed_digest": proposed_digest}
+        receipts_before = (self.records / "receipts.jsonl").read_bytes()
+        with self.assertRaises(gate.GateError) as rejected:
+            self._prepare_enforcement(
+                self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha, **proposal)
+            )
+        message = str(rejected.exception)
+        if not self.real_suites:
+            self.assertIn("admission-mode qualification failed", message)
+        self.assertFalse((self.records / "pending.json").exists())
+        self.assertEqual((self.records / "receipts.jsonl").read_bytes(), receipts_before)
+        print(f"BAD §26 {label}: prepare-enforcement refused: {message.splitlines()[0]}")
+        # No pending record exists, so no admission path can activate it:
+        # not with E' published early, not with the proposal arguments, and
+        # not as an ordinary candidate carrying E' bytes.
+        self._assert_denied(
+            self._args(
+                base=self.b0,
+                candidate=candidate,
+                head_sha=candidate_sha,
+                enforcement_ref_sha=proposed_sha,
+                **proposal,
+            ),
+            contains="protected enforcement ref tip",
         )
-
-
-    def test_trusted_dispatch_includes_inventory_findings(self) -> None:
-        candidate = _clone_at(self.b1, self.root / "invalid-inventory", self.b1_sha)
-        inventory = candidate / gate.ARCH_DIR / "inventories.json"
-        inventory.write_text("{}\n", encoding="utf-8")
-        findings = gate.checker_findings(self.enforcement, "tree", root=candidate)
-        expected = (
-            "inventory schema: top-level fields must be exactly "
-            "schema_version, seam_types, violations, test_exceptions"
+        self._assert_denied(
+            self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha, **proposal),
+            contains="require an orchestrator-prepared pending transition",
         )
-        print("BAD §26: malformed inventory must be rejected by the trusted dispatcher")
-        self.assertIn(expected, findings)
-        print("GOOD §26: trusted dispatcher applies the required inventory checker")
+        self._assert_denied(
+            self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha),
+            contains="protected enforcement bytes",
+        )
+        print(f"BAD §26 {label}: admission after the refused qualification also refused")
 
     def _poison_checker(self, marker: Path, *, skip_inventory: bool) -> str:
         prefix = (
@@ -560,21 +597,25 @@ if __name__ != "__main__":
         target_before = _git(self.repo_root, "rev-parse", TARGET_REF)
         with self.assertRaises(gate.GateError) as rejected:
             self._prepare_enforcement(args)
-        self.assertIn(
-            "test_trusted_dispatch_includes_inventory_findings",
-            str(rejected.exception),
-        )
-        self.assertIn("FAILED", str(rejected.exception))
+        message = str(rejected.exception)
+        if self.real_suites:
+            self.assertIn("protected fixture qualification failed", message)
+            self.assertIn("test_trusted_dispatch_includes_inventory_findings", message)
+            self.assertIn("FAILED", message)
+        else:
+            self.assertIn(
+                "admission-mode qualification failed: proposed E' admitted the known-bad",
+                message,
+            )
         self.assertFalse((self.records / "pending.json").exists())
         self.assertEqual(
             (self.records / "receipts.jsonl").read_bytes(), receipts_before
         )
         self.assertEqual(_git(self.repo_root, "rev-parse", TARGET_REF), target_before)
-        print(
-            f"BAD §26 {label}: exact-approved unsafe E' rejected by the old fixture corpus"
-        )
+        layer = "the real fixture suites" if self.real_suites else "the admission-mode probes"
+        print(f"BAD §26 {label}: exact-approved unsafe E' rejected by {layer}")
 
-    def test_two_merge_poisoning_ci_forced_base_approval_and_legitimate_update(self) -> None:
+    def _flow_two_merge(self) -> None:
         # First admit a strict-subset debt removal with no approval and no new epoch.
         removal_args = self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha)
         gate.admit(removal_args)
@@ -590,8 +631,7 @@ if __name__ != "__main__":
         self.assertIsNone(receipts[-1]["approval_digest"])
         print("GOOD §26 strict-subset policy removal admitted without approval or epoch change")
 
-        # Outer admission runs the full push suite; qualified children suppress
-        # only recursive suite discovery through _ci_check.
+        # The push check runs the full suite only in e2e_trusted_gate.py.
         push_args = self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha)
         push_args.mode = "push"
         push_args.base_sha = self.b0_sha
@@ -699,14 +739,10 @@ if __name__ != "__main__":
         )
         print("BAD §26 forged pin/approval refused without changing active E")
         # Exact approval and matching H bytes must not make an unsafe E' pass
-        # the old fixture corpus during qualification.
-        if os.environ.get("F0_ARCH_QUALIFICATION_CHILD") != "1":
-            self._assert_bad_e_prime_rejected(
-                "always-success-E-prime", omit_inventory=False
-            )
-            self._assert_bad_e_prime_rejected(
-                "omitted-inventory-E-prime", omit_inventory=True
-            )
+        # qualification: the e2e run rejects it through the real suites, the
+        # corpus run through the admission-mode probes.
+        self._assert_bad_e_prime_rejected("always-success-E-prime", omit_inventory=False)
+        self._assert_bad_e_prime_rejected("omitted-inventory-E-prime", omit_inventory=True)
 
         # Prepare the exact E' candidate, qualify under active E, then admit it
         # only after an externally committed pending record and exact E' ref tip.
@@ -744,7 +780,11 @@ if __name__ != "__main__":
             proposed_digest=proposed_digest,
         )
         self._prepare_enforcement(prepare_args)
-        print("GOOD §26 E-prime qualified by real active and proposed full fixture suites")
+        print(
+            "GOOD §26 E-prime qualified by "
+            + ("real active and proposed full fixture suites and " if self.real_suites else "")
+            + "admission-mode probes"
+        )
         self.assertTrue((self.records / "pending.json").is_file())
         _, _, pending_record = gate._read_record_store(self.records, TARGET_REF)
         self.assertEqual(pending_record["head_sha"], legitimate_sha)
@@ -773,7 +813,7 @@ if __name__ != "__main__":
         self.assertEqual(receipts[-1]["bundle_digest"], self.e_digest)
         self.assertEqual(receipts[-1]["activated_enforcement_sha"], proposed_sha)
         self.assertEqual(receipts[-1]["activated_bundle_digest"], proposed_digest)
-        print("GOOD §26 exact E-prime receipt activated only after real qualification")
+        print("GOOD §26 exact E-prime receipt activated only after qualification")
         push_update_args = self._args(
             base=self.b1,
             candidate=legitimate,
@@ -813,6 +853,181 @@ if __name__ != "__main__":
         )
         print("BAD §26 restored debt rejected under activated E-prime")
 
+
+class TrustedGateProtocolTests(GateFixture):
+    def test_flag_conditional_e_prime_review_reproduction_is_refused(self) -> None:
+        # Review r1 reproduction: honest only while the old qualification
+        # flag is set. The gate no longer sets any such flag, and the
+        # admission-mode probes run E' exactly as an operator would.
+        self._poisoned_gate_e_prime("flag-conditional-E-prime", REVIEW_FLAG_POISON)
+
+    def test_production_only_e_prime_is_refused_by_admission_probe(self) -> None:
+        # Honest whenever imported by a test; cheats only as the `admit`
+        # executable. Only an admission-mode run can observe this.
+        self._poisoned_gate_e_prime("production-only-E-prime", PRODUCTION_ONLY_POISON)
+
+    def test_enforcement_checkout_cleanliness_ignores_out_of_bundle_submodule(
+        self,
+    ) -> None:
+        source = self.root / "submodule-source"
+        _init_repo(source)
+        (source / "tracked.txt").write_text("clean\n", encoding="utf-8")
+        _commit(source, "fixture submodule source")
+        _git(source, "branch", gate.SUBMODULE_BRANCH)
+
+        checkout = self.root / "checkout-with-submodule"
+        _init_repo(checkout)
+        (checkout / "root.txt").write_text("clean\n", encoding="utf-8")
+        _commit(checkout, "fixture enforcement checkout")
+        _git(
+            checkout,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--branch",
+            gate.SUBMODULE_BRANCH,
+            str(source),
+            gate.SUBMODULE_PATH,
+        )
+        _git(
+            checkout,
+            "config",
+            "-f",
+            ".gitmodules",
+            f"submodule.{gate.SUBMODULE_PATH}.url",
+            gate.SUBMODULE_URL,
+        )
+        checkout_sha = _commit(checkout, "fixture enforcement module pin")
+        gate.verify_checkout(
+            checkout,
+            checkout_sha,
+            "fixture enforcement checkout",
+            check_submodules=False,
+        )
+
+        (checkout / gate.SUBMODULE_PATH / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaises(gate.GateError):
+            gate.verify_checkout(checkout, checkout_sha, "fixture product checkout")
+        gate.verify_checkout(
+            checkout,
+            checkout_sha,
+            "fixture enforcement checkout",
+            check_submodules=False,
+        )
+
+
+    def test_trusted_dispatch_includes_inventory_findings(self) -> None:
+        candidate = _clone_at(self.b1, self.root / "invalid-inventory", self.b1_sha)
+        inventory = candidate / gate.ARCH_DIR / "inventories.json"
+        inventory.write_text("{}\n", encoding="utf-8")
+        findings = gate.checker_findings(self.enforcement, "tree", root=candidate)
+        expected = (
+            "inventory schema: top-level fields must be exactly "
+            "schema_version, seam_types, violations, test_exceptions"
+        )
+        print("BAD §26: malformed inventory must be rejected by the trusted dispatcher")
+        self.assertIn(expected, findings)
+        print("GOOD §26: trusted dispatcher applies the required inventory checker")
+
+
+class TrustedGateTransitionTests(GateFixture):
+    def test_two_merge_poisoning_ci_forced_base_approval_and_legitimate_update(self) -> None:
+        self._flow_two_merge()
+
+    def test_client_gitlink_move_requires_exact_approval(self) -> None:
+        client = self.root / "client-history"
+        _init_repo(client)
+        (client / "README").write_text("one\n", encoding="utf-8")
+        first = _commit(client, "client one")
+        (client / "README").write_text("two\n", encoding="utf-8")
+        second = _commit(client, "client two")
+
+        history = self.root / "gitlink-history"
+        _write_product_tree(history, self.enforcement, debt=False)
+        (history / ".gitmodules").write_text(
+            f'[submodule "{gate.SUBMODULE_PATH}"]\n'
+            f"\tpath = {gate.SUBMODULE_PATH}\n"
+            f"\turl = {gate.SUBMODULE_URL}\n"
+            f"\tbranch = {gate.SUBMODULE_BRANCH}\n",
+            encoding="utf-8",
+        )
+        _init_repo(history)
+        identity = ("-c", "user.name=Architecture Gate Fixture", "-c", "user.email=architecture-gate-fixture@example.invalid")
+        # `git add --all` would drop a gitlink whose directory is absent, so
+        # stage files first and commit the index directly.
+        _git(history, "add", "--all")
+        _git(history, "update-index", "--add", "--cacheinfo", f"160000,{first},{gate.SUBMODULE_PATH}")
+        _git(history, *identity, "commit", "--quiet", "-m", "fixture base with client gitlink")
+        base_sha = _git(history, "rev-parse", "HEAD")
+        # Same path, URL, and branch; only the recorded client commit moves.
+        _git(history, "update-index", "--cacheinfo", f"160000,{second},{gate.SUBMODULE_PATH}")
+        _git(history, *identity, "commit", "--quiet", "-m", "fixture SHA-only client gitlink move")
+        candidate_sha = _git(history, "rev-parse", "HEAD")
+        base = _clone_at(history, self.root / "gitlink-B", base_sha)
+        candidate = _clone_at(history, self.root / "gitlink-H", candidate_sha)
+
+        records = self.root / "gitlink-records"
+        records.mkdir()
+        (records / "approvals").mkdir()
+        (records / "receipts.jsonl").write_text("", encoding="utf-8")
+        bootstrap = {
+            "accepted_sha": base_sha,
+            "contract_epoch": 0,
+            "enforcement_sha": self.e_sha,
+            "bundle_digest": self.e_digest,
+            "runtime_pin": self.runtime_pin,
+            "schema_versions": gate._schema_versions(base),
+            "input_digest": gate.input_digest(base),
+            "orchestrator_commit": base_sha,
+            "reason": "Fixture bootstrap with the protected client gitlink",
+            "operator_inline_approval": "Fixture bootstrap approval",
+            "owner_acknowledgements": ["T1"],
+        }
+        (records / "gate.json").write_text(
+            json.dumps(
+                {"format": gate.FORMAT, "schema_version": gate.GATE_SCHEMA, "target_ref": TARGET_REF, "bootstrap": bootstrap},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        _init_repo(records)
+        self.records = records
+        self.records_sha = _commit(records, "fixture gitlink bootstrap records")
+        self.repo_root = _clone_at(history, self.root / "gitlink-integration", base_sha)
+        _git(self.repo_root, "update-ref", TARGET_REF, base_sha)
+
+        args = self._args(base=base, candidate=candidate, head_sha=candidate_sha)
+        expected = f"client gitlink moved: {gate.SUBMODULE_PATH} {first} -> {second}"
+        self._assert_denied(args, contains=expected)
+        print(f"BAD §23 §3 SHA-only client gitlink move refused without approval: {expected}")
+
+        current, _, _ = gate._read_record_store(records, TARGET_REF)
+        findings = gate._evaluate_transition(self.enforcement, base, candidate)
+        self.assertEqual(findings, [expected])
+        approval = _approval(
+            kind="policy",
+            head_sha=candidate_sha,
+            base_sha=base_sha,
+            candidate_digest=gate.input_digest(candidate),
+            current=current,
+            proposed_sha=self.e_sha,
+            proposed_digest=self.e_digest,
+            delta=findings,
+        )
+        (records / "approvals" / f"{candidate_sha}.json").write_text(
+            json.dumps(approval, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self._commit_records("fixture exact approval for the client gitlink move")
+        gate.admit(self._args(base=base, candidate=candidate, head_sha=candidate_sha))
+        current, receipts, _ = gate._read_record_store(records, TARGET_REF)
+        self.assertEqual(current["head_sha"], candidate_sha)
+        self.assertEqual(current["contract_epoch"], 1)
+        self.assertEqual(receipts[-1]["transition_kind"], "policy")
+        self.assertEqual(receipts[-1]["delta"], [expected])
+        print("GOOD §23 §3 exactly approved client gitlink move admitted as a contract transition")
 
 
 if __name__ == "__main__":

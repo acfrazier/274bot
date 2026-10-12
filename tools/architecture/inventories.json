@@ -2178,11 +2178,11 @@
       "classification": "public_field_of_owning_view"
     },
     {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|production|Scripts::fail_reload_start_for|public_field_of_owning_view",
+      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|cfg(any(test,feature=\"test-support\"))|Scripts::fail_reload_start_for|public_field_of_owning_view",
       "category": "owning_public_field",
       "path": "crates/frontend-core/src/scripts/mod.rs",
       "symbol": "Scripts::fail_reload_start_for",
-      "cfg_or_target": "production",
+      "cfg_or_target": "cfg(any(test,feature=\"test-support\"))",
       "owner": "T3",
       "reason": "F0 baseline debt; remove at T3.1.",
       "removal_endpoint": "T3.1",
