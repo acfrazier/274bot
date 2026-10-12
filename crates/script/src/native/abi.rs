@@ -20,8 +20,8 @@
 //! execute in place; a Hunt effect's queued notes are called once each in note order before the
 //! effect is applied; the step's ops are placed at its queue position; then a `Step::Call` runs
 //! and a tick-step checkpoint can settle its Promise. A kick has no checkpoint and polls on the
-//! next drive. Current sources: `machine.rs:1291-1294,1311-1368,1345`; `load/machine_v8.rs:257-307`;
-//! `hunt.rs:584-585,794-807`. This does not assert seat-side `last_seq`, lineage, Decide/carry, or
+//! next drive. Current sources: `machine.rs:1293-1296,1313-1318,1357-1370`; `load/machine_v8.rs:257-307`;
+//! `hunt.rs:583-584,798-821`. This does not assert seat-side `last_seq`, lineage, Decide/carry, or
 //! child-before-parent scheduling: those are not active in this in-isolate machine host.
 //!
 //! The `families` arrays below name concrete registered `Family::NAME` values that expose each
@@ -174,6 +174,7 @@ const SYNC_LOG_FAMILIES: &[&str] = &[
     "banking_open",
     "bank_access",
     "bank_npc_access",
+    "bank_deposit",
     "dialog",
     "reach-npc-dialog",
     "reach-entity-op",
@@ -243,7 +244,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:314; $S/hunt.rs:622-624",
+        "$TS/api/combat/hunting/combat.ts:314; $S/hunt.rs:623",
     ),
     hook(
         HUNT_FAMILIES,
@@ -252,7 +253,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/supply.ts:542; $S/hunt.rs:699-703",
+        "$TS/api/combat/hunting/supply.ts:545; $S/hunt.rs:700-702",
     ),
     hook(
         &["reach-entity-op"],
@@ -261,7 +262,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/reach/Reach.ts:224; $S/reach_entity.rs:596-601",
+        "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:596-601",
     ),
     // Awaited / ignored. §28.1 applies V5-07: armSpecial, sustain and afterDeposit are ignored.
     hook(
@@ -271,7 +272,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:402; $S/hunt.rs:624-630",
+        "$TS/api/combat/hunting/combat.ts:402; $S/hunt.rs:624-629",
     ),
     hook(
         SUSTAIN_FAMILIES,
@@ -289,7 +290,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:268-282,384-410,474-493",
+        "$TS/api/bank/Banking.ts:296; $S/periodic_bank.rs:268-282,384-410,474-493",
     ),
     hook(
         &["death_recovery"],
@@ -326,7 +327,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/bank/stealRules.ts:37-43,69-75; $S/bank_withdraw.rs:190-198,353-357",
+        "$TS/api/thieving/stealRules.ts:37-43; $S/bank_withdraw.rs:190-198,353-357",
     ),
     hook(
         &["shop"],
@@ -452,7 +453,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:69,146; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -461,7 +462,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:69,146; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -470,7 +471,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:69,146; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
     ),
     // Call-sync / ignored.
     hook(
@@ -788,7 +789,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$TS/api/combat/hunting/combat.ts:521-522; $S/hunt.rs:783-807",
+        "$TS/api/combat/hunting/combat.ts:521-522; $S/hunt.rs:798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -797,7 +798,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -806,7 +807,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -815,7 +816,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -824,7 +825,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -833,7 +834,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -842,7 +843,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,618-621,783-807",
+        "$S/hunt.rs:50-88,618-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -851,7 +852,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,612-617,783-807",
+        "$S/hunt.rs:50-88,610-621,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -860,7 +861,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,794-807",
+        "$S/hunt.rs:50-88,798-821",
     ),
     hook(
         HUNT_FAMILIES,
@@ -869,7 +870,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,794-807",
+        "$S/hunt.rs:50-88,798-821",
     ),
     hook(
         &["clue_duel_travel"],
@@ -878,7 +879,25 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/duel.rs:174-178",
+        "$S/duel.rs:174-178,1023",
+    ),
+    hook(
+        &["clue_duel_handshake"],
+        "log",
+        "Duel handshake log forwarding through flush_logs",
+        HookPath::Ask,
+        HookValue::Ignored,
+        NO_DISCREPANCY,
+        "$S/duel.rs:174-178,559",
+    ),
+    hook(
+        &["clue_duel_helper"],
+        "log",
+        "Duel helper log forwarding through flush_logs",
+        HookPath::Ask,
+        HookValue::Ignored,
+        NO_DISCREPANCY,
+        "$S/duel.rs:174-178,694",
     ),
     hook(
         &["clue"],

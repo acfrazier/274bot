@@ -160,7 +160,9 @@ impl NativeKind {
                 _ => None,
             },
             commands: match self {
-                Self::Gather | Self::Combat | Self::QuestProgress => Some(ReconnectPolicy::Carry),
+                Self::Gather | Self::Combat | Self::QuestProgress | Self::Walk => {
+                    Some(ReconnectPolicy::Carry)
+                }
                 _ => None,
             },
             args_max_charge: MAX_START_CHARGE,
@@ -243,5 +245,113 @@ impl PendingPayload {
     }
     pub const fn charge(&self) -> usize {
         self.charge
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::script_contract::{
+        PausePolicy, ReconnectPolicy, RequestClass, SessionFamily, TakeoverPolicy,
+        GATHER_SETTINGS_MAX_BYTES, MAX_START_CHARGE,
+    };
+
+    #[test]
+    fn every_kind_policy_matches_r5_8_5_columns_including_walk_carry() {
+        for kind in NativeKind::ALL {
+            let policy = kind.policy();
+            assert_eq!(policy.args_max_charge(), MAX_START_CHARGE);
+            match kind {
+                NativeKind::Gather => {
+                    assert_eq!(policy.class(), RequestClass::Session(SessionFamily::Gather));
+                    assert_eq!(policy.pause(), PausePolicy::CancelOperation);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::SignalGather);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), Some(ReconnectPolicy::Interrupt));
+                    assert_eq!(policy.commands(), Some(ReconnectPolicy::Carry));
+                    assert_eq!(
+                        policy.encoded_settings_max(),
+                        Some(GATHER_SETTINGS_MAX_BYTES)
+                    );
+                }
+                NativeKind::Combat => {
+                    assert_eq!(policy.class(), RequestClass::Session(SessionFamily::Combat));
+                    assert_eq!(policy.pause(), PausePolicy::CancelOperation);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::CancelCombat);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), Some(ReconnectPolicy::Interrupt));
+                    assert_eq!(policy.commands(), Some(ReconnectPolicy::Carry));
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::Hunt => {
+                    assert_eq!(policy.class(), RequestClass::Session(SessionFamily::Hunt));
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), None);
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::Quester => {
+                    assert_eq!(
+                        policy.class(),
+                        RequestClass::Session(SessionFamily::Quester)
+                    );
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), Some(ReconnectPolicy::Interrupt));
+                    assert_eq!(policy.commands(), None);
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::DeathRecovery => {
+                    assert_eq!(
+                        policy.class(),
+                        RequestClass::Session(SessionFamily::DeathRecovery)
+                    );
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), None);
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::QuestProgress => {
+                    assert_eq!(
+                        policy.class(),
+                        RequestClass::Session(SessionFamily::Progress)
+                    );
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Carry);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), Some(ReconnectPolicy::Carry));
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::Walk => {
+                    assert_eq!(policy.class(), RequestClass::Capability);
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::InterruptWalk);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(
+                        policy.commands(),
+                        Some(ReconnectPolicy::Carry),
+                        "R5-8.5: the host carries the undispatched walk-control request (≤ HELD_WALKS)"
+                    );
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                _ => {
+                    assert_eq!(policy.class(), RequestClass::Capability);
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), None);
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+            }
+        }
+        assert_eq!(NativeKind::ALL.len(), 25);
     }
 }
