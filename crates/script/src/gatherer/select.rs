@@ -1411,8 +1411,12 @@ pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
                     "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
                 )
             });
-        nav::world::NavWorld::load_pack(&pack)
-            .unwrap_or_else(|error| panic!("load real 289 nav pack {}: {error}", pack.display()))
+        nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+            panic!(
+                "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
+                pack.display()
+            )
+        })
     });
     &WORLD
 }
