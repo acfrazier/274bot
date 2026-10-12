@@ -63,6 +63,51 @@
 //! }
 //! ```
 //!
+//! A job's progress phases are its family's: a job reporting map-bake
+//! phases cannot be submitted under a family whose phases are walk-map
+//! decode phases.
+//!
+//! ```compile_fail,E0271
+//! use api::identity::{Cancellation, WorkIdentity};
+//! use api::process_condition::ProcessConditions;
+//! use api::work::{
+//!     CooperativeJob, InputRevision, MapBakePhase, RetainedState, StepContext, StepOutcome,
+//!     WalkMapDecodePhase, WorkAdmission, WorkCharge, WorkFamily, WorkFamilySpec,
+//! };
+//!
+//! #[derive(Debug, thiserror::Error)]
+//! #[error("never")]
+//! struct Never;
+//!
+//! struct DecodeSpec;
+//! impl WorkFamilySpec for DecodeSpec {
+//!     const FAMILY: WorkFamily = WorkFamily::WalkMapDecode;
+//!     type Input = ();
+//!     type Output = u32;
+//!     type Error = Never;
+//!     type Phase = WalkMapDecodePhase;
+//!     fn revision(_: &()) -> InputRevision { InputRevision::FIRST }
+//!     fn charge(_: &()) -> WorkCharge { WorkCharge::new(0, 0, 0, 0) }
+//!     fn map_cancellation(reason: Cancellation) -> Cancellation { reason }
+//! }
+//!
+//! struct BakeJob;
+//! impl CooperativeJob for BakeJob {
+//!     type Output = u32;
+//!     type Error = Never;
+//!     type Phase = MapBakePhase;
+//!     fn step(&mut self, ctx: &mut StepContext<'_, MapBakePhase>) -> StepOutcome<u32, Never> {
+//!         ctx.publish_progress(MapBakePhase::Publishing, 1, Some(1));
+//!         StepOutcome::Completed(1)
+//!     }
+//!     fn retained(&self) -> RetainedState { RetainedState::clean(0) }
+//! }
+//!
+//! fn submit<S: WorkAdmission>(service: &mut S, identity: WorkIdentity, conditions: &ProcessConditions) {
+//!     let _ = service.try_submit::<DecodeSpec, BakeJob>(identity, &(), BakeJob, conditions);
+//! }
+//! ```
+//!
 //! Current producers this vocabulary will migrate (characterization in the
 //! producers' own crates, not cooperation): T5 map bake `run_job`
 //! (`crates/host-play/src/map_cache.rs:1960-2043`, `MapJobStatus`/`MapProgress`
@@ -71,11 +116,11 @@
 //! bank-pick; T5 `route_inspect.rs` inspection; card preparation
 //! (`crates/api/src/selected.rs:310-330`).
 
-use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroUsize};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
 
 use crate::identity::{
@@ -558,9 +603,18 @@ impl InputRevision {
 }
 
 /// Identity-bound ticket returned by a successful submit: job identity and
-/// input revision, typed by the family `F` it was submitted under. Display
-/// names and table indices are not identities. The service mints tickets;
-/// composing one by hand grants nothing the identity check does not.
+/// input revision, typed by the family spec `F` it was submitted under.
+/// Display names and table indices are not identities. The service mints
+/// tickets; composing one by hand grants nothing the identity check does
+/// not.
+///
+/// The binding is to the exact spec type `F`, not only to `F::FAMILY`:
+/// [`WorkFamilySpec`] is an open trait and registration does not enforce
+/// one spec per family, so the service records the submitted spec's
+/// `TypeId` and every ticket operation — cancel, abandon, borrow, consume,
+/// progress — is [`CancelOutcome::StaleIdentity`] /
+/// [`LedgerError::StaleIdentity`] under another spec, including one that
+/// declares the same family with different output, error or phase types.
 pub struct WorkTicket<F: WorkFamilySpec> {
     identity: WorkIdentity,
     revision: InputRevision,
@@ -911,30 +965,105 @@ impl ProgressReport {
     }
 }
 
+/// Live cancellation read a [`StepContext`] performs at every checkpoint
+/// (§26 §2.2: a checkpoint observes exact-job cancellation/revocation).
+/// `Sync`, so the registering owner (the service, on a caller's
+/// [`WorkAdmission::cancel`]) and the stepping worker share one source: a
+/// revocation registered during a step is visible at that step's next
+/// checkpoint without waiting for the step to return. The authoritative
+/// selection and its ordering against terminal publication stay in the
+/// service's custody state; a source only publishes that selection to the
+/// worker. It is not a second, independent cancellation selection.
+pub trait CancellationSource: Sync {
+    /// The registered cancellation, if any.
+    fn cancellation(&self) -> Option<Cancellation>;
+}
+
+/// A lock-free [`CancellationSource`] a job's service and worker share: an
+/// atomic holding the first registered [`Cancellation`]. The service
+/// registers after its custody selected that cancellation, so the source
+/// mirrors the selection; registration is first-wins and idempotent. This
+/// is the shape T1.2's worker reads; the protocol fixture uses it directly.
+#[derive(Debug, Default)]
+pub struct SharedCancellation(AtomicU8);
+
+impl SharedCancellation {
+    const NONE: u8 = 0;
+
+    /// No cancellation registered.
+    pub const fn new() -> Self {
+        Self(AtomicU8::new(Self::NONE))
+    }
+
+    /// Register `reason` unless a cancellation already stands; the standing
+    /// one is returned as the error and is never replaced.
+    pub fn register(&self, reason: Cancellation) -> Result<(), Cancellation> {
+        match self.0.compare_exchange(
+            Self::NONE,
+            Self::encode(reason),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(()),
+            Err(standing) => Err(Self::decode(standing)
+                .expect("a SharedCancellation holds only encoded cancellations")),
+        }
+    }
+
+    const fn encode(reason: Cancellation) -> u8 {
+        match reason {
+            Cancellation::Operator => 1,
+            Cancellation::Superseded => 2,
+            Cancellation::ScopeInvalidated => 3,
+            Cancellation::Shutdown => 4,
+        }
+    }
+
+    const fn decode(code: u8) -> Option<Cancellation> {
+        match code {
+            1 => Some(Cancellation::Operator),
+            2 => Some(Cancellation::Superseded),
+            3 => Some(Cancellation::ScopeInvalidated),
+            4 => Some(Cancellation::Shutdown),
+            _ => None,
+        }
+    }
+}
+
+impl CancellationSource for SharedCancellation {
+    fn cancellation(&self) -> Option<Cancellation> {
+        Self::decode(self.0.load(Ordering::Acquire))
+    }
+}
+
 /// Borrowed only for this `step` invocation. The job must not retain it
-/// across a yield. Cancellation is observed live; time is read from the
-/// clock at each checkpoint; progress reported here is published by the
-/// service with a service-assigned sequence.
-pub struct StepContext<'a> {
+/// across a yield. Cancellation is read live from the job's
+/// [`CancellationSource`] at each checkpoint; time is read from the clock
+/// at each checkpoint; progress reported here is published by the service
+/// with a service-assigned sequence. `P` is the submitted family's
+/// [`WorkFamilySpec::Phase`], so a job can only report its own family's
+/// phases.
+pub struct StepContext<'a, P: WorkPhase> {
     clock: &'a dyn MonotonicClock,
     deadline: Deadline,
     remaining_units: u32,
     allowance: u32,
-    cancel: &'a Cell<Option<Cancellation>>,
+    cancel: &'a dyn CancellationSource,
     units_this_slice: u32,
     yield_seen: bool,
     continued_after_yield: bool,
     progress: Option<ProgressReport>,
+    phase: PhantomData<fn(P)>,
 }
 
-impl<'a> StepContext<'a> {
-    /// A context for one slice. `cancel` is the per-job revocation cell;
-    /// a revocation registered during the step is visible at the next
-    /// checkpoint.
+impl<'a, P: WorkPhase> StepContext<'a, P> {
+    /// A context for one slice. `cancel` is the job's live revocation
+    /// source, shared with the registering service; a revocation registered
+    /// during the step is visible at the next checkpoint.
     pub fn new(
         clock: &'a dyn MonotonicClock,
         budget: SliceBudget,
-        cancel: &'a Cell<Option<Cancellation>>,
+        cancel: &'a dyn CancellationSource,
     ) -> Self {
         Self {
             clock,
@@ -946,12 +1075,14 @@ impl<'a> StepContext<'a> {
             yield_seen: false,
             continued_after_yield: false,
             progress: None,
+            phase: PhantomData,
         }
     }
 
-    /// Observe cancellation, the clock, and the current slice budget.
+    /// Observe cancellation (read live from the shared source), the clock,
+    /// and the current slice budget.
     pub fn checkpoint(&mut self) -> Checkpoint {
-        let decision = if let Some(reason) = self.cancel.get() {
+        let decision = if let Some(reason) = self.cancel.cancellation() {
             Checkpoint::Cancel(reason)
         } else if self.deadline.expired(self.clock.now()) || self.remaining_units == 0 {
             Checkpoint::Yield
@@ -974,12 +1105,12 @@ impl<'a> StepContext<'a> {
         self.checkpoint()
     }
 
-    /// Report replaceable progress (§26 §2.2). The service stamps the job
-    /// identity and an increasing sequence and publishes the latest report
-    /// of this slice when the slice returns; a later report within the same
-    /// slice replaces an earlier one. Progress never takes terminal custody
-    /// and is not an acknowledgement.
-    pub fn publish_progress<P: WorkPhase>(&mut self, phase: P, completed: u32, total: Option<u32>) {
+    /// Report replaceable progress (§26 §2.2) in this family's phases. The
+    /// service stamps the job identity and an increasing sequence and
+    /// publishes the latest report of this slice when the slice returns; a
+    /// later report within the same slice replaces an earlier one. Progress
+    /// never takes terminal custody and is not an acknowledgement.
+    pub fn publish_progress(&mut self, phase: P, completed: u32, total: Option<u32>) {
         self.progress = Some(ProgressReport {
             phase: phase.index(),
             completed,
@@ -1022,7 +1153,7 @@ impl<'a> StepContext<'a> {
     }
 }
 
-impl fmt::Debug for StepContext<'_> {
+impl<P: WorkPhase> fmt::Debug for StepContext<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StepContext")
             .field("now", &self.clock.now())
@@ -1339,11 +1470,18 @@ pub trait CooperativeJob: Send + 'static {
     type Output: Send + 'static;
     /// Family error.
     type Error: Send + 'static + fmt::Debug + std::error::Error;
+    /// Progress phases this job reports; submission requires the family's
+    /// [`WorkFamilySpec::Phase`].
+    type Phase: WorkPhase;
 
     /// Perform at most one declared interruptible unit before the next
     /// checkpoint. Check cancellation and the budget at entry, at each
-    /// phase boundary, and before every externally observable publish.
-    fn step(&mut self, ctx: &mut StepContext<'_>) -> StepOutcome<Self::Output, Self::Error>;
+    /// phase boundary, before every externally observable publish, and
+    /// again before returning a success result.
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, Self::Phase>,
+    ) -> StepOutcome<Self::Output, Self::Error>;
 
     /// What still lives on the job after Yielded. Forbidden items fail
     /// the job.
@@ -1365,7 +1503,8 @@ pub trait CooperativeJob: Send + 'static {
 /// composition's concrete service.
 pub trait WorkAdmission {
     /// Never waits for capacity or executes a job on the caller. The family,
-    /// charge and revision come from `F` and `input`, not from the caller.
+    /// charge and revision come from `F` and `input`, not from the caller;
+    /// the job's result, error and progress-phase types must be `F`'s.
     /// Acceptance takes custody of `job`; a refusal returns it.
     fn try_submit<F, J>(
         &mut self,
@@ -1376,18 +1515,29 @@ pub trait WorkAdmission {
     ) -> Result<WorkTicket<F>, Refused<J>>
     where
         F: WorkFamilySpec,
-        J: CooperativeJob<Output = F::Output, Error = F::Error>;
+        J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>;
 
-    /// Idempotent identity-scoped cancellation.
+    /// Idempotent identity-scoped cancellation (§26 §2.2). `Requested`
+    /// means the revocation was recorded in the job's custody, published to
+    /// the job's live [`CancellationSource`], and the service's worker was
+    /// woken ([`WorkerWake`]), in that order: an executing step observes it
+    /// at its next checkpoint and a parked worker does not wait for its next
+    /// slice. A repeated request records nothing, wakes nothing, and is
+    /// still `Requested` (the first selection stands); `AlreadyTerminal` and
+    /// `StaleIdentity` record and wake nothing. Requested is not proof that
+    /// the worker returned or released resources. A ticket of another spec
+    /// type is stale even when it names the same family (see
+    /// [`WorkTicket`]).
     fn cancel<F: WorkFamilySpec>(
         &mut self,
         ticket: WorkTicket<F>,
         reason: Cancellation,
     ) -> CancelOutcome;
 
-    /// Request cancellation and mark the ticket abandoned: its result is
-    /// discarded when the worker actually returns, and credit is retained
-    /// until then.
+    /// Request cancellation (with [`Self::cancel`]'s recording and wake
+    /// obligations) and mark the ticket abandoned: its result is discarded
+    /// when the worker actually returns, and credit is retained until
+    /// then.
     fn abandon<F: WorkFamilySpec>(
         &mut self,
         ticket: WorkTicket<F>,
@@ -1434,10 +1584,25 @@ pub trait WorkerCustody {
     ) -> Result<(), LedgerError>;
 }
 
+/// The neutral wake a service gives its own worker after recording a
+/// revocation (§26 §2.2: `cancel` "records revocation and wakes the
+/// service"), so a parked worker observes the revocation — and runs the
+/// job's bounded cancellation path — without waiting for its next
+/// scheduled slice. T1.2 maps it onto its worker park; the fixture counts
+/// it. It is not the consumer [`crate::identity::Notifier`]: no publication
+/// precedes it, it carries no sequence, and its recipient is the worker,
+/// not a consumer. Wakes may coalesce; the woken worker re-reads its jobs'
+/// [`CancellationSource`]s.
+pub trait WorkerWake: Send + Sync {
+    /// Wake the worker. Called after the revocation is registered in custody
+    /// and published to the job's source, never before.
+    fn wake(&self);
+}
+
 #[cfg(test)]
 mod ledger {
     use super::*;
-    use std::any::Any;
+    use std::any::{Any, TypeId};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -1458,10 +1623,24 @@ mod ledger {
         Failed(Erased),
     }
 
+    /// What the context observed during one slice, read after the typed
+    /// step returned and before erasure.
+    struct SliceReport {
+        continued: bool,
+        exceeded: bool,
+        progress: Option<ProgressReport>,
+    }
+
     /// The job in custody, with its family's types erased so one ledger
-    /// serves every family.
+    /// serves every family. The step runs under a context typed by the
+    /// family's phase; erasure happens after that typed call.
     trait ErasedJob: Send {
-        fn step(&mut self, ctx: &mut StepContext<'_>) -> ErasedStep;
+        fn step(
+            &mut self,
+            clock: &dyn MonotonicClock,
+            budget: SliceBudget,
+            cancel: &dyn CancellationSource,
+        ) -> (ErasedStep, SliceReport);
         fn retained(&self) -> RetainedState;
     }
 
@@ -1473,10 +1652,16 @@ mod ledger {
     impl<F, J> ErasedJob for Typed<F, J>
     where
         F: WorkFamilySpec,
-        J: CooperativeJob<Output = F::Output, Error = F::Error>,
+        J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
     {
-        fn step(&mut self, ctx: &mut StepContext<'_>) -> ErasedStep {
-            match self.job.step(ctx) {
+        fn step(
+            &mut self,
+            clock: &dyn MonotonicClock,
+            budget: SliceBudget,
+            cancel: &dyn CancellationSource,
+        ) -> (ErasedStep, SliceReport) {
+            let mut ctx = StepContext::<F::Phase>::new(clock, budget, cancel);
+            let outcome = match self.job.step(&mut ctx) {
                 StepOutcome::Yielded => ErasedStep::Yielded,
                 StepOutcome::Completed(value) => {
                     ErasedStep::Completed(Box::new(
@@ -1489,7 +1674,13 @@ mod ledger {
                 >::Failed(
                     JobError::Family(error),
                 ))),
-            }
+            };
+            let report = SliceReport {
+                continued: ctx.continued_after_yield(),
+                exceeded: ctx.exceeded_allowance(),
+                progress: ctx.reported_progress(),
+            };
+            (outcome, report)
         }
 
         fn retained(&self) -> RetainedState {
@@ -1519,22 +1710,29 @@ mod ledger {
 
     struct JobSlot {
         identity: WorkIdentity,
-        family: WorkFamily,
+        /// The submitted spec type: a ticket under any other spec is stale,
+        /// even one declaring the same `WorkFamily`.
+        spec: TypeId,
         revision: InputRevision,
         state: JobState,
         charge: WorkCharge,
-        job: Box<dyn ErasedJob>,
+        /// `None` while a dispatched [`Slice`] holds the job.
+        job: Option<Box<dyn ErasedJob>>,
         settle: fn(ServiceTerminal) -> Erased,
         terminal: Terminal<Erased>,
         progress: Option<WorkProgress>,
+        /// Authoritative terminal selection (cancellation versus outage).
         stranded: StrandedCustody,
+        /// The live source the worker reads; mirrors `stranded`'s selected
+        /// cancellation, registered only after custody selected it.
+        cancel: Arc<SharedCancellation>,
         abandoned: bool,
     }
 
     impl JobSlot {
         fn matches<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> bool {
             self.identity == ticket.identity()
-                && self.family == F::FAMILY
+                && self.spec == TypeId::of::<F>()
                 && self.revision == ticket.revision()
         }
 
@@ -1550,16 +1748,63 @@ mod ledger {
         }
     }
 
+    /// The worker's custody of one dispatched slice: the job and its live
+    /// cancellation source, out of the ledger while the step runs, so the
+    /// service can register a revocation mid-step without waiting for the
+    /// step to return.
+    pub struct Slice {
+        identity: WorkIdentity,
+        job: Box<dyn ErasedJob>,
+        cancel: Arc<SharedCancellation>,
+    }
+
+    /// What a stepped [`Slice`] hands back to [`AdmissionLedger::settle`].
+    pub struct SliceOutcome {
+        outcome: ErasedStep,
+        report: SliceReport,
+    }
+
+    impl Slice {
+        /// Run one step under `clock` and `budget`, reading cancellation
+        /// live from the shared source.
+        pub fn step(&mut self, clock: &dyn MonotonicClock, budget: SliceBudget) -> SliceOutcome {
+            let (outcome, report) = self.job.step(clock, budget, &*self.cancel);
+            SliceOutcome { outcome, report }
+        }
+
+        /// The live source this slice's checkpoints read, as the worker
+        /// holds it.
+        pub fn cancellation_source(&self) -> Arc<SharedCancellation> {
+            Arc::clone(&self.cancel)
+        }
+    }
+
+    impl fmt::Debug for Slice {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Slice")
+                .field("identity", &self.identity)
+                .field("cancellation", &self.cancel.cancellation())
+                .finish_non_exhaustive()
+        }
+    }
+
     struct Silent;
 
     impl Notifier for Silent {
         fn notify(&self, _notice: Notice) {}
     }
 
+    impl WorkerWake for Silent {
+        fn wake(&self) {}
+    }
+
     /// Protocol fixture: bounded admission, custody transfer,
     /// cancellation-versus-publication order, yield retention checks,
-    /// charge lifetime, and publish-before-notify through a real notifier.
-    /// Not a shipped executor.
+    /// charge lifetime, publish-before-notify through a real notifier, and
+    /// the cancellation wake through a real [`WorkerWake`]. The service and
+    /// the worker are split at [`Self::dispatch`] / [`Self::settle`] so a
+    /// revocation can be registered while a slice is out. Not a shipped
+    /// executor.
     pub struct AdmissionLedger {
         incarnation: ProcessIncarnation,
         bounds: AdmissionBounds,
@@ -1568,6 +1813,7 @@ mod ledger {
         last_job: Option<RequestId>,
         publications: Arc<WorkPublications>,
         notifier: Arc<dyn Notifier>,
+        wake: Arc<dyn WorkerWake>,
     }
 
     impl AdmissionLedger {
@@ -1577,6 +1823,7 @@ mod ledger {
                 bounds,
                 Arc::new(WorkPublications::new(Scope::Process)),
                 Arc::new(Silent),
+                Arc::new(Silent),
             )
         }
 
@@ -1585,6 +1832,7 @@ mod ledger {
             bounds: AdmissionBounds,
             publications: Arc<WorkPublications>,
             notifier: Arc<dyn Notifier>,
+            wake: Arc<dyn WorkerWake>,
         ) -> Self {
             Self {
                 incarnation,
@@ -1594,6 +1842,7 @@ mod ledger {
                 last_job: None,
                 publications,
                 notifier,
+                wake,
             }
         }
 
@@ -1767,34 +2016,48 @@ mod ledger {
             }
         }
 
-        /// Drive one slice of the job in custody for `job`. The clock is
-        /// borrowed for the step; the revocation cell is derived from the
-        /// job's custody, which is the one place a cancellation is recorded.
-        pub fn drive(
-            &mut self,
-            job: WorkIdentity,
-            clock: &dyn MonotonicClock,
-            budget: SliceBudget,
-        ) -> Result<Option<JobState>, LedgerError> {
+        /// Hand the job in custody for `job` to the worker for one slice.
+        /// `Ok(None)` when the job already has a terminal. While the slice
+        /// is out the slot keeps its custody, charge and live cancellation
+        /// source; a second dispatch is refused until [`Self::settle`].
+        pub fn dispatch(&mut self, job: WorkIdentity) -> Result<Option<Slice>, LedgerError> {
             let Some(slot) = self.slot_by_identity(job) else {
                 return Err(LedgerError::StaleIdentity);
             };
             if slot.has_terminal() {
                 return Ok(None);
             }
-            slot.state = JobState::Executing;
-            let cancel = Cell::new(slot.stranded.cancellation());
-            let (outcome, continued, exceeded, report) = {
-                let mut ctx = StepContext::new(clock, budget, &cancel);
-                let outcome = slot.job.step(&mut ctx);
-                (
-                    outcome,
-                    ctx.continued_after_yield(),
-                    ctx.exceeded_allowance(),
-                    ctx.reported_progress(),
-                )
+            let Some(erased) = slot.job.take() else {
+                return Err(LedgerError::WorkerNotReturned);
             };
-            let progress = report.map(|report| {
+            slot.state = JobState::Executing;
+            Ok(Some(Slice {
+                identity: slot.identity,
+                job: erased,
+                cancel: Arc::clone(&slot.cancel),
+            }))
+        }
+
+        /// Take the stepped slice back and arbitrate its outcome against
+        /// the custody's selected cancellation: a cancellation selected
+        /// before publication is the job's one terminal, whatever the step
+        /// returned; a terminal published while the slice was out (an
+        /// outage) stands.
+        pub fn settle(
+            &mut self,
+            slice: Slice,
+            result: SliceOutcome,
+        ) -> Result<Option<JobState>, LedgerError> {
+            let job = slice.identity;
+            let Some(slot) = self.slot_by_identity(job) else {
+                return Err(LedgerError::StaleIdentity);
+            };
+            slot.job = Some(slice.job);
+            if slot.has_terminal() {
+                return Ok(None);
+            }
+            let SliceOutcome { outcome, report } = result;
+            let progress = report.progress.map(|report| {
                 let sequence = slot.progress.as_ref().map_or(0, WorkProgress::sequence) + 1;
                 WorkProgress::new(
                     slot.identity,
@@ -1807,20 +2070,19 @@ mod ledger {
             if let Some(progress) = &progress {
                 slot.progress = Some(progress.clone());
             }
-            let cooperation = if continued {
+            let cooperation = if report.continued {
                 Some(CooperativeViolation::IgnoredYield)
-            } else if exceeded {
+            } else if report.exceeded {
                 Some(CooperativeViolation::UnboundedSlice)
             } else {
                 None
             };
-            let terminal: Option<Erased> = match (cancel.get(), outcome) {
-                // Cancellation registered before publication wins over a
-                // late success or a yield.
-                (Some(reason), ErasedStep::Completed(_) | ErasedStep::Yielded) => {
-                    Some((slot.settle)(ServiceTerminal::Cancelled(reason)))
-                }
-                (_, ErasedStep::Failed(error)) => Some(match cooperation {
+            let terminal: Option<Erased> = match (slot.stranded.cancellation(), outcome) {
+                // The cancellation selected before publication is the one
+                // terminal: a late success, a yield or a late family failure
+                // cannot replace it (§26 §2.5).
+                (Some(reason), _) => Some((slot.settle)(ServiceTerminal::Cancelled(reason))),
+                (None, ErasedStep::Failed(error)) => Some(match cooperation {
                     Some(violation) => (slot.settle)(ServiceTerminal::Cooperation(violation)),
                     None => error,
                 }),
@@ -1831,7 +2093,11 @@ mod ledger {
                 (None, ErasedStep::Yielded) => match cooperation {
                     Some(violation) => Some((slot.settle)(ServiceTerminal::Cooperation(violation))),
                     None => {
-                        let retained = slot.job.retained();
+                        let retained = slot
+                            .job
+                            .as_ref()
+                            .expect("the slice's job was just returned")
+                            .retained();
                         if let Some(kind) = retained.forbidden_item() {
                             Some((slot.settle)(ServiceTerminal::Cooperation(
                                 CooperativeViolation::ForbiddenRetain(kind),
@@ -1876,6 +2142,20 @@ mod ledger {
                 JobState::Queued | JobState::Executing => None,
             })
         }
+
+        /// Dispatch, step and settle one slice on this thread.
+        pub fn drive(
+            &mut self,
+            job: WorkIdentity,
+            clock: &dyn MonotonicClock,
+            budget: SliceBudget,
+        ) -> Result<Option<JobState>, LedgerError> {
+            let Some(mut slice) = self.dispatch(job)? else {
+                return Ok(None);
+            };
+            let result = slice.step(clock, budget);
+            self.settle(slice, result)
+        }
     }
 
     impl WorkAdmission for AdmissionLedger {
@@ -1888,7 +2168,7 @@ mod ledger {
         ) -> Result<WorkTicket<F>, Refused<J>>
         where
             F: WorkFamilySpec,
-            J: CooperativeJob<Output = F::Output, Error = F::Error>,
+            J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
         {
             let (charge, revision) = match self.admit::<F>(identity, input, conditions) {
                 Ok(admitted) => admitted,
@@ -1898,18 +2178,19 @@ mod ledger {
                 identity.job(),
                 JobSlot {
                     identity,
-                    family: F::FAMILY,
+                    spec: TypeId::of::<F>(),
                     revision,
                     state: JobState::Queued,
                     charge,
-                    job: Box::new(Typed::<F, J> {
+                    job: Some(Box::new(Typed::<F, J> {
                         job,
                         family: PhantomData,
-                    }),
+                    })),
                     settle: erase_service_terminal::<F>,
                     terminal: Terminal::new(),
                     progress: None,
                     stranded: StrandedCustody::new(identity.job(), identity.scope()),
+                    cancel: Arc::new(SharedCancellation::new()),
                     abandoned: false,
                 },
             );
@@ -1930,8 +2211,18 @@ mod ledger {
                 return CancelOutcome::AlreadyTerminal;
             }
             match slot.stranded.cancel(reason) {
-                // Idempotent: the first selection stands.
-                Ok(()) | Err(CustodyError::AlreadyCancelled(_)) => CancelOutcome::Requested,
+                Ok(()) => {
+                    // Recorded in custody first; then published to the live
+                    // source the stepping worker reads; then the wake.
+                    slot.cancel
+                        .register(reason)
+                        .expect("the source is free until custody selects a cancellation");
+                    self.wake.wake();
+                    CancelOutcome::Requested
+                }
+                // Idempotent: the first selection stands; nothing is
+                // recorded and nothing is woken.
+                Err(CustodyError::AlreadyCancelled(_)) => CancelOutcome::Requested,
                 Err(CustodyError::AlreadyFailed | CustodyError::WorkerStillCharged(_)) => {
                     CancelOutcome::AlreadyTerminal
                 }

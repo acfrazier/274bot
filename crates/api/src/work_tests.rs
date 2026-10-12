@@ -1,7 +1,7 @@
 use super::*;
 use std::cell::Cell;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::identity::{
@@ -210,8 +210,9 @@ impl CountJob {
 impl CooperativeJob for CountJob {
     type Output = u32;
     type Error = TestJobError;
+    type Phase = TestPhase;
 
-    fn step(&mut self, ctx: &mut StepContext<'_>) -> StepOutcome<u32, TestJobError> {
+    fn step(&mut self, ctx: &mut StepContext<'_, TestPhase>) -> StepOutcome<u32, TestJobError> {
         match ctx.checkpoint() {
             Checkpoint::Cancel(_) if !self.ignore_cancel => return StepOutcome::Yielded,
             Checkpoint::Yield if !self.ignore_yield => return StepOutcome::Yielded,
@@ -259,7 +260,7 @@ fn submit<F>(
     job: CountJob,
 ) -> Result<WorkTicket<F>, Refused<CountJob>>
 where
-    F: WorkFamilySpec<Input = TestInput, Output = u32, Error = TestJobError>,
+    F: WorkFamilySpec<Input = TestInput, Output = u32, Error = TestJobError, Phase = TestPhase>,
 {
     ledger.try_submit::<F, CountJob>(identity, &input, job, conditions)
 }
@@ -314,10 +315,10 @@ fn every_family_has_typed_owners_phases_and_terminals() {
 
 #[test]
 fn multi_unit_slice_yields_exactly_at_allowance() {
-    let cancel = Cell::new(None);
+    let cancel = SharedCancellation::new();
     let now = Instant::now();
     let clock = AdjClock::new(now);
-    let mut ctx = StepContext::new(&clock, budget(now, 3, 50), &cancel);
+    let mut ctx = StepContext::<TestPhase>::new(&clock, budget(now, 3, 50), &cancel);
     assert_eq!(ctx.checkpoint(), Checkpoint::Continue);
     assert_eq!(ctx.consume_unit(), Checkpoint::Continue);
     assert_eq!(ctx.consume_unit(), Checkpoint::Continue);
@@ -328,10 +329,10 @@ fn multi_unit_slice_yields_exactly_at_allowance() {
 
 #[test]
 fn deadline_expires_mid_slice_under_a_fake_clock() {
-    let cancel = Cell::new(None);
+    let cancel = SharedCancellation::new();
     let now = Instant::now();
     let clock = AdjClock::new(now);
-    let mut ctx = StepContext::new(&clock, budget(now, 8, 50), &cancel);
+    let mut ctx = StepContext::<TestPhase>::new(&clock, budget(now, 8, 50), &cancel);
     assert_eq!(ctx.consume_unit(), Checkpoint::Continue);
     clock.advance(Duration::from_millis(80));
     assert_eq!(ctx.checkpoint(), Checkpoint::Yield);
@@ -344,8 +345,8 @@ fn system_clock_is_a_live_clock_not_a_snapshot() {
     assert!(clock.now() >= first);
     // A deadline already in the past expires at the first checkpoint even
     // though the budget was built from an earlier instant.
-    let cancel = Cell::new(None);
-    let mut ctx = StepContext::new(
+    let cancel = SharedCancellation::new();
+    let mut ctx = StepContext::<TestPhase>::new(
         &clock,
         SliceBudget::new(NonZeroU32::new(8).unwrap(), Deadline::at(first)),
         &cancel,
@@ -355,12 +356,18 @@ fn system_clock_is_a_live_clock_not_a_snapshot() {
 
 #[test]
 fn cancellation_registered_between_units_is_observed() {
-    let cancel = Cell::new(None);
+    let cancel = SharedCancellation::new();
     let now = Instant::now();
     let clock = AdjClock::new(now);
-    let mut ctx = StepContext::new(&clock, budget(now, 8, 50), &cancel);
+    let mut ctx = StepContext::<TestPhase>::new(&clock, budget(now, 8, 50), &cancel);
     assert_eq!(ctx.consume_unit(), Checkpoint::Continue);
-    cancel.set(Some(Cancellation::Operator));
+    cancel.register(Cancellation::Operator).unwrap();
+    assert_eq!(ctx.checkpoint(), Checkpoint::Cancel(Cancellation::Operator));
+    assert_eq!(
+        cancel.register(Cancellation::Shutdown),
+        Err(Cancellation::Operator),
+        "the first registration stands"
+    );
     assert_eq!(ctx.checkpoint(), Checkpoint::Cancel(Cancellation::Operator));
 }
 
@@ -740,10 +747,10 @@ fn saturated_ledger_returns_full_and_hands_the_job_back() {
     assert_eq!(ledger.charged_jobs(), 1);
     assert!(!ledger.is_charged(&WorkTicket::<RouteSpec>::new(second, InputRevision::FIRST)));
     // The caller still owns the job: it can run it elsewhere later.
-    let cancel = Cell::new(None);
+    let cancel = SharedCancellation::new();
     let now = Instant::now();
     let clock = AdjClock::new(now);
-    let mut ctx = StepContext::new(&clock, budget(now, 8, 50), &cancel);
+    let mut ctx = StepContext::<TestPhase>::new(&clock, budget(now, 8, 50), &cancel);
     assert_eq!(job.step(&mut ctx), StepOutcome::Completed(7));
     assert_eq!(produced(&log).len(), 7);
 }
@@ -1324,6 +1331,36 @@ impl Notifier for Reader {
     }
 }
 
+/// What the worker wake saw: one entry per wake, holding what the watched
+/// job's live cancellation source read inside `wake`.
+#[derive(Default)]
+struct WakeLog {
+    watched: Mutex<Option<Arc<SharedCancellation>>>,
+    wakes: Mutex<Vec<Option<Cancellation>>>,
+}
+
+impl WakeLog {
+    fn watch(&self, source: Arc<SharedCancellation>) {
+        *self.watched.lock().unwrap() = Some(source);
+    }
+
+    fn wakes(&self) -> Vec<Option<Cancellation>> {
+        self.wakes.lock().unwrap().clone()
+    }
+}
+
+impl WorkerWake for WakeLog {
+    fn wake(&self) {
+        let read = self
+            .watched
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|source| source.cancellation());
+        self.wakes.lock().unwrap().push(read);
+    }
+}
+
 #[test]
 fn capacity_progress_and_terminal_notify_after_publication() {
     let ids = Ids::new();
@@ -1339,6 +1376,7 @@ fn capacity_progress_and_terminal_notify_after_publication() {
         bounds(2, 1024),
         Arc::clone(&publications),
         Arc::clone(&reader) as Arc<dyn Notifier>,
+        Arc::new(WakeLog::default()),
     );
     let id = ids.identity(incarnation);
     let mut job = CountJob::new(1);
@@ -1431,11 +1469,13 @@ fn an_outage_terminal_is_noticed_through_the_terminal_publication() {
         publications: Arc::clone(&publications),
         seen: Mutex::new(Vec::new()),
     });
+    let wake = Arc::new(WakeLog::default());
     let mut ledger = AdmissionLedger::with_notifier(
         incarnation,
         bounds(2, 1024),
         Arc::clone(&publications),
         Arc::clone(&reader) as Arc<dyn Notifier>,
+        Arc::clone(&wake) as Arc<dyn WorkerWake>,
     );
     let id = ids.identity(incarnation);
     let ticket: WorkTicket<RouteSpec> =
@@ -1449,4 +1489,674 @@ fn an_outage_terminal_is_noticed_through_the_terminal_publication() {
     let terminal = &seen[1];
     assert_eq!(terminal.notice, terminal.terminal.0);
     assert_eq!(terminal.terminal.1, Some(id));
+    assert!(
+        wake.wakes().is_empty(),
+        "an outage settles a gone worker; it is not a cancellation wake"
+    );
+}
+
+// --- Round 4: live cancellation seam, arbitration, spec identity, wake, phases ---
+
+struct Quiet;
+
+impl Notifier for Quiet {
+    fn notify(&self, _notice: Notice) {}
+}
+
+fn ledger_with_wake(
+    incarnation: ProcessIncarnation,
+    bounds: AdmissionBounds,
+    wake: &Arc<WakeLog>,
+) -> AdmissionLedger {
+    AdmissionLedger::with_notifier(
+        incarnation,
+        bounds,
+        Arc::new(WorkPublications::new(Scope::Process)),
+        Arc::new(Quiet),
+        Arc::clone(wake) as Arc<dyn WorkerWake>,
+    )
+}
+
+#[test]
+fn a_shared_cancellation_source_is_revoked_from_another_thread() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<SharedCancellation>();
+    let now = Instant::now();
+    let cancel = SharedCancellation::new();
+    let clock = AdjClock::new(now);
+    let mut ctx = StepContext::<TestPhase>::new(&clock, budget(now, 2, 100), &cancel);
+    assert_eq!(ctx.consume_unit(), Checkpoint::Continue);
+    std::thread::scope(|scope| {
+        scope.spawn(|| cancel.register(Cancellation::Operator).unwrap());
+    });
+    assert_eq!(ctx.checkpoint(), Checkpoint::Cancel(Cancellation::Operator));
+}
+
+/// Parks after every unit — including after its last unit, before the
+/// pre-success checkpoint — so the test thread can register a revocation
+/// through the ledger while the slice is out on a worker thread.
+#[derive(Debug)]
+struct GateJob {
+    next: u32,
+    target: u32,
+    log: Log,
+    unit_done: Arc<Barrier>,
+    proceed: Arc<Barrier>,
+    seen: Arc<Mutex<Vec<Checkpoint>>>,
+}
+
+impl CooperativeJob for GateJob {
+    type Output = u32;
+    type Error = TestJobError;
+    type Phase = TestPhase;
+
+    fn step(&mut self, ctx: &mut StepContext<'_, TestPhase>) -> StepOutcome<u32, TestJobError> {
+        loop {
+            let decision = ctx.checkpoint();
+            self.seen.lock().unwrap().push(decision);
+            match decision {
+                Checkpoint::Cancel(_) | Checkpoint::Yield => return StepOutcome::Yielded,
+                Checkpoint::Continue => {}
+            }
+            if self.next >= self.target {
+                // Obligation 7: the checkpoint above ran before this success.
+                return StepOutcome::Completed(self.next);
+            }
+            ctx.consume_unit();
+            self.log.lock().unwrap().push(self.next);
+            self.next += 1;
+            self.unit_done.wait();
+            self.proceed.wait();
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+struct Gate {
+    unit_done: Arc<Barrier>,
+    proceed: Arc<Barrier>,
+    seen: Arc<Mutex<Vec<Checkpoint>>>,
+    log: Log,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            unit_done: Arc::new(Barrier::new(2)),
+            proceed: Arc::new(Barrier::new(2)),
+            seen: Arc::new(Mutex::new(Vec::new())),
+            log: log(),
+        }
+    }
+
+    fn job(&self, target: u32) -> GateJob {
+        GateJob {
+            next: 0,
+            target,
+            log: Arc::clone(&self.log),
+            unit_done: Arc::clone(&self.unit_done),
+            proceed: Arc::clone(&self.proceed),
+            seen: Arc::clone(&self.seen),
+        }
+    }
+
+    fn seen(&self) -> Vec<Checkpoint> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+/// Dispatch `ticket`'s slice to a worker thread, let it finish `units`
+/// units, register `reason` through the ledger while the slice is still
+/// out, then let the worker reach its next checkpoint. Returns the settled
+/// state.
+fn revoke_mid_step(
+    ledger: &mut AdmissionLedger,
+    ticket: WorkTicket<RouteSpec>,
+    gate: &Gate,
+    wake: &WakeLog,
+    units: usize,
+    reason: Cancellation,
+) -> Option<JobState> {
+    let mut slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
+    wake.watch(slice.cancellation_source());
+    let clock = SystemClock;
+    let now = clock.now();
+    let result = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| slice.step(&clock, budget(now, 8, 10_000)));
+        for _ in 0..units {
+            gate.unit_done.wait();
+            gate.proceed.wait();
+        }
+        gate.unit_done.wait();
+        // The slice is out and parked before its next checkpoint.
+        assert_eq!(
+            ledger.dispatch(ticket.identity()).unwrap_err(),
+            LedgerError::WorkerNotReturned
+        );
+        assert_eq!(ledger.cancel(ticket, reason), CancelOutcome::Requested);
+        assert_eq!(
+            wake.wakes(),
+            vec![Some(reason)],
+            "the worker is woken after the revocation is registered"
+        );
+        gate.proceed.wait();
+        worker.join().unwrap()
+    });
+    ledger.settle(slice, result).unwrap()
+}
+
+#[test]
+fn a_revocation_registered_through_the_ledger_mid_step_is_observed_at_the_next_checkpoint() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let wake = Arc::new(WakeLog::default());
+    let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
+    let gate = Gate::new();
+    let id = ids.identity(incarnation);
+    let ticket = ledger
+        .try_submit::<RouteSpec, GateJob>(id, &input(8), gate.job(3), &conditions)
+        .unwrap();
+    assert_eq!(
+        revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Operator),
+        None,
+        "the slice settles as a terminal"
+    );
+    assert_eq!(produced(&gate.log), vec![0], "no unit after the revocation");
+    assert_eq!(
+        gate.seen(),
+        vec![
+            Checkpoint::Continue,
+            Checkpoint::Cancel(Cancellation::Operator)
+        ]
+    );
+    match ledger.borrow_terminal(&ticket).unwrap() {
+        Some(Settlement::Cancelled(Cancellation::Operator)) => {}
+        other => panic!("expected Cancelled(Operator), got {other:?}"),
+    }
+    assert!(ledger.dispatch(id).unwrap().is_none());
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Cancelled(Cancellation::Operator) => {}
+        other => panic!("expected Cancelled(Operator), got {other:?}"),
+    }
+}
+
+#[test]
+fn a_revocation_registered_before_the_success_checkpoint_cancels_instead_of_publishing() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let wake = Arc::new(WakeLog::default());
+    let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
+    let gate = Gate::new();
+    let ticket = ledger
+        .try_submit::<RouteSpec, GateJob>(
+            ids.identity(incarnation),
+            &input(8),
+            gate.job(1),
+            &conditions,
+        )
+        .unwrap();
+    assert_eq!(
+        revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Shutdown),
+        None
+    );
+    assert_eq!(
+        produced(&gate.log),
+        vec![0],
+        "the last unit ran; the success it would have returned did not publish"
+    );
+    assert_eq!(
+        gate.seen(),
+        vec![
+            Checkpoint::Continue,
+            Checkpoint::Cancel(Cancellation::Shutdown)
+        ],
+        "the pre-success checkpoint observed the revocation"
+    );
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Cancelled(Cancellation::Shutdown) => {}
+        other => panic!("expected Cancelled(Shutdown), got {other:?}"),
+    }
+}
+
+/// Fails with a family error at its first step, whatever its checkpoint
+/// said: a late family failure.
+#[derive(Debug)]
+struct FailJob(&'static str);
+
+impl CooperativeJob for FailJob {
+    type Output = u32;
+    type Error = TestJobError;
+    type Phase = TestPhase;
+
+    fn step(&mut self, ctx: &mut StepContext<'_, TestPhase>) -> StepOutcome<u32, TestJobError> {
+        let _ = ctx.checkpoint();
+        StepOutcome::Failed(TestJobError(self.0))
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn a_selected_cancellation_is_not_replaced_by_a_late_family_failure() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let ticket = ledger
+        .try_submit::<RouteSpec, FailJob>(
+            ids.identity(incarnation),
+            &input(8),
+            FailJob("late cleanup failure"),
+            &conditions,
+        )
+        .unwrap();
+    assert_eq!(
+        ledger.cancel(ticket, Cancellation::Operator),
+        CancelOutcome::Requested
+    );
+    let now = Instant::now();
+    assert_eq!(
+        ledger
+            .drive(ticket.identity(), &AdjClock::new(now), budget(now, 2, 100))
+            .unwrap(),
+        None
+    );
+    match ledger.borrow_terminal(&ticket).unwrap() {
+        Some(Settlement::Cancelled(Cancellation::Operator)) => {}
+        other => panic!("the selected cancellation must stand, got {other:?}"),
+    }
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Cancelled(Cancellation::Operator) => {}
+        other => panic!("expected Cancelled(Operator), got {other:?}"),
+    }
+}
+
+#[test]
+fn a_published_family_failure_is_not_rewritten_by_a_later_cancellation() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let ticket = ledger
+        .try_submit::<RouteSpec, FailJob>(
+            ids.identity(incarnation),
+            &input(8),
+            FailJob("late cleanup failure"),
+            &conditions,
+        )
+        .unwrap();
+    let now = Instant::now();
+    assert_eq!(
+        ledger
+            .drive(ticket.identity(), &AdjClock::new(now), budget(now, 2, 100))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        ledger.cancel(ticket, Cancellation::Operator),
+        CancelOutcome::AlreadyTerminal
+    );
+    assert_eq!(
+        ledger.cancellation(&ticket),
+        None,
+        "a late request selects nothing"
+    );
+    match ledger.borrow_terminal(&ticket).unwrap() {
+        Some(Settlement::Failed(JobError::Family(TestJobError("late cleanup failure")))) => {}
+        other => panic!("the published failure must stand, got {other:?}"),
+    }
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Failed(JobError::Family(TestJobError("late cleanup failure"))) => {}
+        other => panic!("expected the family failure, got {other:?}"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+enum DecodeError {
+    #[error("png exceeds {0} bytes")]
+    Oversized(usize),
+}
+
+/// A second family with its own result, error and phase types.
+struct DecodeSpec;
+
+impl WorkFamilySpec for DecodeSpec {
+    const FAMILY: WorkFamily = WorkFamily::WalkMapDecode;
+    type Input = TestInput;
+    type Output = String;
+    type Error = DecodeError;
+    type Phase = WalkMapDecodePhase;
+
+    fn revision(input: &TestInput) -> InputRevision {
+        InputRevision::new(input.revision)
+    }
+
+    fn charge(input: &TestInput) -> WorkCharge {
+        WorkCharge::new(input.bytes, input.scratch, 0, input.handles)
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+
+#[derive(Debug)]
+struct TextJob {
+    text: &'static str,
+    oversized: Option<usize>,
+}
+
+impl CooperativeJob for TextJob {
+    type Output = String;
+    type Error = DecodeError;
+    type Phase = WalkMapDecodePhase;
+
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, WalkMapDecodePhase>,
+    ) -> StepOutcome<String, DecodeError> {
+        if let Checkpoint::Cancel(_) | Checkpoint::Yield = ctx.checkpoint() {
+            return StepOutcome::Yielded;
+        }
+        ctx.consume_unit();
+        ctx.publish_progress(WalkMapDecodePhase::Publish, 1, Some(1));
+        match self.oversized {
+            Some(bytes) => StepOutcome::Failed(DecodeError::Oversized(bytes)),
+            None => StepOutcome::Completed(self.text.to_owned()),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn families_with_distinct_result_error_and_phase_types_share_one_ledger() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(4, 1024));
+    let mut counting = CountJob::new(1);
+    counting.report = true;
+    let route: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        counting,
+    )
+    .unwrap();
+    let decode = ledger
+        .try_submit::<DecodeSpec, TextJob>(
+            ids.identity(incarnation),
+            &input(8),
+            TextJob {
+                text: "decoded",
+                oversized: None,
+            },
+            &conditions,
+        )
+        .unwrap();
+    let failing = ledger
+        .try_submit::<DecodeSpec, TextJob>(
+            ids.identity(incarnation),
+            &input(8),
+            TextJob {
+                text: "",
+                oversized: Some(70_000),
+            },
+            &conditions,
+        )
+        .unwrap();
+    let now = Instant::now();
+    let clock = AdjClock::new(now);
+    for job in [route.identity(), decode.identity(), failing.identity()] {
+        assert_eq!(
+            ledger.drive(job, &clock, budget(now, 2, 100)).unwrap(),
+            None
+        );
+        ledger.worker_returned(job).unwrap();
+    }
+    assert_eq!(
+        ledger.progress(&route).unwrap().phase(),
+        TestPhase::Commit.index(),
+        "route progress is in route phases"
+    );
+    assert_eq!(
+        ledger.progress(&decode).unwrap().phase(),
+        WalkMapDecodePhase::Publish.index(),
+        "decode progress is in decode phases"
+    );
+    assert_eq!(WalkMapDecodePhase::Publish.index(), 2);
+    assert!(
+        WalkMapDecodePhase::Publish.index() > TestPhase::Commit.index(),
+        "a decode phase index is not a route phase index"
+    );
+    // A route ticket composed for the decode job's identity is stale: the
+    // spec, not only the identity, is checked.
+    let forged = WorkTicket::<RouteSpec>::new(decode.identity(), decode.revision());
+    assert_eq!(
+        ledger.borrow_terminal(&forged).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(
+        ledger.consume(&decode).unwrap(),
+        Settlement::Completed("decoded".to_owned())
+    );
+    assert_eq!(
+        ledger.consume(&failing).unwrap(),
+        Settlement::Failed(JobError::Family(DecodeError::Oversized(70_000)))
+    );
+    assert_eq!(ledger.consume(&route).unwrap(), Settlement::Completed(1));
+    assert_eq!(ledger.charged_jobs(), 0);
+}
+
+/// The same runtime family as [`RouteSpec`] with another output type: a
+/// second spec that registration does not forbid.
+struct RouteAliasSpec;
+
+impl WorkFamilySpec for RouteAliasSpec {
+    const FAMILY: WorkFamily = WorkFamily::Route;
+    type Input = TestInput;
+    type Output = String;
+    type Error = TestJobError;
+    type Phase = TestPhase;
+
+    fn revision(input: &TestInput) -> InputRevision {
+        InputRevision::new(input.revision)
+    }
+
+    fn charge(input: &TestInput) -> WorkCharge {
+        WorkCharge::new(input.bytes, input.scratch, 0, input.handles)
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+
+#[test]
+fn a_different_spec_of_the_same_family_is_stale_for_every_ticket_operation() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let mut job = CountJob::new(1);
+    job.report = true;
+    let ticket: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        job,
+    )
+    .unwrap();
+    let alias = WorkTicket::<RouteAliasSpec>::new(ticket.identity(), ticket.revision());
+    assert_eq!(
+        alias.family(),
+        ticket.family(),
+        "same WorkFamily, other spec"
+    );
+
+    // Pending: the alias cannot cancel, abandon or see the accepted job.
+    assert_eq!(
+        ledger.cancel(alias, Cancellation::Operator),
+        CancelOutcome::StaleIdentity
+    );
+    assert_eq!(
+        ledger.cancellation(&ticket),
+        None,
+        "the job was not cancelled"
+    );
+    assert!(!ledger.is_charged(&alias));
+    assert!(ledger.progress(&alias).is_none());
+    let now = Instant::now();
+    assert_eq!(
+        ledger
+            .drive(ticket.identity(), &AdjClock::new(now), budget(now, 2, 100))
+            .unwrap(),
+        None
+    );
+    assert!(ledger.progress(&ticket).is_some());
+    assert!(ledger.progress(&alias).is_none());
+    ledger.worker_returned(ticket.identity()).unwrap();
+
+    // Terminal: the alias cannot borrow, consume or discard it.
+    assert_eq!(
+        ledger.borrow_terminal(&alias).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(
+        ledger.consume(&alias).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(
+        ledger.abandon(alias, Cancellation::Operator),
+        CancelOutcome::StaleIdentity
+    );
+    assert!(
+        ledger.is_charged(&ticket),
+        "the accepted ticket's terminal was not discarded"
+    );
+    match ledger.borrow_terminal(&ticket).unwrap() {
+        Some(Settlement::Completed(1)) => {}
+        other => panic!("expected the accepted terminal, got {other:?}"),
+    }
+    assert_eq!(ledger.consume(&ticket).unwrap(), Settlement::Completed(1));
+    assert!(!ledger.is_charged(&ticket));
+}
+
+#[test]
+fn cancel_wakes_the_worker_once_per_recorded_revocation() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let wake = Arc::new(WakeLog::default());
+    let mut ledger = ledger_with_wake(incarnation, bounds(4, 1024), &wake);
+    let now = Instant::now();
+    let clock = AdjClock::new(now);
+
+    // A dispatched job: the worker holds its live source while the
+    // service registers the revocation.
+    let a: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(1),
+    )
+    .unwrap();
+    let mut slice = ledger.dispatch(a.identity()).unwrap().unwrap();
+    wake.watch(slice.cancellation_source());
+    assert!(
+        wake.wakes().is_empty(),
+        "submission and dispatch wake nothing"
+    );
+    assert_eq!(
+        ledger.cancel(a, Cancellation::Operator),
+        CancelOutcome::Requested
+    );
+    assert_eq!(
+        wake.wakes(),
+        vec![Some(Cancellation::Operator)],
+        "one wake, after the source holds the revocation"
+    );
+    assert_eq!(
+        ledger.cancel(a, Cancellation::Shutdown),
+        CancelOutcome::Requested,
+        "idempotent"
+    );
+    assert_eq!(
+        ledger.abandon(a, Cancellation::Shutdown),
+        CancelOutcome::Requested
+    );
+    let stale = WorkTicket::<RouteSpec>::new(a.identity(), InputRevision::new(7));
+    assert_eq!(
+        ledger.cancel(stale, Cancellation::Operator),
+        CancelOutcome::StaleIdentity
+    );
+    assert_eq!(
+        wake.wakes().len(),
+        1,
+        "a repeated, abandoning or stale request records nothing and wakes nothing"
+    );
+    let result = slice.step(&clock, budget(now, 2, 100));
+    assert_eq!(ledger.settle(slice, result).unwrap(), None);
+    assert_eq!(
+        ledger.cancel(a, Cancellation::Operator),
+        CancelOutcome::AlreadyTerminal
+    );
+    assert_eq!(wake.wakes().len(), 1, "a terminal request wakes nothing");
+
+    // Abandon carries cancel's wake obligation.
+    let b: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(1),
+    )
+    .unwrap();
+    let slice = ledger.dispatch(b.identity()).unwrap().unwrap();
+    wake.watch(slice.cancellation_source());
+    assert_eq!(
+        ledger.abandon(b, Cancellation::ScopeInvalidated),
+        CancelOutcome::Requested
+    );
+    assert_eq!(
+        wake.wakes(),
+        vec![
+            Some(Cancellation::Operator),
+            Some(Cancellation::ScopeInvalidated)
+        ]
+    );
+
+    // A job already at its terminal is not woken by a late request.
+    let c: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(1),
+    )
+    .unwrap();
+    assert_eq!(
+        ledger
+            .drive(c.identity(), &clock, budget(now, 2, 100))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        ledger.cancel(c, Cancellation::Operator),
+        CancelOutcome::AlreadyTerminal
+    );
+    assert_eq!(wake.wakes().len(), 2);
 }
