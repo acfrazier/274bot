@@ -265,17 +265,20 @@ pub enum RequestOutcome {
 
 /// The process-wide bounded render reservation service.
 ///
-/// `grant_ttl` must be positive. F0 tests use a 20-ms fixture; this constructor
-/// has no implicit production default because M3 owns that qualification.
+/// `grant_ttl` must be positive and finite. F0 tests use a 20-ms fixture; this
+/// constructor has no implicit production default because M3 owns that qualification.
 pub struct RenderService {
     inner: Arc<ServiceInner>,
 }
 
 impl RenderService {
-    /// Create a service with the caller-qualified positive grant lifetime.
+    /// Create a service with the caller-qualified positive finite grant lifetime.
     pub fn new(grant_ttl: Duration) -> Result<Self, RenderError> {
         if grant_ttl.is_zero() {
             return Err(RenderError::ZeroGrantTtl);
+        }
+        if Instant::now().checked_add(grant_ttl).is_none() {
+            return Err(RenderError::DeadlineOverflow);
         }
         Ok(Self {
             inner: Arc::new(ServiceInner {
@@ -359,7 +362,8 @@ impl RenderService {
     }
 
     /// Publish/coalesce due demand, arbitrate it and return Busy rather than
-    /// waiting for the workspace.
+    /// waiting for the workspace. Re-requests after expiry get a fresh identity
+    /// and cannot restore a due time earlier than the expired grant's deadline.
     pub fn request_frame(
         &self,
         head: &HeadLease,
@@ -431,7 +435,8 @@ impl RenderService {
         })
     }
 
-    /// Cancel this head's current request. A consumed frame remains charged
+    /// Cancel this head's current request for Stop or draw-policy disable.
+    /// Detach uses `retire` or `HeadLease` drop. A consumed frame remains charged
     /// until its `FrameLease` is dropped or finished.
     pub fn cancel_request(&self, head: &HeadLease, now: Instant) -> Result<(), RenderError> {
         if !Arc::ptr_eq(&self.inner, &head.service) {
@@ -945,8 +950,15 @@ fn request_locked(
 ) -> Result<RequestOutcome, RenderError> {
     expire_grant(state, now, notices)?;
     let index = require_head(state, head)?;
+    let previous_request = state.heads[index].as_ref().expect("head checked").request;
+    if matches!(
+        state.workspace,
+        Some(WorkspaceOwner::Consumed(owner)) if owner.head == head.identity
+    ) {
+        return Err(RenderError::FrameInProgress);
+    }
     let new_request = matches!(
-        state.heads[index].as_ref().expect("head checked").request,
+        previous_request,
         RequestState::Idle | RequestState::Expired { .. } | RequestState::Cancelled(_)
     );
     if new_request {
@@ -963,10 +975,16 @@ fn request_locked(
             head: head.identity,
             reservation_id,
         };
+        let request_due_at = match previous_request {
+            RequestState::Expired { expires_at, .. } => {
+                Deadline::at(due_at.instant().max(expires_at.instant()))
+            }
+            _ => due_at,
+        };
         let entry = state.heads[index].as_mut().expect("head checked");
         entry.request = RequestState::Pending {
             identity,
-            due_at,
+            due_at: request_due_at,
             insertion_sequence,
         };
         publish_entry(entry, notices)?;
@@ -1633,6 +1651,44 @@ mod tests {
         );
         assert_eq!(stalled.snapshot().1.state(), ReservationState::Granted);
     }
+
+    #[test]
+    fn expired_head_rerequest_cannot_keep_its_old_due_age() {
+        let now = clock();
+        let expiry = now + TTL;
+        let (service, pump) = service(now);
+        let expired_head = attach(&service, &pump, 207, Arc::new(NoopNotifier));
+        let consuming_head = attach(&service, &pump, 208, Arc::new(NoopNotifier));
+        let waiting_head = attach(&service, &pump, 209, Arc::new(NoopNotifier));
+
+        let old_grant = granted(request(&service, &expired_head, now, now));
+        let consuming_request = pending(request(&service, &consuming_head, expiry, now));
+        service.pump(&pump, expiry).unwrap();
+        assert_eq!(expired_head.snapshot().1.state(), ReservationState::Expired);
+        assert_eq!(
+            consuming_head.snapshot().1.reservation(),
+            Some(consuming_request)
+        );
+        let frame = service
+            .try_consume(&consuming_head, consuming_request, expiry)
+            .unwrap();
+
+        let waiting_request = pending(request(&service, &waiting_head, expiry, expiry));
+        let rerequest = pending(request(&service, &expired_head, now, expiry));
+        assert_ne!(rerequest.reservation_id(), old_grant.reservation_id());
+        assert_eq!(
+            expired_head.snapshot().1.due_at(),
+            Some(Deadline::at(expiry))
+        );
+
+        frame.finish(expiry).unwrap();
+        assert_eq!(
+            waiting_head.snapshot().1.reservation(),
+            Some(waiting_request)
+        );
+        assert_eq!(expired_head.snapshot().1.state(), ReservationState::Pending);
+    }
+
     #[test]
     fn missing_notice_does_not_lose_a_grant_because_poll_reads_authoritative_state() {
         let now = clock();
@@ -1771,6 +1827,25 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_consumed_head_cannot_request_until_its_frame_drains() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let head = attach(&service, &pump, 210, Arc::new(NoopNotifier));
+        let old_grant = granted(request(&service, &head, now, now));
+        let frame = service.try_consume(&head, old_grant, now).unwrap();
+
+        service.cancel_request(&head, now).unwrap();
+        assert_eq!(
+            service.request_frame(&head, Deadline::at(now), now),
+            Err(RenderError::FrameInProgress)
+        );
+
+        frame.finish(now).unwrap();
+        let new_grant = granted(request(&service, &head, now, now));
+        assert_ne!(new_grant.reservation_id(), old_grant.reservation_id());
+    }
+
+    #[test]
     fn wrong_service_cannot_retire_another_services_head() {
         let now = clock();
         let (owner, mut owner_pump) = service(now);
@@ -1817,6 +1892,23 @@ mod tests {
         frame.finish(now).unwrap();
         assert_eq!(peer.snapshot().1.state(), ReservationState::Granted);
         assert_eq!(peer.snapshot().1.reservation(), Some(peer_token));
+    }
+
+    #[test]
+    fn retiring_a_granted_head_grants_the_pending_peer_in_the_same_pass() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let mut retiring = attach(&service, &pump, 211, Arc::new(NoopNotifier));
+        let waiting = attach(&service, &pump, 212, Arc::new(NoopNotifier));
+        let retiring_token = granted(request(&service, &retiring, now, now));
+        let waiting_token = pending(request(&service, &waiting, now, now));
+
+        service.retire(&mut retiring, now).unwrap();
+
+        assert_eq!(retiring.snapshot().1.state(), ReservationState::Cancelled);
+        assert_eq!(waiting.snapshot().1.reservation(), Some(waiting_token));
+        assert_eq!(waiting.snapshot().1.state(), ReservationState::Granted);
+        assert_ne!(retiring_token, waiting_token);
     }
 
     #[test]
@@ -1968,6 +2060,24 @@ mod tests {
     }
 
     #[test]
+    fn stale_lease_after_pump_restart_cannot_touch_reattached_head() {
+        let now = clock();
+        let service = RenderService::new(TTL).unwrap();
+        let pump = service.register_pump().unwrap();
+        let stale = attach(&service, &pump, 213, Arc::new(NoopNotifier));
+
+        drop(pump);
+        let restarted_pump = service.register_pump().unwrap();
+        let fresh = attach(&service, &restarted_pump, 213, Arc::new(NoopNotifier));
+
+        assert_eq!(
+            service.request_frame(&stale, Deadline::at(now), now),
+            Err(RenderError::StaleHead)
+        );
+        assert_eq!(fresh.snapshot().1.state(), ReservationState::Idle);
+    }
+
+    #[test]
     fn cancellation_and_consumption_share_one_ordering_point() {
         let now = clock();
         let (service, pump) = service(now);
@@ -2038,17 +2148,10 @@ mod tests {
     }
 
     #[test]
-    fn ttl_overflow_keeps_the_request_published_as_pending() {
-        let service = RenderService::new(Duration::MAX).unwrap();
-        let pump = service.register_pump().unwrap();
-        let now = clock();
-        let head = attach(&service, &pump, 206, Arc::new(NoopNotifier));
-
-        assert_eq!(
-            service.request_frame(&head, Deadline::at(now), now),
+    fn ttl_overflow_is_refused_at_construction() {
+        assert!(matches!(
+            RenderService::new(Duration::MAX),
             Err(RenderError::DeadlineOverflow)
-        );
-        assert_eq!(head.snapshot().1.state(), ReservationState::Pending);
-        assert_eq!(service.pump(&pump, now), Err(RenderError::DeadlineOverflow));
+        ));
     }
 }
