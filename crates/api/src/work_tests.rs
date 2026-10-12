@@ -1,7 +1,7 @@
 use super::*;
 use std::cell::Cell;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::identity::{
@@ -1534,14 +1534,16 @@ fn a_shared_cancellation_source_is_revoked_from_another_thread() {
 
 /// Parks after every unit — including after its last unit, before the
 /// pre-success checkpoint — so the test thread can register a revocation
-/// through the ledger while the slice is out on a worker thread.
+/// through the ledger while the slice is out on a worker thread. A park
+/// nobody releases ends the step with a family failure after a bound, so
+/// a seam that hides the revocation fails the test instead of hanging it.
 #[derive(Debug)]
 struct GateJob {
     next: u32,
     target: u32,
     log: Log,
-    unit_done: Arc<Barrier>,
-    proceed: Arc<Barrier>,
+    unit_done: std::sync::mpsc::Sender<u32>,
+    proceed: std::sync::mpsc::Receiver<()>,
     seen: Arc<Mutex<Vec<Checkpoint>>>,
 }
 
@@ -1565,8 +1567,10 @@ impl CooperativeJob for GateJob {
             ctx.consume_unit();
             self.log.lock().unwrap().push(self.next);
             self.next += 1;
-            self.unit_done.wait();
-            self.proceed.wait();
+            self.unit_done.send(self.next).unwrap();
+            if self.proceed.recv_timeout(Duration::from_secs(5)).is_err() {
+                return StepOutcome::Failed(TestJobError("parked without a release"));
+            }
         }
     }
 
@@ -1575,32 +1579,37 @@ impl CooperativeJob for GateJob {
     }
 }
 
+/// The test thread's ends of a [`GateJob`]'s parks.
 struct Gate {
-    unit_done: Arc<Barrier>,
-    proceed: Arc<Barrier>,
+    unit_done: std::sync::mpsc::Receiver<u32>,
+    proceed: std::sync::mpsc::Sender<()>,
     seen: Arc<Mutex<Vec<Checkpoint>>>,
     log: Log,
 }
 
 impl Gate {
-    fn new() -> Self {
-        Self {
-            unit_done: Arc::new(Barrier::new(2)),
-            proceed: Arc::new(Barrier::new(2)),
-            seen: Arc::new(Mutex::new(Vec::new())),
-            log: log(),
-        }
-    }
-
-    fn job(&self, target: u32) -> GateJob {
-        GateJob {
+    fn new(target: u32) -> (Self, GateJob) {
+        let (unit_done_tx, unit_done_rx) = std::sync::mpsc::channel();
+        let (proceed_tx, proceed_rx) = std::sync::mpsc::channel();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = log();
+        let job = GateJob {
             next: 0,
             target,
-            log: Arc::clone(&self.log),
-            unit_done: Arc::clone(&self.unit_done),
-            proceed: Arc::clone(&self.proceed),
-            seen: Arc::clone(&self.seen),
-        }
+            log: Arc::clone(&log),
+            unit_done: unit_done_tx,
+            proceed: proceed_rx,
+            seen: Arc::clone(&seen),
+        };
+        (
+            Self {
+                unit_done: unit_done_rx,
+                proceed: proceed_tx,
+                seen,
+                log,
+            },
+            job,
+        )
     }
 
     fn seen(&self) -> Vec<Checkpoint> {
@@ -1610,8 +1619,9 @@ impl Gate {
 
 /// Dispatch `ticket`'s slice to a worker thread, let it finish `units`
 /// units, register `reason` through the ledger while the slice is still
-/// out, then let the worker reach its next checkpoint. Returns the settled
-/// state.
+/// out and parked, release the worker, and settle. Every assertion about
+/// the registration runs after the worker is released, so a seam defect
+/// fails the test rather than deadlocking the scope.
 fn revoke_mid_step(
     ledger: &mut AdmissionLedger,
     ticket: WorkTicket<RouteSpec>,
@@ -1624,27 +1634,27 @@ fn revoke_mid_step(
     wake.watch(slice.cancellation_source());
     let clock = SystemClock;
     let now = clock.now();
-    let result = std::thread::scope(|scope| {
+    let (result, redispatch, outcome, wakes) = std::thread::scope(|scope| {
         let worker = scope.spawn(|| slice.step(&clock, budget(now, 8, 10_000)));
         for _ in 0..units {
-            gate.unit_done.wait();
-            gate.proceed.wait();
+            gate.unit_done.recv().unwrap();
+            gate.proceed.send(()).unwrap();
         }
-        gate.unit_done.wait();
+        gate.unit_done.recv().unwrap();
         // The slice is out and parked before its next checkpoint.
-        assert_eq!(
-            ledger.dispatch(ticket.identity()).unwrap_err(),
-            LedgerError::WorkerNotReturned
-        );
-        assert_eq!(ledger.cancel(ticket, reason), CancelOutcome::Requested);
-        assert_eq!(
-            wake.wakes(),
-            vec![Some(reason)],
-            "the worker is woken after the revocation is registered"
-        );
-        gate.proceed.wait();
-        worker.join().unwrap()
+        let redispatch = ledger.dispatch(ticket.identity());
+        let outcome = ledger.cancel(ticket, reason);
+        let wakes = wake.wakes();
+        gate.proceed.send(()).unwrap();
+        (worker.join().unwrap(), redispatch, outcome, wakes)
     });
+    assert_eq!(redispatch.unwrap_err(), LedgerError::WorkerNotReturned);
+    assert_eq!(outcome, CancelOutcome::Requested);
+    assert_eq!(
+        wakes,
+        vec![Some(reason)],
+        "the worker is woken after the revocation is registered"
+    );
     ledger.settle(slice, result).unwrap()
 }
 
@@ -1655,10 +1665,10 @@ fn a_revocation_registered_through_the_ledger_mid_step_is_observed_at_the_next_c
     let conditions = empty_conditions(incarnation);
     let wake = Arc::new(WakeLog::default());
     let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
-    let gate = Gate::new();
+    let (gate, job) = Gate::new(3);
     let id = ids.identity(incarnation);
     let ticket = ledger
-        .try_submit::<RouteSpec, GateJob>(id, &input(8), gate.job(3), &conditions)
+        .try_submit::<RouteSpec, GateJob>(id, &input(8), job, &conditions)
         .unwrap();
     assert_eq!(
         revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Operator),
@@ -1691,14 +1701,9 @@ fn a_revocation_registered_before_the_success_checkpoint_cancels_instead_of_publ
     let conditions = empty_conditions(incarnation);
     let wake = Arc::new(WakeLog::default());
     let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
-    let gate = Gate::new();
+    let (gate, job) = Gate::new(1);
     let ticket = ledger
-        .try_submit::<RouteSpec, GateJob>(
-            ids.identity(incarnation),
-            &input(8),
-            gate.job(1),
-            &conditions,
-        )
+        .try_submit::<RouteSpec, GateJob>(ids.identity(incarnation), &input(8), job, &conditions)
         .unwrap();
     assert_eq!(
         revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Shutdown),
