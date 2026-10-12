@@ -7,12 +7,21 @@
 //! per process incarnation as a [`ProcessServiceCondition`] and stays latched
 //! in the [`ProcessConditions`] ledger until the process exits; nothing a
 //! consumer does clears it. A command or job that needs the failed
-//! capability is refused with an [`UnavailableRefusal`] naming the condition
-//! and keeping its own identity; an accepted command the outage makes
-//! impossible gets one [`UnavailableTerminal`]. A failure report settles
-//! result custody only: it is not a transport-retirement acknowledgement,
-//! so a [`StrandedCustody`] keeps its charge until the worker really
-//! returns.
+//! capability is refused with an [`AdmissionRefusal`] carrying the
+//! [`UnavailableRefusal`] that names the condition and keeps the request's
+//! own identity; an accepted command the outage makes impossible gets one
+//! [`UnavailableTerminal`]. A failure report settles result custody only:
+//! it is not a transport-retirement acknowledgement, so a
+//! [`StrandedCustody`] keeps its charge until the worker really returns.
+//!
+//! The session-side projections of an outage are
+//! [`crate::lifecycle::SessionEventOut::Unavailable`] (a slot's refused next
+//! step, intent preserved) and
+//! [`crate::lifecycle::SessionEndCause::ServiceUnavailable`] (a live session
+//! that lost its authority); intent precedence (§3.2 "Logout/Stop/Remove
+//! intent precedes or races the condition") is the mailbox's, which never
+//! turns a Logout into a login or a Remove into a retry, while the ledger
+//! refuses the retry the preserved intent would otherwise schedule.
 //!
 //! The neutral `ErrorCode` of F0 item 7 embeds [`ProcessServiceCode`] for
 //! these three codes; no fourth process-service code exists without an
@@ -217,7 +226,7 @@ pub const DIAGNOSTIC_MAX_BYTES: usize = 256;
 
 /// Optional redacted diagnostic text, at most [`DIAGNOSTIC_MAX_BYTES`] of
 /// UTF-8. Stable code and cause control behaviour; this text does not.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Diagnostic(Box<str>);
 
 impl Diagnostic {
@@ -241,7 +250,7 @@ impl Diagnostic {
 /// A latched process-service condition (§26 §3.1): accessor-based, with no
 /// per-slot fan-out, Client pointer, reactor handle, cancellation token or
 /// transport acknowledgement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ProcessServiceCondition {
     id: ConditionId,
     cause: ConditionCause,
@@ -343,7 +352,7 @@ pub const MAX_CONDITIONS: usize = ProcessServiceCode::ALL.len();
 /// The per-incarnation ledger of latched conditions: at most one per code,
 /// never cleared before process exit. T1's composition owns it; T3 borrows
 /// its snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessConditions {
     incarnation: ProcessIncarnation,
     entries: [Option<ProcessServiceCondition>; MAX_CONDITIONS],
@@ -410,14 +419,14 @@ impl ProcessConditions {
         capability: ProcessCapability,
         request: Option<RequestId>,
         scope: Scope,
-    ) -> Result<(), UnavailableRefusal> {
+    ) -> Result<(), AdmissionRefusal> {
         match self.blocks(capability) {
-            Some(condition) => Err(UnavailableRefusal {
+            Some(condition) => Err(AdmissionRefusal::Unavailable(UnavailableRefusal {
                 condition: condition.id,
                 capability,
                 request,
                 scope,
-            }),
+            })),
             None => Ok(()),
         }
     }
@@ -430,9 +439,29 @@ impl ProcessConditions {
     }
 }
 
+/// Why the ledger refused to admit a new command or job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AdmissionRefusal {
+    /// The capability's process service is unavailable until the process
+    /// restarts (§26 §3.2 table, row 1).
+    #[error("{0}")]
+    Unavailable(UnavailableRefusal),
+}
+
+impl AdmissionRefusal {
+    /// The refusal's data.
+    pub const fn refusal(&self) -> &UnavailableRefusal {
+        match self {
+            Self::Unavailable(refusal) => refusal,
+        }
+    }
+}
+
 /// A new command or job refused because its capability is unavailable
 /// (§26 §3.2 table, row 1): it is not Pending, not transient `Full` and not
-/// Completed; it keeps the originating identity.
+/// Completed; it keeps the originating identity. Reusable data: other
+/// domains' refusal enums (`try_submit`'s `Unavailable`, a command report)
+/// embed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnavailableRefusal {
     condition: ConditionId,
@@ -485,8 +514,6 @@ impl fmt::Display for UnavailableRefusal {
     }
 }
 
-impl std::error::Error for UnavailableRefusal {}
-
 /// The one logical Failed/Unavailable terminal an accepted command or job
 /// receives when the outage makes it impossible (§26 §3.2 table, row 2). It
 /// settles result custody and references the condition; it acknowledges no
@@ -533,7 +560,7 @@ impl UnavailableTerminal {
 /// (§26 §3.2): reporting a logical failure settles the result cell; the
 /// worker's credit stays charged until the worker actually returns, and no
 /// detection deadline can stand in for that return.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StrandedCustody {
     request: RequestId,
     scope: Scope,
@@ -541,12 +568,17 @@ pub struct StrandedCustody {
     returned: bool,
 }
 
-/// Why a stranded worker's credit could not be released.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+/// Why a stranded worker's terminal could not be published or its credit
+/// released.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CustodyError {
     /// The terminal was already published; it cannot be rewritten.
     #[error("unavailable terminal already published")]
     AlreadyFailed,
+    /// The worker has not returned, so its credit stays charged; the custody
+    /// comes back with the refusal.
+    #[error("worker for request {} still charged: no deadline or report stands in for its return", .0.request().get())]
+    WorkerStillCharged(StrandedCustody),
 }
 
 impl StrandedCustody {
@@ -558,6 +590,16 @@ impl StrandedCustody {
             terminal: None,
             returned: false,
         }
+    }
+
+    /// The request the worker serves.
+    pub const fn request(&self) -> RequestId {
+        self.request
+    }
+
+    /// The request's scope.
+    pub const fn scope(&self) -> Scope {
+        self.scope
     }
 
     /// Publish the one logical Failed/Unavailable terminal. The credit stays
@@ -590,13 +632,13 @@ impl StrandedCustody {
         self.returned = true;
     }
 
-    /// Release the credit. Refused, handing the custody back, until the
+    /// Release the credit. Refused with the custody handed back until the
     /// worker returned.
-    pub fn release(self) -> Result<(), Self> {
+    pub fn release(self) -> Result<(), CustodyError> {
         if self.returned {
             Ok(())
         } else {
-            Err(self)
+            Err(CustodyError::WorkerStillCharged(self))
         }
     }
 }

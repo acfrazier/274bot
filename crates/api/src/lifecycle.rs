@@ -6,30 +6,47 @@
 //! - the [`IntentMailbox`] row matrix: every operator, script or lifecycle
 //!   input an owner reduces ([`Intent`] and [`LifecycleFact`]), each with its
 //!   frozen [`RowMeaning`] (what it does to the session and login policy,
-//!   what it does to the run, and whether it cancels an in-flight attempt);
+//!   what it does to the run, and what it does to an in-flight attempt);
 //! - the generation-stamped mailbox itself, a pure reducer of operator intent
 //!   with today's semantics (`SlotIntent`, `crates/host-play/src/play_login.rs:104-125`):
-//!   every command advances the generation, only attempt-cancelling rows
+//!   every command advances the generation, only attempt-invalidating rows
 //!   advance the cancellation fence, agreeing refreshes create no second
 //!   one-shot, a clean Logout latches automatic login off until an explicit
-//!   rearm, and acknowledgements from an older generation apply only while
-//!   the current intent still asks for the same outcome;
+//!   rearm, acknowledgements from an older generation apply only while the
+//!   current intent still asks for the same outcome, a turnover (Relog now,
+//!   Switch world) owes its login half only until a stronger row supersedes
+//!   it, and Remove or ProcessShutdown closes the mailbox's slot lifetime for
+//!   good (today the sticky `SlotArm::stop`, `play_login.rs:807-817,945-949`);
+//!   no generation wraps ([`MailboxError::Exhausted`]);
 //! - [`SessionEventOut`], the single session boundary every consumer reads,
 //!   carried in B03's identity envelope ([`crate::identity::Event`]) with a
 //!   slot or session scope, and the [`SessionGate`] that derives "the script
-//!   may tick" from it;
+//!   may tick" from it behind the owner-authorized session fence;
 //! - the run-side hold vocabulary: [`SessionHeld`] is not operator pause, and
-//!   only Stop ends a run ([`RunEffect::Terminate`]).
+//!   only Stop ends a run ([`RunEffect::Terminate`]). The run reducer itself
+//!   (today `script::RunState` under `SlotScript`) is characterized at its
+//!   own seam by F0-3/T2; nothing here authorizes work.
 //!
 //! The first rows are the merged relog and login-pacing rules, characterized
 //! from the current code they describe (see each row's documentation).
 //! Reducer and caller activation remain T1.3; nothing here is wired into a
 //! slot.
+//!
+//! Owner-only obligations the mailbox does not carry (they need the owner's
+//! clock or transport evidence): the repeat-guard history
+//! (`record_unexpected_logout_at`, `play_login.rs:744-778`; an explicit
+//! Login clears it, `:378`; an exit is counted only when
+//! [`IntentSnapshot::logout_wanted`] was false before the exit was observed,
+//! `:749`); the clean-release evidence (`CleanExit`, `:819-885`), which
+//! every row that moves the cancellation fence also invalidates; and the
+//! process-condition ledger (`crate::process_condition::ProcessConditions`),
+//! consulted before every attempt so a login the intent still wants is
+//! refused, not retried, while its capability is unavailable.
 
-use std::num::NonZeroU64;
 use std::time::Duration;
 
-use crate::identity::{Deadline, IdentityError, IdentityKind, SessionKey};
+use crate::identity::{Deadline, Fence, SessionKey, SlotKey};
+use crate::process_condition::{ConditionId, ProcessCapability};
 
 /// Client memory mode queued for the next fresh handshake (today
 /// `SlotArm::lowmem_handshake`, `play_login.rs:195`).
@@ -55,37 +72,47 @@ pub enum WorldChoice {
 /// posted to the [`IntentMailbox`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Intent {
-    /// Explicit operator "Log in": arms one login even if auto-login is off
-    /// and lifts every latch and hold (today `SlotArm::arm_explicit_login`,
-    /// `play_login.rs:370-381`).
+    /// Explicit operator "Log in": arms one login even if auto-login is off,
+    /// lifts every latch and hold and supersedes a pending turnover (today
+    /// `SlotArm::arm_explicit_login`, `play_login.rs:370-381`, and the
+    /// frontend's `arm_login`, `crates/frontend-core/src/session.rs:941-946`).
     Login,
     /// The persistent auto-login preference (today `SlotArm::set_auto_login`,
     /// `play_login.rs:518-536`).
     AutoLogin(bool),
     /// Clean operator Logout: cancels a queued or handshaking attempt or
-    /// sends the clean game logout, and latches automatic and
-    /// script-triggered login off until an explicit rearm (today
-    /// `SlotArm::request_logout`, `play_login.rs:384-403`).
+    /// sends the clean game logout, latches automatic and script-triggered
+    /// login off until an explicit rearm, and outranks a pending turnover
+    /// (today `SlotArm::request_logout`, `play_login.rs:384-403`, and
+    /// `logout_member`, `session.rs:1012-1027`).
     Logout,
     /// A persisted logged-out hold restored at spawn: latched like a Logout
     /// without requesting one from the title screen (today
     /// `SlotArm::hold_logged_out`, `play_login.rs:407-418`).
     HoldLoggedOut,
     /// Withdraw the active login intent without changing the saved policy
-    /// (today `SlotArm::withdraw_login`, `play_login.rs:540-549`).
+    /// (today `SlotArm::withdraw_login`, `play_login.rs:540-549`); a pending
+    /// turnover's login half is withdrawn with it.
     WithdrawLogin,
     /// Relog now: explicit clean session turnover followed by a login, not
-    /// Logout's park latch (today the memory-mode relog in
-    /// `crates/frontend-core/src/session.rs:324-327`: a logout half then a
-    /// queued login half through the normal FIFO).
+    /// Logout's park latch. Today the memory-mode relog composes it from the
+    /// owner's Logout and Login: the logout half goes out while online and
+    /// the login half is armed once the slot is parked
+    /// (`request_memory_relog`/`complete_memory_relogs`,
+    /// `session.rs:1102-1155`); with no live session it is a plain login
+    /// (`session.rs:1107-1109`).
     RelogNow,
     /// World preference save: changes the next handshake's selection and
     /// never disconnects an online bot (today the world branch of
-    /// `sync_profile_arm`, `play_login.rs:925-932`).
+    /// `sync_profile_arm`, `play_login.rs:921-932`).
     WorldPreference(WorldChoice),
     /// Explicit switch world: cancel the old attempt or cleanly exit the
-    /// online session, then log in to the requested world (today composed of
-    /// Logout, a world save and Login).
+    /// online session, then log in to the requested world. Today's product
+    /// has no single command for it: the row is the contract's (B03), and
+    /// its current evidence is the composition Logout → world save
+    /// (`sync_profile_arm`) → Login, sequenced by the frontend the way the
+    /// memory relog is. Operational Switch World waits for T1.3's caller
+    /// integration.
     SwitchWorld(u16),
     /// Memory mode for the next fresh handshake; a dirty reconnect keeps the
     /// server session's applied mode (today `set_lowmem_handshake` and
@@ -93,8 +120,15 @@ pub enum Intent {
     MemoryMode(MemoryMode),
     /// The script seat's level-triggered session need: a running or paused
     /// run wants a login whatever the auto-login preference says (today
-    /// `SlotArm::set_script_active`, `play_login.rs:597-604`).
+    /// `SlotArm::set_script_active`, `play_login.rs:597-604`). The end of
+    /// the need (`false` after `true`) also invalidates the in-flight
+    /// attempt's outcome (today `invalidate_clean_exit`, `:600,881-885`).
     ScriptNeedsSession(bool),
+    /// The login identity (profile uid) changed under a running slot: the
+    /// next handshake uses it and nothing in flight is current any more
+    /// (today `invalidate_login_identity` from `sync_profile_arm`,
+    /// `play_login.rs:887-894,906,913-915`).
+    LoginIdentityChanged,
     /// Operator Start of a script.
     StartScript,
     /// Operator Pause: the run keeps its identity and holds its clocks.
@@ -106,15 +140,19 @@ pub enum Intent {
     /// The watchdog's restart request: stop and recreate the execution,
     /// keep the operator run and progress identity.
     WatchdogRestart,
-    /// Remove the slot (today `SlotArm::stop`, `play_login.rs:156`).
+    /// Remove the slot: closes this mailbox's slot lifetime for good (today
+    /// `SlotArm::stop`, `play_login.rs:156`, set by `signal_slot_stop`,
+    /// `play_slots.rs:172-194`); a connected slot first gets the clean
+    /// logout (`remove`, `session.rs:1228-1231`). A replacement is a new
+    /// slot lifetime with a new mailbox.
     RemoveSlot,
-    /// Process shutdown.
+    /// Process shutdown: closes the lifetime like [`Intent::RemoveSlot`].
     ProcessShutdown,
 }
 
 impl Intent {
     /// Every row, for exhaustive checks.
-    pub const ALL: [Intent; 18] = [
+    pub const ALL: [Intent; 20] = [
         Intent::Login,
         Intent::AutoLogin(true),
         Intent::AutoLogin(false),
@@ -126,6 +164,8 @@ impl Intent {
         Intent::SwitchWorld(1),
         Intent::MemoryMode(MemoryMode::Low),
         Intent::ScriptNeedsSession(true),
+        Intent::ScriptNeedsSession(false),
+        Intent::LoginIdentityChanged,
         Intent::StartScript,
         Intent::PauseScript,
         Intent::ResumeScript,
@@ -188,10 +228,20 @@ impl Intent {
                 run: RunEffect::None,
                 attempt: AttemptCancellation::Never,
             },
-            Intent::ScriptNeedsSession(_) => RowMeaning {
+            Intent::ScriptNeedsSession(true) => RowMeaning {
                 session: SessionEffect::PolicyOnly,
                 run: RunEffect::None,
                 attempt: AttemptCancellation::Never,
+            },
+            Intent::ScriptNeedsSession(false) => RowMeaning {
+                session: SessionEffect::PolicyOnly,
+                run: RunEffect::None,
+                attempt: AttemptCancellation::IfScriptNeedEnds,
+            },
+            Intent::LoginIdentityChanged => RowMeaning {
+                session: SessionEffect::NextHandshakeOnly,
+                run: RunEffect::None,
+                attempt: AttemptCancellation::Always,
             },
             Intent::StartScript => RowMeaning {
                 session: SessionEffect::None,
@@ -232,13 +282,17 @@ impl Intent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifecycleFact {
     /// The handshake succeeded and a session is live (today
-    /// `on_login_success`, `play_login.rs:1080-1088`).
+    /// `on_login_success`, `play_login.rs:1080-1088`): the attempt that
+    /// completed is settled, so its command stamp is no longer current.
     LoginSucceeded,
     /// The session ended. `clean` is true only for a server logout (today
     /// `tick_flags`, `play_login.rs:1101-1103`); `resumable` is whether the
     /// client kept its world, which selects reconnect (opcode 18) over a
     /// fresh login (16) (`play_login.rs:1110-1119`). Operator Login intent
-    /// never turns a dirty reconnect into a clean login.
+    /// never turns a dirty reconnect into a clean login. An exit while a
+    /// turnover's logout half is pending settles that half: the session is
+    /// gone, so the login half is armed (today `complete_memory_relogs`
+    /// fires it once the slot is parked, `session.rs:1124-1155`).
     SessionExited {
         /// The exit was a server logout (operator logout, world change or
         /// idle), never a drop.
@@ -259,6 +313,8 @@ pub enum LifecycleFact {
     /// A world-preference error withdrew the login, including a script's
     /// (today `hold_login_on_error`, `play_login.rs:554-564`); the slot parks
     /// until the operator arms a login or changes auto-login or the world.
+    /// A pending turnover ends with it (today `finish_memory_relogs`,
+    /// `session.rs:1160-1173`).
     WorldPreferenceFailed,
 }
 
@@ -287,7 +343,7 @@ impl LifecycleFact {
             LifecycleFact::LoginSucceeded => RowMeaning {
                 session: SessionEffect::None,
                 run: RunEffect::RevalidateUnderNewSession,
-                attempt: AttemptCancellation::Never,
+                attempt: AttemptCancellation::Settled,
             },
             LifecycleFact::SessionExited { clean: true, .. } => RowMeaning {
                 session: SessionEffect::None,
@@ -339,7 +395,7 @@ pub enum SessionEffect {
     ReconnectIfWanted,
     /// No session or policy change.
     None,
-    /// Stop producers; cancel login, transport and jobs.
+    /// Stop producers; cancel login, transport and jobs; close the lifetime.
     Teardown,
 }
 
@@ -373,8 +429,10 @@ pub enum RunEffect {
     Resume,
 }
 
-/// Whether a row cancels an in-flight login attempt (§20 L4 item 1: the
-/// producer of a session-ending intent fires the attempt itself).
+/// What a row does to an in-flight login attempt (§20 L4 item 1: the
+/// producer of a session-ending intent fires the attempt itself). Every
+/// variant but `Never` moves the cancellation fence, so the attempt's later
+/// outcome is stale ([`IntentMailbox::attempt_is_current`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttemptCancellation {
     /// Always cancels.
@@ -384,17 +442,61 @@ pub enum AttemptCancellation {
     Never,
     /// Cancels only an attempt the auto-login preference derived.
     IfAutoDerived,
+    /// Cancels only when the script's session need was on: the end of the
+    /// need invalidates the attempt it may have derived.
+    IfScriptNeedEnds,
+    /// The attempt completed under this row: nothing is fired, but its
+    /// command stamp is retired.
+    Settled,
 }
 
 /// The frozen meaning of one matrix row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RowMeaning {
+    session: SessionEffect,
+    run: RunEffect,
+    attempt: AttemptCancellation,
+}
+
+impl RowMeaning {
     /// Session and login-policy column.
-    pub session: SessionEffect,
+    pub const fn session(self) -> SessionEffect {
+        self.session
+    }
+
     /// Run and action column.
-    pub run: RunEffect,
-    /// Whether the row cancels an in-flight attempt.
-    pub attempt: AttemptCancellation,
+    pub const fn run(self) -> RunEffect {
+        self.run
+    }
+
+    /// In-flight attempt column.
+    pub const fn attempt(self) -> AttemptCancellation {
+        self.attempt
+    }
+}
+
+/// Which mailbox generation refused to advance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MailboxGeneration {
+    /// The command generation, advanced by every command.
+    Command,
+    /// The cancellation fence, advanced by attempt-invalidating rows.
+    Cancellation,
+    /// The world fence, advanced by every world change.
+    World,
+}
+
+/// Why the mailbox refused a row or fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum MailboxError {
+    /// Remove or ProcessShutdown closed this slot lifetime; nothing re-arms
+    /// it, and a replacement needs a new slot and a new mailbox.
+    #[error("slot lifetime closed: a removed or shut-down slot cannot be re-armed")]
+    Closed,
+    /// A generation has no unused value left; the row was not applied and
+    /// nothing changed.
+    #[error("mailbox {0:?} generation exhausted: refusing to reuse a generation")]
+    Exhausted(MailboxGeneration),
 }
 
 /// A mailbox generation: advanced by every command (today
@@ -408,8 +510,11 @@ impl IntentGeneration {
         self.0
     }
 
-    const fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
+    const fn next(self, which: MailboxGeneration) -> Result<Self, MailboxError> {
+        match self.0.checked_add(1) {
+            Some(next) => Ok(Self(next)),
+            None => Err(MailboxError::Exhausted(which)),
+        }
     }
 }
 
@@ -463,11 +568,11 @@ pub enum LoginLatch {
     },
 }
 
-/// What a posted intent did, for the poster's acknowledgement bookkeeping.
+/// What a posted row did, for the poster's acknowledgement bookkeeping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PostReceipt {
     generation: IntentGeneration,
-    cancelled_attempt: bool,
+    invalidated_attempt: bool,
 }
 
 impl PostReceipt {
@@ -477,10 +582,13 @@ impl PostReceipt {
         self.generation
     }
 
-    /// Whether the post advanced the cancellation fence, so the poster must
-    /// cancel the in-flight attempt it holds (§20 L4 item 1).
-    pub const fn cancelled_attempt(self) -> bool {
-        self.cancelled_attempt
+    /// Whether the row advanced the cancellation fence, so an attempt read
+    /// before it is no longer current. For an attempt-cancelling intent the
+    /// poster fires the attempt it holds (§20 L4 item 1); for
+    /// [`LifecycleFact::LoginSucceeded`] the attempt completed and is merely
+    /// retired.
+    pub const fn invalidated_attempt(self) -> bool {
+        self.invalidated_attempt
     }
 }
 
@@ -489,7 +597,8 @@ impl PostReceipt {
 pub enum Acknowledgement {
     /// The command's outcome was recorded.
     Applied,
-    /// A newer command changed the intent; nothing was recorded.
+    /// A newer command changed the intent, or the lifetime is closed;
+    /// nothing was recorded.
     Stale,
 }
 
@@ -500,6 +609,7 @@ pub struct IntentSnapshot {
     cancellation: IntentGeneration,
     login: LoginIntent,
     logout_wanted: bool,
+    turnover: bool,
     latch: Option<LoginLatch>,
     error_hold: bool,
     auto_login: bool,
@@ -507,6 +617,7 @@ pub struct IntentSnapshot {
     world: WorldChoice,
     world_generation: u64,
     memory: Option<MemoryMode>,
+    closed: bool,
 }
 
 impl IntentSnapshot {
@@ -528,6 +639,11 @@ impl IntentSnapshot {
     /// Whether a clean logout is wanted.
     pub const fn logout_wanted(&self) -> bool {
         self.logout_wanted
+    }
+
+    /// Whether a turnover's login half is still owed after its logout half.
+    pub const fn turnover_pending(&self) -> bool {
+        self.turnover
     }
 
     /// Why automatic login is latched off, if it is.
@@ -565,11 +681,18 @@ impl IntentSnapshot {
         self.memory
     }
 
+    /// Whether Remove or ProcessShutdown closed this slot lifetime.
+    pub const fn closed(&self) -> bool {
+        self.closed
+    }
+
     /// The level-triggered login want (today `SlotArm::wanted`,
-    /// `play_login.rs:638-642`): not latched, and either a login intent or
-    /// a script need that no error hold suppresses.
+    /// `play_login.rs:638-642`): the lifetime is open, nothing latched it,
+    /// and either a login intent or a script need that no error hold
+    /// suppresses.
     pub const fn login_wanted(&self) -> bool {
-        self.latch.is_none()
+        !self.closed
+            && self.latch.is_none()
             && (!matches!(self.login, LoginIntent::Withdrawn)
                 || (!self.error_hold && self.script_needs_session))
     }
@@ -604,17 +727,22 @@ pub enum ParkReason {
     WorldError,
 }
 
-/// The generation-stamped operator-intent mailbox: one per slot, written by
-/// control threads and read by the slot, a pure reducer with the row
-/// semantics of [`Intent::meaning`]. It holds no lock of another owner, no
-/// attempt token and no clock; the owner that posts an attempt-cancelling row
-/// fires the attempt it holds, and the owner's clock counts the repeat guard.
-#[derive(Debug, Clone)]
+/// The generation-stamped operator-intent mailbox: one per slot lifetime,
+/// written by control threads and read by the slot, a pure reducer with the
+/// row semantics of [`Intent::meaning`]. It holds no lock of another owner,
+/// no attempt token and no clock; the owner that posts an attempt-cancelling
+/// row fires the attempt it holds, and the owner's clock counts the repeat
+/// guard. A refused row or fact changes nothing.
+#[derive(Debug)]
 pub struct IntentMailbox {
     generation: IntentGeneration,
     cancellation: IntentGeneration,
     login: LoginIntent,
     logout_wanted: bool,
+    /// A turnover (Relog now, Switch world) owes its login half once its
+    /// logout half is acknowledged or the session exits; a stronger row
+    /// supersedes it.
+    turnover: bool,
     latch: Option<LoginLatch>,
     error_hold: bool,
     auto_login: bool,
@@ -626,7 +754,7 @@ pub struct IntentMailbox {
     work_reset_pending: bool,
     reconnect: bool,
     last_exit_clean: bool,
-    turnover: bool,
+    closed: bool,
 }
 
 impl IntentMailbox {
@@ -643,6 +771,7 @@ impl IntentMailbox {
                 LoginIntent::Withdrawn
             },
             logout_wanted: false,
+            turnover: false,
             latch: None,
             error_hold: false,
             auto_login,
@@ -654,7 +783,7 @@ impl IntentMailbox {
             work_reset_pending: false,
             reconnect: false,
             last_exit_clean: true,
-            turnover: false,
+            closed: false,
         }
     }
 
@@ -665,6 +794,7 @@ impl IntentMailbox {
             cancellation: self.cancellation,
             login: self.login,
             logout_wanted: self.logout_wanted,
+            turnover: self.turnover,
             latch: self.latch,
             error_hold: self.error_hold,
             auto_login: self.auto_login,
@@ -672,15 +802,37 @@ impl IntentMailbox {
             world: self.world,
             world_generation: self.world_generation,
             memory: self.memory,
+            closed: self.closed,
         }
     }
 
-    fn advance(&mut self) {
-        self.generation = self.generation.next();
+    /// Advance the command generation and, if `cancels`, the cancellation
+    /// fence: both are computed before either is stored, so a refusal
+    /// leaves both as they were.
+    fn command(&mut self, cancels: bool) -> Result<(), MailboxError> {
+        let generation = self.generation.next(MailboxGeneration::Command)?;
+        let cancellation = if cancels {
+            self.cancellation.next(MailboxGeneration::Cancellation)?
+        } else {
+            self.cancellation
+        };
+        self.generation = generation;
+        self.cancellation = cancellation;
+        Ok(())
     }
 
-    fn cancel_attempt(&mut self) {
-        self.cancellation = self.cancellation.next();
+    /// Advance only the cancellation fence (today `invalidate_clean_exit`,
+    /// `play_login.rs:881-885`).
+    fn invalidate_attempt(&mut self) -> Result<(), MailboxError> {
+        self.cancellation = self.cancellation.next(MailboxGeneration::Cancellation)?;
+        Ok(())
+    }
+
+    const fn next_world_generation(&self) -> Result<u64, MailboxError> {
+        match self.world_generation.checked_add(1) {
+            Some(next) => Ok(next),
+            None => Err(MailboxError::Exhausted(MailboxGeneration::World)),
+        }
     }
 
     /// Re-derive the auto-login want after a hold lifts (today
@@ -691,35 +843,67 @@ impl IntentMailbox {
         }
     }
 
+    /// Arm one explicit login and lift every latch, hold and pending
+    /// turnover half (today `arm_explicit_login`, `play_login.rs:370-381`).
+    fn arm_login(&mut self) {
+        self.error_hold = false;
+        self.latch = None;
+        self.login = LoginIntent::Once;
+        self.logout_wanted = false;
+        self.turnover = false;
+    }
+
+    /// Begin a turnover: the logout half only while a session is online,
+    /// then the login half; with no session it is the login alone.
+    fn begin_turnover(&mut self) {
+        self.arm_login();
+        if self.session_online {
+            self.logout_wanted = true;
+            self.turnover = true;
+        }
+    }
+
+    const fn receipt(&self, before: IntentGeneration) -> PostReceipt {
+        PostReceipt {
+            generation: self.generation,
+            invalidated_attempt: self.cancellation.0 != before.0,
+        }
+    }
+
     /// Post one row. Session-side script rows (`StartScript`, `PauseScript`,
     /// `ResumeScript`, `StopScript`, `WatchdogRestart`) change no login
     /// intent: they are routed to the run owner and only acknowledged here.
-    pub fn post(&mut self, intent: Intent) -> PostReceipt {
+    /// Once the lifetime is closed only another Remove or ProcessShutdown is
+    /// accepted (and changes nothing); every other row is refused.
+    pub fn post(&mut self, intent: Intent) -> Result<PostReceipt, MailboxError> {
         let before = self.cancellation;
+        if self.closed {
+            return match intent {
+                Intent::RemoveSlot | Intent::ProcessShutdown => Ok(self.receipt(before)),
+                _ => Err(MailboxError::Closed),
+            };
+        }
         match intent {
             Intent::Login => {
-                self.advance();
-                self.error_hold = false;
-                self.latch = None;
-                self.login = LoginIntent::Once;
-                self.logout_wanted = false;
+                self.command(false)?;
+                self.arm_login();
             }
             Intent::AutoLogin(enabled) => {
+                let withdraws = !enabled && self.login == LoginIntent::Auto;
+                self.command(withdraws)?;
                 self.auto_login = enabled;
-                self.advance();
                 self.error_hold = false;
                 if enabled {
                     self.rederive_auto_want();
-                } else if self.login == LoginIntent::Auto {
-                    self.cancel_attempt();
+                } else if withdraws {
                     self.login = LoginIntent::Withdrawn;
                 }
             }
             Intent::Logout => {
-                self.advance();
-                self.cancel_attempt();
+                self.command(true)?;
                 self.latch = Some(LoginLatch::OperatorLogout);
                 self.logout_wanted = true;
+                self.turnover = false;
                 self.login = LoginIntent::Withdrawn;
                 // A connected exit reads OperatorLogout from the latch; only
                 // an already-offline command owes a held-work reset, and an
@@ -729,82 +913,85 @@ impl IntentMailbox {
                 }
             }
             Intent::HoldLoggedOut => {
-                self.advance();
-                self.cancel_attempt();
+                self.command(true)?;
                 self.latch = Some(LoginLatch::PersistedLogout);
                 self.login = LoginIntent::Withdrawn;
                 self.logout_wanted = false;
+                self.turnover = false;
             }
             Intent::WithdrawLogin => {
-                self.advance();
-                self.cancel_attempt();
+                self.command(true)?;
                 self.login = LoginIntent::Withdrawn;
+                self.turnover = false;
             }
             Intent::RelogNow => {
-                // Turnover: a clean logout that keeps the login armed and
-                // installs no latch, so the slot logs back in through the
-                // normal queue.
-                self.advance();
-                self.logout_wanted = true;
-                self.turnover = true;
-                self.login = LoginIntent::Once;
-                self.latch = None;
-                self.error_hold = false;
+                self.command(false)?;
+                self.begin_turnover();
             }
             Intent::WorldPreference(world) => {
                 if self.world != world {
-                    self.world = world;
-                    self.world_generation = self.world_generation.wrapping_add(1);
+                    let world_generation = self.next_world_generation()?;
                     if self.error_hold {
-                        self.advance();
+                        self.command(false)?;
+                    }
+                    self.world = world;
+                    self.world_generation = world_generation;
+                    if self.error_hold {
                         self.error_hold = false;
                         self.rederive_auto_want();
                     }
                 }
             }
             Intent::SwitchWorld(world) => {
-                self.advance();
-                self.cancel_attempt();
+                let world_generation = self.next_world_generation()?;
+                self.command(true)?;
                 self.world = WorldChoice::World(world);
-                self.world_generation = self.world_generation.wrapping_add(1);
-                self.logout_wanted = self.session_online;
-                self.turnover = self.session_online;
-                self.login = LoginIntent::Once;
-                self.latch = None;
-                self.error_hold = false;
+                self.world_generation = world_generation;
+                self.begin_turnover();
             }
             Intent::MemoryMode(mode) => {
                 self.memory = Some(mode);
             }
             Intent::ScriptNeedsSession(needs) => {
-                self.script_needs_session = needs;
+                if needs != self.script_needs_session {
+                    if !needs {
+                        self.invalidate_attempt()?;
+                    }
+                    self.script_needs_session = needs;
+                }
+            }
+            Intent::LoginIdentityChanged => {
+                self.command(true)?;
             }
             Intent::StartScript
             | Intent::PauseScript
             | Intent::ResumeScript
             | Intent::StopScript
             | Intent::WatchdogRestart => {
-                self.advance();
+                self.command(false)?;
             }
             Intent::RemoveSlot | Intent::ProcessShutdown => {
-                self.advance();
-                self.cancel_attempt();
+                self.command(true)?;
+                self.closed = true;
                 self.login = LoginIntent::Withdrawn;
-                self.logout_wanted = false;
                 self.script_needs_session = false;
+                self.turnover = false;
+                // A connected slot gets the clean logout first; the owner
+                // bounds that window and stops after the exit or its deadline.
+                self.logout_wanted = self.session_online;
             }
         }
-        PostReceipt {
-            generation: self.generation,
-            cancelled_attempt: self.cancellation != before,
-        }
+        Ok(self.receipt(before))
     }
 
-    /// Reduce a lifecycle fact.
-    pub fn observe(&mut self, fact: LifecycleFact) -> PostReceipt {
+    /// Reduce a lifecycle fact. Session facts are recorded for a closed
+    /// lifetime too (its teardown reads them); guard and world facts no
+    /// longer change a closed lifetime.
+    pub fn observe(&mut self, fact: LifecycleFact) -> Result<PostReceipt, MailboxError> {
         let before = self.cancellation;
         match fact {
             LifecycleFact::LoginSucceeded => {
+                self.invalidate_attempt()?;
                 self.session_online = true;
                 self.reconnect = true;
             }
@@ -812,14 +999,20 @@ impl IntentMailbox {
                 self.session_online = false;
                 self.last_exit_clean = clean;
                 self.reconnect = resumable;
+                if self.turnover {
+                    // The logout half is done with the session; the login
+                    // half is owed now.
+                    self.turnover = false;
+                    self.logout_wanted = false;
+                    self.login = LoginIntent::Once;
+                }
             }
             LifecycleFact::RepeatGuardTripped {
                 count,
                 window_seconds,
             } => {
-                if self.latch.is_none() && !self.logout_wanted {
-                    self.advance();
-                    self.cancel_attempt();
+                if !self.closed && self.latch.is_none() && !self.logout_wanted {
+                    self.command(true)?;
                     self.latch = Some(LoginLatch::RepeatGuard {
                         count,
                         window_seconds,
@@ -828,16 +1021,15 @@ impl IntentMailbox {
                 }
             }
             LifecycleFact::WorldPreferenceFailed => {
-                self.advance();
-                self.cancel_attempt();
-                self.login = LoginIntent::Withdrawn;
-                self.error_hold = true;
+                if !self.closed {
+                    self.command(true)?;
+                    self.login = LoginIntent::Withdrawn;
+                    self.error_hold = true;
+                    self.turnover = false;
+                }
             }
         }
-        PostReceipt {
-            generation: self.generation,
-            cancelled_attempt: self.cancellation != before,
-        }
+        Ok(self.receipt(before))
     }
 
     /// Whether a live session owns its one boundary decision.
@@ -866,7 +1058,8 @@ impl IntentMailbox {
     }
 
     /// The login command while on the title screen, if a login is wanted
-    /// (today `login_command`, `play_login.rs:717-723`).
+    /// (today `login_command`, `play_login.rs:717-723`, behind the sticky
+    /// stop of `granted_permit_may_start_login`, `:945-949`).
     pub fn login_command(&self, online: bool) -> Option<IntentCommand> {
         (!online && self.snapshot().login_wanted()).then_some(IntentCommand {
             generation: self.generation,
@@ -875,7 +1068,8 @@ impl IntentMailbox {
     }
 
     /// The logout command while in game, if a clean logout is wanted (today
-    /// `logout_command`, `play_login.rs:725-731`).
+    /// `logout_command`, `play_login.rs:725-731`); a closed lifetime still
+    /// presses the clean logout its teardown wants.
     pub fn logout_command(&self, online: bool) -> Option<IntentCommand> {
         (online && self.logout_wanted).then_some(IntentCommand {
             generation: self.generation,
@@ -883,9 +1077,10 @@ impl IntentMailbox {
         })
     }
 
-    /// Whether an in-flight attempt read as `command` is still current: not
-    /// removed, still wanted, and neither the cancellation nor the world
-    /// fence moved (today `login_attempt_is_current`, `play_login.rs:807-817`).
+    /// Whether an in-flight attempt read as `command` is still current: the
+    /// lifetime is open, a login is still wanted, and neither the
+    /// cancellation nor the world fence moved (today
+    /// `login_attempt_is_current`, `play_login.rs:807-817`).
     pub fn attempt_is_current(&self, command: IntentCommand, world_generation: u64) -> bool {
         self.snapshot().login_wanted()
             && self.cancellation == command.cancellation
@@ -895,8 +1090,12 @@ impl IntentMailbox {
     /// Acknowledge a login the slot completed under `command`: an older
     /// generation applies only while the current intent still asks for a
     /// login; the want survives only as the auto-login preference (today
-    /// `acknowledge_login`, `play_login.rs:793-803`).
+    /// `acknowledge_login`, `play_login.rs:793-803`). A closed lifetime
+    /// records nothing.
     pub fn acknowledge_login(&mut self, command: IntentCommand) -> Acknowledgement {
+        if self.closed {
+            return Acknowledgement::Stale;
+        }
         if self.generation != command.generation
             && (self.login == LoginIntent::Withdrawn || self.latch.is_some() || self.logout_wanted)
         {
@@ -912,10 +1111,10 @@ impl IntentMailbox {
 
     /// Acknowledge a logout the slot pressed under `command`: an older
     /// generation applies only while a logout is still wanted. A Logout
-    /// installs the OperatorLogout latch; a turnover (Relog now, Switch
-    /// world) keeps its login armed instead (today `acknowledge_logout`,
-    /// `play_login.rs:733-742`, and the queued login half of the memory
-    /// relog, `crates/frontend-core/src/session.rs:324-327`).
+    /// installs the OperatorLogout latch; a turnover whose login half was
+    /// not superseded keeps its login armed instead (today
+    /// `acknowledge_logout`, `play_login.rs:733-742`, and the login half of
+    /// the memory relog, `session.rs:1139-1150`).
     pub fn acknowledge_logout(&mut self, command: IntentCommand) -> Acknowledgement {
         if self.generation != command.generation && !self.logout_wanted {
             return Acknowledgement::Stale;
@@ -1012,7 +1211,8 @@ pub enum AbortedAttempt {
 }
 
 /// Why a session ended, as a closed classification of the client's exit
-/// reason (`client::client::client::SessionExitReason`).
+/// reason (`client::client::client::SessionExitReason`) plus the two ends
+/// the owner produces itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionEndCause {
     /// The server logged the client out: operator logout, world change or
@@ -1036,6 +1236,16 @@ pub enum SessionEndCause {
     ConnectionLost,
     /// The slot was removed or the process shut down.
     Removed,
+    /// The process service the session depended on became unavailable
+    /// (§26 §3.2 "Reactor becomes unavailable with a live session"): its
+    /// network and session effect authority is invalidated and the condition
+    /// is projected instead of Ready or recovery. Not clean, not resumable,
+    /// never counted by the repeat guard: the retry is refused at admission
+    /// until the process restarts, while the login intent is preserved.
+    ServiceUnavailable {
+        /// The latched condition.
+        condition: ConditionId,
+    },
 }
 
 impl SessionEndCause {
@@ -1056,14 +1266,27 @@ impl SessionEndCause {
         }
     }
 
-    /// Whether this end is clean: a server logout. Every other end is
-    /// unexpected and counts toward the repeat guard.
+    /// Whether this end is clean: a server logout or the owner's own
+    /// removal. Every other end is unexpected.
     pub const fn is_clean(self) -> bool {
         matches!(self, Self::ServerLogout | Self::Removed)
+    }
+
+    /// Whether the owner's repeat guard counts this end: every unexpected
+    /// transport end does; a removal or a process-service outage never does.
+    pub const fn counts_toward_repeat_guard(self) -> bool {
+        !matches!(
+            self,
+            Self::ServerLogout | Self::Removed | Self::ServiceUnavailable { .. }
+        )
     }
 }
 
 /// Why the slot holds its script while the session is otherwise usable.
+/// Holds are a set: each reason is held once and released by its own
+/// [`SessionEventOut::Released`], so a guardian hold outlives every other
+/// release and no readiness event (§27 §6: the guardian hold takes
+/// precedence, whatever owns the foreground).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HoldReason {
     /// The welcome modal is up.
@@ -1075,10 +1298,27 @@ pub enum HoldReason {
     SessionBoundary,
 }
 
+impl HoldReason {
+    /// Every reason, for exhaustive checks.
+    pub const ALL: [HoldReason; 3] = [
+        HoldReason::WelcomeModal,
+        HoldReason::Guardian,
+        HoldReason::SessionBoundary,
+    ];
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::WelcomeModal => 1,
+            Self::Guardian => 2,
+            Self::SessionBoundary => 4,
+        }
+    }
+}
+
 /// The one session boundary event every consumer reads (A D4 with B03's
-/// envelope; §20 L8 `HandshakeAborted`). Carried as
+/// envelope; §20 L8 `HandshakeAborted`; §26 §3.2 `Unavailable`). Carried as
 /// [`crate::identity::Event`] with a slot scope, or a session scope for
-/// `SceneReady` and `SessionEnded`.
+/// `SceneReady`, `SessionEnded`, `Held` and `Released`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEventOut {
     /// Assets and cache prepared; the slot may queue.
@@ -1116,8 +1356,18 @@ pub enum SessionEventOut {
         /// Why.
         reason: AbortedAttempt,
     },
+    /// The slot's next step needs a capability the process lost (§26 §3.2):
+    /// no attempt is started and none is retried before the process
+    /// restarts; the login intent is preserved. Slot-scoped.
+    Unavailable {
+        /// The capability the step needed.
+        capability: ProcessCapability,
+        /// The latched condition that refused it.
+        condition: ConditionId,
+    },
     /// The scene is built and the local player seen: the one event that lets
-    /// scripts tick. Session-scoped.
+    /// scripts tick. Session-scoped; idempotent for the current session and
+    /// stale for any other.
     SceneReady,
     /// The session ended. Session-scoped.
     SessionEnded {
@@ -1126,13 +1376,16 @@ pub enum SessionEventOut {
         /// The client kept its world, so the next handshake may reconnect.
         resumable: bool,
     },
-    /// The script is held while the session stays up.
+    /// The script is held while the session stays up. Session-scoped.
     Held {
         /// Why.
         why: HoldReason,
     },
-    /// A hold lifted.
-    Released,
+    /// A hold lifted: only the hold of the same reason. Session-scoped.
+    Released {
+        /// Which hold.
+        why: HoldReason,
+    },
     /// The owner applied the mailbox generation; the frontend settles its
     /// pending operation on this acknowledgement.
     IntentApplied {
@@ -1141,56 +1394,157 @@ pub enum SessionEventOut {
     },
 }
 
+/// Why the session gate refused to begin a session or observe an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SessionGateError {
+    /// The session belongs to another slot.
+    #[error("session {offered:?} belongs to another slot; this gate serves {expected:?}")]
+    WrongSlot {
+        /// The slot this gate serves.
+        expected: SlotKey,
+        /// The session offered.
+        offered: SessionKey,
+    },
+    /// The session's epoch is not newer than the newest one begun: an ended
+    /// or superseded session never begins again.
+    #[error("session {offered:?} is not newer than {latest:?}; an ended or superseded epoch cannot begin again")]
+    ObsoleteEpoch {
+        /// The newest session begun.
+        latest: SessionKey,
+        /// The session offered.
+        offered: SessionKey,
+    },
+    /// The event is stamped with a session that is not the current one
+    /// (ended, superseded, never begun or still to begin); it changed
+    /// nothing.
+    #[error("event stamped {stamped:?} is stale; the current session is {current:?}")]
+    StaleSession {
+        /// The current session, if one is begun and not ended.
+        current: Option<SessionKey>,
+        /// The session the event carried.
+        stamped: SessionKey,
+    },
+}
+
 /// Derives "the script may tick" from session events: only between
-/// `SceneReady` and `SessionEnded` of the same session key and while not
-/// held. Events for another session key are stale and change nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `SceneReady` and `SessionEnded` of the session the owner authorized with
+/// [`begin`](Self::begin), and only while no hold is set. The owner's
+/// authorization is the fence ([`crate::identity::Fence`] over
+/// [`SessionKey`]); no arriving event changes which session is current, and
+/// an event stamped with any other session is stale and changes nothing.
+#[derive(Debug)]
 pub struct SessionGate {
-    ready: Option<SessionKey>,
+    slot: SlotKey,
+    /// The newest session ever begun: an ended or superseded epoch never
+    /// begins again.
+    latest: Option<SessionKey>,
+    current: Fence<SessionKey>,
+    ready: bool,
     holds: u8,
 }
 
 impl SessionGate {
-    /// A gate with no session ready.
-    pub const fn new() -> Self {
+    /// A gate for `slot` with no session begun.
+    pub const fn new(slot: SlotKey) -> Self {
         Self {
-            ready: None,
+            slot,
+            latest: None,
+            current: Fence::new(),
+            ready: false,
             holds: 0,
         }
     }
 
-    /// Reduce one session-scoped event. `session` is the event's scope.
-    pub fn observe(&mut self, session: SessionKey, event: &SessionEventOut) {
-        if let SessionEventOut::SceneReady = event {
-            self.ready = Some(session);
-            self.holds = 0;
-            return;
+    /// The slot this gate serves.
+    pub const fn slot(&self) -> SlotKey {
+        self.slot
+    }
+
+    /// Authorize `session` as the current one: the owner calls this at the
+    /// session boundary that minted the key ([`SessionKey::next`]). Refused
+    /// for another slot or an epoch not newer than the newest begun. A
+    /// session still current is superseded (its late events become stale);
+    /// readiness and holds start over.
+    pub fn begin(&mut self, session: SessionKey) -> Result<(), SessionGateError> {
+        if session.slot() != self.slot {
+            return Err(SessionGateError::WrongSlot {
+                expected: self.slot,
+                offered: session,
+            });
         }
-        if self.ready != Some(session) {
-            return;
+        if let Some(latest) = self.latest {
+            if session.epoch() <= latest.epoch() {
+                return Err(SessionGateError::ObsoleteEpoch {
+                    latest,
+                    offered: session,
+                });
+            }
         }
+        self.latest = Some(session);
+        self.current.arm(session);
+        self.ready = false;
+        self.holds = 0;
+        Ok(())
+    }
+
+    /// Reduce one event stamped with `session`. Only the current session's
+    /// events apply: `SceneReady` makes it ready (again, without touching
+    /// holds); `SessionEnded` ends it for good; `Held`/`Released` set and
+    /// clear the hold of their reason; every other event changes nothing.
+    pub fn observe(
+        &mut self,
+        session: SessionKey,
+        event: &SessionEventOut,
+    ) -> Result<(), SessionGateError> {
+        self.current
+            .admit(session)
+            .map_err(|rejected| SessionGateError::StaleSession {
+                current: rejected.current(),
+                stamped: session,
+            })?;
         match event {
+            SessionEventOut::SceneReady => self.ready = true,
             SessionEventOut::SessionEnded { .. } => {
-                self.ready = None;
+                self.current.revoke();
+                self.ready = false;
                 self.holds = 0;
             }
-            SessionEventOut::Held { .. } => self.holds = self.holds.saturating_add(1),
-            SessionEventOut::Released => self.holds = self.holds.saturating_sub(1),
-            _ => {}
+            SessionEventOut::Held { why } => self.holds |= why.bit(),
+            SessionEventOut::Released { why } => self.holds &= !why.bit(),
+            SessionEventOut::Prepared
+            | SessionEventOut::Queued { .. }
+            | SessionEventOut::AttemptStarted { .. }
+            | SessionEventOut::HandshakeOk { .. }
+            | SessionEventOut::HandshakeRefused { .. }
+            | SessionEventOut::HandshakeAborted { .. }
+            | SessionEventOut::Unavailable { .. }
+            | SessionEventOut::IntentApplied { .. } => {}
         }
+        Ok(())
+    }
+
+    /// The session the owner authorized and has not ended, ready or not.
+    pub const fn current(&self) -> Option<SessionKey> {
+        self.current.current()
     }
 
     /// The session scripts may tick in, if any.
     pub const fn ready(&self) -> Option<SessionKey> {
-        match (self.ready, self.holds) {
-            (Some(session), 0) => Some(session),
-            _ => None,
+        if self.ready && self.holds == 0 {
+            self.current.current()
+        } else {
+            None
         }
     }
 
-    /// Whether the session is up but held.
+    /// Whether the current session is held for any reason.
     pub const fn held(&self) -> bool {
-        self.ready.is_some() && self.holds > 0
+        self.current.current().is_some() && self.holds != 0
+    }
+
+    /// Whether the current session is held for `why`.
+    pub const fn held_by(&self, why: HoldReason) -> bool {
+        self.current.current().is_some() && self.holds & why.bit() != 0
     }
 }
 
@@ -1216,96 +1570,18 @@ pub enum RunPhase {
 /// clocks and effects stay held until the next Ready. Only Stop ends the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionHeld {
+    since: Option<SessionKey>,
+}
+
+impl SessionHeld {
+    /// A hold since the end of `since`, if the session is known.
+    pub const fn new(since: Option<SessionKey>) -> Self {
+        Self { since }
+    }
+
     /// The session whose end holds the run, if it is known.
-    pub since: Option<SessionKey>,
-}
-
-/// The run-side projection of the matrix: phase, operator pause and session
-/// hold, with the execution generation that changes on recreate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RunHold {
-    phase: RunPhase,
-    session_held: Option<SessionHeld>,
-    execution_generation: NonZeroU64,
-}
-
-impl RunHold {
-    /// An idle run.
-    pub const fn idle() -> Self {
-        Self {
-            phase: RunPhase::Idle,
-            session_held: None,
-            execution_generation: NonZeroU64::MIN,
-        }
-    }
-
-    /// The phase.
-    pub const fn phase(&self) -> RunPhase {
-        self.phase
-    }
-
-    /// The session hold, if any.
-    pub const fn session_held(&self) -> Option<SessionHeld> {
-        self.session_held
-    }
-
-    /// The execution generation; a recreate advances it.
-    pub const fn execution_generation(&self) -> NonZeroU64 {
-        self.execution_generation
-    }
-
-    /// Whether the run may act now: Running, not session-held.
-    pub const fn may_act(&self) -> bool {
-        matches!(self.phase, RunPhase::Running) && self.session_held.is_none()
-    }
-
-    /// Apply a row's run effect. `session` is the session the row concerns,
-    /// if any. A recreate that exhausts the generation space is refused.
-    pub fn apply(
-        &mut self,
-        effect: RunEffect,
-        session: Option<SessionKey>,
-    ) -> Result<(), IdentityError> {
-        match effect {
-            RunEffect::None | RunEffect::ResumeHeld => {}
-            RunEffect::HoldWork => {
-                if matches!(self.phase, RunPhase::Running | RunPhase::Paused) {
-                    self.session_held = Some(SessionHeld { since: session });
-                }
-            }
-            RunEffect::RevalidateUnderNewSession => {
-                self.session_held = None;
-            }
-            RunEffect::Terminate => {
-                self.phase = RunPhase::Idle;
-                self.session_held = None;
-            }
-            RunEffect::RecreateExecution => {
-                if matches!(self.phase, RunPhase::Running | RunPhase::Paused) {
-                    self.execution_generation = self
-                        .execution_generation
-                        .checked_add(1)
-                        .ok_or(IdentityError::Exhausted(IdentityKind::ExecutionGeneration))?;
-                }
-            }
-            RunEffect::Start => {
-                if matches!(self.phase, RunPhase::Idle | RunPhase::Error) {
-                    self.phase = RunPhase::Running;
-                    self.session_held = None;
-                }
-            }
-            RunEffect::Pause => {
-                if matches!(self.phase, RunPhase::Running) {
-                    self.phase = RunPhase::Paused;
-                }
-            }
-            RunEffect::Resume => {
-                if matches!(self.phase, RunPhase::Paused) {
-                    self.phase = RunPhase::Running;
-                }
-            }
-        }
-        Ok(())
+    pub const fn since(self) -> Option<SessionKey> {
+        self.since
     }
 }
 
