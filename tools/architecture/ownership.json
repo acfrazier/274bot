@@ -5003,6 +5003,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/architecture/e2e_trusted_gate.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/architecture/graph.py",
       "owner": "T1"
     },

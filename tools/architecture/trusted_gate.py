@@ -277,6 +277,25 @@ def _submodule_manifest(root: Path) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(values.items()))
 
 
+def _gitlinks(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): gitlink_sha
+        for path, gitlink_sha in _source_files(root)
+        if gitlink_sha is not None
+    }
+
+
+def _gitlink_findings(base_root: Path, candidate_root: Path) -> list[str]:
+    """A moved client gitlink changes I-wire/T1 custody; it is an approval delta."""
+    before = _gitlinks(base_root)
+    after = _gitlinks(candidate_root)
+    return [
+        f"client gitlink moved: {path} {before[path]} -> {after[path]}"
+        for path in sorted(before.keys() & after.keys())
+        if before[path] != after[path]
+    ]
+
+
 def _submodule_paths(root: Path) -> tuple[str, ...]:
     return tuple(
         path.relative_to(root).as_posix()
@@ -766,6 +785,7 @@ def _evaluate_transition(enforcement_root: Path, base_root: Path, candidate_root
     _check_tree_clean(enforcement_root, base_root, "B")
     _check_tree_clean(enforcement_root, candidate_root, "H")
     findings = checker_findings(enforcement_root, "transition", base=base_root, candidate=candidate_root)
+    findings += _gitlink_findings(base_root, candidate_root)
     if len(findings) != len(set(findings)):
         _fail("trusted check_transition returned duplicate findings")
     return sorted(findings)
@@ -880,7 +900,7 @@ def _run_child(root: Path, *, evidence_root: Path, checker_root: Path | None = N
             _fail("pinned rust-analyzer executable is unavailable during qualification")
         parser_dir = str(Path(parser).resolve(strict=True).parent)
         system_path = os.pathsep.join(dict.fromkeys((parser_dir, "/usr/bin", "/bin")))
-        env = {"PATH": system_path, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(scratch), "F0_ARCH_TEST_ROOT": str(scratch), "F0_ARCH_QUALIFICATION_CHILD": "1"}
+        env = {"PATH": system_path, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(scratch), "F0_ARCH_TEST_ROOT": str(scratch)}
         if checker_root is not None:
             env["F0_ARCH_TEST_CHECKER_ROOT"] = str(_path(checker_root, "qualification checker root"))
         commands = [
@@ -906,7 +926,217 @@ def _qualification_digest(active_root: Path, proposed_root: Path, base_sha: str,
         "approval_digest": approval_digest,
         "runtime_pin": runtime_pin,
         "fixture_corpus": "check.py --self-test + tools/architecture/test_*.py",
+        "admission_probes": [label for label, _, _ in ADMISSION_PROBES],
     })
+
+
+# Admission-mode qualification. The suites above import E' as a module, so
+# E' can tell that it is under test. These probes instead run E' exactly as
+# an operator runs an ordinary admission once E' is active: the same
+# interpreter, environment, working directory, and `admit` command line,
+# against a records chain identical to the post-activation chain. Nothing
+# in that invocation marks it as qualification. The control must be
+# admitted (the simulated store is valid); every known-bad candidate must
+# be refused without a receipt.
+_PROBE_EMPTY_FINDINGS = (
+    "\n\n"
+    "def check_tree(root):\n"
+    "    return []\n"
+    "\n\n"
+    "def check_transition(base, candidate):\n"
+    "    return []\n"
+)
+_PROBE_MARKER = "checker-executed"
+_PROBE_SEAM_PATH = Path("crates/frontend-core/src/views.rs")
+
+
+def _probe_control(root: Path) -> None:
+    manifest = root / "Cargo.toml"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + "\n# Workspace notes are tracked in the README.\n", encoding="utf-8")
+
+
+def _probe_always_success(root: Path) -> None:
+    marker = root.parent / _PROBE_MARKER
+    (root / ARCH_DIR / "check.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n" + _PROBE_EMPTY_FINDINGS,
+        encoding="utf-8",
+    )
+
+
+def _probe_omitted_inventory(root: Path) -> None:
+    path = root / ARCH_DIR / "inventories.py"
+    path.write_text(path.read_text(encoding="utf-8") + _PROBE_EMPTY_FINDINGS, encoding="utf-8")
+
+
+def _probe_workflow(root: Path) -> None:
+    (root / WORKFLOW_PATH).write_text(
+        "name: CI\non:\n  push:\njobs:\n  architecture:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: \"true\"\n",
+        encoding="utf-8",
+    )
+
+
+def _dependency_names(manifest: dict[str, Any]) -> set[str]:
+    tables: list[Any] = [manifest.get(key) for key in ("dependencies", "dev-dependencies", "build-dependencies")]
+    targets = manifest.get("target")
+    if isinstance(targets, dict):
+        for table in targets.values():
+            if isinstance(table, dict):
+                tables.extend(table.get(key) for key in ("dependencies", "dev-dependencies", "build-dependencies"))
+    names: set[str] = set()
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        for key, spec in table.items():
+            names.add(key)
+            if isinstance(spec, dict) and isinstance(spec.get("package"), str):
+                names.add(spec["package"])
+    return names
+
+
+def _probe_added_edge(root: Path) -> None:
+    """Add a normal path dependency that policy does not permit (restored or new debt)."""
+    try:
+        workspace = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+        members = workspace.get("workspace", {}).get("members", [])
+        packages: dict[str, Path] = {}
+        manifests: dict[str, dict[str, Any]] = {}
+        for member in members:
+            manifest = tomllib.loads((root / str(member) / "Cargo.toml").read_text(encoding="utf-8"))
+            name = manifest.get("package", {}).get("name")
+            if isinstance(name, str):
+                packages[name] = root / str(member)
+                manifests[name] = manifest
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, AttributeError) as exc:
+        _fail(f"admission qualification cannot read workspace manifests: {exc}")
+    policy = _policy(root)
+    permitted = {
+        (row.get("from"), row.get("to"))
+        for row in policy.get("allow", [])
+        if isinstance(row, dict) and "normal" in (row.get("kinds") or [])
+    } | {
+        (row.get("from"), row.get("to"))
+        for row in policy.get("migration", [])
+        if isinstance(row, dict) and row.get("kind") == "normal"
+    }
+    for source in sorted(packages):
+        present = _dependency_names(manifests[source])
+        for target in sorted(packages):
+            if target == source or target in present or (source, target) in permitted:
+                continue
+            relative = os.path.relpath(packages[target], packages[source])
+            manifest = packages[source] / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8") + f'\n[dependencies.{json.dumps(target)}]\npath = {json.dumps(relative)}\n',
+                encoding="utf-8",
+            )
+            return
+    _fail("admission qualification cannot construct a dependency edge outside policy")
+
+
+def _probe_unregistered_seam(root: Path) -> None:
+    path = root / _PROBE_SEAM_PATH
+    if not path.is_file():
+        _fail(f"admission qualification requires the frontend seam file {_PROBE_SEAM_PATH.as_posix()}")
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n#[derive(Clone)]\npub struct OperatorNoteView {\n    pub text: String,\n}\n",
+        encoding="utf-8",
+    )
+
+
+ADMISSION_PROBES = (
+    ("control: comment-only workspace manifest change", _probe_control, True),
+    ("always-success candidate check.py", _probe_always_success, False),
+    ("omitted-inventory candidate inventories.py", _probe_omitted_inventory, False),
+    ("candidate CI workflow replacement", _probe_workflow, False),
+    ("restored or new dependency edge outside policy", _probe_added_edge, False),
+    ("owning seam with public field and Clone, inventory row omitted", _probe_unregistered_seam, False),
+)
+
+
+def _clone_at(source: Path, destination: Path, sha: str) -> Path:
+    """Check out exact SHA in a new clone that borrows the source object store."""
+    _git(destination.parent, "clone", "--quiet", "--shared", "--no-checkout", str(source), str(destination))
+    _git(destination, "checkout", "--quiet", "--detach", sha)
+    return destination
+
+
+def _commit_as(root: Path, identity_root: Path, identity_sha: str, message: str) -> str:
+    author = _git(identity_root, "log", "-1", "--format=%an%x00%ae", identity_sha).split("\0")
+    if len(author) != 2:
+        _fail(f"cannot read commit identity of {identity_sha}")
+    # Probes only modify tracked files; `--update` leaves unpopulated gitlinks alone.
+    _git(root, "add", "--update")
+    _git(root, "-c", f"user.name={author[0]}", "-c", f"user.email={author[1]}", "commit", "--quiet", "--no-verify", "-m", message)
+    return _git(root, "rev-parse", "--verify", "HEAD")
+
+
+def _qualify_admission_mode(
+    *,
+    scratch: Path,
+    record_root: Path,
+    target_ref: str,
+    candidate_root: Path,
+    head_sha: str,
+    proposed_root: Path,
+    proposed_sha: str,
+    proposed_digest: str,
+    runtime_pin: str,
+    activation_receipt: dict[str, Any],
+) -> None:
+    records_top = _path(Path(_git(record_root, "rev-parse", "--show-toplevel")), "records repository")
+    records_sha = _git(record_root, "rev-parse", "--verify", "HEAD")
+    records_subpath = record_root.relative_to(records_top)
+    for label, mutate, admitted in ADMISSION_PROBES:
+        with tempfile.TemporaryDirectory(prefix="arch-", dir=scratch) as temp_name:
+            work = Path(temp_name)
+            records_clone = _clone_at(records_top, work / "records", records_sha)
+            records = records_clone / records_subpath
+            receipts_path = records / "receipts.jsonl"
+            old = receipts_path.read_bytes()
+            if old and not old.endswith(b"\n"):
+                _fail("receipt file must end with a newline")
+            receipts_path.write_bytes(old + _canonical(activation_receipt) + b"\n")
+            simulated_records_sha = _commit_as(records_clone, records_top, records_sha, "Record architecture admission receipt")
+            enforcement = _clone_at(proposed_root, work / "enforcement", proposed_sha)
+            if bundle_digest(enforcement) != proposed_digest:
+                _fail("proposed E' clone does not match its exact bundle digest")
+            base = _clone_at(candidate_root, work / "base", head_sha)
+            _git(base, "update-ref", target_ref, head_sha)
+            candidate = _clone_at(candidate_root, work / "candidate", head_sha)
+            mutate(candidate)
+            probe_sha = _commit_as(candidate, candidate_root, head_sha, "Update workspace")
+            receipts_before = receipts_path.read_bytes()
+            command = [
+                sys.executable, str(enforcement / ARCH_DIR / "trusted_gate.py"), "admit",
+                "--records-root", str(records),
+                "--records-commit", simulated_records_sha,
+                "--records-ref-sha", simulated_records_sha,
+                "--enforcement-root", str(enforcement),
+                "--enforcement-sha", proposed_sha,
+                "--bundle-digest", proposed_digest,
+                "--runtime-pin", runtime_pin,
+                "--enforcement-ref-sha", proposed_sha,
+                "--target-ref", target_ref,
+                "--repo-root", str(base),
+                "--base-root", str(base),
+                "--candidate-root", str(candidate),
+                "--head-sha", probe_sha,
+            ]
+            try:
+                result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=dict(os.environ))
+            except OSError as exc:
+                _fail(f"cannot run proposed E' in admission mode: {exc}")
+            output = result.stdout.strip()[-4000:]
+            if (work / _PROBE_MARKER).exists():
+                _fail(f"admission-mode qualification failed: proposed E' executed candidate checker code ({label})\n{output}")
+            if admitted:
+                if result.returncode != 0:
+                    _fail(f"admission-mode qualification failed: proposed E' refused the {label} (exit {result.returncode})\n{output}")
+                current, receipts, pending = _read_record_store(records, target_ref)
+                if pending or current["head_sha"] != probe_sha or receipts[-1]["transition_kind"] is not None or current["enforcement_sha"] != proposed_sha:
+                    _fail(f"admission-mode qualification failed: proposed E' did not record an ordinary receipt for the {label}\n{output}")
+            elif result.returncode == 0 or receipts_path.read_bytes() != receipts_before or (records / "pending.json").exists():
+                _fail(f"admission-mode qualification failed: proposed E' admitted the known-bad {label} (exit {result.returncode})\n{output}")
 
 
 def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
@@ -1135,7 +1365,7 @@ def admit(args: argparse.Namespace) -> None:
 
 
 def prepare_enforcement(args: argparse.Namespace) -> None:
-    record_root, active_root, base_root, candidate_root, current, _, pending, meta = _load_current_inputs(args, local=True)
+    record_root, active_root, base_root, candidate_root, current, receipts, pending, meta = _load_current_inputs(args, local=True)
     if pending:
         _fail("another protected enforcement transition is already pending")
     _check_enforcement_ref(args.enforcement_ref_sha, current, {})
@@ -1164,6 +1394,7 @@ def prepare_enforcement(args: argparse.Namespace) -> None:
     if args.runtime_pin != current["runtime_pin"]:
         _fail("runtime changes require the new exact runtime to be provisioned before qualification")
     evidence_root = _path(args.evidence_root, "qualification evidence root")
+    _require_separate(evidence_root, record_root, active_root, base_root, candidate_root, proposed_root)
     _run_child(active_root, evidence_root=evidence_root, checker_root=proposed_root)
     _run_child(proposed_root, evidence_root=evidence_root, checker_root=proposed_root)
     qualification = _qualification_digest(active_root, proposed_root, base_sha, head_sha, candidate_digest, approval_hash, args.runtime_pin)
@@ -1188,6 +1419,38 @@ def prepare_enforcement(args: argparse.Namespace) -> None:
         "orchestrator_commit": head_sha,
         "qualification_digest": qualification,
     }
+    activation_receipt = _make_receipt(
+        sequence=len(receipts) + 1,
+        target_ref=meta["target_ref"],
+        head_sha=head_sha,
+        base_sha=base_sha,
+        epoch=current["contract_epoch"] + 1,
+        enforcement_sha=current["enforcement_sha"],
+        bundle_hash=current["bundle_digest"],
+        runtime=current["runtime_pin"],
+        activated_enforcement_sha=proposed_sha,
+        activated_bundle_hash=proposed_digest,
+        activated_runtime=args.runtime_pin,
+        schemas=_schema_versions(candidate_root),
+        input_hash=candidate_digest,
+        transition_kind="enforcement",
+        delta=findings,
+        approval_digest=approval_hash,
+        pending_digest=_digest(pending_record),
+        previous_digest=_record_prev_digest(record_root, _read_json(record_root / "gate.json", "gate record"), receipts),
+    )
+    _qualify_admission_mode(
+        scratch=evidence_root,
+        record_root=record_root,
+        target_ref=meta["target_ref"],
+        candidate_root=candidate_root,
+        head_sha=head_sha,
+        proposed_root=proposed_root,
+        proposed_sha=proposed_sha,
+        proposed_digest=proposed_digest,
+        runtime_pin=args.runtime_pin,
+        activation_receipt=activation_receipt,
+    )
     _write_pending(record_root, pending_record)
     print(f"protected transition prepared: H={head_sha} E'={proposed_sha}; publish E' only after committing pending.json")
 
