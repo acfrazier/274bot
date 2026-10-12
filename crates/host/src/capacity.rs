@@ -284,7 +284,8 @@ enum Clock {
 
 /// One reading of a [`Clock`].
 enum Reading {
-    /// Cumulative run-queue wait.
+    /// Cumulative run-queue wait. Only Linux (schedstat) and tests construct it.
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
     Waited(Duration),
     /// Cumulative CPU time of the thread.
     Cpu(Duration),
