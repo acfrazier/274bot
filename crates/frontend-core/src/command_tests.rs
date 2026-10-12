@@ -218,16 +218,17 @@ type Columns = (
     Option<ActionKind>,
 );
 
-/// The application decisions the r1 review found missing (D7 / `00-contract.md:52`:
-/// fleet model, dirty-form workflow, catalogue preparation and loadout draft
-/// are core-owned), each with its independently specified columns.
+/// The application decisions the r1 and r2 reviews found missing (D7 /
+/// `00-contract.md:52`: fleet model, shared picker, legacy settings,
+/// dirty-form workflow, catalogue preparation, map demand and loadout
+/// draft are core-owned), each with its independently specified columns.
 #[test]
 fn the_core_owned_application_decisions_have_their_frozen_columns() {
     use OperatorCommand as C;
     use ProcessCapability as P;
     use Settles::{AtDispatch, Owner};
     use SubjectKind::{Application, Profile};
-    let rows: [Columns; 16] = [
+    let rows: [Columns; 24] = [
         (C::SetFleetFilter, Application, AtDispatch, None, None),
         (
             C::SetFleetSort(FleetOrder::Name),
@@ -236,7 +237,33 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
             None,
             None,
         ),
+        (C::PickBrowseCard, Application, AtDispatch, None, None),
         (C::SelectScriptCard, Profile, AtDispatch, None, None),
+        (
+            C::PrepareScriptCard,
+            Application,
+            Owner,
+            Some(P::BackgroundWork),
+            None,
+        ),
+        (C::SaveLegacyScriptSettings, Application, Owner, None, None),
+        (C::EditParameterText, Application, AtDispatch, None, None),
+        (C::DiscardParameterText, Application, AtDispatch, None, None),
+        (
+            C::SetRaster(RasterMode::Cpu),
+            Profile,
+            Owner,
+            None,
+            Some(ActionKind::SaveProfile),
+        ),
+        (
+            C::OpenMapDemand,
+            Application,
+            Owner,
+            Some(P::BackgroundWork),
+            None,
+        ),
+        (C::ReleaseMapDemand, Application, AtDispatch, None, None),
         (
             C::TranspileAll,
             Application,
@@ -271,7 +298,7 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
         ),
         (C::SelectLoadout, Application, AtDispatch, None, None),
         (
-            C::EditLoadoutDraft(LoadoutField::Name),
+            C::EditLoadoutDraft(LoadoutField::Unassigned),
             Application,
             AtDispatch,
             None,
@@ -453,6 +480,100 @@ fn profile_form_and_loadout_decisions_settle_by_their_own_rules() {
     assert_eq!(f.terminal(duplicate, Subject::Application), Some(&nothing));
 }
 
+/// R2-H1: the shared Browse pick, the legacy settings save and the map
+/// demand are application decisions that need no profile; the per-profile
+/// pending choice stays a profile row, a picked loaded card's warm-up is
+/// its own preparation job, and a demand opens through the work service
+/// and releases at once.
+#[test]
+fn shared_browse_pick_legacy_save_and_map_demand_need_no_profile() {
+    use OperatorCommand as C;
+    let mut f = Fixture::new();
+    let pick = f.open_app(C::PickBrowseCard);
+    assert_eq!(
+        f.member(pick, Subject::Application).pending(),
+        Some(Pending::Accepted)
+    );
+    f.book
+        .settle(pick, Subject::Application, DONE, None)
+        .unwrap();
+    // The legacy save waits for the shared settings file's writer.
+    let legacy = f.open_app(C::SaveLegacyScriptSettings);
+    assert!(!f.book.report(legacy).unwrap().is_settled());
+    let failed = Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed));
+    f.book
+        .settle(
+            legacy,
+            Subject::Application,
+            failed.clone(),
+            Some("read-only"),
+        )
+        .unwrap();
+    assert_eq!(f.terminal(legacy, Subject::Application), Some(&failed));
+    // The pending choice is still per profile, never the application's.
+    let request = f.requests.mint().unwrap();
+    assert_eq!(
+        f.book.open(
+            request,
+            C::SelectScriptCard,
+            &[(Subject::Application, Scope::Process)],
+            &f.conditions
+        ),
+        Err(CommandError::WrongSubject {
+            request,
+            subject: Subject::Application,
+            scope: Scope::Process
+        })
+    );
+    let choice = f.open(C::SelectScriptCard, &[(ALICE, Scope::Process)]);
+    assert_eq!(f.member(choice, ALICE).pending(), Some(Pending::Accepted));
+    // A catalogue-only open settles on the demand; its failure is the
+    // demand's, not the pick's.
+    let open = f.open_app(C::OpenMapDemand);
+    assert_eq!(
+        f.member(open, Subject::Application).stage(),
+        Stage::Admitted
+    );
+    let unavailable = Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed));
+    f.book
+        .settle(
+            open,
+            Subject::Application,
+            unavailable.clone(),
+            Some("catalogue unavailable"),
+        )
+        .unwrap();
+    assert_eq!(f.terminal(open, Subject::Application), Some(&unavailable));
+    // Under the work outage the warm-up and the demand are refused while
+    // the pick, the legacy save and the release go through.
+    let work = f.latch(ProcessServiceCode::WorkAdmissionUnavailable);
+    for refused in [C::PrepareScriptCard, C::OpenMapDemand, C::BakeMapNow] {
+        let request = f.open_app(refused);
+        assert_eq!(
+            f.terminal(request, Subject::Application),
+            Some(&Settlement::Failed(CommandFailure::Refused {
+                condition: work,
+                capability: ProcessCapability::BackgroundWork
+            })),
+            "{refused:?}"
+        );
+    }
+    for admitted in [
+        C::PickBrowseCard,
+        C::SaveLegacyScriptSettings,
+        C::ReleaseMapDemand,
+        C::DeclineMapBake,
+    ] {
+        let request = f.open_app(admitted);
+        assert_eq!(
+            f.member(request, Subject::Application).pending(),
+            Some(Pending::Accepted),
+            "{admitted:?}"
+        );
+    }
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 0);
+}
+
 // --- Process conditions: independent capability/consumer matrix ---
 
 /// The rows each code refuses at admission, listed independently of
@@ -478,8 +599,9 @@ fn refused_by(code: ProcessServiceCode) -> Vec<OperatorCommand> {
         ProcessServiceCode::WorkAdmissionUnavailable => vec![
             C::StartScript,
             C::AssignAndRestart,
-            C::SaveScriptSettings,
-            C::ApplySettingsToMarked,
+            C::PrepareScriptCard,
+            C::SaveScriptSettings(CardKind::Native),
+            C::ApplySettingsToMarked(CardKind::Native),
             C::RestartForSettings,
             C::LoadScriptFile,
             C::ReloadScripts,
@@ -488,6 +610,7 @@ fn refused_by(code: ProcessServiceCode) -> Vec<OperatorCommand> {
             C::TranspileAll,
             C::WalkTo,
             C::GroupWalk,
+            C::OpenMapDemand,
             C::BakeMapNow,
             C::ReloadQuesterPaths,
         ],
@@ -535,8 +658,9 @@ fn each_code_refuses_exactly_its_independent_row_set() {
 #[test]
 fn only_a_resolved_login_stops_needing_the_resolver() {
     use ProcessCapability as P;
+    let attempt = current_attempt(&IntentMailbox::new(true, WorldChoice::Automatic));
     for command in OperatorCommand::ALL {
-        let resolved = command.needs(Stage::AddressResolved);
+        let resolved = command.needs(Stage::AddressResolved(attempt));
         assert_eq!(command.needs(Stage::Admitted), command.capabilities());
         if matches!(
             command,
@@ -546,7 +670,38 @@ fn only_a_resolved_login_stops_needing_the_resolver() {
         } else {
             assert_eq!(resolved, command.capabilities(), "{command:?}");
         }
+        // Only a native settings save has a preparation phase; prepared,
+        // it needs nothing. The JS kind never needs the background service.
+        let prepared = command.needs(Stage::Prepared);
+        if matches!(
+            command,
+            OperatorCommand::SaveScriptSettings(CardKind::Native)
+                | OperatorCommand::ApplySettingsToMarked(CardKind::Native)
+        ) {
+            assert!(command.prepares(), "{command:?}");
+            assert_eq!(command.capabilities(), [P::BackgroundWork]);
+            assert_eq!(prepared, []);
+        } else {
+            assert!(!command.prepares(), "{command:?}");
+            assert_eq!(prepared, command.capabilities(), "{command:?}");
+        }
     }
+    for js in [
+        OperatorCommand::SaveScriptSettings(CardKind::Script),
+        OperatorCommand::ApplySettingsToMarked(CardKind::Script),
+        OperatorCommand::SaveLegacyScriptSettings,
+    ] {
+        assert!(!js.prepares());
+        assert_eq!(js.capabilities(), []);
+    }
+}
+
+/// The attempt the slot owner reads from `mailbox` now, on the title screen.
+fn current_attempt(mailbox: &IntentMailbox) -> LoginAttempt {
+    LoginAttempt::new(
+        mailbox.login_command(false).unwrap(),
+        mailbox.snapshot().world_generation(),
+    )
 }
 
 #[test]
@@ -570,10 +725,20 @@ fn a_resolver_outage_fails_an_unresolved_login_and_spares_a_resolved_one() {
     // The slot owner resolved BOB's handshake address for the attempt it
     // read at the current generation; a later Log in on that slot was not
     // covered by it.
-    let through = resolved_box.snapshot().generation();
-    assert_eq!(f.book.address_resolved(resolved_slot, through), 1);
-    assert_eq!(f.book.address_resolved(resolved_slot, through), 0);
-    assert_eq!(f.member(resolved, BOB).stage(), Stage::AddressResolved);
+    let attempt = current_attempt(&resolved_box);
+    let snapshot = resolved_box.snapshot();
+    assert_eq!(
+        f.book.address_resolved(resolved_slot, attempt, &snapshot),
+        1
+    );
+    assert_eq!(
+        f.book.address_resolved(resolved_slot, attempt, &snapshot),
+        0
+    );
+    assert_eq!(
+        f.member(resolved, BOB).stage(),
+        Stage::AddressResolved(attempt)
+    );
     assert_eq!(f.member(unresolved, ALICE).stage(), Stage::Admitted);
 
     let resolver = f.latch(ProcessServiceCode::ResolverUnavailable);
@@ -610,6 +775,321 @@ fn a_resolver_outage_fails_an_unresolved_login_and_spares_a_resolved_one() {
         unavailable_terminal(f.terminal(unresolved, ALICE)).condition(),
         resolver
     );
+}
+
+/// The r2 review's probe (R2-H2): a world change replaces the attempt
+/// without changing the intent generation, so the old resolution fact must
+/// not exempt the replacement attempt from the resolver outage.
+#[test]
+fn review_r2_world_change_revokes_the_old_resolver_exception() {
+    let mut f = Fixture::new();
+    let slot = f.slot();
+    let mut mailbox = IntentMailbox::new(false, WorldChoice::World(1));
+    let login = f.dispatch(OperatorCommand::Login, ALICE, slot, &mut mailbox);
+    let attempt = current_attempt(&mailbox);
+    assert_eq!(
+        f.book.address_resolved(slot, attempt, &mailbox.snapshot()),
+        1
+    );
+    let generation = mailbox.snapshot().generation();
+    mailbox
+        .post(Intent::WorldPreference(WorldChoice::World(2)))
+        .unwrap();
+    // The mailbox declares the attempt stale, the login is still wanted and
+    // the intent generation did not move.
+    assert!(!mailbox.attempt_is_current(attempt.command(), attempt.world_generation()));
+    assert!(mailbox.snapshot().login_wanted());
+    assert_eq!(mailbox.snapshot().generation(), generation);
+    // The slot owner needs name resolution for the replacement attempt and
+    // the resolver is gone: its event is the member's one terminal, with
+    // the condition, the command identity and the scope.
+    let resolver = f.latch(ProcessServiceCode::ResolverUnavailable);
+    let event = unavailable(slot, ProcessCapability::NameResolution, resolver);
+    assert_eq!(f.book.observe(&event), 1);
+    let terminal = unavailable_terminal(f.terminal(login, ALICE));
+    assert_eq!(terminal.condition(), resolver);
+    assert_eq!(terminal.request(), login);
+    assert_eq!(terminal.scope(), Scope::Slot(slot));
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 0);
+    assert_eq!(f.book.blocked_by(login, ALICE, &f.conditions), None);
+}
+
+/// The exemption is bound to the attempt: the slot's snapshot revokes it
+/// when the world or cancellation fence moves while the login is still
+/// wanted (neither completing nor cancelling the login), a late fact for a
+/// replaced attempt changes nothing, and a genuinely current resolved
+/// handshake continues through the outage to its acknowledgement.
+#[test]
+fn a_resolution_exemption_lapses_with_its_attempt_and_a_current_one_continues() {
+    let mut f = Fixture::new();
+    let (world_slot, identity_slot, current_slot) = (f.slot(), f.slot(), f.slot());
+    let mut world_box = IntentMailbox::new(false, WorldChoice::World(1));
+    let mut identity_box = IntentMailbox::new(false, WorldChoice::Automatic);
+    let mut current_box = IntentMailbox::new(false, WorldChoice::Automatic);
+    let world = f.dispatch(OperatorCommand::Login, ALICE, world_slot, &mut world_box);
+    let identity = f.dispatch(
+        OperatorCommand::RelogNow,
+        BOB,
+        identity_slot,
+        &mut identity_box,
+    );
+    let current = f.dispatch(
+        OperatorCommand::Login,
+        CAROL,
+        current_slot,
+        &mut current_box,
+    );
+    let mut resolved = Vec::new();
+    for (slot, mailbox) in [
+        (world_slot, &world_box),
+        (identity_slot, &identity_box),
+        (current_slot, &current_box),
+    ] {
+        let attempt = current_attempt(mailbox);
+        assert_eq!(
+            f.book.address_resolved(slot, attempt, &mailbox.snapshot()),
+            1
+        );
+        resolved.push(attempt);
+    }
+
+    // A world change on the first slot, an identity change on the second:
+    // each mailbox replaces its attempt while the login stays wanted.
+    world_box
+        .post(Intent::WorldPreference(WorldChoice::World(2)))
+        .unwrap();
+    identity_box.post(Intent::LoginIdentityChanged).unwrap();
+    for (slot, mailbox, attempt) in [
+        (world_slot, &world_box, resolved[0]),
+        (identity_slot, &identity_box, resolved[1]),
+        (current_slot, &current_box, resolved[2]),
+    ] {
+        assert_eq!(
+            mailbox.attempt_is_current(attempt.command(), attempt.world_generation()),
+            slot == current_slot
+        );
+        assert!(mailbox.snapshot().login_wanted());
+        assert_eq!(f.book.observe_intent(slot, &mailbox.snapshot()), 0);
+    }
+    assert_eq!(f.member(world, ALICE).stage(), Stage::Admitted);
+    assert_eq!(f.member(identity, BOB).stage(), Stage::Admitted);
+    assert_eq!(
+        f.member(current, CAROL).stage(),
+        Stage::AddressResolved(resolved[2])
+    );
+    // Revocation settles nothing: the logins are still pending, posted as
+    // before (the identity change moved the generation; the post did not).
+    for (request, who, slot, attempt) in [
+        (world, ALICE, world_slot, resolved[0]),
+        (identity, BOB, identity_slot, resolved[1]),
+    ] {
+        assert_eq!(
+            f.member(request, who).pending(),
+            Some(Pending::Posted {
+                slot,
+                generation: attempt.command().generation()
+            })
+        );
+    }
+    // A late fact for the replaced attempt is fenced; the state is unchanged.
+    assert_eq!(
+        f.book
+            .address_resolved(world_slot, resolved[0], &world_box.snapshot()),
+        0
+    );
+    assert_eq!(f.member(world, ALICE).stage(), Stage::Admitted);
+    assert!(f.member(world, ALICE).pending().is_some());
+
+    // The resolver outage fails the two replacement attempts and spares
+    // the current resolved handshake.
+    let resolver = f.latch(ProcessServiceCode::ResolverUnavailable);
+    assert_eq!(
+        f.book.blocked_by(world, ALICE, &f.conditions),
+        Some(resolver)
+    );
+    assert_eq!(
+        f.book.blocked_by(identity, BOB, &f.conditions),
+        Some(resolver)
+    );
+    assert_eq!(f.book.blocked_by(current, CAROL, &f.conditions), None);
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 2);
+    for (request, who) in [(world, ALICE), (identity, BOB)] {
+        let terminal = unavailable_terminal(f.terminal(request, who));
+        assert_eq!(terminal.condition(), resolver);
+        assert_eq!(terminal.request(), request);
+    }
+    assert_eq!(f.terminal(current, CAROL), None);
+    // The current handshake completes: the login succeeds and the slot
+    // acknowledges the posted generation.
+    current_box.observe(LifecycleFact::LoginSucceeded).unwrap();
+    assert_eq!(f.book.observe(&applied(current_slot, &current_box)), 1);
+    assert_eq!(f.terminal(current, CAROL), Some(&DONE));
+}
+
+/// The resolution fact covers the posts the attempt was read for (its
+/// generation and earlier) on its slot, and nothing else: an older post is
+/// covered, a later post and another slot's post are not, and a repeated or
+/// stale fact leaves every member as it was.
+#[test]
+fn a_resolution_fact_covers_the_posts_its_attempt_read_and_no_later_one() {
+    const DAVE: Subject = Subject::Profile(ProfileIdentity::uid(4));
+    let mut f = Fixture::new();
+    let (slot, other_slot) = (f.slot(), f.slot());
+    let mut mailbox = IntentMailbox::new(false, WorldChoice::Automatic);
+    let mut other_box = IntentMailbox::new(false, WorldChoice::Automatic);
+    let older = f.dispatch(OperatorCommand::Login, ALICE, slot, &mut mailbox);
+    let older_generation = mailbox.snapshot().generation();
+    // A later command on the slot moves the generation past the Log in.
+    f.dispatch(OperatorCommand::StartScript, BOB, slot, &mut mailbox);
+    let elsewhere = f.dispatch(OperatorCommand::Login, DAVE, other_slot, &mut other_box);
+    // The slot owner reads the attempt now, after both posts.
+    let attempt = current_attempt(&mailbox);
+    assert!(older_generation < attempt.command().generation());
+    assert_eq!(
+        f.book.address_resolved(slot, attempt, &mailbox.snapshot()),
+        1
+    );
+    assert_eq!(
+        f.member(older, ALICE).stage(),
+        Stage::AddressResolved(attempt)
+    );
+    assert_eq!(f.member(elsewhere, DAVE).stage(), Stage::Admitted);
+    // A Log in posted after the attempt was read is not covered by it,
+    // even though the attempt stays current.
+    let later = f.dispatch(OperatorCommand::Login, CAROL, slot, &mut mailbox);
+    assert!(mailbox.attempt_is_current(attempt.command(), attempt.world_generation()));
+    assert_eq!(
+        f.book.address_resolved(slot, attempt, &mailbox.snapshot()),
+        0
+    );
+    assert_eq!(f.member(later, CAROL).stage(), Stage::Admitted);
+    assert_eq!(
+        f.member(older, ALICE).stage(),
+        Stage::AddressResolved(attempt)
+    );
+    // The other slot's own fact covers only its member.
+    let other_attempt = current_attempt(&other_box);
+    assert_eq!(
+        f.book
+            .address_resolved(other_slot, other_attempt, &other_box.snapshot()),
+        1
+    );
+    assert_eq!(f.member(later, CAROL).stage(), Stage::Admitted);
+    // Under the resolver outage only the uncovered posts fail.
+    f.latch(ProcessServiceCode::ResolverUnavailable);
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 1);
+    assert!(matches!(
+        f.terminal(later, CAROL),
+        Some(Settlement::Failed(CommandFailure::Unavailable(_)))
+    ));
+    assert_eq!(f.terminal(older, ALICE), None);
+    assert_eq!(f.terminal(elsewhere, DAVE), None);
+}
+
+/// R2-M1: a ready JS settings save needs no background service, a native
+/// save needs it only until its preparation completed, and the durable
+/// writer keeps its own terminal rule on both sides of the work outage.
+#[test]
+fn settings_saves_need_the_background_service_only_for_an_unprepared_native_card() {
+    use CardKind::{Native, Script};
+    use OperatorCommand as C;
+    // Outage first: JS and legacy saves are admitted and continue; native
+    // ones are refused.
+    let mut f = Fixture::new();
+    let work = f.latch(ProcessServiceCode::WorkAdmissionUnavailable);
+    let js = f.open(C::SaveScriptSettings(Script), &[(ALICE, Scope::Process)]);
+    let js_apply = f.open(
+        C::ApplySettingsToMarked(Script),
+        &[(ALICE, Scope::Process), (BOB, Scope::Process)],
+    );
+    let legacy = f.open_app(C::SaveLegacyScriptSettings);
+    for (request, who) in [(js, ALICE), (js_apply, BOB), (legacy, Subject::Application)] {
+        assert_eq!(f.member(request, who).pending(), Some(Pending::Accepted));
+        assert_eq!(f.book.blocked_by(request, who, &f.conditions), None);
+    }
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 0);
+    f.book.settle(js, ALICE, DONE, None).unwrap();
+    assert_eq!(f.terminal(js, ALICE), Some(&DONE));
+    for row in [
+        C::SaveScriptSettings(Native),
+        C::ApplySettingsToMarked(Native),
+    ] {
+        let refused = f.open(row, &[(ALICE, Scope::Process)]);
+        assert_eq!(
+            f.terminal(refused, ALICE),
+            Some(&Settlement::Failed(CommandFailure::Refused {
+                condition: work,
+                capability: ProcessCapability::BackgroundWork
+            }))
+        );
+        assert_eq!(
+            f.book.prepared(refused, ALICE),
+            Err(CommandError::AlreadySettled {
+                request: refused,
+                subject: ALICE
+            })
+        );
+    }
+
+    // Outage later: an unprepared native save fails with its identity, a
+    // prepared one and a JS one continue to their writer's terminal.
+    let mut f = Fixture::new();
+    let unprepared = f.open(C::SaveScriptSettings(Native), &[(ALICE, Scope::Process)]);
+    let prepared = f.open(
+        C::ApplySettingsToMarked(Native),
+        &[(ALICE, Scope::Process), (BOB, Scope::Process)],
+    );
+    let js = f.open(C::SaveScriptSettings(Script), &[(CAROL, Scope::Process)]);
+    assert_eq!(f.member(unprepared, ALICE).stage(), Stage::Admitted);
+    f.book.prepared(prepared, ALICE).unwrap();
+    assert_eq!(f.member(prepared, ALICE).stage(), Stage::Prepared);
+    assert_eq!(f.member(prepared, BOB).stage(), Stage::Admitted);
+    // The preparation protocol: once per member, only for rows with a
+    // preparation phase, never for a settled member.
+    assert_eq!(
+        f.book.prepared(prepared, ALICE),
+        Err(CommandError::AlreadyPrepared {
+            request: prepared,
+            subject: ALICE
+        })
+    );
+    assert_eq!(
+        f.book.prepared(js, CAROL),
+        Err(CommandError::NoPreparation(js))
+    );
+    let logout = f.open(C::Logout, &[(ALICE, Scope::Slot(f.slot()))]);
+    assert_eq!(
+        f.book.prepared(logout, ALICE),
+        Err(CommandError::NoPreparation(logout))
+    );
+    assert_eq!(f.member(prepared, BOB).stage(), Stage::Admitted);
+
+    let work = f.latch(ProcessServiceCode::WorkAdmissionUnavailable);
+    assert_eq!(
+        f.book.blocked_by(unprepared, ALICE, &f.conditions),
+        Some(work)
+    );
+    assert_eq!(f.book.blocked_by(prepared, BOB, &f.conditions), Some(work));
+    assert_eq!(f.book.blocked_by(prepared, ALICE, &f.conditions), None);
+    assert_eq!(f.book.blocked_by(js, CAROL, &f.conditions), None);
+    assert_eq!(f.book.fail_unavailable(&f.conditions), 2);
+    for (request, who) in [(unprepared, ALICE), (prepared, BOB)] {
+        let terminal = unavailable_terminal(f.terminal(request, who));
+        assert_eq!(terminal.condition(), work);
+        assert_eq!(terminal.request(), request);
+        assert_eq!(terminal.scope(), Scope::Process);
+    }
+    assert_eq!(f.terminal(prepared, ALICE), None);
+    assert_eq!(f.terminal(js, CAROL), None);
+    // The durable writer settles the survivors by its own rule.
+    let write_failed = Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed));
+    f.book
+        .settle(prepared, ALICE, write_failed.clone(), Some("disk full"))
+        .unwrap();
+    f.book.settle(js, CAROL, DONE, None).unwrap();
+    assert_eq!(f.terminal(prepared, ALICE), Some(&write_failed));
+    assert_eq!(f.terminal(js, CAROL), Some(&DONE));
+    assert!(f.book.report(prepared).unwrap().is_settled());
 }
 
 #[test]

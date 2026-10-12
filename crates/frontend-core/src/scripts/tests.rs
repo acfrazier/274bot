@@ -2,15 +2,24 @@
 //! [`host_play::Play`] (no server contact), real script slots and the real
 //! profile writer over a temp vault.
 
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
+use crate::command::{
+    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
+};
 use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
+use api::identity::{ProcessIncarnation, ProcessTime, RequestIdMinter, Scope, Settlement};
+use api::process_condition::{
+    ConditionCause, ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCode,
+    ProcessServiceCondition,
+};
 use host_play::{InstancePermit, Play, PlayOptions};
 use serde_json::{json, Map, Value};
 
@@ -3519,4 +3528,175 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
         assert_eq!(start_accepted(&f, name), 0, "{name}");
         assert_eq!(f.state(name), script::RunState::Idle, "{name}");
     }
+}
+
+/// A frozen command book with one latched process condition.
+fn frozen_book(code: Option<ProcessServiceCode>) -> (CommandBook, ProcessConditions) {
+    let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::MIN);
+    let mut conditions = ProcessConditions::new(incarnation);
+    if let Some(code) = code {
+        conditions
+            .publish(ProcessServiceCondition::new(
+                ConditionId::new(incarnation, code),
+                ConditionCause::Panicked,
+                ProcessTime::ZERO,
+                None,
+            ))
+            .unwrap();
+    }
+    (CommandBook::new(), conditions)
+}
+
+/// R2-M1 against the real settings path (the review's fixture): a loaded
+/// JS card's parameter save is staged at once and taken by the durable
+/// writer, so its frozen row is admitted under a latched work-admission
+/// outage and the writer's result settles it; the saved value is on disk.
+#[test]
+fn a_ready_js_settings_save_is_admitted_and_written_under_a_work_outage() {
+    let mut f = fixture("frozen-js-save", &["alice"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    let (mut book, conditions) = frozen_book(Some(ProcessServiceCode::WorkAdmissionUnavailable));
+    let alice = Subject::Profile(ProfileIdentity::uid(1));
+    let save = RequestIdMinter::new().mint().unwrap();
+    book.open(
+        save,
+        OperatorCommand::SaveScriptSettings(CardKind::Script),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    assert_eq!(
+        book.report(save).unwrap().member(alice).unwrap().pending(),
+        Some(Pending::Accepted)
+    );
+
+    f.set("alice", &thiever, "target", json!("Guard"));
+    f.core.flush_writes();
+    let writes = f.core.take_settings_writes();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0].result,
+        super::SettingsResult::Saved(super::LiveDelivery::NotRunning)
+    );
+    assert_eq!(
+        f.saved_bag("alice", &thiever.identity_key()),
+        Some(bag(&[("target", json!("Guard"))]))
+    );
+    // The outage never touched the member; the writer's result settles it.
+    assert_eq!(book.fail_unavailable(&conditions), 0);
+    assert_eq!(book.blocked_by(save, alice, &conditions), None);
+    book.settle(save, alice, Settlement::Completed(Completion::Done), None)
+        .unwrap();
+    assert!(book.report(save).unwrap().is_settled());
+}
+
+/// A native card's parameter save is a preparation job first
+/// (`queue_native_settings` → `script_prepare_config`), then the durable
+/// write: its frozen row needs the background service until the
+/// preparation staged the row, and only the writer afterwards.
+#[test]
+fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
+    let mut f = native_fixture("frozen-native-save", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    let (mut book, mut conditions) = frozen_book(None);
+    let alice = Subject::Profile(ProfileIdentity::uid(1));
+    let requests = RequestIdMinter::new();
+    let save = requests.mint().unwrap();
+    book.open(
+        save,
+        OperatorCommand::SaveScriptSettings(CardKind::Native),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    let member = |book: &CommandBook| book.report(save).unwrap().member(alice).unwrap().stage();
+    assert_eq!(member(&book), Stage::Admitted);
+
+    // Hold the writer: the preparation stages the row, nothing is durable.
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            id,
+            bag(&[("targetPreference", json!("Nearest"))]),
+        )
+        .unwrap();
+    let staged_value = |f: &Fixture| {
+        f.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .map(|(_, values)| values.get("targetPreference").cloned())
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while staged_value(&f) != Some(Some(json!("Nearest"))) {
+        assert!(
+            Instant::now() < deadline,
+            "native preparation did not settle"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(f.saved_bag("alice", &key), None, "nothing durable yet");
+    // The preparation owner reports; the member no longer needs the service.
+    book.prepared(save, alice).unwrap();
+    assert_eq!(member(&book), Stage::Prepared);
+    let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::MIN);
+    let work = ConditionId::new(incarnation, ProcessServiceCode::WorkAdmissionUnavailable);
+    conditions
+        .publish(ProcessServiceCondition::new(
+            work,
+            ConditionCause::Panicked,
+            ProcessTime::ZERO,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(book.fail_unavailable(&conditions), 0);
+    assert_eq!(book.blocked_by(save, alice, &conditions), None);
+    // A second native save is refused now; the prepared one still writes.
+    let refused = requests.mint().unwrap();
+    book.open(
+        refused,
+        OperatorCommand::SaveScriptSettings(CardKind::Native),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    assert!(matches!(
+        book.report(refused)
+            .unwrap()
+            .member(alice)
+            .unwrap()
+            .terminal(),
+        Some(Settlement::Failed(CommandFailure::Refused {
+            capability: ProcessCapability::BackgroundWork,
+            ..
+        }))
+    ));
+    drop(held);
+    f.core.flush_writes();
+    f.core.poll();
+    let writes = f.core.take_settings_writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert!(matches!(writes[0].result, super::SettingsResult::Saved(_)));
+    let saved = f.saved_bag("alice", &key).unwrap();
+    let (_, values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
+    assert_eq!(values["targetPreference"], json!("Nearest"));
+    book.settle(save, alice, Settlement::Completed(Completion::Done), None)
+        .unwrap();
+    assert!(book.report(save).unwrap().is_settled());
 }

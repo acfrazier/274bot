@@ -30,8 +30,11 @@
 //!   mailbox row's member is bound once to its admitted slot; it settles on
 //!   that slot owner's `SessionEventOut::IntentApplied` for its receipt's
 //!   generation or a later one, and an older acknowledgement, or another
-//!   slot's, never settles it. Settled history is bounded; pending work is
-//!   never evicted.
+//!   slot's, never settles it. What a pending member still needs from the
+//!   process follows its [`Stage`]: a login's resolver exemption is bound
+//!   to the attempt it was resolved for ([`LoginAttempt`]) and lapses with
+//!   it; a native settings save stops needing the background service once
+//!   prepared. Settled history is bounded; pending work is never evicted.
 //!
 //! UI strings are presentation: reports carry typed reasons; free text from
 //! a lower layer survives only as [`MemberReport::detail`].
@@ -40,8 +43,8 @@ use std::collections::VecDeque;
 
 use api::identity::{Cancellation, Event, RequestId, RequestNamespace, Scope, Settlement, SlotKey};
 use api::lifecycle::{
-    Intent, IntentGeneration, IntentSnapshot, MailboxError, MemoryMode, ParkReason, PostReceipt,
-    SessionEventOut, WorldChoice,
+    Intent, IntentCommand, IntentGeneration, IntentSnapshot, MailboxError, MemoryMode, ParkReason,
+    PostReceipt, SessionEventOut, WorldChoice,
 };
 use api::process_condition::{
     ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCondition, UnavailableTerminal,
@@ -140,29 +143,70 @@ pub enum OperatorCommand {
     /// Drop a queued Start-all/marked Start before it is admitted
     /// (`Scripts::{cancel_queued, cancel_queued_as}`, `scripts/mod.rs:973-998`).
     CancelQueuedStart,
-    /// Make the staged Browse card the member's pending script choice
+    /// Make a card the shared Browse selection: the application's one
+    /// `script_sel` both surfaces show (panel `select_script_selection`,
+    /// `session_catalog.rs:128-129`, `app.rs:2709-2710`; TUI Browse pick
+    /// into `app.script_sel`, `app.rs:1481-1482,1581-1582`). It needs no
+    /// profile. Today's handlers compose it with a focused profile's
+    /// [`Self::SelectScriptCard`] and, for a loaded card on the panel, with
+    /// [`Self::PrepareScriptCard`]; each of the three has its own report.
+    PickBrowseCard,
+    /// Make the shared Browse card the member's pending script choice
     /// (`Scripts::set_pending_browse`, `scripts/mod.rs:598-599`; panel
-    /// `select_script_selection`, `session_catalog.rs:128-135`,
-    /// `app.rs:2709-2710`; TUI Browse pick, `app.rs:1481-1482,1581-1582`,
-    /// recorded at `bin.rs:2420-2423`). It neither persists the assignment
-    /// ([`Self::AssignScript`]) nor starts a run ([`Self::StartScript`]). The
-    /// warm-up the panel queues for a loaded card is a separate preparation
-    /// job with its own admission, not this row's terminal.
+    /// `session_catalog.rs:130-132` for the focused profile; TUI
+    /// `bin.rs:2420-2424` for the profile whose heading it replaced). It
+    /// neither persists the assignment ([`Self::AssignScript`]) nor starts
+    /// a run ([`Self::StartScript`]).
     SelectScriptCard,
+    /// Queue the preparation (transpile) of one loaded card: the warm-up
+    /// the panel queues for a picked loaded card (`enqueue_transpile`,
+    /// `session_catalog.rs:133-135`, pumped one `ensure_js` per armed
+    /// frame by `pump_script_transpile`). A preparation job with its own
+    /// admission and terminal; neither [`Self::PickBrowseCard`]'s terminal
+    /// nor a single-card [`Self::TranspileAll`].
+    PrepareScriptCard,
     /// Assign the staged script selection (`Scripts::persist_assignment`,
     /// `scripts/mod.rs:638`; `marked::assign_marked`).
     AssignScript,
     /// Assign then restart running members (`marked::assign_and_restart_marked`,
     /// `marked.rs:197`).
     AssignAndRestart,
-    /// Save the staged script parameters (`Scripts::{set_profile_setting,
-    /// profile_save_live, set_compiled_setting, set_compiled_overrides}`).
-    SaveScriptSettings,
+    /// Save the member's staged parameters of one card. The kind of card
+    /// decides the prerequisites ([`CardKind`]): a loaded JS card's value
+    /// is coerced and staged at once and the durable writer takes the row
+    /// (`Scripts::set_profile_setting`, `scripts/mod.rs:882-927`;
+    /// `profile_save_live`), no background service involved; a native
+    /// card's bag is first prepared by a background job
+    /// (`set_compiled_setting`/`set_compiled_overrides`, `native.rs:124-221`;
+    /// `queue_native_settings`, `native_settings.rs:246`) and the durable
+    /// write follows ([`Stage::Prepared`], [`CommandBook::prepared`]).
+    SaveScriptSettings(CardKind),
+    /// Save a parameter of a loaded JS card to the shared legacy overrides
+    /// when no profile is focused (panel `persist_profile_setting`,
+    /// `app.rs:3339-3344`: `scripts.legacy.set_value` then `legacy.save`).
+    /// A durable write of the application's shared settings file, settled
+    /// by its writer; it needs no background service.
+    SaveLegacyScriptSettings,
+    /// A staged edit of the parameter editor's text buffer for one field
+    /// (`Scripts::{parameter_text_mut, parameter_text_mut_for}` and the
+    /// validation of that buffer, `parameter_edit.rs:715-818`): the
+    /// persistent buffer both front ends bind, keyed by profile, card and
+    /// field. It changes the staged text only; [`Self::SaveScriptSettings`]
+    /// commits it (`commit_parameter_value`).
+    EditParameterText,
+    /// Cancel a field's staged text (`Scripts::{discard_parameter_text,
+    /// discard_parameter_text_for}`, `parameter_edit.rs:820-840,960-968`);
+    /// a write the buffer already queued still settles first, then the
+    /// discard is honoured.
+    DiscardParameterText,
     /// Apply the focused member's parameters to the marked same-card members
     /// ("Apply to all": `Scripts::{prepare_settings_sync,
     /// prepare_compiled_settings_sync, apply_settings_sync}`,
     /// `scripts/sync.rs:783-1070`; `marked::prepare_apply_settings_marked`).
-    ApplySettingsToMarked,
+    /// Same card for every member, so one [`CardKind`] decides the
+    /// prerequisites as for [`Self::SaveScriptSettings`]: a JS copy is
+    /// staged and written, a native copy is prepared per member first.
+    ApplySettingsToMarked(CardKind),
     /// Withdraw a prepared Apply-to-all (`Scripts::cancel_settings_sync`,
     /// `scripts/sync.rs:919`).
     CancelSettingsSync,
@@ -249,13 +293,15 @@ pub enum OperatorCommand {
 
     // --- Loadouts ---
     /// Make the selected loadout the editing draft (panel Loadouts list,
-    /// `loadouts.rs:240-246`; `sync_draft`). Unsaved draft edits of the
-    /// previous selection are dropped, as today.
+    /// `loadouts.rs:240-246`, `sync_draft`; TUI loadouts popup row 0,
+    /// `tui/src/loadouts.rs:111-115`, `sync_scratch_from_selection`).
+    /// Unsaved draft edits of the previous selection are dropped, as today.
     SelectLoadout,
-    /// A staged edit of the loadout draft (name, worn slot, supplies,
-    /// unassigned legacy gear: `loadouts.rs:267,277-281,311-434` and the
-    /// item search popup). It changes the draft only; [`Self::SaveLoadout`]
-    /// writes it.
+    /// A staged edit of the loadout draft (panel name, worn slot, supplies,
+    /// Clear unassigned: `loadouts.rs:267,277-281,311-434` and the item
+    /// search popup; TUI scratch rows 1-4, typed or erased character by
+    /// character, `tui/src/loadouts.rs:200-225`). It changes the draft
+    /// only; [`Self::SaveLoadout`] writes it.
     EditLoadoutDraft(LoadoutField),
     /// Copy the member's current equipment into the loadout draft, keeping
     /// its supplies (`copy_equipment`, `loadouts.rs:134-148`): a draft edit,
@@ -263,16 +309,20 @@ pub enum OperatorCommand {
     /// character, `NothingSelected` without a draft.
     CopyEquipmentToLoadout,
     /// Create a loadout and write the loadout file at once, the in-memory
-    /// set rolled back if the write fails (`add_loadout`, `loadouts.rs:65-80`).
+    /// set rolled back if the write fails (panel `add_loadout`,
+    /// `loadouts.rs:65-80`; TUI row 5, `tui/src/loadouts.rs:123-140`).
     CreateLoadout,
     /// Duplicate the selected loadout and write at once, rolled back if the
-    /// write fails (`duplicate_loadout`, `loadouts.rs:82-106`).
-    /// `Skipped(NothingSelected)` without a selection.
+    /// write fails (panel `duplicate_loadout`, `loadouts.rs:82-106`; TUI
+    /// row 6, `tui/src/loadouts.rs:141-166`). `Skipped(NothingSelected)`
+    /// without a selection.
     DuplicateLoadout,
-    /// Save the edited loadout draft (`save_draft`, `loadouts.rs:37-63`).
+    /// Save the edited loadout draft (panel `save_draft`, `loadouts.rs:37-63`;
+    /// TUI Enter on a scratch row or row 8, `commit_scratch`,
+    /// `tui/src/loadouts.rs:56-85`).
     SaveLoadout,
-    /// Delete the selected loadout, written at once (`delete_loadout`,
-    /// `loadouts.rs:108-132`).
+    /// Delete the selected loadout, written at once (panel `delete_loadout`,
+    /// `loadouts.rs:108-132`; TUI row 7, `tui/src/loadouts.rs:167-190`).
     DeleteLoadout,
 
     // --- Selection and marks ---
@@ -309,7 +359,11 @@ pub enum OperatorCommand {
     /// and Load all focuses like MultiBox-on (`pick_focus`, `session.rs:44`).
     SetMultiBox(bool),
     /// The focused member's raster mode (panel `Off`/`Gpu`/`Cpu`,
-    /// `Session::request_focused_raster`).
+    /// `Session::{request_focused_raster, set_focused_raster}`,
+    /// `panel/src/session.rs:4123-4138`): the renderer switches at once and
+    /// the profile's raster preference is written durably
+    /// (`persist_game_render_prefs` → `save_profile`, "render prefs"), so
+    /// the member settles on the writer.
     SetRaster(RasterMode),
     /// One draw-policy switch (panel `game renderer`, `capture input`,
     /// `sidecar 50 fps`, `focused 50 fps`, `full rate (this run)`).
@@ -323,11 +377,32 @@ pub enum OperatorCommand {
     SetDangerLevel(DangerLevel),
     /// Turn the session log file on or off (`log_file::apply_session_log`).
     SetSessionLog(bool),
-    /// Persist the map-bake choice (`map_bake::persist_map_bake_choice`).
+    /// Persist the map-bake choice (`map_bake::persist_map_bake_choice`;
+    /// `MapBakeGate::set_choice`).
     SetMapBakeChoice(MapBakeChoice),
-    /// Accept the map-bake prompt (`MapBakeGate::accept`, `map_bake.rs:142`).
+    /// Open the map demand for the bound profile through the bake gate
+    /// (`MapBakeGate::{open_profile, open}`, `map_bake.rs:156-191`): the
+    /// TUI's catalogue-only demand (`MapOpen` → `open_map_catalogue`,
+    /// `bin.rs:1335-1352,3370-3373`) and the panel's walk-map demand
+    /// (`sync_walk_map`, `panel/src/session.rs:4502-4513`), which the gate
+    /// keeps catalogue-only and prompts for without bake consent. The
+    /// demand admits catalogue decode or terrain bake work and settles
+    /// when it is ready; a held demand is custody, not presentation.
+    /// Distinct from [`Self::WalkTo`] and from [`Self::BakeMapNow`].
+    OpenMapDemand,
+    /// Release the held map demand and close the shared map model (panel
+    /// `release_walk_map`, `panel/src/session.rs:4578-4587`, which also
+    /// reaps the demand; TUI `MapClose` → `release_map_catalogue` and
+    /// `map_model.close()`, `bin.rs:1470-1473,3374-3378`).
+    ReleaseMapDemand,
+    /// Bake now: consent to the local terrain bake for this process and
+    /// reopen the images demand that starts it (`MapBakeGate::accept` then
+    /// `open_profile(Images)`: panel `accept_map_bake`,
+    /// `panel/src/session.rs:4547-4562`; "Always bake" composes
+    /// [`Self::SetMapBakeChoice`] first). Settled by the bake demand.
     BakeMapNow,
-    /// Decline the map-bake prompt (`MapBakeGate::decline`, `map_bake.rs:149`).
+    /// Decline the map-bake prompt (`MapBakeGate::decline`, `map_bake.rs:149`):
+    /// the open demand stays catalogue-only.
     DeclineMapBake,
     /// Persist the staged Quester paths settings
     /// (`QuesterPathsController::apply_changed_at`, `quester_paths.rs:185`).
@@ -403,8 +478,22 @@ pub enum LoadoutField {
     Equipment,
     /// A supply entry: added, removed, item or quantity changed.
     Supplies,
-    /// The unassigned legacy gear was cleared.
-    ClearUnassigned,
+    /// The unassigned legacy gear list: cleared (panel `Clear unassigned`)
+    /// or edited as free text committed as a list (TUI scratch row 3,
+    /// `split_csv`).
+    Unassigned,
+}
+
+/// The kind of card a parameter save is for; it decides what the save
+/// needs from the process (`SaveScriptSettings`, `ApplySettingsToMarked`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CardKind {
+    /// A loaded JS card: the bag is coerced and staged synchronously and
+    /// the durable writer takes the profile row; no background job.
+    Script,
+    /// A native (compiled) card: the bag is prepared off-pump by a
+    /// background job before the row is staged and written.
+    Native,
 }
 
 /// What a profile-form close leaves.
@@ -459,20 +548,68 @@ pub enum Settles {
     Owner,
 }
 
+/// The identity of one login attempt a slot owner runs: the mailbox
+/// command it read the attempt as (its generation and cancellation fence)
+/// and the world fence it was read under. The attempt is current while the
+/// slot's mailbox still wants a login and neither fence moved
+/// (`IntentMailbox::attempt_is_current`); a world change, an identity
+/// change, a withdrawal, a closed lifetime or a completed login replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LoginAttempt {
+    command: IntentCommand,
+    world_generation: u64,
+}
+
+impl LoginAttempt {
+    /// The attempt the slot owner read as `command` under `world_generation`
+    /// (`IntentMailbox::login_command` and `IntentSnapshot::world_generation`).
+    pub const fn new(command: IntentCommand, world_generation: u64) -> Self {
+        Self {
+            command,
+            world_generation,
+        }
+    }
+
+    /// The command the attempt was read as.
+    pub const fn command(self) -> IntentCommand {
+        self.command
+    }
+
+    /// The world fence the attempt was read under.
+    pub const fn world_generation(self) -> u64 {
+        self.world_generation
+    }
+
+    /// Whether the attempt is still the one the slot's mailbox asks for,
+    /// judged by `snapshot`: the same test as `IntentMailbox::attempt_is_current`.
+    pub fn is_current(self, snapshot: &IntentSnapshot) -> bool {
+        snapshot.login_wanted()
+            && snapshot.cancellation() == self.command.cancellation()
+            && snapshot.world_generation() == self.world_generation
+    }
+}
+
 /// How far a pending member's work has progressed, as far as the process
-/// capabilities it still needs are concerned (§26 §3.2). Only the slot
-/// owner moves a member past [`Stage::Admitted`]
-/// ([`CommandBook::address_resolved`]).
+/// capabilities it still needs are concerned (§26 §3.2). Only an owner
+/// moves a member past [`Stage::Admitted`]: the slot owner's resolution
+/// fact ([`CommandBook::address_resolved`]) or the preparation owner's
+/// completion ([`CommandBook::prepared`]); a stale resolution is revoked
+/// by the slot's mailbox snapshot ([`CommandBook::observe_intent`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stage {
     /// Nothing the row needs is secured: it needs every capability of
     /// [`OperatorCommand::capabilities`].
     Admitted,
-    /// A login-wanting member whose handshake address the slot owner has
-    /// resolved: it needs the transport (new connection, login) and the
-    /// resolved address, no longer name resolution (§26 §3.2 resolver row:
-    /// an already admitted, already-resolved handshake continues).
-    AddressResolved,
+    /// A login-wanting member whose handshake address the slot owner
+    /// resolved for this attempt, which is still current: it needs the
+    /// transport (new connection, login) and the resolved address, no
+    /// longer name resolution (§26 §3.2 resolver row: an already admitted,
+    /// already-resolved handshake continues). Once the attempt is replaced
+    /// the member is [`Stage::Admitted`] again.
+    AddressResolved(LoginAttempt),
+    /// A native settings member whose preparation job completed: the
+    /// durable writer holds it, and it needs no process service any more.
+    Prepared,
 }
 
 const NO_CAPABILITY: &[ProcessCapability] = &[];
@@ -496,7 +633,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 77] = [
+    pub const ALL: [OperatorCommand; 84] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -518,11 +655,16 @@ impl OperatorCommand {
         Self::ResumeScript,
         Self::StopScript,
         Self::CancelQueuedStart,
+        Self::PickBrowseCard,
         Self::SelectScriptCard,
+        Self::PrepareScriptCard,
         Self::AssignScript,
         Self::AssignAndRestart,
-        Self::SaveScriptSettings,
-        Self::ApplySettingsToMarked,
+        Self::SaveScriptSettings(CardKind::Native),
+        Self::SaveLegacyScriptSettings,
+        Self::EditParameterText,
+        Self::DiscardParameterText,
+        Self::ApplySettingsToMarked(CardKind::Native),
         Self::CancelSettingsSync,
         Self::RestartForSettings,
         Self::DeferSettingsRestart,
@@ -567,6 +709,8 @@ impl OperatorCommand {
         Self::SetDangerLevel(DangerLevel::Never),
         Self::SetSessionLog(true),
         Self::SetMapBakeChoice(MapBakeChoice::Ask),
+        Self::OpenMapDemand,
+        Self::ReleaseMapDemand,
         Self::BakeMapNow,
         Self::DeclineMapBake,
         Self::SetQuesterPaths,
@@ -586,6 +730,11 @@ impl OperatorCommand {
             | Self::ResetVault
             | Self::SetFleetFilter
             | Self::SetFleetSort(_)
+            | Self::PickBrowseCard
+            | Self::PrepareScriptCard
+            | Self::SaveLegacyScriptSettings
+            | Self::EditParameterText
+            | Self::DiscardParameterText
             | Self::CancelSettingsSync
             | Self::RestartForSettings
             | Self::DeferSettingsRestart
@@ -616,6 +765,8 @@ impl OperatorCommand {
             | Self::SetDangerLevel(_)
             | Self::SetSessionLog(_)
             | Self::SetMapBakeChoice(_)
+            | Self::OpenMapDemand
+            | Self::ReleaseMapDemand
             | Self::BakeMapNow
             | Self::DeclineMapBake
             | Self::SetQuesterPaths
@@ -653,22 +804,29 @@ impl OperatorCommand {
     /// The process capabilities a new command needs at admission (§26
     /// §3.1). A latched condition affecting one of them refuses the command
     /// unless it is [`Self::retirement_dependent`]. A login is admitted
-    /// unresolved, so it needs name resolution.
+    /// unresolved, so it needs name resolution. A settings save needs the
+    /// background service only for a native card's preparation
+    /// ([`CardKind`]); a JS save and the legacy save are staged
+    /// synchronously and written by the durable writer.
     pub const fn capabilities(self) -> &'static [ProcessCapability] {
         match self {
             Self::Login | Self::RelogNow | Self::SwitchWorld(_) => SESSION_LOGIN,
             Self::Logout | Self::Remove | Self::Teleport | Self::DebugCommand => NETWORK_EFFECT,
             Self::ScriptPaintInput | Self::GameInput => NETWORK_EFFECT,
+            Self::SaveScriptSettings(CardKind::Native)
+            | Self::ApplySettingsToMarked(CardKind::Native) => BACKGROUND_WORK,
+            Self::SaveScriptSettings(CardKind::Script)
+            | Self::ApplySettingsToMarked(CardKind::Script) => NO_CAPABILITY,
             Self::StartScript
             | Self::AssignAndRestart
             | Self::RestartForSettings
-            | Self::SaveScriptSettings
-            | Self::ApplySettingsToMarked
+            | Self::PrepareScriptCard
             | Self::LoadScriptFile
             | Self::ReloadScripts
             | Self::ConfirmReload
             | Self::ImportCatalog
             | Self::TranspileAll
+            | Self::OpenMapDemand
             | Self::BakeMapNow
             | Self::ReloadQuesterPaths => BACKGROUND_WORK,
             Self::WalkTo | Self::GroupWalk => ROUTED_MOVEMENT,
@@ -679,12 +837,26 @@ impl OperatorCommand {
     /// The capabilities an accepted member still needs at `stage`: what an
     /// outage can make impossible and what its status shows while it waits.
     /// A login-wanting member past resolution no longer needs the resolver;
-    /// every other row's needs do not change after admission.
+    /// a prepared native settings member needs nothing more; every other
+    /// row's needs do not change after admission.
     pub const fn needs(self, stage: Stage) -> &'static [ProcessCapability] {
         match stage {
-            Stage::AddressResolved if self.wants_login() => RESOLVED_LOGIN,
-            Stage::Admitted | Stage::AddressResolved => self.capabilities(),
+            Stage::AddressResolved(_) if self.wants_login() => RESOLVED_LOGIN,
+            Stage::Prepared if self.prepares() => NO_CAPABILITY,
+            Stage::Admitted | Stage::AddressResolved(_) | Stage::Prepared => self.capabilities(),
         }
+    }
+
+    /// Whether the row's work has a preparation phase before its durable
+    /// write: a native card's settings are prepared by a background job
+    /// and the durable writer takes the row afterwards
+    /// ([`CommandBook::prepared`]).
+    pub const fn prepares(self) -> bool {
+        matches!(
+            self,
+            Self::SaveScriptSettings(CardKind::Native)
+                | Self::ApplySettingsToMarked(CardKind::Native)
+        )
     }
 
     /// Whether completion waits on a real retirement predicate (no session,
@@ -712,7 +884,10 @@ impl OperatorCommand {
             | Self::ClearMarks
             | Self::SetFleetFilter
             | Self::SetFleetSort(_)
+            | Self::PickBrowseCard
             | Self::SelectScriptCard
+            | Self::EditParameterText
+            | Self::DiscardParameterText
             | Self::OpenProfileForm
             | Self::OpenNewProfileForm
             | Self::EditProfileDraft(_)
@@ -726,10 +901,10 @@ impl OperatorCommand {
             | Self::CancelSettingsSync
             | Self::DeferSettingsRestart
             | Self::CancelReload
+            | Self::ReleaseMapDemand
             | Self::DeclineMapBake
             | Self::SetRenderAll(_)
             | Self::SetMultiBox(_)
-            | Self::SetRaster(_)
             | Self::SetDraw(..)
             | Self::GameInput
             | Self::AcknowledgeNotice => Settles::AtDispatch,
@@ -780,10 +955,11 @@ impl OperatorCommand {
             | Self::SetMemoryMode(_)
             | Self::SetGuardian
             | Self::AssignScript
-            | Self::SaveScriptSettings
+            | Self::SaveScriptSettings(_)
+            | Self::SetRaster(_)
             | Self::MarkTutorialSkipped => Some(ActionKind::SaveProfile),
             Self::DeleteProfile => Some(ActionKind::DeleteProfile),
-            Self::ApplySettingsToMarked => Some(ActionKind::SyncSettings),
+            Self::ApplySettingsToMarked(_) => Some(ActionKind::SyncSettings),
             _ => None,
         }
     }
@@ -1003,6 +1179,19 @@ pub enum CommandError {
     /// never accepted.
     #[error("{subject:?} of command {request:?} is already posted")]
     AlreadyPosted {
+        /// The command.
+        request: RequestId,
+        /// The member.
+        subject: Subject,
+    },
+    /// Only a row with a preparation phase ([`OperatorCommand::prepares`])
+    /// can report a completed preparation.
+    #[error("command {0:?} has no preparation phase")]
+    NoPreparation(RequestId),
+    /// The member's preparation is already recorded; a second report is
+    /// never accepted.
+    #[error("{subject:?} of command {request:?} is already prepared")]
+    AlreadyPrepared {
         /// The command.
         request: RequestId,
         /// The member.
@@ -1300,12 +1489,25 @@ impl CommandBook {
         Ok(())
     }
 
-    /// The slot owner resolved the handshake address of its login attempt
-    /// read at mailbox generation `through`: every pending login-wanting
-    /// member posted to `slot` at that generation or earlier no longer needs
-    /// name resolution ([`Stage::AddressResolved`]). A member posted later
-    /// still does. Returns how many members moved.
-    pub fn address_resolved(&mut self, slot: SlotKey, through: IntentGeneration) -> usize {
+    /// The slot owner resolved the handshake address of the login attempt
+    /// it read as `attempt` on `slot`, reported with the mailbox snapshot
+    /// it holds now: every pending login-wanting member posted to `slot` at
+    /// the attempt's generation or earlier no longer needs name resolution
+    /// ([`Stage::AddressResolved`]) for as long as that attempt is current.
+    /// A member posted later still does. A fact for an attempt the mailbox
+    /// already replaced (`!attempt.is_current(snapshot)`: a world change,
+    /// an identity change, a withdrawal or a completed login moved a
+    /// fence) is late and changes nothing. Returns how many members moved.
+    pub fn address_resolved(
+        &mut self,
+        slot: SlotKey,
+        attempt: LoginAttempt,
+        snapshot: &IntentSnapshot,
+    ) -> usize {
+        if !attempt.is_current(snapshot) {
+            return 0;
+        }
+        let through = attempt.command().generation();
         let mut moved = 0;
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in &mut report.members {
@@ -1315,13 +1517,36 @@ impl CommandBook {
                 }) = member.state
                 {
                     if posted == slot && generation <= through && member.stage == Stage::Admitted {
-                        member.stage = Stage::AddressResolved;
+                        member.stage = Stage::AddressResolved(attempt);
                         moved += 1;
                     }
                 }
             }
         }
         moved
+    }
+
+    /// The preparation owner reports that the member's preparation job
+    /// completed and the durable writer now holds the row
+    /// ([`Stage::Prepared`]): the member no longer needs the background
+    /// service. Only a pending, still unprepared member of a row with a
+    /// preparation phase ([`OperatorCommand::prepares`]) accepts it; a
+    /// second report, a settled member or another row is refused and
+    /// changes nothing. The writer's own terminal still settles the member
+    /// ([`Self::settle`]).
+    pub fn prepared(&mut self, request: RequestId, subject: Subject) -> Result<(), CommandError> {
+        let report = self
+            .report(request)
+            .ok_or(CommandError::UnknownRequest(request))?;
+        if !report.command.prepares() {
+            return Err(CommandError::NoPreparation(request));
+        }
+        let member = self.locate_pending(request, subject)?;
+        if member.stage == Stage::Prepared {
+            return Err(CommandError::AlreadyPrepared { request, subject });
+        }
+        member.stage = Stage::Prepared;
+        Ok(())
     }
 
     /// Apply one slot-scoped session event; returns how many members
@@ -1335,9 +1560,12 @@ impl CommandBook {
     ///   owner's decision that its next step needs a lost capability: every
     ///   pending, non-retirement member admitted on S whose current stage
     ///   still needs `capability` gets its one `Failed(Unavailable)` terminal
-    ///   referencing `condition`, its own command and its scope. A
-    ///   retirement-dependent member stays Pending (§26 §3.2 row 3), and no
-    ///   retirement or closure is inferred.
+    ///   referencing `condition`, its own command and its scope. An owner
+    ///   whose next step is name resolution is not continuing a resolved
+    ///   handshake, so `NameResolution` first revokes the resolved stage of
+    ///   S's login-wanting members ([`Stage::AddressResolved`]) and they
+    ///   fail like unresolved ones. A retirement-dependent member stays
+    ///   Pending (§26 §3.2 row 3), and no retirement or closure is inferred.
     /// - Every other event settles nothing. In particular
     ///   `SessionEnded { cause: ServiceUnavailable }` ends the session, not a
     ///   command: a pending Log out still needs its acknowledgement or the
@@ -1360,13 +1588,28 @@ impl CommandBook {
     }
 
     /// Apply the slot's mailbox snapshot, read after its events were
-    /// observed. A pending login-wanting member (Log in, Relog now, Switch
-    /// world) posted to `slot` whose want a later generation withdrew
-    /// settles: a world error as `Failed(WorldRejected)`, a latch or
-    /// withdrawal as `Cancelled(Superseded)` (today `arm.login_latched()`
+    /// observed. First the resolution fence: a pending login-wanting member
+    /// posted to `slot` whose resolved attempt the mailbox no longer asks
+    /// for ([`LoginAttempt::is_current`]: the world or cancellation fence
+    /// moved while a login is still wanted) is [`Stage::Admitted`] again
+    /// and needs name resolution for its replacement attempt; the login
+    /// itself is neither completed nor cancelled by that. Then the
+    /// withdrawal rule: a pending login-wanting member (Log in, Relog now,
+    /// Switch world) posted to `slot` whose want a later generation
+    /// withdrew settles: a world error as `Failed(WorldRejected)`, a latch
+    /// or withdrawal as `Cancelled(Superseded)` (today `arm.login_latched()`
     /// cancels the pending Log in, `session.rs:1641-1644`). Members posted to
     /// another slot are untouched. Returns how many settled.
     pub fn observe_intent(&mut self, slot: SlotKey, snapshot: &IntentSnapshot) -> usize {
+        for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
+            for member in report.members.iter_mut().filter(|m| m.on_slot(slot)) {
+                if let Stage::AddressResolved(attempt) = member.stage {
+                    if !attempt.is_current(snapshot) {
+                        member.stage = Stage::Admitted;
+                    }
+                }
+            }
+        }
         if snapshot.login_wanted() {
             return 0;
         }
@@ -1529,7 +1772,8 @@ impl CommandBook {
     }
 
     /// Fail the non-retirement members admitted on `slot` whose stage still
-    /// needs `capability`.
+    /// needs `capability`; the owner's need for name resolution revokes
+    /// the slot's resolved stages first.
     fn unavailable_on(
         &mut self,
         slot: SlotKey,
@@ -1543,10 +1787,17 @@ impl CommandBook {
             .filter(|r| !r.command.retirement_dependent())
         {
             let request = report.request;
-            for member in &mut report.members {
-                let needed = report.command.needs(member.stage).contains(&capability);
-                if matches!(member.state, MemberState::Pending(_)) && member.on_slot(slot) && needed
+            for member in report
+                .members
+                .iter_mut()
+                .filter(|m| m.on_slot(slot) && matches!(m.state, MemberState::Pending(_)))
+            {
+                if capability == ProcessCapability::NameResolution
+                    && matches!(member.stage, Stage::AddressResolved(_))
                 {
+                    member.stage = Stage::Admitted;
+                }
+                if report.command.needs(member.stage).contains(&capability) {
                     member.state =
                         MemberState::Settled(Settlement::Failed(CommandFailure::Unavailable(
                             UnavailableTerminal::new(condition, request, member.scope),
@@ -1661,3 +1912,7 @@ fn first_block(
 #[cfg(test)]
 #[path = "command_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "command_census_tests.rs"]
+mod census;
