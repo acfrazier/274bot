@@ -1060,6 +1060,21 @@ def _clone_at(source: Path, destination: Path, sha: str) -> Path:
     return destination
 
 
+def _populate_gitlinks(source_root: Path, clone: Path) -> None:
+    """Check out each gitlink from the source checkout's initialized submodule, without network.
+
+    Admission requires B/H checkouts with the client submodule initialized, so
+    the probe trees must have it too. A source without it stays unpopulated,
+    and the honest control then fails closed.
+    """
+    for path in sorted(_gitlinks(clone)):
+        local = source_root / path
+        if not (local / ".git").exists():
+            continue
+        _git(clone, "config", f"submodule.{path}.url", str(local))
+        _git(clone, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--quiet", "--", path)
+
+
 def _commit_as(root: Path, identity_root: Path, identity_sha: str, message: str) -> str:
     author = _git(identity_root, "log", "-1", "--format=%an%x00%ae", identity_sha).split("\0")
     if len(author) != 2:
@@ -1101,8 +1116,10 @@ def _qualify_admission_mode(
             if bundle_digest(enforcement) != proposed_digest:
                 _fail("proposed E' clone does not match its exact bundle digest")
             base = _clone_at(candidate_root, work / "base", head_sha)
+            _populate_gitlinks(candidate_root, base)
             _git(base, "update-ref", target_ref, head_sha)
             candidate = _clone_at(candidate_root, work / "candidate", head_sha)
+            _populate_gitlinks(candidate_root, candidate)
             mutate(candidate)
             probe_sha = _commit_as(candidate, candidate_root, head_sha, "Update workspace")
             receipts_before = receipts_path.read_bytes()
