@@ -3,6 +3,7 @@
 //! and the real pack) and must agree. The production side is written here
 //! from the production call sites, never from the facade.
 
+use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::num::NonZeroU16;
 use std::sync::Arc;
@@ -15,11 +16,12 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::{pack_walk, WorldCollision};
 use crate::quest_gates::{QuestFamilyId, QuestGates};
-use crate::router::{Leg, Route, RouteError, TargetError};
+use crate::router::{FindOptions, Leg, Route, RouteError, TargetError};
 use crate::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
 };
 use crate::world::NavWorld;
+use crate::world_state::WorldState;
 use crate::zones::{
     Zone, ZoneClass, ZoneExempt, ZoneFilter, ZoneGroup, ZoneKey, ZoneKind, ZoneTable,
 };
@@ -1199,4 +1201,875 @@ fn real_pack_exemptions_match_the_router_mask_for_catalog_groups() {
     assert!(!zones
         .exemption_contains(one, zones.bind(ZoneKey::Zone(mountain_members[1])).unwrap())
         .unwrap());
+}
+
+// --- Transport facts through the router (§23 §1.1 "Transport facts") ---
+
+/// The production admission predicate every transport leg of a found route
+/// satisfied: `WorldState::allows` (`world_state.rs:155`), the gate
+/// `find_with` relaxes nothing against.
+fn production_allows(state: &WorldState, edge: &TransportEdge) -> bool {
+    state.allows(edge)
+}
+
+/// A 5×3 bake at (3200,3200) split by two walls (between x=3200|3201 and
+/// x=3202|3203, the client's `W_E`/`W_W` pairs so no step or diagonal
+/// crosses) with two directed doors on row z=3201 as the only crossings.
+fn two_door_world(first: TransportEdge, second: TransportEdge) -> (WorldCollision, TransportGraph) {
+    let w_e = CollisionFlag::W_E as u32;
+    let w_w = CollisionFlag::W_W as u32;
+    let mut level0 = vec![0u32; 5 * 3];
+    for z in 0..3 {
+        level0[z * 5] |= w_e;
+        level0[z * 5 + 1] |= w_w;
+        level0[z * 5 + 2] |= w_e;
+        level0[z * 5 + 3] |= w_w;
+    }
+    let collision = grid(tile(3200, 3200, 0), 5, 3, level0);
+    let mut graph = TransportGraph {
+        edges: vec![first, second],
+        ..TransportGraph::default()
+    };
+    graph.rebuild_index(&collision);
+    (collision, graph)
+}
+
+/// Every walk/transport leg relation the facade promises, checked against
+/// the route the router actually returned: the walk leg before a hop ends
+/// on a tile the production footprint/takeoff predicate admits for that
+/// packed edge (`TransportGraph::admissible_from`, `transport.rs:308`;
+/// exact when the takeoff is pinned), the walk leg after it starts on its
+/// landing, hop `n` satisfied the production admission predicate under
+/// `states[n]` (the last state covers later hops), and the view's tick cost
+/// is the walk half-ticks plus the hop ticks. Returns the hop count.
+fn check_route_view_against_router(
+    view: RouteView<'_>,
+    route: &Route,
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    states: &[&WorldState],
+) -> usize {
+    assert_eq!(view.destination(), route.dest);
+    assert_eq!(view.ticks(), route.ticks);
+    assert_eq!(view.leg_count(), route.legs.len());
+    let mut hops = 0usize;
+    let mut ticks = 0.0f64;
+    for (index, leg) in route.legs.iter().enumerate() {
+        let facade = view.leg(index).unwrap();
+        match leg {
+            Leg::Walk { tiles } => {
+                assert_eq!(facade.walk_tiles().unwrap(), tiles.as_slice());
+                ticks += 0.5 * (tiles.len() - 1) as f64;
+            }
+            Leg::Transport { edge } => {
+                let state = states[hops.min(states.len() - 1)];
+                hops += 1;
+                let hop = facade.transport().unwrap();
+                assert_eq!(hop.kind(), edge.kind);
+                assert_eq!(hop.ticks(), edge.ticks);
+                assert_eq!(hop.anchor(), edge.at);
+                assert_eq!(hop.landing(), edge.to);
+                assert_eq!(hop.takeoff(), edge.takeoff);
+                assert_eq!(hop.effective_takeoff(), edge.takeoff.unwrap_or(edge.at));
+                assert_eq!(hop.loc_id(), edge.loc_id);
+                assert_eq!(hop.option(), edge.option);
+                assert_eq!(hop.direction(), edge.dir);
+                assert_eq!(hop.displacement(), edge.player_delta);
+                assert_eq!(hop.held(), edge.item_req.as_slice());
+                assert_eq!(hop.consumed(), edge.consumed_req.as_slice());
+                assert_eq!(hop.returned(), edge.item_returns.as_slice());
+                assert_eq!(hop.worn_any(), edge.worn_req.as_slice());
+                assert_eq!(hop.worn_all(), edge.worn_all_req.as_slice());
+                assert_eq!(hop.skill_requirements(), edge.skill_req.as_slice());
+                assert_eq!(hop.members_required(), edge.members_req);
+                assert_eq!(hop.wilderness_cap(), edge.wildy_cap);
+                assert_eq!(hop.has_quest_gate(), edge.quest_gates.is_some());
+                assert!(
+                    production_allows(state, edge),
+                    "the router only takes hops the state proves: {hop:?}"
+                );
+                ticks += f64::from(edge.ticks);
+                let before = view.leg(index - 1).unwrap().walk_tiles().unwrap();
+                let takeoff = *before.last().expect("a walk leg precedes every hop");
+                assert!(collision.standable(takeoff));
+                if graph.teleports.iter().any(|packed| packed == &**edge) {
+                    assert_eq!(hop.anchor(), tile(0, 0, 0), "a teleport has no anchor");
+                } else {
+                    // A relative landing is rewritten onto the planned `to`;
+                    // match the packed row on everything else.
+                    let packed = graph
+                        .edges
+                        .iter()
+                        .position(|packed| {
+                            packed == &**edge
+                                || (packed.player_delta.is_some()
+                                    && TransportEdge {
+                                        to: packed.to,
+                                        ..(**edge).clone()
+                                    } == *packed)
+                        })
+                        .expect("the hop is a packed edge");
+                    assert!(
+                        graph.admissible_from(collision, packed, takeoff),
+                        "the walk ends on a stand the production takeoff predicate admits"
+                    );
+                    if let Some(pinned) = hop.takeoff() {
+                        assert_eq!(takeoff, pinned, "a pinned takeoff is exact");
+                    }
+                }
+                let after = view.leg(index + 1).unwrap().walk_tiles().unwrap();
+                assert_eq!(after.first().copied(), Some(hop.landing()));
+            }
+        }
+    }
+    assert_eq!(
+        view.ticks(),
+        ticks,
+        "facade ticks are the half-tick walk cost plus hop ticks"
+    );
+    hops
+}
+
+#[test]
+fn transport_legs_report_the_router_edges_and_the_production_admission_facts() {
+    // Door 1 needs a reusable held pair, spends coins and returns a token;
+    // door 2 is passable only by holding that returned token.
+    let mut first = door_edge(tile(3200, 3201, 0), tile(3201, 3201, 0));
+    first.skill_req = vec![(16, 10)];
+    first.item_req = vec![(1, 2)];
+    first.consumed_req = vec![(995, 5)];
+    first.item_returns = vec![(996, 1)];
+    first.worn_req = vec![772, 773];
+    first.worn_all_req = vec![10, 11];
+    first.takeoff = Some(tile(3200, 3202, 0));
+    let mut second = door_edge(tile(3202, 3201, 0), tile(3203, 3201, 0));
+    second.skill_req.clear();
+    second.item_req = vec![(996, 1)];
+    second.consumed_req.clear();
+    second.item_returns.clear();
+    second.worn_req.clear();
+    second.worn_all_req.clear();
+    second.ticks = 3;
+    let (collision, graph) = two_door_world(first.clone(), second.clone());
+    let from = tile(3200, 3200, 0);
+    let to = tile(3204, 3202, 0);
+
+    // Nothing proven: the router fails closed and the family maps NoPath.
+    let empty = WorldState::empty();
+    assert!(!production_allows(&empty, &first));
+    match crate::router::find(&collision, &graph, from, to) {
+        Err(error) => assert!(matches!(
+            RouteService::map_route_error(error),
+            Ok(RouteFamilyResult::NoPath)
+        )),
+        Ok(route) => panic!("unproven doors must not route, got {route:?}"),
+    }
+
+    let rich = WorldState {
+        inv: HashMap::from([(1, 2), (995, 5)]),
+        worn: HashSet::from([772, 10, 11]),
+        stats: HashMap::from([(16, 10)]),
+        ..WorldState::empty()
+    };
+    assert!(production_allows(&rich, &first));
+    assert!(
+        !production_allows(&rich, &second),
+        "the token is not carried; only door 1's return supplies it"
+    );
+    let route =
+        crate::router::find_with(&collision, &graph, from, to, FindOptions::default(), &rich)
+            .expect("both doors open with the proven facts");
+    let lease = lease_from(collision);
+    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
+    let view = plan.view(&lease).unwrap();
+    let after_first = WorldState {
+        inv: HashMap::from([(1, 2), (996, 1)]),
+        ..rich.clone()
+    };
+    // Hop 1 is admitted under the proven facts; hop 2 under the balance
+    // after hop 1's spend and return.
+    let hops = {
+        let mut count = 0;
+        for (index, leg) in route.legs.iter().enumerate() {
+            if let Leg::Transport { edge } = leg {
+                let hop = view.leg(index).unwrap().transport().unwrap();
+                let state = if count == 0 { &rich } else { &after_first };
+                assert!(production_allows(state, edge), "hop {count} admitted");
+                assert_eq!(hop.held(), edge.item_req.as_slice());
+                count += 1;
+            }
+        }
+        count
+    };
+    assert_eq!(hops, 2);
+    assert_eq!(
+        check_route_view_against_router(
+            view,
+            &route,
+            &lease.world.collision,
+            &graph,
+            &[&rich, &after_first]
+        ),
+        2
+    );
+
+    // Real values: the pinned takeoff is where the first walk ends, the
+    // held/consumed/returned/worn-any/worn-all facts are the five distinct
+    // requirement lists, and the second door's held fact is the first's
+    // returned token.
+    let first_walk = view.leg(0).unwrap().walk_tiles().unwrap();
+    assert_eq!(first_walk.first().copied(), Some(from));
+    assert_eq!(first_walk.last().copied(), Some(tile(3200, 3202, 0)));
+    let hop1 = view.leg(1).unwrap().transport().unwrap();
+    assert_eq!(hop1.effective_takeoff(), tile(3200, 3202, 0));
+    assert_eq!(hop1.held(), &[(1, 2)]);
+    assert_eq!(hop1.consumed(), &[(995, 5)]);
+    assert_eq!(hop1.returned(), &[(996, 1)]);
+    assert_eq!(hop1.worn_any(), &[772, 773]);
+    assert_eq!(hop1.worn_all(), &[10, 11]);
+    assert_eq!(hop1.skill_requirements(), &[(16, 10)]);
+    let hop2 = view.leg(3).unwrap().transport().unwrap();
+    assert_eq!(hop2.held(), hop1.returned());
+    assert_eq!(hop2.ticks(), 3);
+    assert_eq!(hop2.takeoff(), None);
+    assert_eq!(hop2.effective_takeoff(), hop2.anchor());
+    assert_eq!(
+        view.leg(4).unwrap().walk_tiles().unwrap().last().copied(),
+        Some(to)
+    );
+    assert_eq!(view.ticks(), route.ticks);
+    assert!(view.ticks() >= 5.0, "two hops (2 + 3 ticks) plus walking");
+
+    // Each requirement fact independently gates admission, exactly as the
+    // production predicate and the router decide it.
+    let lacking: [(&str, WorldState); 6] = [
+        (
+            "held",
+            WorldState {
+                inv: HashMap::from([(995, 5)]),
+                ..rich.clone()
+            },
+        ),
+        (
+            "consumed",
+            WorldState {
+                inv: HashMap::from([(1, 2), (995, 4)]),
+                ..rich.clone()
+            },
+        ),
+        (
+            "worn-any",
+            WorldState {
+                worn: HashSet::from([10, 11]),
+                ..rich.clone()
+            },
+        ),
+        (
+            "worn-all (one of two)",
+            WorldState {
+                worn: HashSet::from([772, 10]),
+                ..rich.clone()
+            },
+        ),
+        (
+            "skill",
+            WorldState {
+                stats: HashMap::from([(16, 9)]),
+                ..rich.clone()
+            },
+        ),
+        ("returned token held by nobody", WorldState::empty()),
+    ];
+    for (name, state) in &lacking {
+        assert!(
+            !production_allows(state, &first) || !production_allows(state, &second),
+            "{name}: some hop is refused by the production predicate"
+        );
+        assert_eq!(
+            crate::router::find_with(
+                &lease.world.collision,
+                &graph,
+                from,
+                to,
+                FindOptions::default(),
+                state
+            )
+            .unwrap_err(),
+            RouteError::NoPath,
+            "{name}: the router fails closed"
+        );
+    }
+    // Worn-any is any one alternative; worn-all is every listed id.
+    let other_alternative = WorldState {
+        worn: HashSet::from([773, 10, 11]),
+        ..rich.clone()
+    };
+    assert!(production_allows(&other_alternative, &first));
+    assert!(crate::router::find_with(
+        &lease.world.collision,
+        &graph,
+        from,
+        to,
+        FindOptions::default(),
+        &other_alternative
+    )
+    .is_ok());
+    let carried_not_worn = WorldState {
+        inv: HashMap::from([(1, 2), (995, 5), (10, 1), (11, 1)]),
+        worn: HashSet::from([772]),
+        ..rich.clone()
+    };
+    assert!(
+        !production_allows(&carried_not_worn, &first),
+        "worn-all cannot be met by carried items"
+    );
+    // The returned token is a router fact: without hop 1's return, hop 2
+    // stays shut even though everything else is proven.
+    let mut no_return = first.clone();
+    no_return.item_returns.clear();
+    let (collision2, graph2) = two_door_world(no_return, second.clone());
+    assert_eq!(
+        crate::router::find_with(
+            &collision2,
+            &graph2,
+            from,
+            to,
+            FindOptions::default(),
+            &rich
+        )
+        .unwrap_err(),
+        RouteError::NoPath
+    );
+}
+
+#[test]
+fn real_pack_transport_legs_match_the_router_and_admission_facts() {
+    let Some(world) = NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let collision = &lease.world.collision;
+    let graph = &lease.world.graph;
+
+    // Lumbridge castle: the ground-floor staircase is the only way up, so a
+    // route to the first floor carries a transport leg the router chose.
+    let upstairs = tile(3205, 3209, 1);
+    let empty = WorldState::empty();
+    let route = crate::router::find(collision, graph, LUMBRIDGE, upstairs)
+        .expect("the castle stairs route");
+    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
+    let view = plan.view(&lease).unwrap();
+    let hops = check_route_view_against_router(view, &route, collision, graph, &[&empty]);
+    assert!(hops >= 1, "a plane change needs a transport leg");
+    let stairs = view
+        .legs()
+        .filter_map(|leg| leg.transport())
+        .find(|hop| hop.kind() == TransportKind::Stairs)
+        .expect("the staircase hop");
+    assert_eq!(stairs.anchor(), tile(3204, 3207, 0));
+    assert_eq!(stairs.landing(), upstairs);
+    assert_eq!(stairs.loc_id(), 1738);
+    assert_eq!(stairs.ticks(), 1);
+    assert_eq!(stairs.takeoff(), None);
+    assert!(stairs.held().is_empty() && stairs.consumed().is_empty());
+    assert!(stairs.worn_any().is_empty() && stairs.worn_all().is_empty());
+    assert!(!stairs.has_quest_gate());
+    let packed = graph
+        .edges
+        .iter()
+        .find(|edge| edge.at == stairs.anchor() && edge.to == stairs.landing())
+        .expect("the packed staircase edge");
+    assert_eq!(packed.kind, TransportKind::Stairs);
+    assert!(production_allows(&empty, packed));
+
+    // A charged teleport: consumed and returned are the packed jewellery
+    // charge variants, and the hop is admitted only while the charge is
+    // carried.
+    let edgeville = tile(3087, 3496, 0);
+    let charged = WorldState {
+        inv: HashMap::from([(1712, 1)]),
+        ..WorldState::empty()
+    };
+    let teleports = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let route =
+        crate::router::find_with(collision, graph, LUMBRIDGE, edgeville, teleports, &charged)
+            .expect("a glory teleport to Edgeville");
+    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
+    let view = plan.view(&lease).unwrap();
+    assert_eq!(
+        check_route_view_against_router(view, &route, collision, graph, &[&charged]),
+        1
+    );
+    let glory = view
+        .legs()
+        .find_map(|leg| leg.transport())
+        .filter(|hop| hop.kind() == TransportKind::Teleport)
+        .expect("the teleport leg");
+    assert_eq!(glory.landing(), edgeville);
+    assert_eq!(glory.consumed(), &[(1712, 1)]);
+    assert_eq!(glory.returned(), &[(1710, 1)]);
+    assert!(glory.held().is_empty());
+    let packed = graph
+        .teleports
+        .iter()
+        .find(|edge| edge.to == edgeville && edge.consumed_req == [(1712, 1)])
+        .expect("the packed glory(4) teleport");
+    assert_eq!(glory.ticks(), packed.ticks);
+    assert_eq!(glory.returned(), packed.item_returns.as_slice());
+    assert!(production_allows(&charged, packed));
+    assert!(!production_allows(&empty, packed));
+    let uncharged =
+        crate::router::find_with(collision, graph, LUMBRIDGE, edgeville, teleports, &empty);
+    assert!(
+        uncharged.map_or(true, |route| route.legs.iter().all(
+            |leg| !matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)
+        )),
+        "without the charge the router never takes the teleport"
+    );
+
+    // Every packed hop: the facade's requirement facts are exactly what the
+    // production predicate gates on. A state proving everything the hop
+    // lists is admitted unless a quest-stage gate is present (no evidence
+    // here); dropping any one listed category refuses it.
+    let mut positive = [0usize; 6];
+    let mut checked = 0usize;
+    for edge in graph.edges.iter().chain(graph.teleports.iter()) {
+        let hop = TransportView::from_edge(edge);
+        let mut inv: HashMap<i32, i32> = HashMap::new();
+        for &(id, count) in hop.held() {
+            let entry = inv.entry(id).or_default();
+            *entry = (*entry).max(count);
+        }
+        for &(id, packed) in hop.consumed() {
+            let entry = inv.entry(id).or_default();
+            *entry = (*entry).max(packed.max(200));
+        }
+        let mut worn: HashSet<i32> = hop.worn_all().iter().copied().collect();
+        if let Some(&any) = hop.worn_any().first() {
+            worn.insert(any);
+        }
+        let proving = WorldState {
+            inv,
+            worn,
+            stats: hop.skill_requirements().iter().copied().collect(),
+            varps: edge.varp_req.iter().copied().collect(),
+            quests: edge.quest_req.iter().cloned().collect(),
+            map_members: hop.members_required(),
+            ..WorldState::empty()
+        };
+        assert_eq!(
+            production_allows(&proving, edge),
+            !hop.has_quest_gate(),
+            "proving every listed fact admits the hop unless it is quest-gated: {hop:?}"
+        );
+        if hop.has_quest_gate() {
+            continue;
+        }
+        checked += 1;
+        let without: [(usize, WorldState); 6] = [
+            (
+                0,
+                WorldState {
+                    inv: proving
+                        .inv
+                        .iter()
+                        .filter(|(id, _)| !hop.held().iter().any(|(held, _)| held == *id))
+                        .map(|(&id, &count)| (id, count))
+                        .collect(),
+                    ..proving.clone()
+                },
+            ),
+            (
+                1,
+                WorldState {
+                    inv: proving
+                        .inv
+                        .iter()
+                        .filter(|(id, _)| !hop.consumed().iter().any(|(used, _)| used == *id))
+                        .map(|(&id, &count)| (id, count))
+                        .collect(),
+                    ..proving.clone()
+                },
+            ),
+            (
+                2,
+                WorldState {
+                    worn: hop.worn_all().iter().copied().collect(),
+                    ..proving.clone()
+                },
+            ),
+            (
+                3,
+                WorldState {
+                    worn: hop.worn_any().first().copied().into_iter().collect(),
+                    ..proving.clone()
+                },
+            ),
+            (
+                4,
+                WorldState {
+                    stats: HashMap::new(),
+                    ..proving.clone()
+                },
+            ),
+            (
+                5,
+                WorldState {
+                    map_members: false,
+                    ..proving.clone()
+                },
+            ),
+        ];
+        let present = [
+            !hop.held().is_empty(),
+            !hop.consumed().is_empty(),
+            !hop.worn_any().is_empty(),
+            !hop.worn_all().is_empty(),
+            !hop.skill_requirements().is_empty(),
+            hop.members_required(),
+        ];
+        for (category, state) in &without {
+            // Dropping a category that shares an obj id with another
+            // category may refuse through that other category; the
+            // assertion is one-directional there.
+            let shares = match category {
+                0 => hop
+                    .held()
+                    .iter()
+                    .any(|(id, _)| hop.consumed().iter().any(|(used, _)| used == id)),
+                1 => hop
+                    .consumed()
+                    .iter()
+                    .any(|(id, _)| hop.held().iter().any(|(held, _)| held == id)),
+                2 | 3 => hop
+                    .worn_any()
+                    .first()
+                    .is_some_and(|any| hop.worn_all().contains(any)),
+                _ => false,
+            };
+            let admitted = production_allows(state, edge);
+            if present[*category] {
+                assert!(!admitted, "dropping a listed fact refuses the hop: {hop:?}");
+                positive[*category] += 1;
+            } else if !shares {
+                assert!(admitted, "an unlisted fact does not gate the hop: {hop:?}");
+            }
+        }
+    }
+    assert!(checked > 1000, "the real pack carries thousands of hops");
+    assert!(
+        positive.iter().all(|&count| count > 0),
+        "held/consumed/worn-any/worn-all/skill/members each gate real hops: {positive:?}"
+    );
+}
+
+// --- Zone class, membership, kind/hazard/shape facts (§23 §1.1 "Zones") ---
+
+/// Kinds 0: wolf (NPC 96); 1: the curated lava bridge hazard. Zones 0: an
+/// unshaped wolf zone with a carved-out corner; 1: a shaped wolf zone whose
+/// 3×3 mask drops every corner; 2: the hazard rectangle; 3: a level-rule
+/// wolf zone with a combat cap, on plane 1.
+fn shaped_zone_table() -> ZoneTable {
+    let wolf = ZoneKind::new("wolf", "Wolf", 96, 32, true, false);
+    let lava = ZoneKind::new(
+        "ikov-lava-bridge",
+        "Temple of Ikov lava bridge",
+        -1,
+        0,
+        false,
+        true,
+    );
+    let plain = Zone::npc(tile(2, 2, 0), 1, ZoneClass::Always, u16::MAX, 0);
+    let shaped = Zone::shaped_npc(tile(8, 2, 0), 1, 1, ZoneClass::Always, u16::MAX, 0, 0);
+    let hazard = Zone::hazard(
+        AvoidRect {
+            min_x: 2,
+            max_x: 4,
+            min_z: 8,
+            max_z: 9,
+            level: Some(0),
+        },
+        0,
+        1,
+    );
+    let capped = Zone::npc(tile(8, 8, 1), 1, ZoneClass::LevelRule, 64, 0);
+    ZoneTable::from_parts(
+        vec![plain, shaped, hazard, capped],
+        vec![wolf, lava],
+        Vec::new(),
+        vec![(
+            0,
+            AvoidRect {
+                min_x: 1,
+                max_x: 1,
+                min_z: 3,
+                max_z: 3,
+                level: Some(0),
+            },
+        )],
+        // Row-major over the 3×3 bounding rect (min_x..=max_x, min_z..=max_z):
+        // every corner is masked out.
+        vec![0b010_111_010],
+        tile(0, 0, 0),
+        12,
+        12,
+        &WildernessRules::default(),
+    )
+    .unwrap()
+}
+
+/// Membership of every tile of `index`'s bounding rect, one tile beyond it,
+/// on its own plane and the plane above, compared against the production
+/// membership `ZoneTable::at` (`zones.rs:474`). Returns how many tiles of
+/// the rect are members.
+fn check_membership_against_table(view: ZoneView<'_>, table: &ZoneTable, index: u16) -> usize {
+    let (min_x, min_z, max_x, max_z) = view.bounds();
+    let plane = i32::from(view.plane());
+    let mut members = 0usize;
+    for level in [plane, plane + 1] {
+        for x in min_x - 1..=max_x + 1 {
+            for z in min_z - 1..=max_z + 1 {
+                let t = tile(x, z, level);
+                let production = table.at(t).any(|i| i == index);
+                assert_eq!(view.contains(t), production, "zone {index} contains {t:?}");
+                if production && level == plane {
+                    members += 1;
+                }
+                if level != plane || x < min_x || x > max_x || z < min_z || z > max_z {
+                    assert!(
+                        !production,
+                        "outside the plane-aware rect is never a member"
+                    );
+                }
+            }
+        }
+    }
+    members
+}
+
+#[test]
+fn zone_shape_carve_class_and_hazard_facts_match_the_table() {
+    let table = shaped_zone_table();
+    let mut world = NavWorld::from_parts(
+        grid(tile(0, 0, 0), 1, 1, vec![0]),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    world.graph.zones = Some(table);
+    let lease = NavLease::wrap(Arc::new(world), digest(b"shaped")).unwrap();
+    let zones = lease.zones().unwrap();
+    let table = lease.world.graph.zones.as_ref().unwrap();
+
+    let plain = zones.zone(zones.bind(ZoneKey::Zone(0)).unwrap()).unwrap();
+    let shaped = zones.zone(zones.bind(ZoneKey::Zone(1)).unwrap()).unwrap();
+    let hazard = zones.zone(zones.bind(ZoneKey::Zone(2)).unwrap()).unwrap();
+    let capped = zones.zone(zones.bind(ZoneKey::Zone(3)).unwrap()).unwrap();
+
+    // Shape presence is a real fact: the masked zone has one, the others
+    // do not.
+    assert!(shaped.has_shape());
+    assert!(!plain.has_shape());
+    assert!(!hazard.has_shape());
+    assert!(!capped.has_shape());
+
+    // Membership against the production table: 9 − 4 corners for the
+    // shaped zone; 9 − 1 carved tile for the plain zone; the full 3×2
+    // hazard rect; the capped zone on plane 1 only.
+    assert_eq!(check_membership_against_table(shaped, table, 1), 5);
+    assert_eq!(check_membership_against_table(plain, table, 0), 8);
+    assert_eq!(check_membership_against_table(hazard, table, 2), 6);
+    assert_eq!(check_membership_against_table(capped, table, 3), 9);
+    assert!(
+        shaped.contains(tile(8, 2, 0)),
+        "the shaped spawn is a member"
+    );
+    assert!(!shaped.contains(tile(7, 1, 0)), "a masked corner is not");
+    assert!(!shaped.contains(tile(9, 3, 0)));
+    assert!(
+        plain.contains(tile(1, 1, 0)),
+        "an uncarved corner is a member"
+    );
+    assert!(!plain.contains(tile(1, 3, 0)), "the carved tile is not");
+    assert!(!plain.contains(tile(2, 2, 1)), "membership is plane-aware");
+    assert!(capped.contains(tile(8, 8, 1)));
+    assert!(!capped.contains(tile(8, 8, 0)));
+    assert_eq!(
+        zones.containing(tile(1, 3, 0)).count(),
+        0,
+        "a carved tile belongs to no zone"
+    );
+    assert_eq!(
+        zones
+            .containing(tile(3, 8, 0))
+            .map(|z| z.key().key())
+            .collect::<Vec<_>>(),
+        vec![ZoneKey::Zone(2)]
+    );
+
+    // Class and cap: level-rule zones expose their combat cap, always-on
+    // zones none.
+    assert_eq!(capped.class(), ZoneClass::LevelRule);
+    assert_eq!(capped.cap(), Some(64));
+    assert_eq!(capped.plane(), 1);
+    assert_eq!(plain.class(), ZoneClass::Always);
+    assert_eq!(plain.cap(), None);
+    assert_eq!(hazard.class(), ZoneClass::Always);
+    for (view, index) in [(plain, 0usize), (shaped, 1), (hazard, 2), (capped, 3)] {
+        let row = &table.zones()[index];
+        assert_eq!(view.class(), row.class);
+        assert_eq!(
+            view.cap(),
+            (row.class == ZoneClass::LevelRule).then_some(row.cap)
+        );
+        assert_eq!(view.plane(), row.level);
+        assert_eq!(view.spawn(), (row.spawn_x, row.spawn_z));
+        assert_eq!(view.bounds(), (row.min_x, row.min_z, row.max_x, row.max_z));
+        assert_eq!(view.group().is_none(), row.group == crate::zones::NO_GROUP);
+        let kind = &table.kinds()[usize::from(row.kind)];
+        assert_eq!(view.kind().id(), kind.id.as_ref());
+        assert_eq!(view.kind().label(), kind.label.as_ref());
+        assert_eq!(
+            view.kind().npc_id(),
+            (kind.npc_id >= 0).then_some(kind.npc_id)
+        );
+        assert_eq!(view.kind().vislevel(), kind.vislevel);
+        assert_eq!(view.kind().aggressive(), kind.ap);
+        assert_eq!(view.kind().vis_off(), kind.vis_off);
+        assert_eq!(
+            view.kind().hazard_damage(),
+            crate::zones::curated::hazard_damage(kind.id.as_ref())
+        );
+    }
+
+    // Kind and hazard facts with real values: the wolf is an aggressive NPC
+    // with no curated damage; the lava bridge is a non-NPC hazard whose
+    // curated damage is 20 (`zones/curated.rs:60-72`).
+    let wolf = plain.kind();
+    assert_eq!(wolf.npc_id(), Some(96));
+    assert_eq!(wolf.vislevel(), 32);
+    assert!(wolf.aggressive());
+    assert!(!wolf.vis_off());
+    assert_eq!(wolf.hazard_damage(), None);
+    let lava = hazard.kind();
+    assert_eq!(lava.id(), "ikov-lava-bridge");
+    assert_eq!(lava.npc_id(), None);
+    assert!(lava.vis_off());
+    assert_eq!(lava.hazard_damage(), Some(20));
+    assert_eq!(
+        zones
+            .kind(zones.resolve("ikov-lava-bridge").unwrap())
+            .unwrap()
+            .hazard_damage(),
+        Some(20),
+        "the hazard resolves by its curated id"
+    );
+    assert_eq!(zones.resolve("ikov-lava-bridge"), Some(hazard.key()));
+    assert_eq!(zones.resolve("not-a-zone"), None);
+}
+
+#[test]
+fn real_pack_shape_carve_hazard_and_class_facts_match_the_table() {
+    let Some(world) = NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let zones = lease.zones().expect("v16 packs carry a zone table");
+    let table = lease.world.graph.zones.as_ref().unwrap();
+
+    // Every shaped zone: shape presence is positive and its membership
+    // matrix is the production table's, with at least one in-rect tile
+    // masked out.
+    let shaped: Vec<u16> = (0..table.zones().len())
+        .map(|index| index as u16)
+        .filter(|&index| table.zones()[usize::from(index)].shape != crate::zones::NO_SHAPE)
+        .collect();
+    assert!(!shaped.is_empty(), "the real pack carries shaped zones");
+    for &index in &shaped {
+        let view = zones
+            .zone(zones.bind(ZoneKey::Zone(index)).unwrap())
+            .unwrap();
+        assert!(view.has_shape(), "zone {index} is shaped");
+        let (min_x, min_z, max_x, max_z) = view.bounds();
+        let rect = ((max_x - min_x + 1) * (max_z - min_z + 1)) as usize;
+        let members = check_membership_against_table(view, table, index);
+        assert!(
+            members > 0 && members < rect,
+            "zone {index}: {members} of {rect} rect tiles"
+        );
+    }
+    // Unshaped zones report no shape, and a carved zone excludes its carve.
+    let unshaped = (0..table.zones().len() as u16)
+        .find(|&index| table.zones()[usize::from(index)].shape == crate::zones::NO_SHAPE)
+        .expect("an unshaped zone");
+    assert!(!zones
+        .zone(zones.bind(ZoneKey::Zone(unshaped)).unwrap())
+        .unwrap()
+        .has_shape());
+    let mut carved_checked = 0usize;
+    for &(index, rect) in table.carves().iter().take(64) {
+        let view = zones
+            .zone(zones.bind(ZoneKey::Zone(index)).unwrap())
+            .unwrap();
+        let (min_x, min_z, max_x, max_z) = view.bounds();
+        let level = rect.level.unwrap_or(i32::from(view.plane()));
+        for x in rect.min_x.max(min_x)..=rect.max_x.min(max_x) {
+            for z in rect.min_z.max(min_z)..=rect.max_z.min(max_z) {
+                let t = tile(x, z, level);
+                assert!(!view.contains(t), "carved tile {t:?} of zone {index}");
+                assert!(!table.at(t).any(|i| i == index));
+                carved_checked += 1;
+            }
+        }
+    }
+    assert!(carved_checked > 0, "real carves cover real tiles");
+
+    // Hazard: the curated lava bridge is packed, resolves by id, and its
+    // damage is the curated 20. Every kind agrees with the curated table.
+    let lava = zones
+        .resolve("ikov-lava-bridge")
+        .expect("the packed hazard");
+    let lava_view = zones.zone(lava).unwrap();
+    assert_eq!(lava_view.kind().id(), "ikov-lava-bridge");
+    assert_eq!(lava_view.kind().npc_id(), None);
+    assert_eq!(lava_view.kind().hazard_damage(), Some(20));
+    assert_eq!(lava_view.bounds(), (2648, 9828, 2650, 9829));
+    assert!(lava_view.contains(tile(2649, 9828, 0)));
+    assert!(!lava_view.contains(tile(2649, 9828, 1)));
+    let mut hazards = 0usize;
+    for index in 0..table.zones().len() as u16 {
+        let view = zones
+            .zone(zones.bind(ZoneKey::Zone(index)).unwrap())
+            .unwrap();
+        let row = &table.zones()[usize::from(index)];
+        let kind = &table.kinds()[usize::from(row.kind)];
+        let damage = crate::zones::curated::hazard_damage(kind.id.as_ref());
+        assert_eq!(view.kind().hazard_damage(), damage);
+        assert_eq!(
+            view.kind().npc_id(),
+            (kind.npc_id >= 0).then_some(kind.npc_id)
+        );
+        assert_eq!(view.class(), row.class);
+        assert_eq!(
+            view.cap(),
+            (row.class == ZoneClass::LevelRule).then_some(row.cap)
+        );
+        hazards += usize::from(damage.is_some());
+    }
+    assert!(hazards > 0);
+    // A real level-rule zone exposes its packed cap (twice the kind's
+    // visibility level).
+    let (index, row) = table
+        .zones()
+        .iter()
+        .enumerate()
+        .find(|(_, row)| row.class == ZoneClass::LevelRule)
+        .expect("a level-rule zone");
+    let view = zones
+        .zone(zones.bind(ZoneKey::Zone(index as u16)).unwrap())
+        .unwrap();
+    assert_eq!(view.cap(), Some(row.cap));
+    assert_eq!(row.cap, 2 * view.kind().vislevel());
 }
