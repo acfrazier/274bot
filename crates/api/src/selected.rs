@@ -187,8 +187,12 @@ pub enum FactError {
     },
 }
 
-/// Process-local identity; `slot` comes from Play's worker lifetime owner only.
-/// Intentionally not deserializable or persistable.
+/// Process-local identity of one operator run, stamped with the session it
+/// currently executes in; `slot` comes from Play's worker lifetime owner only.
+/// Intentionally not deserializable or persistable. The typed projections
+/// ([`slot_key`](Self::slot_key), [`session_key`](Self::session_key),
+/// [`same_run`](Self::same_run)) and the rest of the identity envelope live in
+/// [`crate::identity`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RunKey {
     pub slot: u64,
@@ -196,20 +200,30 @@ pub struct RunKey {
     pub session: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GenerationExhausted;
-
 impl RunKey {
-    pub fn next_run(self) -> Result<Self, GenerationExhausted> {
+    /// The next operator run of the same slot, or a refusal once the run
+    /// space is exhausted; never wraps.
+    pub fn next_run(self) -> Result<Self, crate::identity::IdentityError> {
         Ok(Self {
-            run: self.run.checked_add(1).ok_or(GenerationExhausted)?,
+            run: self
+                .run
+                .checked_add(1)
+                .ok_or(crate::identity::IdentityError::Exhausted(
+                    crate::identity::IdentityKind::Run,
+                ))?,
             ..self
         })
     }
 
-    pub fn next_session(self) -> Result<Self, GenerationExhausted> {
+    /// The same run re-stamped with the next session epoch, or a refusal once
+    /// the epoch space is exhausted; never wraps.
+    pub fn next_session(self) -> Result<Self, crate::identity::IdentityError> {
         Ok(Self {
-            session: self.session.checked_add(1).ok_or(GenerationExhausted)?,
+            session: self.session.checked_add(1).ok_or(
+                crate::identity::IdentityError::Exhausted(
+                    crate::identity::IdentityKind::SessionEpoch,
+                ),
+            )?,
             ..self
         })
     }
@@ -406,8 +420,18 @@ mod tests {
             session: u64::MAX,
             ..original
         };
-        assert_eq!(exhausted.next_run(), Err(GenerationExhausted));
-        assert_eq!(exhausted.next_session(), Err(GenerationExhausted));
+        assert_eq!(
+            exhausted.next_run(),
+            Err(crate::identity::IdentityError::Exhausted(
+                crate::identity::IdentityKind::Run
+            ))
+        );
+        assert_eq!(
+            exhausted.next_session(),
+            Err(crate::identity::IdentityError::Exhausted(
+                crate::identity::IdentityKind::SessionEpoch
+            ))
+        );
     }
 
     #[test]
