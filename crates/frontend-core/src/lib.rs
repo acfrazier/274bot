@@ -18,6 +18,7 @@
 
 pub mod bulk;
 pub mod capacity;
+pub mod command;
 pub mod fleet;
 pub mod group_walk;
 pub mod log;
@@ -26,6 +27,7 @@ pub mod map_bake;
 pub mod marked;
 pub mod nav_prefs;
 pub mod operations;
+pub mod process_status;
 pub mod profile_form;
 pub mod profile_saves;
 mod profiles;
@@ -41,6 +43,7 @@ pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
+pub use command::{CommandBook, CommandReport, OperatorCommand};
 pub use fleet::Fleet;
 pub use group_walk::{walk_marked, MarkedWalk, WalkInputs};
 pub use map_bake::{
