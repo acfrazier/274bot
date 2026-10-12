@@ -1,5 +1,5 @@
 use seat_model::{
-    Bounds, Class, Id, MAX_START_CHARGE, Origin, Outcome, Refusal, Rules, START_METADATA,
+    Bounds, Class, Id, MAX_START_CHARGE, Mutation, Origin, Outcome, Refusal, Rules, START_METADATA,
     SessionFamily, State, Step, Trace, Trigger, run_trace,
 };
 
@@ -87,6 +87,46 @@ fn expect_chosen_pass(fixture: &Fixture) -> Trace {
         trace.text
     );
     trace
+}
+
+fn mutation_state(mutation: Mutation) -> State {
+    State::with_mutation(Rules::Chosen, Bounds::production(), mutation)
+}
+
+fn apply_checked_mutation_step(state: &mut State, step: Step) {
+    state
+        .apply(&step)
+        .unwrap_or_else(|error| panic!("invalid mutation fixture step {step:?}: {error}"));
+    state.check().unwrap_or_else(|error| {
+        panic!("mutation fixture baseline failed after {step:?}: {error:?}")
+    });
+}
+
+fn mutation_start(state: &mut State, parent: Option<Id>, class: Class) -> Id {
+    let id = state.next_id();
+    apply_checked_mutation_step(
+        state,
+        Step::Start {
+            parent,
+            local_parent: None,
+            class,
+            group: 1,
+            bytes: 0,
+            hooks: 0,
+        },
+    );
+    id
+}
+
+fn mutation_admit(state: &mut State, parent: Option<Id>, class: Class) -> Id {
+    let id = mutation_start(state, parent, class);
+    apply_checked_mutation_step(state, Step::Admit(id));
+    id
+}
+
+fn expect_mutation_failure(state: &State, name: &str) {
+    let failure = state.check().expect_err("expected a mutation invariant failure");
+    assert_eq!(failure.name, name, "{failure:?}");
 }
 
 fn v5_01_fixture() -> (Fixture, Id, Id) {
@@ -1460,6 +1500,7 @@ fn guardian_hold_fixture(family: SessionFamily) -> (Fixture, [Id; 7]) {
     let held_cancel = fixture.child(held_decide, 4);
     let preheld_cancel = fixture.child(producer, 5);
     let session = fixture.admitted(None, Class::Session(family), 6);
+    let held_mirror = fixture.mirror(Some(producer), None);
     fixture.apply(Step::Page);
     fixture.apply(Step::Prompt(held_decide));
     fixture.apply(Step::Emit {
@@ -1485,6 +1526,19 @@ fn guardian_hold_fixture(family: SessionFamily) -> (Fixture, [Id; 7]) {
         of: Some(held_release),
         release: true,
     });
+    for (owner, expected_dropped) in [
+        (Some(session), 3),
+        (Some(pending), 4),
+        (Some(held_mirror), 5),
+        (Some(producer), 6),
+        (None, 7),
+    ] {
+        fixture.apply(Step::Emit {
+            of: owner,
+            release: false,
+        });
+        assert_eq!(fixture.builder.dropped(), expected_dropped);
+    }
     fixture.apply(Step::Cancel {
         of: held_cancel,
         throw: false,
@@ -1492,6 +1546,10 @@ fn guardian_hold_fixture(family: SessionFamily) -> (Fixture, [Id; 7]) {
     fixture.apply(Step::Decide {
         of: held_decide,
         complete: false,
+    });
+    fixture.apply(Step::Cancel {
+        of: pending,
+        throw: false,
     });
     (
         fixture,
@@ -1524,11 +1582,16 @@ fn assert_guardian_hold_frozen(fixture: &Fixture, ids: [Id; 7], expected_foregro
     assert_eq!(state.pending(), 1);
     assert_eq!(state.history_floor(), 0);
     assert!(state.terminal_order().is_empty());
-    assert_eq!(state.carry_len(), 3);
+    assert_eq!(state.carry_len(), 4);
     assert_eq!(state.dispatched(), 0);
     assert_eq!(state.release_dispatched(), 0);
-    assert_eq!(state.dropped(), 2);
+    assert_eq!(state.dropped(), 7);
     assert_eq!(state.encoded_rows(), vec![(Some(producer), true)]);
+    assert!(
+        state.describe().contains("queue=1 wire=1"),
+        "{}",
+        state.describe()
+    );
 
     for id in [
         producer,
@@ -1578,10 +1641,6 @@ fn assert_guardian_hold_blocks_seat_steps(fixture: &mut Fixture, session: Id, pe
         Step::Controls,
         Step::Page,
         Step::Watermark,
-        Step::Emit {
-            of: Some(session),
-            release: false,
-        },
         Step::Take,
         Step::Batch,
         Step::Reconnect { keep: true },
@@ -1631,7 +1690,9 @@ fn resume_guardian_hold_fixture(
     fixture.apply(Step::SessionResumed);
     assert!(!fixture.builder.session_held());
     assert_eq!(fixture.builder.foreground_session(), expected_foreground);
-    fixture.apply(Step::Admit(pending));
+    assert_eq!(fixture.builder.pending(), 1);
+    assert!(fixture.builder.entry(pending).is_none());
+    assert_eq!(fixture.builder.outcome(pending), None);
     fixture.apply(Step::Controls);
     assert_eq!(
         fixture.builder.outcome(preheld_cancel),
@@ -1641,6 +1702,7 @@ fn resume_guardian_hold_fixture(
         fixture.builder.outcome(held_cancel),
         Some(Outcome::Aborted(Trigger::ParentAborted))
     );
+    assert_eq!(fixture.builder.outcome(pending), None);
     assert_eq!(
         fixture.builder.terminal_order(),
         vec![preheld_cancel, held_cancel]
@@ -1657,7 +1719,13 @@ fn resume_guardian_hold_fixture(
     assert_eq!(fixture.builder.history_floor(), 0);
     assert_eq!(fixture.builder.foreground_session(), expected_foreground);
     assert!(fixture.builder.entry(session).is_some());
-    assert!(fixture.builder.entry(pending).is_some());
+    assert!(fixture.builder.entry(pending).is_none());
+    fixture.apply(Step::Admit(pending));
+    assert_eq!(
+        fixture.builder.outcome(pending),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+    assert_eq!(fixture.builder.settlements(pending), 0);
 
     fixture.apply(Step::Dispatch);
     fixture.apply(Step::Take);
@@ -1665,17 +1733,17 @@ fn resume_guardian_hold_fixture(
     let trace = expect_chosen_pass(&fixture);
     assert_eq!(trace.final_state.dispatched(), 0);
     assert_eq!(trace.final_state.release_dispatched(), 2);
-    assert_eq!(trace.final_state.dropped(), 2);
+    assert_eq!(trace.final_state.dropped(), 7);
     assert_eq!(trace.final_state.host_actions_dispatched(), 1);
     assert_eq!(trace.final_state.last_host_action(), Some(7));
     assert_eq!(
         trace.final_state.terminal_order(),
-        vec![preheld_cancel, held_cancel]
+        vec![preheld_cancel, held_cancel, pending]
     );
     assert_eq!(trace.final_state.foreground_session(), expected_foreground);
     assert!(trace.final_state.entry(session).is_some());
     assert!(trace.final_state.entry(held_release).is_some());
-    assert!(trace.final_state.entry(pending).is_some());
+    assert!(trace.final_state.entry(pending).is_none());
     assert!(trace.final_state.entry(producer).is_some());
     trace
 }
@@ -1695,28 +1763,211 @@ fn chosen_hunt_guardian_hold_drops_gameplay_and_preserves_controls() {
 #[test]
 fn chosen_held_tick_discards_rows_without_settling_live_entries() {
     let mut fixture = Fixture::new(Bounds::production());
-    let live = fixture.admitted(None, Class::Capability, 1);
+    let wire_live = fixture.admitted(None, Class::Capability, 1);
+    let queued_live = fixture.admitted(None, Class::Capability, 2);
     fixture.apply(Step::Emit {
-        of: Some(live),
+        of: Some(wire_live),
         release: false,
     });
     fixture.apply(Step::Emit {
-        of: Some(live),
-        release: false,
+        of: Some(wire_live),
+        release: true,
     });
     fixture.apply(Step::Take);
     fixture.apply(Step::Emit {
-        of: Some(live),
+        of: Some(queued_live),
+        release: true,
+    });
+    fixture.apply(Step::Emit {
+        of: Some(queued_live),
         release: false,
     });
+    assert_eq!(
+        fixture.builder.encoded_rows(),
+        vec![(Some(wire_live), true), (Some(wire_live), false)]
+    );
+    assert!(fixture.builder.describe().contains("queue=2 wire=2"));
     fixture.apply(Step::HeldTick);
+    assert!(fixture.builder.encoded_rows().is_empty());
+    assert!(fixture.builder.describe().contains("queue=0 wire=0"));
+    fixture.apply(Step::Take);
+    fixture.apply(Step::Dispatch);
     let trace = expect_chosen_pass(&fixture);
-    assert_eq!(trace.final_state.dropped(), 3);
-    assert_eq!(trace.final_state.live(), 1);
-    assert!(trace.final_state.entry(live).is_some());
-    assert_eq!(trace.final_state.outcome(live), None);
+    assert_eq!(trace.final_state.dropped(), 2);
+    assert_eq!(trace.final_state.live(), 2);
+    assert!(trace.final_state.entry(wire_live).is_some());
+    assert!(trace.final_state.entry(queued_live).is_some());
+    assert_eq!(trace.final_state.outcome(wire_live), None);
+    assert_eq!(trace.final_state.outcome(queued_live), None);
     assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.release_dispatched(), 0);
 }
+
+#[test]
+fn chosen_mutation_held_cancel_executes_breaks_guardian_hold() {
+    let mut state = mutation_state(Mutation::HeldCancelExecutes);
+    let _session = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
+    let target = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(&mut state, Step::SessionHeld);
+    state
+        .apply(&Step::Cancel {
+            of: target,
+            throw: false,
+        })
+        .expect("held Cancel is a legal guardian event");
+    expect_mutation_failure(&state, "guardian-hold");
+}
+
+#[test]
+fn chosen_mutation_held_decide_executes_breaks_guardian_hold() {
+    let mut state = mutation_state(Mutation::HeldDecideExecutes);
+    let _session = mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
+    let target = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(&mut state, Step::Prompt(target));
+    apply_checked_mutation_step(&mut state, Step::SessionHeld);
+    state
+        .apply(&Step::Decide {
+            of: target,
+            complete: false,
+        })
+        .expect("held Decide is a legal guardian event");
+    expect_mutation_failure(&state, "guardian-hold");
+}
+
+#[test]
+fn chosen_mutation_held_release_dispatch_breaks_guardian_hold() {
+    let mut state = mutation_state(Mutation::HeldReleaseDispatch);
+    let target = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(&mut state, Step::SessionHeld);
+    state
+        .apply(&Step::Emit {
+            of: Some(target),
+            release: true,
+        })
+        .expect("held release emission is legal");
+    expect_mutation_failure(&state, "guardian-hold");
+}
+
+#[test]
+fn chosen_mutation_hold_clears_carry_breaks_control_custody() {
+    let mut state = mutation_state(Mutation::HoldClearsCarry);
+    let target = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(
+        &mut state,
+        Step::Cancel {
+            of: target,
+            throw: false,
+        },
+    );
+    state
+        .apply(&Step::SessionHeld)
+        .expect("guardian hold transition is legal");
+    expect_mutation_failure(&state, "control-custody");
+}
+
+#[test]
+fn chosen_mutation_hold_drops_pending_breaks_pending_start_custody() {
+    let mut state = mutation_state(Mutation::HoldDropsPending);
+    mutation_start(&mut state, None, Class::Capability);
+    state
+        .apply(&Step::SessionHeld)
+        .expect("guardian hold transition is legal");
+    expect_mutation_failure(&state, "pending-start-custody");
+}
+
+#[test]
+fn chosen_mutation_resume_completes_foreground_breaks_guardian_hold() {
+    let mut state = mutation_state(Mutation::ResumeCompletesForeground);
+    mutation_admit(&mut state, None, Class::Session(SessionFamily::Gather));
+    apply_checked_mutation_step(&mut state, Step::SessionHeld);
+    state
+        .apply(&Step::SessionResumed)
+        .expect("guardian resume transition is legal");
+    expect_mutation_failure(&state, "guardian-hold");
+}
+
+#[test]
+fn chosen_mutation_controls_clears_carry_breaks_control_custody() {
+    let mut state = mutation_state(Mutation::ControlsClearsCarry);
+    let target = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(
+        &mut state,
+        Step::Cancel {
+            of: target,
+            throw: false,
+        },
+    );
+    state
+        .apply(&Step::Controls)
+        .expect("Controls is a legal outside-hold step");
+    expect_mutation_failure(&state, "control-custody");
+}
+
+#[test]
+fn chosen_mutation_controls_drops_pending_breaks_pending_start_custody() {
+    let mut state = mutation_state(Mutation::ControlsDropsPending);
+    mutation_start(&mut state, None, Class::Capability);
+    state
+        .apply(&Step::Controls)
+        .expect("Controls is a legal outside-hold step");
+    expect_mutation_failure(&state, "pending-start-custody");
+}
+
+#[test]
+fn chosen_mutation_duplicate_release_breaks_row_conservation() {
+    let mut state = mutation_state(Mutation::DuplicateRelease);
+    let owner = mutation_admit(&mut state, None, Class::Capability);
+    state
+        .apply(&Step::Emit {
+            of: Some(owner),
+            release: true,
+        })
+        .expect("release emission is legal");
+    expect_mutation_failure(&state, "row-conservation");
+}
+
+#[test]
+fn chosen_mutation_held_tick_keeps_releases_breaks_row_conservation() {
+    let mut state = mutation_state(Mutation::HeldTickKeepsReleases);
+    let wire_owner = mutation_admit(&mut state, None, Class::Capability);
+    let queued_owner = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(
+        &mut state,
+        Step::Emit {
+            of: Some(wire_owner),
+            release: true,
+        },
+    );
+    apply_checked_mutation_step(&mut state, Step::Take);
+    apply_checked_mutation_step(
+        &mut state,
+        Step::Emit {
+            of: Some(queued_owner),
+            release: true,
+        },
+    );
+    assert!(state.describe().contains("queue=1 wire=1"));
+    state
+        .apply(&Step::HeldTick)
+        .expect("HeldTick is a legal boundary");
+    expect_mutation_failure(&state, "row-conservation");
+}
+
+#[test]
+fn chosen_mutation_held_gameplay_queue_breaks_row_conservation() {
+    let mut state = mutation_state(Mutation::HeldGameplayQueue);
+    let owner = mutation_admit(&mut state, None, Class::Capability);
+    apply_checked_mutation_step(&mut state, Step::SessionHeld);
+    state
+        .apply(&Step::Emit {
+            of: Some(owner),
+            release: false,
+        })
+        .expect("held gameplay emission is legal");
+    expect_mutation_failure(&state, "row-conservation");
+}
+
+
 
 #[test]
 fn chosen_kept_reconnect_preserves_undelivered_release() {
