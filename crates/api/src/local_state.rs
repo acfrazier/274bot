@@ -42,7 +42,7 @@
 
 use std::fmt;
 
-use crate::bank_memory::{login_identity, HintRowsError, MAX_HINT_ROWS};
+use crate::bank_memory::{check_hint_rows, login_identity, HintRowsError};
 use crate::identity::{DurableTimestamp, RequestId, Settlement};
 use crate::loadout::Loadout;
 use crate::process_condition::{ProcessServiceCode, Recoverability};
@@ -549,27 +549,6 @@ fn check_preference_row(key: &str, value: &str) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-/// Whether `rows` meet the bank row contract: at most [`MAX_HINT_ROWS`],
-/// every count positive, ids strictly increasing.
-fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
-    if rows.len() > MAX_HINT_ROWS {
-        return Err(HintRowsError::TooManyRows);
-    }
-    let mut previous: Option<i32> = None;
-    for &(id, count) in rows {
-        if count <= 0 {
-            return Err(HintRowsError::NonPositiveCount);
-        }
-        match previous {
-            Some(prev) if id < prev => return Err(HintRowsError::Unsorted),
-            Some(prev) if id == prev => return Err(HintRowsError::DuplicateId),
-            _ => {}
-        }
-        previous = Some(id);
-    }
-    Ok(())
-}
-
 /// The owned, bounded rows a [`DomainLease`] hands out for reads (§21 §4.2
 /// row 1): a closed enum over the already-frozen value types, one variant
 /// per domain. No generic bag, no script storage type, no I/O: a snapshot
@@ -579,7 +558,7 @@ fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
 pub enum LeaseSnapshot {
     /// Preference rows, each within the key/value caps.
     Preferences(Vec<PreferenceRow>),
-    /// Bank rows within [`MAX_HINT_ROWS`], under the same row contract an
+    /// Bank rows within [`crate::bank_memory::MAX_HINT_ROWS`], under the same row contract an
     /// admitted [`BankHint`] meets.
     BankHints(Vec<(i32, i32)>),
     /// Loadout rows.
@@ -596,7 +575,7 @@ impl LeaseSnapshot {
     }
 
     /// Snapshot bank `rows`: sorted, unique and positive within
-    /// [`MAX_HINT_ROWS`] — the same row rules the hint file checks — or
+    /// [`crate::bank_memory::MAX_HINT_ROWS`] — the same row rules the hint file checks — or
     /// the snapshot is refused whole.
     pub fn bank_hints(rows: Vec<(i32, i32)>) -> Result<Self, HintRowsError> {
         check_hint_rows(&rows)?;
@@ -674,7 +653,9 @@ pub struct DomainLease {
 impl DomainLease {
     /// Lease `identity` at `version`, observed `at`, carrying `snapshot`.
     /// The snapshot must read the leased domain, or the lease is an
-    /// identity mismatch and nothing is leased.
+    /// identity mismatch and nothing is leased. A knowledge snapshot must
+    /// carry only the leased identity's own records: every record's
+    /// identity equals the lease identity, or the whole lease is refused.
     pub fn try_new(
         identity: DomainIdentity,
         version: StoreVersion,
@@ -686,6 +667,14 @@ impl DomainLease {
                 domain: identity.domain(),
                 reason: ValidationReason::Identity,
             });
+        }
+        if let LeaseSnapshot::Knowledge(records) = &snapshot {
+            if records.iter().any(|record| record.identity() != &identity) {
+                return Err(ErrorCode::Validation {
+                    domain: identity.domain(),
+                    reason: ValidationReason::Identity,
+                });
+            }
         }
         Ok(Self {
             identity,
@@ -1049,7 +1038,7 @@ impl LoadoutEdit {
 
 /// Observed bank rows to persist in the `bank-hints` domain: `(obj id,
 /// count)` sorted by id, unique, every count positive, at most
-/// [`MAX_HINT_ROWS`] — the same row rules the hint file checks
+/// [`crate::bank_memory::MAX_HINT_ROWS`] — the same row rules the hint file checks
 /// (`api::bank_memory`), so a persisted hint is always plannable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankHint {
@@ -1063,7 +1052,7 @@ impl BankHint {
     /// Persist `rows` observed `observed_at` for `identity`, expecting
     /// `expected`. The identity must be a `bank-hints` identity and the
     /// rows must already be sorted, unique and positive within
-    /// [`MAX_HINT_ROWS`], or the hint is refused whole and nothing is
+    /// [`crate::bank_memory::MAX_HINT_ROWS`], or the hint is refused whole and nothing is
     /// staged.
     pub fn try_new(
         identity: DomainIdentity,
@@ -1176,9 +1165,12 @@ impl ValidatedKnowledgePayload {
 
 /// Check `payload` against `schema_version` for the `knowledge` domain (§21
 /// §4.4): an unknown schema is [`Schema`](ValidationReason::Schema), an
-/// oversize payload [`TooLong`](ValidationReason::TooLong). A byte cap
-/// alone is not content validation; the closed schema gate is what keeps
-/// attempted routes from becoming stored observations.
+/// oversize payload [`TooLong`](ValidationReason::TooLong). Schema `1` is
+/// the only accepted version until T5.6 freezes per-fact schemas, and it
+/// accepts any bytes within [`MAX_KNOWLEDGE_BYTES`]: the cap is a size
+/// bound, not content validation. What keeps attempted routes from becoming
+/// stored observations (§21 §4.4) is source-proven [`KnowledgeProvenance`],
+/// not this check.
 pub fn validate_knowledge_payload(
     schema_version: u32,
     payload: &[u8],
