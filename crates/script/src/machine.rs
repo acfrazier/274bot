@@ -620,6 +620,8 @@ const FAMILIES: &[Entry] = &[
     #[cfg(test)]
     entry::<tests::Ask>(),
     #[cfg(test)]
+    entry::<tests::NotificationOrder>(),
+    #[cfg(test)]
     entry::<tests::Inline>(),
     #[cfg(test)]
     entry::<tests::SoloAsker>(),
@@ -1639,6 +1641,7 @@ pub(crate) mod tests {
     impl Family for Hooked {
         const NAME: &'static str = "hooked";
         const CALLBACKS: &'static [&'static str] = &["sync", "later", "mark"];
+        const SYNC_HOOKS: &'static [usize] = &[0];
         type Args = HookedArgs;
         type Output = Value;
 
@@ -1900,6 +1903,43 @@ pub(crate) mod tests {
                     hook: 0,
                     args: Vec::new(),
                 }),
+            }
+        }
+    }
+
+    /// Feeds a fixture effect through Hunt's real notification/decision
+    /// consumer, without duplicating its notes loop or callback mapping.
+    pub(crate) struct NotificationOrder {
+        started: bool,
+    }
+
+    impl Family for NotificationOrder {
+        const NAME: &'static str = "notification-order";
+        const CALLBACKS: &'static [&'static str] = crate::hunt::HOOKS;
+        const KICK_ON_START: bool = true;
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self { started: false })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            if self.started {
+                return match cx.reply() {
+                    Some(Reply::Value(value)) => Step::Done(value),
+                    Some(Reply::Threw(thrown)) => Step::Fail(thrown),
+                    None => Step::Wait,
+                };
+            }
+            self.started = true;
+            let effect = json!({
+                "kind": "eat",
+                "notes": [{"kind": "count-kill"}, {"kind": "count-kill"}],
+            });
+            match crate::hunt::characterize_effect(&effect, cx) {
+                Ok(Some(step)) => step,
+                Ok(None) | Err(_) => Step::Wait,
             }
         }
     }
