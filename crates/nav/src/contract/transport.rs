@@ -2,6 +2,8 @@
 //! held/consumed/returned/worn-any/worn-all requirements. Does not expose
 //! `TransportEdge` vectors or packed `QuestGates` layout.
 
+use std::fmt;
+
 use api::snapshot::WorldTile;
 
 use crate::transport::TransportEdge;
@@ -9,7 +11,7 @@ use crate::transport::TransportEdge;
 use super::{DoorDir, TransportKind};
 
 /// Borrowed transport facts of one hop.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct TransportView<'a> {
     edge: &'a TransportEdge,
 }
@@ -116,5 +118,15 @@ impl<'a> TransportView<'a> {
     /// Skill `(id, level)` requirements.
     pub fn skill_requirements(self) -> &'a [(i32, i32)] {
         &self.edge.skill_req
+    }
+}
+
+impl fmt::Debug for TransportView<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TransportView")
+            .field("kind", &self.edge.kind)
+            .field("anchor", &self.edge.at)
+            .field("landing", &self.edge.to)
+            .finish_non_exhaustive()
     }
 }
