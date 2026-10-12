@@ -681,7 +681,11 @@ fn relog_now_is_a_turnover_not_a_logout_latch() {
     assert!(mailbox.snapshot().turnover_pending());
     let logout = mailbox.logout_command(true).unwrap();
     assert_eq!(mailbox.acknowledge_logout(logout), Acknowledgement::Applied);
-    assert!(!mailbox.snapshot().turnover_pending());
+    assert!(
+        mailbox.snapshot().turnover_pending(),
+        "pressed: the turnover stays open until its session exits"
+    );
+    assert!(!mailbox.snapshot().logout_wanted(), "pressed once");
     assert_eq!(mailbox.snapshot().latch(), None, "no park latch");
     assert_eq!(
         mailbox.snapshot().login(),
@@ -689,6 +693,7 @@ fn relog_now_is_a_turnover_not_a_logout_latch() {
         "the login half stays armed"
     );
     mailbox.observe(CLEAN_EXIT).unwrap();
+    assert!(!mailbox.snapshot().turnover_pending());
     assert!(!mailbox.reconnects(), "the turnover's login is fresh");
     let login = mailbox.login_command(false).unwrap();
     assert!(
@@ -855,6 +860,331 @@ fn a_session_exit_settles_a_pending_turnovers_logout_half() {
         mailbox.logout_command(true).is_none(),
         "no logout follows the relogged session"
     );
+}
+
+/// The two turnover rows, each issued on a live session.
+const TURNOVERS: [Intent; 2] = [Intent::RelogNow, Intent::SwitchWorld(6)];
+
+/// A live session (auto-login on or off) on which `begin` was posted, with
+/// the logout command the slot read for the turnover's logout half.
+fn begin_live(begin: Intent, auto: bool) -> (IntentMailbox, IntentCommand) {
+    let mut mailbox = IntentMailbox::new(auto, WorldChoice::Automatic);
+    if !auto {
+        mailbox.post(Intent::Login).unwrap();
+    }
+    online(&mut mailbox);
+    mailbox.post(begin).unwrap();
+    assert!(mailbox.snapshot().turnover_pending(), "{begin:?}");
+    let press = mailbox
+        .logout_command(true)
+        .expect("the logout half goes out while online");
+    (mailbox, press)
+}
+
+/// Turnover table, row "ack, then exit" (today's order: the slot
+/// acknowledges right after pressing, `play_login.rs:1159-1166`, and the
+/// relog's latch makes the exit deliberate, `:617-625,749,1124-1130`, until
+/// the frontend arms the login half once parked, `session.rs:1131-1146`).
+#[test]
+fn a_pressed_turnover_stays_open_until_its_exit_then_owes_one_login() {
+    for begin in TURNOVERS {
+        for auto in [true, false] {
+            let (mut mailbox, press) = begin_live(begin, auto);
+            mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+            assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Applied);
+            let pressed = mailbox.snapshot();
+            assert!(!pressed.logout_wanted(), "{begin:?} {auto}: pressed once");
+            assert!(mailbox.logout_command(true).is_none());
+            assert!(
+                pressed.turnover_pending(),
+                "{begin:?} {auto}: open until the session exits"
+            );
+            assert_eq!(pressed.latch(), None, "{begin:?} {auto}: no park latch");
+            assert_eq!(pressed.login(), LoginIntent::Once);
+            assert!(
+                !mailbox.keeps_run_work_after_exit(),
+                "{begin:?} {auto}: the turnover's exit is deliberate: no kept session work"
+            );
+            let guard = mailbox
+                .observe(LifecycleFact::RepeatGuardTripped {
+                    count: 3,
+                    window_seconds: 600,
+                })
+                .unwrap();
+            assert!(
+                !guard.invalidated_attempt(),
+                "{begin:?} {auto}: the deliberate exit is no repeat-guard strike"
+            );
+            assert_eq!(mailbox.snapshot(), pressed);
+
+            mailbox.observe(CLEAN_EXIT).unwrap();
+            let exited = mailbox.snapshot();
+            assert!(!exited.turnover_pending(), "{begin:?} {auto}");
+            assert_eq!(exited.login(), LoginIntent::Once, "{begin:?} {auto}");
+            assert_eq!(exited.latch(), None);
+            let login = mailbox
+                .login_command(false)
+                .expect("the login half is owed after the exit");
+            mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+            assert_eq!(mailbox.acknowledge_login(login), Acknowledgement::Applied);
+            assert_eq!(
+                mailbox.snapshot().login(),
+                if auto {
+                    LoginIntent::Auto
+                } else {
+                    LoginIntent::Withdrawn
+                },
+                "{begin:?} {auto}: the one-shot is spent; the preference remains"
+            );
+            assert!(mailbox.logout_command(true).is_none());
+        }
+    }
+}
+
+/// Turnover table, row "exit, then a late ack" (review r2 probe 1). Today
+/// the exit leaves the relog's latch until the frontend arms the login half
+/// as a newer command (`session.rs:1131-1146`, `play_login.rs:370-377`),
+/// after which the old press is stale (`play_login.rs:735-736`).
+#[test]
+fn exit_then_late_logout_ack_preserves_turnover_login() {
+    for begin in TURNOVERS {
+        for auto in [true, false] {
+            for exit in [CLEAN_EXIT, DROP] {
+                let (mut mailbox, press) = begin_live(begin, auto);
+                mailbox.observe(exit).unwrap();
+                let settled = mailbox.snapshot();
+                assert_eq!(settled.login(), LoginIntent::Once);
+                assert_eq!(settled.latch(), None);
+                assert!(!settled.logout_wanted());
+                assert_eq!(
+                    mailbox.acknowledge_logout(press),
+                    Acknowledgement::Stale,
+                    "{begin:?} {auto} {exit:?}: the exit already settled the logout half"
+                );
+                assert_eq!(mailbox.snapshot(), settled, "{begin:?} {auto} {exit:?}");
+                assert!(mailbox.login_command(false).is_some());
+            }
+        }
+    }
+}
+
+/// Turnover table, row "ack, ack again" (review r2 probe 2): a consumed
+/// acknowledgement has no second effect, before or after the exit.
+#[test]
+fn duplicate_turnover_logout_ack_is_idempotent() {
+    for begin in TURNOVERS {
+        for auto in [true, false] {
+            let (mut mailbox, press) = begin_live(begin, auto);
+            assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Applied);
+            let pressed = mailbox.snapshot();
+            assert_eq!(
+                mailbox.acknowledge_logout(press),
+                Acknowledgement::Stale,
+                "{begin:?} {auto}: the boundary was settled once"
+            );
+            assert_eq!(mailbox.snapshot(), pressed, "{begin:?} {auto}");
+            mailbox.observe(CLEAN_EXIT).unwrap();
+            let exited = mailbox.snapshot();
+            assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Stale);
+            assert_eq!(mailbox.snapshot(), exited);
+            assert_eq!(exited.login(), LoginIntent::Once, "{begin:?} {auto}");
+            assert_eq!(exited.latch(), None);
+        }
+    }
+}
+
+/// Turnover table, row "replacement login, then the old ack" (review r2
+/// probe 3), with the logout half settled by the exit or by its ack; and a
+/// new Logout's boundary is not settled by the old press either.
+#[test]
+fn old_logout_ack_cannot_latch_the_relogged_session() {
+    for begin in TURNOVERS {
+        for auto in [true, false] {
+            for acked in [false, true] {
+                let (mut mailbox, press) = begin_live(begin, auto);
+                if acked {
+                    assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Applied);
+                }
+                mailbox.observe(CLEAN_EXIT).unwrap();
+                let login = mailbox.login_command(false).unwrap();
+                mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+                assert_eq!(mailbox.acknowledge_login(login), Acknowledgement::Applied);
+                let relogged = mailbox.snapshot();
+                assert_eq!(
+                    mailbox.acknowledge_logout(press),
+                    Acknowledgement::Stale,
+                    "{begin:?} {auto} acked={acked}: the old boundary cannot touch the new session"
+                );
+                assert_eq!(mailbox.snapshot(), relogged);
+                assert_eq!(relogged.latch(), None);
+                assert!(mailbox.logout_command(true).is_none());
+
+                mailbox.post(Intent::Logout).unwrap();
+                assert_eq!(
+                    mailbox.acknowledge_logout(press),
+                    Acknowledgement::Stale,
+                    "{begin:?} {auto} acked={acked}: read before the new Logout's boundary opened"
+                );
+                assert!(
+                    mailbox.snapshot().logout_wanted(),
+                    "the new Logout still owes its own press"
+                );
+                let fresh = mailbox.logout_command(true).unwrap();
+                assert_eq!(mailbox.acknowledge_logout(fresh), Acknowledgement::Applied);
+                assert_eq!(mailbox.snapshot().latch(), Some(LoginLatch::OperatorLogout));
+            }
+        }
+    }
+}
+
+/// Turnover table, row "a login completion arrives while the turnover is
+/// open": it belongs to the session being retired and cannot spend the
+/// login half owed after the exit (today the relog's latch makes the older
+/// login stale, `play_login.rs:388,795-799`).
+#[test]
+fn a_login_completed_before_the_turnovers_exit_cannot_spend_its_login_half() {
+    for begin in TURNOVERS {
+        for acked in [false, true] {
+            let mut mailbox = parked();
+            mailbox.post(Intent::Login).unwrap();
+            let old_login = mailbox.login_command(false).unwrap();
+            mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+            mailbox.post(begin).unwrap();
+            let press = mailbox.logout_command(true).unwrap();
+            if acked {
+                assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Applied);
+            }
+            let open = mailbox.snapshot();
+            assert_eq!(
+                mailbox.acknowledge_login(old_login),
+                Acknowledgement::Stale,
+                "{begin:?} acked={acked}"
+            );
+            assert_eq!(mailbox.snapshot(), open);
+            mailbox.observe(DROP).unwrap();
+            assert_eq!(mailbox.snapshot().login(), LoginIntent::Once);
+            assert!(
+                mailbox.login_command(false).is_some(),
+                "{begin:?} acked={acked}: the login half survives with auto-login off"
+            );
+        }
+    }
+}
+
+/// Turnover table, rows "a stronger row after the logout half was pressed,
+/// before the exit": the turnover is superseded, the consumed press stays
+/// stale, and only the stronger row's own outcome follows the exit (today
+/// Login, `session.rs:941-948`; Logout, `:1013-1021`; Remove, `:1216-1230`;
+/// shutdown, `:477-481` and `lib.rs:508-521`; a world error ends the relog,
+/// `session.rs:1160-1173`; WithdrawLogin has no caller during a relog's
+/// logout half and is the contract's row).
+#[test]
+fn a_stronger_row_after_the_press_supersedes_the_turnover_and_the_press_stays_consumed() {
+    for begin in TURNOVERS {
+        for stronger in [
+            Some(Intent::Login),
+            Some(Intent::Logout),
+            Some(Intent::HoldLoggedOut),
+            Some(Intent::WithdrawLogin),
+            Some(Intent::RemoveSlot),
+            Some(Intent::ProcessShutdown),
+            None,
+        ] {
+            let (mut mailbox, press) = begin_live(begin, false);
+            assert_eq!(mailbox.acknowledge_logout(press), Acknowledgement::Applied);
+            match stronger {
+                Some(intent) => {
+                    mailbox.post(intent).unwrap();
+                }
+                None => {
+                    mailbox
+                        .observe(LifecycleFact::WorldPreferenceFailed)
+                        .unwrap();
+                }
+            }
+            assert!(
+                !mailbox.snapshot().turnover_pending(),
+                "{begin:?} then {stronger:?}"
+            );
+            let superseded = mailbox.snapshot();
+            assert_eq!(
+                mailbox.acknowledge_logout(press),
+                Acknowledgement::Stale,
+                "{begin:?} then {stronger:?}: the press was consumed before the row"
+            );
+            assert_eq!(mailbox.snapshot(), superseded);
+            let owes_press = matches!(
+                stronger,
+                Some(Intent::Logout | Intent::RemoveSlot | Intent::ProcessShutdown)
+            );
+            match mailbox.logout_command(true) {
+                Some(fresh) => {
+                    assert!(owes_press, "{begin:?} then {stronger:?}");
+                    assert_eq!(mailbox.acknowledge_logout(fresh), Acknowledgement::Applied);
+                }
+                None => assert!(!owes_press, "{begin:?} then {stronger:?}"),
+            }
+            mailbox.observe(CLEAN_EXIT).unwrap();
+            assert_eq!(
+                mailbox.login_command(false).is_some(),
+                stronger == Some(Intent::Login),
+                "{begin:?} then {stronger:?}: only an explicit Login logs back in"
+            );
+        }
+    }
+}
+
+/// Turnover table, rows "a stronger row before the press is acknowledged,
+/// then the late ack": the ack settles the stronger row's logout, if it has
+/// one, and otherwise is stale (today `play_login.rs:735-742` after the
+/// supersession sites listed above).
+#[test]
+fn a_late_ack_after_a_stronger_row_settles_only_that_rows_logout() {
+    for begin in TURNOVERS {
+        for (stronger, applies, latch) in [
+            (Intent::Login, false, None),
+            (Intent::Logout, true, Some(LoginLatch::OperatorLogout)),
+            (
+                Intent::HoldLoggedOut,
+                false,
+                Some(LoginLatch::PersistedLogout),
+            ),
+            (
+                Intent::WithdrawLogin,
+                true,
+                Some(LoginLatch::OperatorLogout),
+            ),
+            (Intent::RemoveSlot, true, Some(LoginLatch::OperatorLogout)),
+            (
+                Intent::ProcessShutdown,
+                true,
+                Some(LoginLatch::OperatorLogout),
+            ),
+        ] {
+            let (mut mailbox, press) = begin_live(begin, true);
+            mailbox.post(stronger).unwrap();
+            assert_eq!(
+                mailbox.acknowledge_logout(press),
+                if applies {
+                    Acknowledgement::Applied
+                } else {
+                    Acknowledgement::Stale
+                },
+                "{begin:?} then {stronger:?}"
+            );
+            assert_eq!(
+                mailbox.snapshot().latch(),
+                latch,
+                "{begin:?} then {stronger:?}"
+            );
+            assert!(!mailbox.snapshot().logout_wanted());
+            assert_eq!(
+                mailbox.acknowledge_logout(press),
+                Acknowledgement::Stale,
+                "{begin:?} then {stronger:?}: settled once"
+            );
+        }
+    }
 }
 
 #[test]
