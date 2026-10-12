@@ -253,7 +253,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/supply.ts:545; $S/hunt.rs:700-702",
+        "$TS/api/combat/hunting/supply.ts:542; $S/hunt.rs:700-702",
     ),
     hook(
         &["reach-entity-op"],

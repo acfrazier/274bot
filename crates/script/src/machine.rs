@@ -2705,6 +2705,21 @@ pub(crate) mod tests {
             }
         }
         for row in HOOK_CHARACTERIZATIONS {
+            for name in row.families() {
+                let family = super::FAMILIES
+                    .iter()
+                    .find(|family| {
+                        family.name == *name && !TEST_FAMILY_NAMES.contains(&family.name)
+                    })
+                    .unwrap_or_else(|| panic!("ABI row names unregistered family {name}"));
+                assert!(
+                    family.callbacks.contains(&row.member()),
+                    "ABI row {name} / {} is not a registered callback",
+                    row.member()
+                );
+            }
+        }
+        for row in HOOK_CHARACTERIZATIONS {
             let FrozenPathStatus::ExistingDiscrepancy { q5_row, .. } = row.frozen_path() else {
                 continue;
             };
