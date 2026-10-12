@@ -917,6 +917,29 @@ class TrustedGateProtocolTests(GateFixture):
         )
 
 
+    def test_admission_probe_trees_populate_the_client_gitlink_locally(self) -> None:
+        # Admission checks B/H with the client submodule initialized (ownership
+        # covers its files), so each probe tree must be populated the same way.
+        source = self.root / "client-source"
+        _init_repo(source)
+        (source / "client.rs").write_text("// client\n", encoding="utf-8")
+        client_sha = _commit(source, "fixture client")
+        product = self.root / "product-with-client"
+        _init_repo(product)
+        (product / "root.txt").write_text("product\n", encoding="utf-8")
+        _commit(product, "fixture product")
+        _git(product, "-c", "protocol.file.allow=always", "submodule", "add", str(source), gate.SUBMODULE_PATH)
+        product_sha = _commit(product, "fixture client gitlink")
+        unpopulated = gate._clone_at(product, self.root / "probe-without-source", product_sha)
+        gate._populate_gitlinks(self.root / "missing-source", unpopulated)
+        self.assertFalse((unpopulated / gate.SUBMODULE_PATH / "client.rs").exists())
+        probe = gate._clone_at(product, self.root / "probe-tree", product_sha)
+        gate._populate_gitlinks(product, probe)
+        self.assertEqual(_git(probe / gate.SUBMODULE_PATH, "rev-parse", "HEAD"), client_sha)
+        self.assertTrue((probe / gate.SUBMODULE_PATH / "client.rs").is_file())
+        gate.verify_checkout(probe, product_sha, "populated probe tree")
+        print("GOOD §26 probe trees check out the client gitlink from the local initialized submodule")
+
     def test_trusted_dispatch_includes_inventory_findings(self) -> None:
         candidate = _clone_at(self.b1, self.root / "invalid-inventory", self.b1_sha)
         inventory = candidate / gate.ARCH_DIR / "inventories.json"
