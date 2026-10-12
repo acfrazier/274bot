@@ -6,9 +6,9 @@ use dear_imgui_rs::{Condition, StyleVar, Ui, WindowFlags};
 
 use crate::session::Session;
 use crate::theme::{scale_px, scale_size, ui_scale};
+use api::loadout::{CarryEntry, Loadout};
 use script::{
-    copy_equipment_preserving_supplies, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
-    WORN_SLOT_LAYOUT,
+    copy_equipment_preserving_supplies, unique_loadout_name, worn_slot_label, WORN_SLOT_LAYOUT,
 };
 
 const SEARCH_LIMIT: usize = 40;

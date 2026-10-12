@@ -7381,7 +7381,7 @@ fn script_start_handle_explicit_loadouts_starts() {
             script::LoadShape::NativeTick,
             Some(bag),
             vec![],
-            &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
         )
         .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
@@ -7407,8 +7407,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     play.attach_arm("alice", SlotArm::new(7, false));
     let start = play.script_start_handle();
     let rows = [
-        script::Loadout::new("First"),
-        script::Loadout::new("Second"),
+        api::loadout::Loadout::new("First"),
+        api::loadout::Loadout::new("Second"),
     ];
     for wanted in ["", " SECOND "] {
         let mut bag = serde_json::Map::new();
@@ -7429,9 +7429,9 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     }
 
     let ambiguous_rows = [
-        script::Loadout::new("First"),
-        script::Loadout::new("Second"),
-        script::Loadout::new("SECOND"),
+        api::loadout::Loadout::new("First"),
+        api::loadout::Loadout::new("Second"),
+        api::loadout::Loadout::new("SECOND"),
     ];
     let mut bag = serde_json::Map::new();
     bag.insert("loadout".into(), serde_json::json!(" second "));

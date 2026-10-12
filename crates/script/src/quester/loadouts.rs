@@ -1,5 +1,5 @@
 //! Read-only operator/Path loadout overlay and conservative owned-tier fills.
-use crate::loadouts_store::Loadout;
+use api::loadout::Loadout;
 use std::sync::Arc;
 
 #[derive(Clone)]

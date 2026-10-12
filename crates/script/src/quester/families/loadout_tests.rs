@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 fn with_path_loadout<R>(
-    store_rows: Vec<crate::loadouts_store::Loadout>,
+    store_rows: Vec<api::loadout::Loadout>,
     authored_row: serde_json::Value,
     allow_lower_tier: bool,
     f: impl FnOnce(&Arc<dyn StepPlan>, &Arc<dyn PredicatePlan>, &api::game_data::SelectedGameData) -> R,
@@ -25,7 +25,7 @@ fn with_path_loadout<R>(
 /// `args` are the step's authored `loadout` arguments besides `loadout`
 /// itself; the `loadout_ready` skip gets the same ones.
 fn with_path_loadout_args<R>(
-    store_rows: Vec<crate::loadouts_store::Loadout>,
+    store_rows: Vec<api::loadout::Loadout>,
     authored_row: serde_json::Value,
     mut args: serde_json::Value,
     f: impl FnOnce(&Arc<dyn StepPlan>, &Arc<dyn PredicatePlan>, &api::game_data::SelectedGameData) -> R,
@@ -553,7 +553,7 @@ fn loadout_ready_uses_alias_ids_and_excludes_same_display_certificates() {
 
 #[test]
 fn operator_display_name_override_still_selects_unnoted_items() {
-    let store = crate::loadouts_store::Loadout::new("cook/melee")
+    let store = api::loadout::Loadout::new("cook/melee")
         .with_slot("hat", "Rune full helm")
         .with_carry("Lobster", 2);
     with_path_loadout(vec![store], path_loadout(), false, |plan, _, data| {

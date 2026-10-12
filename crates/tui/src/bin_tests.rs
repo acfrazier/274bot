@@ -1342,7 +1342,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
     );
     assert_eq!(
         pending.loadouts,
-        vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+        vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
         "production live preparation stages scenario loadouts for catalog Start"
     );
 }

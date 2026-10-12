@@ -606,9 +606,8 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         monotonic: false,
     };
     let areas = HashMap::new();
-    let loadouts = LoadoutOverlay::from_default_store(
-        Arc::<[crate::loadouts_store::Loadout]>::from(Vec::new()),
-    );
+    let loadouts =
+        LoadoutOverlay::from_default_store(Arc::<[api::loadout::Loadout]>::from(Vec::new()));
     let recipes = HashMap::new();
     let path = FactKey::new("combat_unattackable");
     let cx = fixture_compile_context(
@@ -3355,7 +3354,7 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
     );
     // The overlay row holds display names, as the compiled Path rows do; the
     // carry map holds the alias-resolved identities native consumers use.
-    let row = crate::loadouts_store::Loadout::new("kitpath/cash")
+    let row = api::loadout::Loadout::new("kitpath/cash")
         .with_carry("Coins", 1000)
         .with_carry("Bones", 5);
     let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
