@@ -283,21 +283,56 @@ fn work_job_ids_are_host_minted_and_unique_across_runs_in_one_incarnation() {
     .is_ok());
 }
 
+/// The accepted policy (CSPRNG nonce drawn once by T1 composition,
+/// probabilistic non-reuse) leaves this type the identity mapping: every
+/// nonzero nonce round-trips, zero is the only value with no incarnation
+/// (refused by `NonZeroU64` before the constructor), and nothing but the
+/// nonce is read.
 #[test]
-fn process_incarnations_are_exactly_their_start_nonce() {
-    let first = incarnation(1);
-    let again = incarnation(1);
+fn a_start_nonce_names_exactly_one_incarnation_and_only_zero_names_none() {
     assert_eq!(
-        first, again,
-        "no clock, pid or sequence is mixed in: the nonce alone names the start"
+        NonZeroU64::new(0).map(ProcessIncarnation::from_start_nonce),
+        None,
+        "zero is unrepresentable by construction"
     );
-    assert_ne!(first, incarnation(2));
-    assert_eq!(first.start_nonce().get(), 1);
-    assert_eq!(
-        incarnation(u64::MAX).start_nonce().get(),
+    let samples = [
+        1,
+        2,
+        3,
+        0x5555_5555_5555_5555,
+        0x8000_0000_0000_0000,
+        0xAAAA_AAAA_AAAA_AAAA,
+        u64::MAX - 1,
         u64::MAX,
-        "no value of the nonce space collapses onto another"
-    );
+    ];
+    for raw in samples {
+        let nonce = NonZeroU64::new(raw).unwrap();
+        assert_eq!(
+            ProcessIncarnation::from_start_nonce(nonce).start_nonce(),
+            nonce,
+            "{raw:#x} round-trips"
+        );
+        for other in samples {
+            assert_eq!(
+                incarnation(raw) == incarnation(other),
+                raw == other,
+                "{raw:#x} vs {other:#x}: distinct nonces never collapse, equal nonces never differ"
+            );
+        }
+    }
+
+    // No clock, pid or counter is mixed in: the mapping is evaluable at
+    // compile time, and the same nonce later or on another thread names
+    // the same incarnation.
+    const AT_COMPILE_TIME: ProcessIncarnation =
+        ProcessIncarnation::from_start_nonce(NonZeroU64::MAX);
+    assert_eq!(AT_COMPILE_TIME, incarnation(u64::MAX));
+    let here = incarnation(0x5555_5555_5555_5555);
+    let elsewhere = thread::spawn(|| incarnation(0x5555_5555_5555_5555))
+        .join()
+        .unwrap();
+    assert_eq!(here, elsewhere);
+    assert_eq!(here, incarnation(0x5555_5555_5555_5555));
 }
 
 #[test]
