@@ -382,6 +382,74 @@ fn handed_out_leases_keep_their_rows_after_a_newer_commit() {
     );
 }
 
+#[test]
+fn a_knowledge_lease_refuses_another_identity_records() {
+    let alice = identity(LocalStateDomain::Knowledge, "alice");
+    let foreign = KnowledgeRecord::try_new(
+        account("local-289", "bob"),
+        scope(),
+        None,
+        "cook:stage",
+        KnowledgeProvenance::QuestList,
+        KnowledgeStatus::Known,
+        knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"stage=2"),
+        at(10),
+    )
+    .unwrap();
+    assert_eq!(
+        DomainLease::try_new(
+            alice.clone(),
+            StoreVersion::INITIAL,
+            at(10),
+            LeaseSnapshot::knowledge(vec![foreign]),
+        )
+        .unwrap_err(),
+        ErrorCode::Validation {
+            domain: LocalStateDomain::Knowledge,
+            reason: ValidationReason::Identity,
+        },
+        "a knowledge lease never carries another account's records"
+    );
+    let other_scope = ContentScope::try_new(client::io::ClientRevision::R289, "other").unwrap();
+    let rescoped = KnowledgeRecord::try_new(
+        account("local-289", "alice"),
+        other_scope,
+        None,
+        "cook:stage",
+        KnowledgeProvenance::QuestList,
+        KnowledgeStatus::Known,
+        knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"stage=2"),
+        at(10),
+    )
+    .unwrap();
+    assert_eq!(
+        DomainLease::try_new(
+            alice.clone(),
+            StoreVersion::INITIAL,
+            at(10),
+            LeaseSnapshot::knowledge(vec![knowledge_record(None), rescoped]),
+        )
+        .unwrap_err(),
+        ErrorCode::Validation {
+            domain: LocalStateDomain::Knowledge,
+            reason: ValidationReason::Identity,
+        },
+        "one record under another scope refuses the whole lease"
+    );
+    let lease = DomainLease::try_new(
+        alice,
+        StoreVersion::INITIAL,
+        at(10),
+        LeaseSnapshot::knowledge(vec![knowledge_record(None)]),
+    )
+    .unwrap();
+    assert_eq!(
+        lease.snapshot().as_knowledge().unwrap().len(),
+        1,
+        "the lease's own records still lease"
+    );
+}
+
 /// A hydrating test port: cold until told otherwise, like the T5.2 service
 /// while an import or readback is pending.
 struct HydratingPort {
@@ -472,7 +540,13 @@ fn bank_hints_keep_the_row_contract() {
         }
     );
     assert_eq!(
-        BankHint::try_new(id, None, vec![(1, 1); MAX_HINT_ROWS + 1], at(8)).unwrap_err(),
+        BankHint::try_new(
+            id,
+            None,
+            vec![(1, 1); crate::bank_memory::MAX_HINT_ROWS + 1],
+            at(8)
+        )
+        .unwrap_err(),
         ErrorCode::Validation {
             domain: LocalStateDomain::BankHints,
             reason: ValidationReason::TooManyRows,
@@ -498,6 +572,34 @@ fn bank_hints_refuse_a_foreign_identity() {
             reason: ValidationReason::Identity,
         },
         "a preferences identity wrapped in a bank edit is an identity mismatch"
+    );
+}
+
+#[test]
+fn bank_row_checks_agree_on_multi_fault_rows() {
+    // Breaks two row rules at once: the ids step back and a later count is
+    // not positive. A hint load, a hint edit and a hint snapshot of the
+    // same rows must all name the same break.
+    let rows = vec![(5, 1), (3, 1), (1, 0)];
+    let mut memory = crate::bank_memory::BankMemory::default();
+    assert_eq!(
+        memory.load_hint(rows.clone(), 8),
+        Err(HintRowsError::NonPositiveCount),
+        "the hint file names the non-positive count first"
+    );
+    let id = identity(LocalStateDomain::BankHints, "alice");
+    assert_eq!(
+        BankHint::try_new(id, None, rows.clone(), at(8)).unwrap_err(),
+        ErrorCode::Validation {
+            domain: LocalStateDomain::BankHints,
+            reason: ValidationReason::NonPositiveCount,
+        },
+        "a hint edit classifies the same rows the same way a hint load does"
+    );
+    assert_eq!(
+        LeaseSnapshot::bank_hints(rows),
+        Err(HintRowsError::NonPositiveCount),
+        "a hint snapshot classifies the same rows the same way a hint load does"
     );
 }
 

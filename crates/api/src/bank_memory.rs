@@ -302,7 +302,7 @@ fn fold_sorted(rows: &mut Vec<(i32, i32)>) {
 }
 
 /// The §1.4 row rules a hint file must already satisfy.
-fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
+pub(crate) fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
     if rows.len() > MAX_HINT_ROWS {
         return Err(HintRowsError::TooManyRows);
     }
