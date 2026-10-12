@@ -4689,6 +4689,7 @@ dependencies = [
  "rustyscript",
  "schemars",
  "script",
+ "seat-model",
  "serde",
  "serde_json",
  "sha2",

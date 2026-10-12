@@ -104,6 +104,7 @@ globalThis.__afterPredicate = null;
 globalThis.__beforeChild = null;
 globalThis.__afterChild = null;
 globalThis.__sameThrown = false;
+globalThis.__machineSameThrown = false;
 globalThis.__recovered = false;
 
 function readContext() {
@@ -166,13 +167,23 @@ function walkBack() {
 
 export default class T extends TaskBot {
     onStart() {
-        this.add(new DeathRecovery(this, {
+        const recovery = new DeathRecovery(this, {
             anchor: { x: 3300, z: 3300, level: 0 },
             radius: 6,
             onDeath: () => { globalThis.__deaths += 1; },
             onRecovered: () => { globalThis.__recovered = true; },
             walkBack,
-        }));
+        });
+        const execute = recovery.execute.bind(recovery);
+        recovery.execute = async (...args) => {
+            try {
+                return await execute(...args);
+            } catch (thrown) {
+                globalThis.__machineSameThrown = thrown === globalThis.__sentinel;
+                throw thrown;
+            }
+        };
+        this.add(recovery);
     }
 }
 "#;
@@ -264,9 +275,14 @@ export default class T extends TaskBot {
     assert_eq!(value(&iso, "globalThis.__sameThrown"), true);
     assert_eq!(value(&iso, "globalThis.__deaths"), 1);
     assert_eq!(
+        value(&iso, "globalThis.__machineSameThrown"),
+        true,
+        "the actual DeathRecovery execute rejects with the awaited hook's thrown value"
+    );
+    assert_eq!(
         value(&iso, "globalThis.__recovered"),
-        false,
-        "the awaited hook's thrown value fails the current DeathRecovery row"
+        true,
+        "onRecovered is an independent validate observation of the actual arrival, not execute success"
     );
     assert_eq!(
         value(

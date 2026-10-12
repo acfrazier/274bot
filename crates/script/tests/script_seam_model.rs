@@ -299,7 +299,9 @@ fn terminal_receipt_retires_decide_and_cancel_custody_against_model() {
                 if cancel {
                     Step::Cancel {
                         of: owner,
-                        throw: true,
+                        // The oracle permits copied Cancel after receipt;
+                        // HookThrew is generated only while its hook is live.
+                        throw: false,
                     }
                 } else {
                     Step::Decide {
