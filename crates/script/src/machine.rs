@@ -528,6 +528,9 @@ struct Entry {
     callbacks: &'static [&'static str],
     kick_on_start: bool,
     begin: fn(Value, Vec<Hook>, usize) -> Started,
+    /// [`Family::SYNC_HOOKS`]. The ABI coverage test reads this field.
+    #[allow(dead_code)]
+    sync_hooks: &'static [usize],
 }
 
 const fn entry<F: Family>() -> Entry {
@@ -536,6 +539,7 @@ const fn entry<F: Family>() -> Entry {
         callbacks: F::CALLBACKS,
         kick_on_start: F::KICK_ON_START,
         begin: begin_row::<F>,
+        sync_hooks: F::SYNC_HOOKS,
     }
 }
 
@@ -2649,5 +2653,71 @@ pub(crate) mod tests {
                 button(6)
             ]
         );
+    }
+
+    #[test]
+    fn every_production_family_callback_has_an_abi_row_matching_sync_hooks() {
+        use crate::native::abi::{FrozenPathStatus, HookPath, HOOK_CHARACTERIZATIONS};
+        use crate::native::divergence::{DivergenceStatus, DIVERGENCES};
+
+        const TEST_FAMILY_NAMES: &[&str] = &[
+            "probe",
+            "solo",
+            "walker",
+            "hooked",
+            "burst",
+            "present",
+            "nested",
+            "solo-hooked",
+            "inline",
+            "solo-asker",
+            "ask",
+            "notification-order",
+            "kicked",
+        ];
+        for family in super::FAMILIES {
+            if TEST_FAMILY_NAMES.contains(&family.name) {
+                continue;
+            }
+            for (index, member) in family.callbacks.iter().enumerate() {
+                let rows: Vec<_> = HOOK_CHARACTERIZATIONS
+                    .iter()
+                    .filter(|row| row.families().contains(&family.name) && row.member() == *member)
+                    .collect();
+                assert!(
+                    !rows.is_empty(),
+                    "no ABI row for registered {} / {}",
+                    family.name,
+                    member
+                );
+                let sync = family.sync_hooks.contains(&index);
+                for row in rows {
+                    assert_eq!(
+                        row.path() == HookPath::CallSync,
+                        sync,
+                        "{} / {} path {:?} vs SYNC_HOOKS {:?}",
+                        family.name,
+                        member,
+                        row.path(),
+                        family.sync_hooks
+                    );
+                }
+            }
+        }
+        for row in HOOK_CHARACTERIZATIONS {
+            let FrozenPathStatus::ExistingDiscrepancy { q5_row, .. } = row.frozen_path() else {
+                continue;
+            };
+            let id = q5_row.to_string();
+            let found = DIVERGENCES
+                .iter()
+                .find(|divergence| divergence.id() == id)
+                .unwrap_or_else(|| panic!("q5_row {q5_row} is not in DIVERGENCES"));
+            assert_eq!(
+                found.status(),
+                DivergenceStatus::Existing,
+                "q5_row {q5_row} must be an existing discrepancy"
+            );
+        }
     }
 }

@@ -4,6 +4,7 @@
 use super::request::PendingPayload;
 use api::identity::RequestId;
 use api::script_contract::{CallbackCancelReason, CallbackCancellation, Decide, DecisionSequence};
+use std::num::NonZeroU32;
 
 /// State the adapter retains for a single request. It owns no JS values;
 /// a full-build mirror keeps its actual Promise handle until `receive_terminal`
@@ -16,7 +17,7 @@ pub struct CallbackCustody<A> {
     acknowledged_ever: bool,
     last_prompt_invoked: Option<DecisionSequence>,
     last_answered: Option<DecisionSequence>,
-    last_event_sequence: u32,
+    last_event_sequence: Option<NonZeroU32>,
     decide: Option<Decide<A>>,
     cancel: Option<CallbackCancellation>,
     terminal_received: bool,
@@ -30,7 +31,7 @@ impl<A> CallbackCustody<A> {
             acknowledged_ever: false,
             last_prompt_invoked: None,
             last_answered: None,
-            last_event_sequence: 0,
+            last_event_sequence: None,
             decide: None,
             cancel: None,
             terminal_received: false,
@@ -74,11 +75,15 @@ impl<A> CallbackCustody<A> {
     }
     /// Consume an event only once, in ascending sequence order. Every event
     /// gets its own invocation; there is no per-tick notification coalescing.
-    pub fn consume_event(&mut self, sequence: u32) -> bool {
-        if self.terminal_received || sequence <= self.last_event_sequence {
+    pub fn consume_event(&mut self, sequence: NonZeroU32) -> bool {
+        if self.terminal_received
+            || self
+                .last_event_sequence
+                .is_some_and(|seen| sequence <= seen)
+        {
             return false;
         }
-        self.last_event_sequence = sequence;
+        self.last_event_sequence = Some(sequence);
         true
     }
     /// Carry the actual answer once. A pending cancellation wins any race.

@@ -216,6 +216,64 @@ fn guardian_and_foreground_are_separate_and_controls_are_never_filtered() {
         ),
         DispatchDisposition::ProtocolDefect
     );
+    assert_eq!(
+        dispatch_disposition(
+            EmissionClass::Gameplay,
+            Some(id(1)),
+            Some(id(1)),
+            AdmissionWitness::Admitted,
+            EmissionProof::InvalidExternal,
+            AuthorityBoundary::Preserved,
+            true
+        ),
+        DispatchDisposition::ProtocolDefect,
+        "a hold must not hide an invalid-external protocol defect"
+    );
+}
+
+#[test]
+fn boundary_delivery_revocation_and_release_custody_are_exhaustive() {
+    use Boundary::*;
+    const ALL: [Boundary; 14] = [
+        Done,
+        Failed,
+        HookThrew,
+        ParentAborted,
+        Superseded,
+        ManualWalk,
+        ManualCombat,
+        GatherSignal,
+        Stop,
+        Reset,
+        KeptReconnect,
+        Pause,
+        GuardianHold,
+        HeldTick,
+    ];
+    for boundary in ALL {
+        match boundary {
+            Done | Failed | HookThrew | ParentAborted | Superseded | ManualWalk | ManualCombat => {
+                assert_eq!(boundary.delivery(), BoundaryDelivery::RetainedTerminal);
+            }
+            Reset => assert_eq!(boundary.delivery(), BoundaryDelivery::LocalReset),
+            Stop => assert_eq!(boundary.delivery(), BoundaryDelivery::SilentStop),
+            GatherSignal | KeptReconnect | Pause | GuardianHold | HeldTick => {
+                assert_eq!(boundary.delivery(), BoundaryDelivery::Hold);
+            }
+        }
+        assert_eq!(
+            boundary.revokes_descendants(),
+            matches!(
+                boundary,
+                ParentAborted | Superseded | ManualWalk | ManualCombat | Stop | Reset
+            )
+        );
+        assert_eq!(
+            boundary.keeps_queued_releases(),
+            !matches!(boundary, Stop | Reset | HeldTick),
+            "{boundary:?} release custody"
+        );
+    }
 }
 #[test]
 fn pages_enforce_combined_credits_and_sequence_order_not_just_two_separate_caps() {

@@ -6,6 +6,7 @@ use script::native::custody::CallbackCustody;
 use script::native::divergence::{DivergenceStatus, DIVERGENCES};
 use script::native::request::{NativeKind, PendingPayload};
 use seat_model::{Bounds, Class, Outcome, Rules, SessionFamily, State, Step, Trigger};
+use std::num::NonZeroU32;
 
 fn apply(state: &mut State, step: Step) {
     state
@@ -546,12 +547,12 @@ fn class_corrections_and_open_row_8a_are_explicit_not_activated() {
 #[test]
 fn notification_custody_invokes_each_sequence_once_without_tick_coalescing() {
     let mut carried = custody(1);
-    assert!(!carried.consume_event(0));
     for sequence in 1..=7 {
+        let sequence = NonZeroU32::new(sequence).unwrap();
         assert!(carried.consume_event(sequence));
         assert!(!carried.consume_event(sequence));
     }
-    assert!(!carried.consume_event(3));
+    assert!(!carried.consume_event(NonZeroU32::new(3).unwrap()));
     assert!(carried.invoke_prompt(frozen::DecisionSequence::FIRST));
     assert!(carried.answer(frozen::DecisionSequence::FIRST, ()));
     carried.decisions_consumed(1);
@@ -560,7 +561,224 @@ fn notification_custody_invokes_each_sequence_once_without_tick_coalescing() {
         "an acknowledged answer cannot be carried again"
     );
     assert!(carried.receive_terminal());
-    assert!(!carried.consume_event(8));
+    assert!(!carried.consume_event(NonZeroU32::new(8).unwrap()));
     assert!(!carried.invoke_prompt(frozen::DecisionSequence::FIRST));
     assert!(!carried.answer(frozen::DecisionSequence::FIRST, ()));
+}
+
+fn queue_gameplay_and_release(state: &mut State, owner: u16) {
+    apply(
+        state,
+        Step::Emit {
+            of: Some(owner),
+            release: false,
+        },
+    );
+    apply(
+        state,
+        Step::Emit {
+            of: Some(owner),
+            release: true,
+        },
+    );
+    apply(state, Step::Take);
+}
+
+fn dispatch_after_boundary(state: &mut State) {
+    match state.apply(&Step::Dispatch) {
+        Ok(()) => {}
+        Err(error) if error == "stopped" => {}
+        Err(error) => panic!("Dispatch: {error}"),
+    }
+    state
+        .check()
+        .unwrap_or_else(|error| panic!("after Dispatch: {error:?}"));
+}
+
+#[test]
+fn frozen_boundary_release_custody_matches_the_oracle() {
+    for (boundary, steps) in [
+        (frozen::Boundary::Stop, &[Step::Stop][..]),
+        (
+            frozen::Boundary::Reset,
+            &[Step::Reconnect { keep: false }][..],
+        ),
+        (
+            frozen::Boundary::KeptReconnect,
+            &[Step::Reconnect { keep: true }][..],
+        ),
+        (frozen::Boundary::HeldTick, &[Step::HeldTick][..]),
+        (
+            frozen::Boundary::GuardianHold,
+            &[Step::SessionHeld, Step::SessionResumed][..],
+        ),
+    ] {
+        let mut state = State::new(Rules::Chosen, Bounds::production());
+        let owner = admitted(&mut state, None, Class::Capability, 1);
+        queue_gameplay_and_release(&mut state, owner);
+        for step in steps {
+            apply(&mut state, step.clone());
+        }
+        dispatch_after_boundary(&mut state);
+        assert_eq!(
+            state.release_dispatched(),
+            usize::from(boundary.keeps_queued_releases()),
+            "{boundary:?} release dispatch must follow keeps_queued_releases"
+        );
+        assert_eq!(
+            state.dispatched(),
+            0,
+            "{boundary:?} must not dispatch queued gameplay"
+        );
+    }
+}
+
+#[test]
+fn descendant_terminal_order_agrees_with_frozen_revokes_descendants() {
+    for (trigger, boundary) in [
+        (Trigger::Superseded, frozen::Boundary::Superseded),
+        (Trigger::ParentAborted, frozen::Boundary::ParentAborted),
+        (Trigger::ManualCombat, frozen::Boundary::ManualCombat),
+        (Trigger::ManualWalk, frozen::Boundary::ManualWalk),
+        (Trigger::GatherSignal, frozen::Boundary::GatherSignal),
+        (Trigger::Pause, frozen::Boundary::Pause),
+    ] {
+        let mut state = State::new(Rules::Chosen, Bounds::production());
+        let root = admitted(&mut state, None, Class::Capability, 1);
+        let child = admitted(&mut state, Some(root), Class::Capability, 2);
+        apply(&mut state, Step::Revoke { of: root, trigger });
+        if boundary.revokes_descendants() {
+            assert_eq!(
+                state.terminal_order(),
+                vec![child, root],
+                "{boundary:?} must settle descendants leaf-first"
+            );
+            assert!(state.entry(child).is_none());
+        } else {
+            assert!(
+                state.entry(child).is_some() && state.entry(root).is_some(),
+                "{boundary:?} must not revoke descendants"
+            );
+        }
+    }
+    for (step, boundary) in [
+        (Step::Stop, frozen::Boundary::Stop),
+        (Step::Reconnect { keep: false }, frozen::Boundary::Reset),
+    ] {
+        let mut state = State::new(Rules::Chosen, Bounds::production());
+        let root = admitted(&mut state, None, Class::Capability, 1);
+        let child = admitted(&mut state, Some(root), Class::Capability, 2);
+        apply(&mut state, step);
+        assert!(
+            boundary.revokes_descendants(),
+            "{boundary:?} revokes_descendants is the Stop/Reset bit"
+        );
+        assert!(state.entry(child).is_none());
+        assert!(state.entry(root).is_none());
+        assert_eq!(state.live(), 0);
+    }
+}
+
+#[test]
+fn batch_order_controls_precede_starts_so_cancelled_starts_never_admit() {
+    assert_eq!(frozen::BATCH_ORDER[0], frozen::BatchStage::Watermark);
+    assert_eq!(
+        frozen::BATCH_ORDER[frozen::BATCH_ORDER.len() - 1],
+        frozen::BatchStage::Dispatch
+    );
+    let controls = frozen::BATCH_ORDER
+        .iter()
+        .position(|stage| *stage == frozen::BatchStage::Controls)
+        .expect("BATCH_ORDER names Controls");
+    let starts = frozen::BATCH_ORDER
+        .iter()
+        .position(|stage| *stage == frozen::BatchStage::PendingStarts)
+        .expect("BATCH_ORDER names PendingStarts");
+    assert!(
+        controls < starts,
+        "Controls must precede PendingStarts so a Cancel cannot be overtaken by its start"
+    );
+
+    let mut pending_cancel = State::new(
+        Rules::Chosen,
+        seat_model::Profile::V5_03PendingCancel.bounds(),
+    );
+    for step in seat_model::Profile::V5_03PendingCancel.prefix() {
+        apply(&mut pending_cancel, step);
+    }
+    apply(&mut pending_cancel, Step::Batch);
+    apply(&mut pending_cancel, Step::Page);
+    apply(&mut pending_cancel, Step::Watermark);
+    assert!(
+        pending_cancel.entry(2).is_none(),
+        "V5_03PendingCancel must never admit the cancelled start"
+    );
+    assert_eq!(
+        pending_cancel.outcome(2),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+
+    let mut deferred = State::new(
+        Rules::Chosen,
+        seat_model::Profile::V5_03CreditDeferred.bounds(),
+    );
+    for step in seat_model::Profile::V5_03CreditDeferred.prefix() {
+        apply(&mut deferred, step);
+    }
+    apply(
+        &mut deferred,
+        Step::Cancel {
+            of: 3,
+            throw: false,
+        },
+    );
+    apply(&mut deferred, Step::Complete(1));
+    apply(&mut deferred, Step::Page);
+    apply(&mut deferred, Step::Watermark);
+    apply(&mut deferred, Step::Controls);
+    apply(&mut deferred, Step::Admit(3));
+    assert!(
+        deferred.entry(3).is_none(),
+        "V5_03CreditDeferred must never admit the cancelled start"
+    );
+    assert_eq!(
+        deferred.outcome(3),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+}
+
+#[test]
+fn unacknowledged_start_and_parent_aborted_remain_one_custody_unit() {
+    let parent = request(1);
+    let mut carried: CallbackCustody<()> = CallbackCustody::new(
+        request(2),
+        PendingPayload::new(vec![1, 2], 1, None).unwrap(),
+        Some(parent),
+    );
+    assert!(carried.cancel(frozen::CallbackCancelReason::ParentAborted));
+    assert!(
+        carried.payload().is_some(),
+        "cancel before ack keeps the start payload"
+    );
+    assert!(carried.cancellation().is_some());
+    assert_eq!(carried.local_parent(), Some(parent));
+    carried.acknowledge_live();
+    assert!(carried.payload().is_none());
+    assert_eq!(
+        carried.local_parent(),
+        Some(parent),
+        "lost-batch ack keeps hybrid ancestry"
+    );
+    assert!(
+        carried.cancellation().is_some(),
+        "ack keeps the ParentAborted cancellation"
+    );
+    assert!(carried.receive_terminal());
+    assert!(carried.payload().is_none());
+    assert!(carried.local_parent().is_none());
+    assert!(carried.cancellation().is_none());
+    assert!(
+        !carried.receive_terminal(),
+        "terminal receipt retires the unit exactly once"
+    );
 }

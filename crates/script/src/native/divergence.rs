@@ -50,10 +50,10 @@ macro_rules! row {
 /// T2 with T1 must extend/re-review the model before Hunt I-family activates.
 pub const DIVERGENCES: &[Divergence] = &[
     row!("1", Existing, "Read hook members once at start; later mutation does not change callbacks", "§28.6 row 1; §25 R5-6; load/machine_v8.rs hook rooting"),
-    row!("2", Pinned, "Awaited pending Promise is polled, never re-invoked", "§28.6 row 2; machine.rs:1291-1294,1362-1364"),
-    row!("3", Pinned, "One notification per typed event in sequence order, reposts deduplicated", "§28.6 row 3; §25 R5-6.3.2; hunt.rs:794-807"),
+    row!("2", Pinned, "Awaited pending Promise is polled, never re-invoked", "§28.6 row 2; machine.rs:1293-1296,1364-1366"),
+    row!("3", Pinned, "One notification per typed event in sequence order, reposts deduplicated", "§28.6 row 3; §25 R5-6.3.2; hunt.rs:798-821"),
     row!("4", FamilyCharacterization, "Keep each family's frozen log/vlog/setStatus invocation point", "§28.6 row 4; §25 R5-6.2"),
-    row!("5", Pinned, "Await decision; HookThrew publishes Failed and detached children survive", "§28.6 row 5; §25 R5-7; machine.rs:1349-1353"),
+    row!("5", Pinned, "Await decision; HookThrew publishes Failed and detached children survive", "§28.6 row 5; §25 R5-7; machine.rs:1351-1356"),
     row!("6", FamilyCharacterization, "Synchronous call point, arguments and path/value Promise/throw semantics stay per member", "§28.6 row 6; §25 R5-6.1"),
     row!("7", NoFrozenCounterpart, "Second live Session root is refused Busy", "§28.6 row 7; §28.4 A2-A4"),
     row!("8a", OpenRow8a, "Model currently refuses top-level Capability beside Hunt; operator requires coexistence before Hunt activation", "§28.6 row 8a; §27 §8 final Q5 answer (2026-10-11)"),
@@ -72,7 +72,7 @@ pub const DIVERGENCES: &[Divergence] = &[
     row!("18", Pinned, "bankNearest and PeriodicBank can be Capability children when bounds permit", "§28.6 row 18; §25 R5-4.6; periodic_bank.rs:380-392,473-496"),
     row!("19", OutsideAbi, "Derived AsyncContext preserves lineage; unrelated replacement is Foreign with once-per-run diagnostic", "§28.6 row 19; §25 R5-2.2.5, R5-2.3"),
     row!("20", NewDivergence, "Credit-deferred start remains custody; pending gameplay needs admission witness and never replays", "§28.6 row 20; §28.4; pending-count cap 32"),
-    row!("21", Existing, "Hunt ask/ignored Promise currently fails not-impl; frozen notification returns ignored", "§28.6 row 21; machine.rs:464-469; hunt.rs:783-807"),
+    row!("21", Existing, "Hunt ask/ignored Promise currently fails not-impl; frozen notification returns ignored", "§28.6 row 21; machine.rs:464-469; hunt.rs:798-821"),
     row!("22", HostChange, "Releases bypass foreground and survive guardian hold; controls execute after resume", "§28.6 row 22; §27 §6 guardian hold; slot.rs:1788-1795; load/isolate/thread.rs:1475-1491"),
     row!("23", NewDivergence, "A fifth reserved future root leaf is refused Busy", "§28.6 row 23; §28.3 root reservation"),
     row!("24", NewDivergence, "Adopted subtree is cancelled ParentAborted when adoptive ancestor later revokes", "§28.6 row 24; §28.3 later ancestor revocation"),

@@ -885,8 +885,9 @@ mod tests {
     #[test]
     fn script_services_borrow_real_native_actions_and_recheck_owner_authority() {
         use crate::native::services::{ScriptServices, ServiceAuthority, ServiceError};
-        use api::identity::{ExecutionId, Fence};
+        use api::identity::{ExecutionId, Fence, FenceError};
         use api::lifecycle::{HoldReason, SessionEventOut, SessionGate};
+        use api::selected::RunKey;
 
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::from_secs(3), |cx| {
@@ -928,6 +929,66 @@ mod tests {
                 !queued.live(),
                 "existing host authority still fences dispatch"
             );
+
+            let other_session = session.next().unwrap();
+            let mut other_gate = SessionGate::new(session.slot());
+            other_gate.begin(other_session).unwrap();
+            other_gate
+                .observe(other_session, &SessionEventOut::SceneReady)
+                .unwrap();
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &fence, &other_gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    matches!(
+                        services.with_actions(|_, _| panic!("foreign session admitted an action")),
+                        Err(ServiceError::SessionHeld)
+                    ),
+                    "a ready gate on another session is not this execution's session"
+                );
+            }
+
+            let other_run = ExecutionId::first(RunKey {
+                slot: 1,
+                run: 99,
+                session: 1,
+            });
+            assert!(
+                matches!(
+                    ScriptServices::new(
+                        ServiceAuthority::new(other_run, &fence, &gate),
+                        &mut actions,
+                        cx,
+                        None,
+                    ),
+                    Err(ServiceError::ContextMismatch)
+                ),
+                "an ExecutionId for another run is a context mismatch"
+            );
+
+            let mut stale_fence = Fence::new();
+            stale_fence.arm(execution.next_generation().unwrap());
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &stale_fence, &gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    matches!(
+                        services.with_actions(|_, _| panic!("stale fence admitted an action")),
+                        Err(ServiceError::Fence(FenceError::Stale { .. }))
+                    ),
+                    "a fence armed for a newer execution is stale, not revoked"
+                );
+            }
 
             gate.observe(
                 session,

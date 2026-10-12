@@ -242,6 +242,14 @@ pub enum DispatchDisposition {
 /// Evaluate the §28.2 eligibility table on already captured, proven authority.
 /// The caller separately checks its F0 `Fence<ExecutionId>` and session gate.
 /// Stop/reset/held-tick whole-queue discard precedes this per-row table.
+///
+/// Gameplay `EmissionProof::InvalidExternal` is a protocol defect in both
+/// hold and live columns of the §28.2 matrix. Classify it before the guardian
+/// hold branch so a hold cannot hide the defect. The defective row is still
+/// dropped and never replayed.
+///
+/// `Lifecycle` → `Retain` during a hold is a F0 choice. SG keeps releases and
+/// controls and does not specify lifecycle rows (`28-seat-sg.md` §28.2).
 pub const fn dispatch_disposition(
     class: EmissionClass,
     captured_session: Option<RequestId>,
@@ -253,6 +261,9 @@ pub const fn dispatch_disposition(
 ) -> DispatchDisposition {
     if matches!(class, EmissionClass::Host) {
         return DispatchDisposition::Dispatch;
+    }
+    if matches!(class, EmissionClass::Gameplay) && matches!(proof, EmissionProof::InvalidExternal) {
+        return DispatchDisposition::ProtocolDefect;
     }
     if guardian_held {
         return if matches!(class, EmissionClass::Gameplay) {
@@ -547,9 +558,9 @@ impl<E> NativeProgress<E> {
     pub const fn of(&self) -> RequestId {
         self.of
     }
-    /// Deduplication/order sequence.
-    pub const fn sequence(&self) -> u32 {
-        self.sequence.get()
+    /// Deduplication/order sequence. Never zero: the first event is 1.
+    pub const fn sequence(&self) -> NonZeroU32 {
+        self.sequence
     }
     /// Borrow the family payload without cloning.
     pub const fn event(&self) -> &E {
