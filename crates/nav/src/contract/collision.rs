@@ -1,6 +1,10 @@
-//! Borrowed collision view: plane-aware standable, walkable, step validity
-//! and arrival/goal queries. Does not expose `WorldCollision` ownership,
-//! walk/blocked/flags vectors, mutable storage or a world copy.
+//! Borrowed collision view: plane-aware packed-bake standable, walkable,
+//! step validity and arrival/goal queries. Does not expose `WorldCollision`
+//! ownership, walk/blocked/flags vectors, mutable storage or a world copy.
+//!
+//! These predicates read the packed bake. They are not current loaded-scene
+//! standability (`native/walk.rs` / `script_walk.rs`). Gatherer uses the bake
+//! (`gatherer/select.rs:1085-1088`).
 
 use std::fmt;
 
@@ -43,21 +47,24 @@ impl<'a> CollisionView<'a> {
             && (lz as usize) < self.collision.height
     }
 
-    /// Footprint/ground standability. Face flags do not disqualify standing
-    /// (`collision.rs:219-237`).
+    /// Packed-bake footprint/ground standability. Face flags do not
+    /// disqualify standing (`collision.rs:219-237`). Not live-scene
+    /// standability.
     pub fn standable(self, tile: WorldTile) -> bool {
         self.collision.standable(tile)
     }
 
-    /// Blanket walkability, stricter than standable: any face bit or
-    /// `SQ_BLOCKED` rejects the tile.
+    /// Packed-bake blanket walkability, stricter than standable: any face
+    /// bit or `SQ_BLOCKED` rejects the tile.
     pub fn walkable(self, tile: WorldTile) -> bool {
         self.collision.walkable(tile)
     }
 
     /// One-tile step validity: the client's directional `tryMove` test
     /// (`router.rs:3335-3387`), including diagonal orthogonal-face rules.
-    /// Different planes or a non-adjacent pair are not a step.
+    /// Different planes or a non-adjacent pair are not a step. The plane
+    /// check is this view's: `router::step_ok` copies `from.level` onto the
+    /// neighbour and would otherwise ignore `to.level`.
     pub fn step_ok(self, from: WorldTile, to: WorldTile) -> bool {
         if from.level != to.level {
             return false;
@@ -69,15 +76,16 @@ impl<'a> CollisionView<'a> {
         crate::router::step_ok(self.collision, from, d)
     }
 
-    /// Reach or Area arrival against this bake. Reach uses walkable (solid
-    /// destinations are approached); Area uses current standability.
+    /// Packed-bake Reach or Area arrival. Reach uses bake walkable (solid
+    /// destinations are approached); Area uses bake standable. See
+    /// [`ArrivalSpec`].
     pub fn arrived(self, here: WorldTile, dest: WorldTile, spec: ArrivalSpec) -> bool {
         arrived(&self, here, dest, spec)
     }
 
-    /// Packed Area goals: any currently standable tile in the Chebyshev
+    /// Packed-bake Area goals: any bake-standable tile in the Chebyshev
     /// neighbourhood. Empty means a Walk has no Area goals.
-    pub fn area_has_goal(self, centre: WorldTile, radius: i32) -> bool {
+    pub fn area_has_goal(self, centre: WorldTile, radius: u16) -> bool {
         area_has_goal(&self, centre, radius)
     }
 }

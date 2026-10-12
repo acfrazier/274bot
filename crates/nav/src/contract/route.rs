@@ -16,6 +16,9 @@ use super::{ContractError, NavLease, PackId};
 
 /// Once-published plan ownership, shared by `Arc`. Identity-bound to the
 /// originating pack and work request.
+///
+/// [`Clone`] clones the plan handle, not route storage. That is the
+/// consumer justification (T5.1 publishes once; T1/T2 borrow the view).
 #[derive(Clone)]
 pub struct RoutePlanLease {
     pack: PackId,
@@ -25,6 +28,7 @@ pub struct RoutePlanLease {
 }
 
 impl RoutePlanLease {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn from_backend(
         pack: PackId,
         identity: WorkIdentity,
@@ -104,11 +108,12 @@ impl<'a> RouteView<'a> {
         self.route.legs.len()
     }
 
-    /// Bounded leg access. `None` when `index` is out of range.
-    pub fn leg(self, index: usize) -> Option<LegView<'a>> {
-        match self.route.legs.get(index)? {
-            Leg::Walk { tiles } => Some(LegView::Walk(tiles.as_slice())),
-            Leg::Transport { edge } => Some(LegView::Transport(TransportView::from_edge(edge))),
+    /// Bounded leg access. Out of range is [`ContractError::NoSuchLeg`].
+    pub fn leg(self, index: usize) -> Result<LegView<'a>, ContractError> {
+        match self.route.legs.get(index) {
+            Some(Leg::Walk { tiles }) => Ok(LegView::Walk(tiles.as_slice())),
+            Some(Leg::Transport { edge }) => Ok(LegView::Transport(TransportView::from_edge(edge))),
+            None => Err(ContractError::NoSuchLeg),
         }
     }
 

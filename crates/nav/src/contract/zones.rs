@@ -7,9 +7,9 @@ use std::fmt;
 use api::snapshot::WorldTile;
 
 use crate::transport::WildernessRules;
-use crate::zones::{ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
+use crate::zones::{ZoneExempt, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
 
-use super::{ContractError, PackId, ZoneClass, ZoneExempt, ZoneKey};
+use super::{ContractError, PackId, ZoneClass, ZoneKey};
 
 /// A [`ZoneKey`] bound to the pack that minted it. Using it against another
 /// pack is [`ContractError::PackMismatch`].
@@ -28,6 +28,27 @@ impl BoundZoneKey {
     /// Pack-local key.
     pub const fn key(self) -> ZoneKey {
         self.key
+    }
+}
+
+/// A [`ZoneExempt`] bound to the pack that produced its keys. Built only by
+/// [`ZoneTableView::exempt`]. Raw indices and [`ZoneTable`] do not appear
+/// on this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundZoneExempt {
+    pack: PackId,
+    inner: ZoneExempt,
+}
+
+impl BoundZoneExempt {
+    /// Originating pack.
+    pub const fn pack(self) -> PackId {
+        self.pack
+    }
+
+    /// Whether this request bypasses all table work.
+    pub const fn is_all(self) -> bool {
+        self.inner.is_all()
     }
 }
 
@@ -56,8 +77,10 @@ impl<'a> ZoneTableView<'a> {
         }
     }
 
-    /// Bind `key` to this pack, or refuse unknown keys.
-    pub fn bind(self, key: ZoneKey) -> Result<BoundZoneKey, ContractError> {
+    /// Bind `key` to this pack, or refuse unknown keys. Not public: a raw
+    /// index must not be laundered into another pack's identity.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn bind(self, key: ZoneKey) -> Result<BoundZoneKey, ContractError> {
         if !self.contains_key(key) {
             return Err(ContractError::UnknownKey);
         }
@@ -67,8 +90,37 @@ impl<'a> ZoneTableView<'a> {
         })
     }
 
-    /// Zone row for a bound key. Group keys yield [`ContractError::UnknownKey`]
-    /// here; use [`Self::containing`] / [`Self::resolve`] for groups.
+    /// Pack-bound exemption covering `keys`. Every key must belong to this
+    /// pack; more than [`super::MAX_ZONE_KEYS`] is [`ContractError::TooManyExemptions`].
+    pub fn exempt(self, keys: &[BoundZoneKey]) -> Result<BoundZoneExempt, ContractError> {
+        for key in keys {
+            if key.pack != self.pack {
+                return Err(ContractError::PackMismatch);
+            }
+            if !self.contains_key(key.key) {
+                return Err(ContractError::UnknownKey);
+            }
+        }
+        let raw: Vec<ZoneKey> = keys.iter().map(|key| key.key).collect();
+        let inner = ZoneExempt::named(&raw).map_err(|_| ContractError::TooManyExemptions)?;
+        Ok(BoundZoneExempt {
+            pack: self.pack,
+            inner,
+        })
+    }
+
+    /// Exempt every zone of this pack without constructing a table-sized mask.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn exempt_all(self) -> BoundZoneExempt {
+        BoundZoneExempt {
+            pack: self.pack,
+            inner: ZoneExempt::all(),
+        }
+    }
+
+    /// Zone row for a bound zone key. Group keys yield
+    /// [`ContractError::UnknownKey`] here; use [`Self::containing`] /
+    /// [`Self::resolve`] for groups.
     pub fn zone(self, bound: BoundZoneKey) -> Result<ZoneView<'a>, ContractError> {
         if bound.pack != self.pack {
             return Err(ContractError::PackMismatch);
@@ -130,24 +182,33 @@ impl<'a> ZoneTableView<'a> {
         Ok(self.table.label(bound.key))
     }
 
-    /// Whether `exempt` covers this bound zone, checking pack identity.
+    /// Whether `exempt` covers this bound zone. Either side from another
+    /// pack is [`ContractError::PackMismatch`].
     pub fn exemption_contains(
         self,
-        exempt: ZoneExempt,
+        exempt: BoundZoneExempt,
         bound: BoundZoneKey,
     ) -> Result<bool, ContractError> {
-        if bound.pack != self.pack {
+        if exempt.pack != self.pack || bound.pack != self.pack {
             return Err(ContractError::PackMismatch);
         }
         match bound.key {
             ZoneKey::Zone(index) if self.table.zones().get(usize::from(index)).is_some() => {
-                Ok(exempt.contains_zone(index, self.table))
+                Ok(exempt.inner.contains_zone(index, self.table))
             }
             ZoneKey::Group(group) if self.table.groups().get(usize::from(group)).is_some() => {
-                Ok(self.table.zones().iter().enumerate().any(|(i, zone)| {
-                    zone.group == group
-                        && exempt.contains_zone(u16::try_from(i).unwrap_or(u16::MAX), self.table)
-                }))
+                let mut covered = false;
+                for (i, zone) in self.table.zones().iter().enumerate() {
+                    if zone.group != group {
+                        continue;
+                    }
+                    let index = u16::try_from(i).map_err(|_| ContractError::UnknownKey)?;
+                    if exempt.inner.contains_zone(index, self.table) {
+                        covered = true;
+                        break;
+                    }
+                }
+                Ok(covered)
             }
             _ => Err(ContractError::UnknownKey),
         }
@@ -171,11 +232,12 @@ pub struct ZoneView<'a> {
 }
 
 impl<'a> ZoneView<'a> {
-    /// Bound key for this row (group if the zone is grouped).
+    /// Bound key for this row. Always a [`ZoneKey::Zone`] so
+    /// [`ZoneTableView::zone`] round-trips. Group identity is [`Self::group`].
     pub fn key(self) -> BoundZoneKey {
         BoundZoneKey {
             pack: self.pack,
-            key: self.table.key(self.index),
+            key: ZoneKey::Zone(self.index),
         }
     }
 
@@ -201,9 +263,13 @@ impl<'a> ZoneView<'a> {
         self.table.zones()[usize::from(self.index)].class
     }
 
-    /// Combat cap (`u16::MAX` for Always).
-    pub fn cap(self) -> u16 {
-        self.table.zones()[usize::from(self.index)].cap
+    /// Combat cap for a level-rule zone. [`None`] for Always.
+    pub fn cap(self) -> Option<u16> {
+        let zone = &self.table.zones()[usize::from(self.index)];
+        match zone.class {
+            ZoneClass::Always => None,
+            ZoneClass::LevelRule => Some(zone.cap),
+        }
     }
 
     /// Whether the zone has a shape mask (replaces importing `NO_SHAPE`).
@@ -264,9 +330,12 @@ impl<'a> ZoneKindView<'a> {
         self.kind.label.as_ref()
     }
 
-    /// NPC id, or `-1` for a non-NPC hazard.
-    pub fn npc_id(self) -> i32 {
-        self.kind.npc_id
+    /// NPC id for an NPC hazard. [`None`] when the kind is not an NPC.
+    pub fn npc_id(self) -> Option<i32> {
+        match self.kind.npc_id {
+            -1 => None,
+            id => Some(id),
+        }
     }
 
     /// Visibility level.
