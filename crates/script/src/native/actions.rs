@@ -883,6 +883,87 @@ mod tests {
     }
 
     #[test]
+    fn script_services_borrow_real_native_actions_and_recheck_owner_authority() {
+        use crate::native::services::{ScriptServices, ServiceAuthority, ServiceError};
+        use api::identity::{ExecutionId, Fence};
+        use api::lifecycle::{HoldReason, SessionEventOut, SessionGate};
+
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::from_secs(3), |cx| {
+            let owner = install_owner(cx);
+            let execution = ExecutionId::first(cx.run());
+            let session = execution.run().session_key().unwrap();
+            let mut fence = Fence::new();
+            fence.arm(execution);
+            let mut gate = SessionGate::new(session.slot());
+            gate.begin(session).unwrap();
+            gate.observe(session, &SessionEventOut::SceneReady).unwrap();
+            let mut actions = NativeActions { _private: () };
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &fence, &gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert_eq!(services.active_time().as_duration(), Duration::from_secs(3));
+                services
+                    .with_actions(|_, cx| cx.emit(InteractReq::CloseModal))
+                    .unwrap()
+                    .unwrap();
+                assert!(services.state_identity().is_none());
+                assert!(matches!(
+                    services.with_state(|_, _, _| panic!("no state port was injected")),
+                    Err(ServiceError::StateUnavailable)
+                ));
+            }
+            let queued = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(
+                queued.live(),
+                "the real native queue owns the admitted action"
+            );
+            owner.revoke();
+            assert!(
+                !queued.live(),
+                "existing host authority still fences dispatch"
+            );
+
+            gate.observe(
+                session,
+                &SessionEventOut::Held {
+                    why: HoldReason::Guardian,
+                },
+            )
+            .unwrap();
+            let mut services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap();
+            assert!(matches!(
+                services.with_actions(|_, _| panic!("held frame admitted an action")),
+                Err(ServiceError::SessionHeld)
+            ));
+            drop(services);
+            fence.revoke();
+            let mut services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap();
+            assert!(matches!(
+                services.with_actions(|_, _| panic!("stale frame admitted an action")),
+                Err(ServiceError::Fence(_))
+            ));
+        });
+    }
+
+    #[test]
     fn shared_action_revoker_fences_already_queued_input_before_slot_cleanup() {
         struct Pending;
         impl NativeMachine for Pending {
