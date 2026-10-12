@@ -39,3 +39,4 @@ pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;
 pub mod stock;
+pub mod work;
