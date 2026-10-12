@@ -30,6 +30,7 @@ fn main() -> ExitCode {
 
     match cli.selection {
         Selection::Profiles => {
+            println!("profile_count={}", profiles().len());
             let mut passed = true;
             for profile in profiles() {
                 let result = explore_profile_with_limits(

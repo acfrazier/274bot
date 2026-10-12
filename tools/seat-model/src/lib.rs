@@ -32,11 +32,39 @@ pub enum Mutation {
     Replacement,
     ReleaseDisplacement,
     SessionCapture,
+    ReplacementLabel,
+    KeptReleaseDiscard,
+    RevocationCascade(Trigger),
+    ReplacementCascade,
+    ExpiredParent,
+    HostActionDrop,
+    HostActionReorder,
+    GuardianHold,
+}
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SessionFamily {
+    Hunt,
+    Gather,
+    Combat,
+    Progress,
+}
+impl SessionFamily {
+    pub const fn owns_foreground(self) -> bool {
+        !matches!(self, Self::Hunt)
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Class {
     Capability,
-    Session,
+    Session(SessionFamily),
+}
+impl Class {
+    pub const fn is_session(self) -> bool {
+        matches!(self, Self::Session(_))
+    }
+    pub const fn owns_foreground(self) -> bool {
+        matches!(self, Self::Session(family) if family.owns_foreground())
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Origin {
@@ -182,6 +210,13 @@ pub enum Step {
     },
     Stop,
     HeldTick,
+    /// Host actors dispatch outside the seat encoder and lineage.
+    HostAction {
+        action: u8,
+    },
+    /// Guardian hold is not a queue-discard tick or lifecycle row.
+    SessionHeld,
+    SessionResumed,
 }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Entry {
@@ -278,6 +313,9 @@ pub struct State {
     releases: usize,
     late_controls: usize,
     dropped: usize,
+    host_actions: usize,
+    last_host_action: Option<u8>,
+    held: bool,
     stopped: bool,
     failure: Option<Violation>,
     monitor: Monitor,
@@ -313,6 +351,9 @@ impl State {
             releases: 0,
             late_controls: 0,
             dropped: 0,
+            host_actions: 0,
+            last_host_action: None,
+            held: false,
             stopped: false,
             failure: None,
             monitor: Monitor::default(),
@@ -366,6 +407,21 @@ impl State {
     }
     pub fn dropped(&self) -> usize {
         self.dropped
+    }
+    pub fn host_actions_dispatched(&self) -> usize {
+        self.host_actions
+    }
+    pub fn last_host_action(&self) -> Option<u8> {
+        self.last_host_action
+    }
+    pub fn session_held(&self) -> bool {
+        self.held
+    }
+    pub fn foreground_session(&self) -> Option<Id> {
+        self.entries
+            .iter()
+            .find(|e| e.class.owns_foreground())
+            .map(|e| e.id)
     }
     pub fn encoded_rows(&self) -> Vec<(Option<Id>, bool)> {
         self.wire
@@ -442,7 +498,7 @@ impl State {
     fn session_root(&self) -> Option<Id> {
         self.entries
             .iter()
-            .find(|e| e.class == Class::Session)
+            .find(|e| e.class.is_session())
             .map(|e| e.id)
     }
     fn mint(&mut self) -> Id {
@@ -578,7 +634,9 @@ impl State {
             return;
         }
         let mut ids = Vec::new();
-        self.descendants(id, &mut ids);
+        if self.mutation != Mutation::RevocationCascade(trigger) {
+            self.descendants(id, &mut ids);
+        }
         ids.push(id);
         for child in ids {
             self.revoke_leases(child);
@@ -615,6 +673,7 @@ impl State {
     }
     fn admit(&mut self, id: Id) {
         let before = self.monitor.admission(id, self.bounds);
+        self.monitor.prepare_admission(before);
         self.admit_impl(id);
         self.monitor.admission_finished(id, before);
     }
@@ -645,6 +704,7 @@ impl State {
             match self.status(parent) {
                 Status::Live if self.entry(parent).is_some() => {}
                 Status::Completed => e.parent = None,
+                Status::Expired if self.mutation == Mutation::ExpiredParent => e.parent = None,
                 Status::Expired => {
                     self.refuse(id, Refusal::HistoryExpired);
                     return;
@@ -657,7 +717,7 @@ impl State {
         }
         let mut victim = None;
         if let Some(parent) = e.parent {
-            if e.class == Class::Session {
+            if e.class.is_session() {
                 self.refuse(id, Refusal::Busy);
                 return;
             }
@@ -676,6 +736,9 @@ impl State {
                     c.parent == Some(parent) && c.class == Class::Capability && c.group == e.group
                 })
                 .map(|c| c.id);
+            if self.mutation == Mutation::ReplacementLabel {
+                victim = None;
+            }
             if victim.is_none()
                 && self
                     .entries
@@ -751,7 +814,12 @@ impl State {
             return;
         }
         if let Some(v) = victim {
+            let mutation = self.mutation;
+            if mutation == Mutation::ReplacementCascade {
+                self.mutation = Mutation::RevocationCascade(Trigger::Superseded);
+            }
             self.revoke(v, Trigger::Superseded);
+            self.mutation = mutation;
         }
         e.origin = Origin::Started;
         self.monitor.accepted(id);
@@ -865,7 +933,7 @@ impl State {
             .filter(|s| ancestors.contains(s))
             .or_else(|| {
                 pending
-                    .filter(|p| p.entry.class == Class::Session && p.entry.parent.is_none())
+                    .filter(|p| p.entry.class.is_session() && p.entry.parent.is_none())
                     .map(|p| p.entry.id)
             });
         let ancestor_revoked = self.rules == Rules::Chosen
@@ -936,7 +1004,7 @@ impl State {
         }
     }
     fn dispatch(&mut self) {
-        let session = self.session_root();
+        let session = self.foreground_session();
         let rows = std::mem::take(&mut self.wire);
         for row in rows {
             if row.release {
@@ -1033,14 +1101,11 @@ impl State {
         self.ledger.retain(|t| t.seq > self.consumed_seq);
     }
     fn discard_rows(&mut self, keep_releases: bool) {
-        let mut discarded = Vec::new();
         for rows in [&mut self.queue, &mut self.wire] {
             for row in rows.extract_if(.., |row| !keep_releases || !row.release) {
                 self.dropped += usize::from(!row.release);
-                discarded.push(row.witness);
             }
         }
-        self.monitor.discarded(discarded.into_iter());
     }
     fn clear(&mut self, stop: bool) {
         self.discard_rows(false);
@@ -1233,7 +1298,7 @@ impl State {
             }
             Step::Reconnect { keep } => {
                 self.session += 1;
-                self.discard_rows(keep);
+                self.discard_rows(keep && self.mutation != Mutation::KeptReleaseDiscard);
                 if !keep {
                     self.clear(false);
                 }
@@ -1241,10 +1306,35 @@ impl State {
             }
             Step::Stop => self.clear(true),
             Step::HeldTick => self.discard_rows(false),
+            Step::HostAction { action } => {
+                if self.mutation != Mutation::HostActionDrop {
+                    let dispatched = if self.mutation == Mutation::HostActionReorder {
+                        action ^ 1
+                    } else {
+                        action
+                    };
+                    self.monitor.host_dispatched(dispatched);
+                    self.host_actions += 1;
+                    self.last_host_action = Some(dispatched);
+                }
+            }
+            Step::SessionHeld => {
+                if self.mutation != Mutation::GuardianHold {
+                    self.held = true;
+                }
+            }
+            Step::SessionResumed => self.held = false,
         }
+        self.monitor.finished();
         Ok(())
     }
     fn enabled(&self, step: &Step) -> Result<(), String> {
+        if matches!(step, Step::HostAction { .. }) {
+            return Ok(());
+        }
+        if self.held && !matches!(step, Step::SessionResumed | Step::SessionHeld) {
+            return Err("guardian holds the seat".into());
+        }
         if self.stopped {
             return Err("stopped".into());
         }
@@ -1324,6 +1414,12 @@ impl State {
             self.queue.iter().chain(&self.wire).map(|row| row.witness),
         )?;
         let violation = |name, detail| Err(Violation { name, detail });
+        if self.held != self.monitor.session_held() {
+            return violation(
+                "guardian-hold",
+                "seat hold differs from observed guardian state".into(),
+            );
+        }
         if self.live() + self.retained() > self.bounds.credits {
             return violation("credit-bound", self.describe());
         }
@@ -1343,13 +1439,7 @@ impl State {
                 return violation("forest-depth-parent", self.describe());
             }
         }
-        if self
-            .entries
-            .iter()
-            .filter(|e| e.class == Class::Session)
-            .count()
-            > 1
-        {
+        if self.entries.iter().filter(|e| e.class.is_session()).count() > 1 {
             return violation("session-exclusivity", self.describe());
         }
         for m in &self.mirrors {
@@ -1490,6 +1580,10 @@ fn alphabet(state: &State) -> Vec<Step> {
         Step::Reconnect { keep: false },
         Step::Stop,
         Step::HeldTick,
+        Step::HostAction { action: 0 },
+        Step::HostAction { action: 1 },
+        Step::SessionHeld,
+        Step::SessionResumed,
         Step::Emit {
             of: None,
             release: false,
@@ -1509,7 +1603,10 @@ fn alphabet(state: &State) -> Vec<Step> {
             for (class, group) in [
                 (Class::Capability, 0),
                 (Class::Capability, 1),
-                (Class::Session, 2),
+                (Class::Session(SessionFamily::Gather), 2),
+                (Class::Session(SessionFamily::Hunt), 2),
+                (Class::Session(SessionFamily::Combat), 2),
+                (Class::Session(SessionFamily::Progress), 2),
             ] {
                 out.push(Step::Start {
                     parent,
@@ -1684,7 +1781,7 @@ mod tests {
             Step::Start {
                 parent: None,
                 local_parent: None,
-                class: Class::Session,
+                class: Class::Session(SessionFamily::Gather),
                 group: 2,
                 bytes: 1,
                 hooks: 1,
@@ -1710,7 +1807,7 @@ mod tests {
                     class: if revoked {
                         Class::Capability
                     } else {
-                        Class::Session
+                        Class::Session(SessionFamily::Gather)
                     },
                     group: 2,
                     bytes: 1,
