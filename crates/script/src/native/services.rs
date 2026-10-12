@@ -51,14 +51,14 @@ impl<'a> ServiceAuthority<'a> {
 /// Explicit borrowed state capability. The composition root supplies the real
 /// port and durable identity; no default store or fake implementation is made.
 pub struct LocalStateCapability<'a> {
-    port: &'a mut dyn LocalStatePort,
+    port: &'a dyn LocalStatePort,
     account: &'a AccountKey,
     scope: &'a ContentScope,
 }
 impl<'a> LocalStateCapability<'a> {
     /// Bind a port to the account and selected content used by this script.
     pub fn new(
-        port: &'a mut dyn LocalStatePort,
+        port: &'a dyn LocalStatePort,
         account: &'a AccountKey,
         scope: &'a ContentScope,
     ) -> Self {
@@ -139,11 +139,11 @@ impl<'a, 'frame> ScriptServices<'a, 'frame> {
     /// Use the real nonblocking lease/submit/receipt port with explicit keys.
     /// Functional port installation is T5.2; absence is a typed refusal.
     pub fn with_state<R>(
-        &mut self,
-        operation: impl FnOnce(&mut dyn LocalStatePort, &AccountKey, &ContentScope) -> R,
+        &self,
+        operation: impl FnOnce(&dyn LocalStatePort, &AccountKey, &ContentScope) -> R,
     ) -> Result<R, ServiceError> {
         self.authority.check()?;
-        let state = self.state.as_mut().ok_or(ServiceError::StateUnavailable)?;
+        let state = self.state.as_ref().ok_or(ServiceError::StateUnavailable)?;
         Ok(operation(state.port, state.account, state.scope))
     }
 }

@@ -947,7 +947,6 @@ mod tests {
                 services.with_actions(|_, _| panic!("held frame admitted an action")),
                 Err(ServiceError::SessionHeld)
             ));
-            drop(services);
             fence.revoke();
             let mut services = ScriptServices::new(
                 ServiceAuthority::new(execution, &fence, &gate),
