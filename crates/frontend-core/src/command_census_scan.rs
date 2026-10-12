@@ -1328,7 +1328,10 @@ fn scan_core(dir: &Path, files: &[PathBuf], errors: &mut Vec<String>) -> Vec<Cor
     let mut entries = Vec::new();
     for l in &loaded {
         let fname = l.rel.rsplit('/').next().unwrap_or("");
-        if fname == "lib.rs" || fname == "command.rs" || fname == "process_status.rs" {
+        if matches!(
+            fname,
+            "lib.rs" | "command.rs" | "process_status.rs" | "command_census_scan.rs"
+        ) {
             continue;
         }
         let impls = impl_blocks(&l.clean, &l.starts, &l.lines);
