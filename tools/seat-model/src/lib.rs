@@ -55,6 +55,17 @@ pub enum Mutation {
     RevocationRootFirst,
     DispatchAnySession,
     HuntForeground,
+    HeldCancelExecutes,
+    HeldDecideExecutes,
+    HeldReleaseDispatch,
+    HoldClearsCarry,
+    HoldDropsPending,
+    ResumeCompletesForeground,
+    ControlsClearsCarry,
+    ControlsDropsPending,
+    DuplicateRelease,
+    HeldTickKeepsReleases,
+    HeldGameplayQueue,
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SessionFamily {
@@ -267,7 +278,7 @@ struct Terminal {
     old_parent: Option<Id>,
     authority_revoked: bool,
 }
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Control {
     Cancel { of: Id, throw: bool },
     Decide { of: Id, seq: u8, complete: bool },
@@ -863,8 +874,15 @@ impl State {
         self.entries.sort_by_key(|e| e.id);
     }
     fn controls(&mut self) {
+        self.monitor.control_execution();
         if self.mutation == Mutation::ControlsGameplayDrop {
             self.discard_rows(true);
+        }
+        if self.mutation == Mutation::ControlsClearsCarry {
+            self.carry.clear();
+        }
+        if self.mutation == Mutation::ControlsDropsPending {
+            self.pending.clear();
         }
         let controls = self.carry.clone();
         // Cancellation dominates any copied Decide for the same id.
@@ -908,6 +926,10 @@ impl State {
         }
     }
     fn emit(&mut self, of: Option<Id>, release: bool) {
+        if self.held && !release && self.mutation != Mutation::HeldGameplayQueue {
+            self.dropped += 1;
+            return;
+        }
         if release
             && self.rules == Rules::Chosen
             && self
@@ -993,6 +1015,10 @@ impl State {
             awaiting_admission,
             witness,
         });
+        if release && self.mutation == Mutation::DuplicateRelease {
+            self.queue
+                .push(self.queue.last().expect("just emitted").clone());
+        }
     }
     fn take(&mut self) {
         let cap = if self.rules == Rules::R5 && self.bounds.rows == 256 {
@@ -1126,6 +1152,7 @@ impl State {
             self.pending.retain(|p| p.entry.id != e.id);
             self.carry.retain(|c| !matches!(c, Control::Decide { of, seq, .. } if *of == e.id && *seq <= e.decisions));
         }
+        self.monitor.page();
     }
     fn watermark(&mut self) {
         let retired: Vec<_> = self
@@ -1282,6 +1309,9 @@ impl State {
                 } else {
                     self.carry.push(Control::Cancel { of, throw });
                 }
+                if self.held && self.mutation == Mutation::HeldCancelExecutes {
+                    self.controls();
+                }
             }
             Step::Prompt(id) => {
                 self.entries
@@ -1310,9 +1340,21 @@ impl State {
                     let seq = self.entry(of).map_or(1, |e| e.decisions + 1);
                     self.carry.push(Control::Decide { of, seq, complete });
                 }
+                if self.held && self.mutation == Mutation::HeldDecideExecutes {
+                    self.controls();
+                }
             }
             Step::Controls => self.controls(),
-            Step::Emit { of, release } => self.emit(of, release),
+            Step::Emit { of, release } => {
+                self.emit(of, release);
+                if self.held && release && self.mutation == Mutation::HeldReleaseDispatch {
+                    if self.wire.is_empty() {
+                        self.monitor.taking(self.bounds.gameplay);
+                        self.take();
+                    }
+                    self.dispatch();
+                }
+            }
             Step::Take => {
                 self.monitor.taking(self.bounds.gameplay);
                 self.take();
@@ -1350,7 +1392,9 @@ impl State {
                 self.batches += 1;
             }
             Step::Stop => self.clear(true),
-            Step::HeldTick => self.discard_rows(false),
+            Step::HeldTick => {
+                self.discard_rows(self.mutation == Mutation::HeldTickKeepsReleases);
+            }
             Step::HostAction { action } => {
                 if self.mutation != Mutation::HostActionDrop {
                     let dispatched = if self.mutation == Mutation::HostActionReorder {
@@ -1373,8 +1417,23 @@ impl State {
                 if self.mutation != Mutation::GuardianGameplayReplay {
                     self.discard_rows(self.mutation != Mutation::GuardianReleaseDiscard);
                 }
+                if self.mutation == Mutation::HoldClearsCarry {
+                    self.carry.clear();
+                }
+                if self.mutation == Mutation::HoldDropsPending {
+                    self.pending.clear();
+                }
             }
-            Step::SessionResumed => self.held = false,
+            Step::SessionResumed => {
+                let resumed = self.held;
+                self.held = false;
+                if resumed
+                    && self.mutation == Mutation::ResumeCompletesForeground
+                    && let Some(id) = self.foreground_session()
+                {
+                    self.complete(id, Outcome::Done);
+                }
+            }
         }
         self.monitor.finished();
         Ok(())
@@ -1393,7 +1452,7 @@ impl State {
                 step,
                 Step::SessionResumed
                     | Step::SessionHeld
-                    | Step::Emit { release: true, .. }
+                    | Step::Emit { .. }
                     | Step::Cancel { .. }
                     | Step::Decide { .. }
             )
@@ -1479,6 +1538,10 @@ impl State {
         self.monitor.check(
             self.bounds,
             self.queue.iter().chain(&self.wire).map(|row| row.witness),
+        )?;
+        self.monitor.check_custody(
+            self.pending.iter().map(|p| (p.entry.id, p.cancelled)),
+            self.carry.iter(),
         )?;
         let violation = |name, detail| Err(Violation { name, detail });
         if self.held != self.monitor.session_held() {

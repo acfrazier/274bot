@@ -358,12 +358,8 @@ impl Coverage {
             match step {
                 Step::Cancel { .. } => self.guardian_hold_cancel_steps += 1,
                 Step::Decide { .. } => self.guardian_hold_decide_steps += 1,
-                Step::Emit {
-                    release: true, ..
-                } => self.guardian_hold_release_emits += 1,
-                Step::Emit {
-                    release: false, ..
-                } => {
+                Step::Emit { release: true, .. } => self.guardian_hold_release_emits += 1,
+                Step::Emit { release: false, .. } => {
                     self.held_gameplay_pushes += 1;
                     self.held_gameplay_drops += after.dropped().saturating_sub(before.dropped);
                 }
@@ -972,6 +968,7 @@ impl Profile {
             Self::R5GuardianCustody(family) => vec![
                 start(None, None, Class::Session(family), 2, 0, 0),
                 Step::Admit(1),
+                Step::Page,
                 Step::Prompt(1),
                 Step::Decide {
                     of: 1,
