@@ -9,8 +9,9 @@
 //!   executes in); an [`ExecutionId`] is the machine or isolate that happens
 //!   to implement a run; a [`RequestId`] names one request inside its
 //!   namespace; a [`ProcessIncarnation`] names one process start;
-//! - exhaustion: every generation advances by a checked add and refuses with
-//!   [`IdentityError::Exhausted`] instead of wrapping or reusing a value;
+//! - exhaustion: every generation and sequence advances by a checked add and
+//!   refuses with [`IdentityError::Exhausted`] instead of wrapping or reusing
+//!   a value, leaving its state as it was;
 //! - generation checks: [`Fence`] admits only the completion stamped with the
 //!   current identity, [`Scope::contains`] checks nesting agreement,
 //!   [`Terminal`] publishes once and is consumed once;
@@ -46,7 +47,7 @@ use parking_lot::Mutex;
 
 use crate::selected::RunKey;
 
-/// Which identity space refused to advance.
+/// Which identity or sequence space refused to advance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdentityKind {
     /// Slot worker incarnations ([`SlotKeyMinter`]).
@@ -59,6 +60,8 @@ pub enum IdentityKind {
     ExecutionGeneration,
     /// Host-minted request ids ([`RequestIdMinter`]).
     HostRequest,
+    /// Publication sequences ([`Publication::publish`]).
+    PublishSequence,
 }
 
 impl IdentityKind {
@@ -70,6 +73,7 @@ impl IdentityKind {
             Self::Run => "run",
             Self::ExecutionGeneration => "execution generation",
             Self::HostRequest => "host request",
+            Self::PublishSequence => "publication sequence",
         }
     }
 }
@@ -114,9 +118,17 @@ pub enum IdentityError {
         namespace: RequestNamespace,
     },
     /// An isolate-minted request id is unique only within its run, so a work
-    /// identity carrying one must name that run or execution.
+    /// identity correlating one must name that run or execution.
     #[error("an isolate-minted request id needs a run or execution scope")]
     IsolateRequestWithoutRun,
+    /// A job id must be host-minted: only the host namespace is unique within
+    /// the process incarnation (§26 §2.2), so an isolate-minted id, unique
+    /// only per run, names no job.
+    #[error("request id {raw} is isolate-minted and cannot name a job")]
+    JobIdNotHostMinted {
+        /// The offending raw value.
+        raw: u64,
+    },
 }
 
 fn checked_next(kind: IdentityKind, value: u64) -> Result<u64, IdentityError> {
@@ -136,26 +148,35 @@ fn mint_atomic(kind: IdentityKind, last: &AtomicU64) -> Result<NonZeroU64, Ident
 
 /// Opaque identity of one process start (§26 §3.1 `condition_id`).
 ///
-/// Not a pid, user name or reusable service index. Every [`mint`](Self::mint)
-/// in one process yields a distinct value, and the wall-clock start time is
-/// mixed in so a later process start does not repeat an earlier one. Compare
-/// only for equality.
+/// Not a pid, user name, wall-clock reading or reusable service index: it is
+/// exactly the start nonce composition supplies at process start, under the
+/// non-reuse policy composition owns (see
+/// [`from_start_nonce`](Self::from_start_nonce)). This type adds no
+/// heuristic of its own. Compare only for equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessIncarnation(NonZeroU64);
 
 impl ProcessIncarnation {
-    /// Mint the identity of a process start. The composition owner calls it
-    /// once per process; tests call it for every distinct incarnation they
-    /// need.
-    pub fn mint() -> Self {
-        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-        let started = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos() as u64);
-        let pid = u64::from(std::process::id()).rotate_left(40);
-        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let mixed = (started ^ pid).wrapping_add(sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-        Self(NonZeroU64::new(mixed).unwrap_or(NonZeroU64::MIN))
+    /// The incarnation named by `nonce`, the value composition minted once
+    /// for this process start.
+    ///
+    /// Non-reuse across process starts is the nonce's assurance, not this
+    /// type's: the T1 composition owner supplies a value no earlier start of
+    /// this installation produced. The accepted source is an open freeze
+    /// decision recorded with F0-1/2 and owned by T1: a durable counter in
+    /// local state (F0-7 `LocalStatePort`) guarantees it; a 64-bit value from
+    /// OS entropy gives only a collision probability the orchestrator must
+    /// accept explicitly. Neither a clock reading nor a pid qualifies: both
+    /// repeat. Two calls with the same nonce name the same incarnation, so
+    /// a nonce is minted once per process. Tests pass distinct nonces for
+    /// the distinct incarnations they need.
+    pub const fn from_start_nonce(nonce: NonZeroU64) -> Self {
+        Self(nonce)
+    }
+
+    /// The start nonce this incarnation was named by.
+    pub const fn start_nonce(self) -> NonZeroU64 {
+        self.0
     }
 }
 
@@ -530,37 +551,53 @@ impl<T> Event<T> {
     }
 }
 
-/// The job correlation envelope of §26 §2.2: the request id, the process
-/// incarnation it was accepted in and its originating scope. The registered
-/// work family and input revision are per-family values (F0 item 4).
+/// The job correlation envelope of §26 §2.2: the job id, the process
+/// incarnation it was accepted in, its originating scope and the request
+/// that submitted it. The registered work family and input revision are
+/// per-family values (F0 item 4).
+///
+/// The job id is host-minted from the composition's one incarnation-wide
+/// [`RequestIdMinter`], so it is unique within the process incarnation
+/// whatever run submitted it; the submitting request (an isolate-minted id
+/// unique per run, or a host-minted one) is kept only as correlation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkIdentity {
-    request: RequestId,
+    job: RequestId,
     incarnation: ProcessIncarnation,
     scope: Scope,
+    origin: Option<RequestId>,
 }
 
 impl WorkIdentity {
-    /// Compose a work identity; an isolate-minted request id is refused
-    /// unless the scope names its run or execution.
+    /// Compose a work identity. `job` must be host-minted
+    /// ([`IdentityError::JobIdNotHostMinted`] otherwise); an isolate-minted
+    /// `origin` is refused unless the scope names its run or execution
+    /// ([`IdentityError::IsolateRequestWithoutRun`]).
     pub fn new(
-        request: RequestId,
+        job: RequestId,
         incarnation: ProcessIncarnation,
         scope: Scope,
+        origin: Option<RequestId>,
     ) -> Result<Self, IdentityError> {
-        if request.namespace() == RequestNamespace::Isolate && scope.run().is_none() {
+        if job.namespace() != RequestNamespace::Host {
+            return Err(IdentityError::JobIdNotHostMinted { raw: job.get() });
+        }
+        if origin.is_some_and(|origin| origin.namespace() == RequestNamespace::Isolate)
+            && scope.run().is_none()
+        {
             return Err(IdentityError::IsolateRequestWithoutRun);
         }
         Ok(Self {
-            request,
+            job,
             incarnation,
             scope,
+            origin,
         })
     }
 
-    /// The request id.
-    pub const fn request(&self) -> RequestId {
-        self.request
+    /// The job id: host-minted, unique within the incarnation.
+    pub const fn job(&self) -> RequestId {
+        self.job
     }
 
     /// The process incarnation the job was accepted in.
@@ -572,39 +609,49 @@ impl WorkIdentity {
     pub const fn scope(&self) -> Scope {
         self.scope
     }
-}
 
-/// A completion stamped with an identity the owner no longer holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StaleCompletion<K> {
-    current: Option<K>,
-    stamped: K,
-}
-
-impl<K> StaleCompletion<K> {
-    /// The identity the owner holds now (`None` after revocation or before
-    /// the fence was armed).
-    pub const fn current(&self) -> Option<&K> {
-        self.current.as_ref()
+    /// The request that submitted the job, if one did: correlation only,
+    /// never the job's identity.
+    pub const fn origin(&self) -> Option<RequestId> {
+        self.origin
     }
+}
 
+/// Why a fence rejected a completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum FenceError<K: fmt::Debug> {
+    /// The fence holds nothing: it was never armed or was revoked.
+    #[error("completion stamped {stamped:?} rejected: the fence holds nothing")]
+    Unarmed {
+        /// The identity the rejected completion carried.
+        stamped: K,
+    },
+    /// The completion carries an identity the owner no longer holds.
+    #[error("completion stamped {stamped:?} rejected: the owner holds {current:?}")]
+    Stale {
+        /// The identity the owner holds now.
+        current: K,
+        /// The identity the rejected completion carried.
+        stamped: K,
+    },
+}
+
+impl<K: Copy + fmt::Debug> FenceError<K> {
     /// The identity the rejected completion carried.
-    pub const fn stamped(&self) -> &K {
-        &self.stamped
+    pub const fn stamped(&self) -> K {
+        match self {
+            Self::Unarmed { stamped } | Self::Stale { stamped, .. } => *stamped,
+        }
+    }
+
+    /// The identity the owner holds now, if it holds one.
+    pub const fn current(&self) -> Option<K> {
+        match self {
+            Self::Unarmed { .. } => None,
+            Self::Stale { current, .. } => Some(*current),
+        }
     }
 }
-
-impl<K: fmt::Debug> fmt::Display for StaleCompletion<K> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "stale completion stamped {:?}; the owner holds {:?}",
-            self.stamped, self.current
-        )
-    }
-}
-
-impl<K: fmt::Debug> std::error::Error for StaleCompletion<K> {}
 
 /// The owner-side generation fence (B03 "Authority, cancellation and
 /// ordering" 2–5; §26 §2.5): a completion is admitted only while it carries
@@ -637,15 +684,12 @@ impl<K: Copy + PartialEq + fmt::Debug> Fence<K> {
         self.current
     }
 
-    /// Admit a completion stamped `stamped`, or reject it as stale.
-    pub fn admit(&self, stamped: K) -> Result<K, StaleCompletion<K>> {
-        if self.current == Some(stamped) {
-            Ok(stamped)
-        } else {
-            Err(StaleCompletion {
-                current: self.current,
-                stamped,
-            })
+    /// Admit a completion stamped `stamped`, or reject it.
+    pub fn admit(&self, stamped: K) -> Result<K, FenceError<K>> {
+        match self.current {
+            Some(current) if current == stamped => Ok(stamped),
+            Some(current) => Err(FenceError::Stale { current, stamped }),
+            None => Err(FenceError::Unarmed { stamped }),
         }
     }
 }
@@ -868,19 +912,30 @@ impl<T> Publication<T> {
         self.scope
     }
 
-    /// Publish `value`, then notify. Returns the new sequence.
-    pub fn publish(&self, value: T, notifier: &dyn Notifier) -> PublishSequence {
+    /// Publish `value`, then notify. Returns the new sequence. Once the
+    /// sequence space is exhausted the publication is refused: the retained
+    /// value and sequence stay as they were, `value` is dropped and no
+    /// notice is issued, so observers never see a sequence go backwards.
+    pub fn publish(
+        &self,
+        value: T,
+        notifier: &dyn Notifier,
+    ) -> Result<PublishSequence, IdentityError> {
         let sequence = {
             let mut published = self.inner.lock();
-            published.sequence = PublishSequence(published.sequence.0.wrapping_add(1));
+            let next = PublishSequence(checked_next(
+                IdentityKind::PublishSequence,
+                published.sequence.0,
+            )?);
+            published.sequence = next;
             published.value = value;
-            published.sequence
+            next
         };
         notifier.notify(Notice {
             scope: self.scope,
             sequence,
         });
-        sequence
+        Ok(sequence)
     }
 
     /// Read the current value and its sequence.

@@ -11,6 +11,10 @@ fn run(slot: u64, run: u64, session: u64) -> RunKey {
     RunKey { slot, run, session }
 }
 
+fn incarnation(nonce: u64) -> ProcessIncarnation {
+    ProcessIncarnation::from_start_nonce(NonZeroU64::new(nonce).unwrap())
+}
+
 #[test]
 fn slot_keys_start_at_one_and_refuse_instead_of_wrapping() {
     let minter = SlotKeyMinter::new();
@@ -203,41 +207,97 @@ fn scope_nesting_contains_only_agreeing_identities() {
 }
 
 #[test]
-fn work_identity_rejects_isolate_ids_without_a_run_scope() {
-    let incarnation = ProcessIncarnation::mint();
-    let isolate = RequestId::isolate(5).unwrap();
-    let host = RequestIdMinter::new().mint().unwrap();
-    let key = run(1, 1, 1);
+fn work_job_ids_are_host_minted_and_unique_across_runs_in_one_incarnation() {
+    let incarnation = incarnation(7);
+    let minter = RequestIdMinter::new();
+    // Two runs each submit their isolate request 1 as the origin of a job.
+    let origin = RequestId::isolate(1).unwrap();
+    let first_run = Scope::Run(run(1, 1, 1));
+    let second_run = Scope::Run(run(1, 2, 1));
+    let first =
+        WorkIdentity::new(minter.mint().unwrap(), incarnation, first_run, Some(origin)).unwrap();
+    let second = WorkIdentity::new(
+        minter.mint().unwrap(),
+        incarnation,
+        second_run,
+        Some(origin),
+    )
+    .unwrap();
+    assert_ne!(
+        first.job(),
+        second.job(),
+        "job ids are unique within the incarnation, whatever run submitted them"
+    );
+    assert_eq!(first.origin(), Some(origin));
+    assert_eq!(second.origin(), Some(origin));
+    assert_eq!(first.job().namespace(), RequestNamespace::Host);
+    assert_eq!(first.incarnation(), incarnation);
+    assert_eq!(first.scope(), first_run);
+
+    // An isolate-minted id names no job, in any scope.
+    for scope in [
+        Scope::Process,
+        Scope::Slot(slot(1)),
+        Scope::Session(SessionKey::new(slot(1), 1)),
+        first_run,
+        Scope::Execution(ExecutionId::first(run(1, 1, 1))),
+    ] {
+        assert_eq!(
+            WorkIdentity::new(origin, incarnation, scope, None).map(|_| ()),
+            Err(IdentityError::JobIdNotHostMinted { raw: 1 }),
+            "{scope:?}"
+        );
+    }
+
+    // An isolate-minted origin is unique only per run, so correlating it
+    // needs a run or execution scope; a host-minted origin needs none.
+    let host_origin = minter.mint().unwrap();
     for scope in [
         Scope::Process,
         Scope::Slot(slot(1)),
         Scope::Session(SessionKey::new(slot(1), 1)),
     ] {
         assert_eq!(
-            WorkIdentity::new(isolate, incarnation, scope).map(|_| ()),
+            WorkIdentity::new(minter.mint().unwrap(), incarnation, scope, Some(origin)).map(|_| ()),
             Err(IdentityError::IsolateRequestWithoutRun),
             "{scope:?}"
         );
-        let scoped = WorkIdentity::new(host, incarnation, scope).unwrap();
-        assert_eq!(scoped.scope(), scope);
+        let process_job = WorkIdentity::new(
+            minter.mint().unwrap(),
+            incarnation,
+            scope,
+            Some(host_origin),
+        )
+        .unwrap();
+        assert_eq!(process_job.scope(), scope);
+        let unsolicited =
+            WorkIdentity::new(minter.mint().unwrap(), incarnation, scope, None).unwrap();
+        assert_eq!(unsolicited.origin(), None);
     }
-    let scoped = WorkIdentity::new(isolate, incarnation, Scope::Run(key)).unwrap();
-    assert_eq!(scoped.request(), isolate);
-    assert_eq!(scoped.incarnation(), incarnation);
     assert!(WorkIdentity::new(
-        isolate,
+        minter.mint().unwrap(),
         incarnation,
-        Scope::Execution(ExecutionId::first(key))
+        Scope::Execution(ExecutionId::first(run(1, 1, 1))),
+        Some(origin)
     )
     .is_ok());
 }
 
 #[test]
-fn process_incarnations_are_distinct_per_mint() {
-    let first = ProcessIncarnation::mint();
-    let second = ProcessIncarnation::mint();
-    assert_ne!(first, second);
-    assert_eq!(first, first);
+fn process_incarnations_are_exactly_their_start_nonce() {
+    let first = incarnation(1);
+    let again = incarnation(1);
+    assert_eq!(
+        first, again,
+        "no clock, pid or sequence is mixed in: the nonce alone names the start"
+    );
+    assert_ne!(first, incarnation(2));
+    assert_eq!(first.start_nonce().get(), 1);
+    assert_eq!(
+        incarnation(u64::MAX).start_nonce().get(),
+        u64::MAX,
+        "no value of the nonce space collapses onto another"
+    );
 }
 
 #[test]
@@ -248,7 +308,8 @@ fn fence_rejects_stale_and_revoked_completions() {
     let mut fence = Fence::new();
     assert_eq!(fence.current(), None);
     let unarmed = fence.admit(first).unwrap_err();
-    assert_eq!((unarmed.current(), *unarmed.stamped()), (None, first));
+    assert_eq!(unarmed, FenceError::Unarmed { stamped: first });
+    assert_eq!((unarmed.current(), unarmed.stamped()), (None, first));
 
     fence.arm(first);
     assert_eq!(fence.admit(first), Ok(first));
@@ -260,12 +321,23 @@ fn fence_rejects_stale_and_revoked_completions() {
 
     fence.arm(second);
     let stale = fence.admit(first).unwrap_err();
-    assert_eq!(stale.current(), Some(&second));
-    assert_eq!(*stale.stamped(), first);
+    assert_eq!(
+        stale,
+        FenceError::Stale {
+            current: second,
+            stamped: first
+        }
+    );
+    assert_eq!(stale.current(), Some(second));
+    assert_eq!(stale.stamped(), first);
     assert_eq!(fence.admit(second), Ok(second));
 
     fence.revoke();
-    assert!(fence.admit(second).is_err(), "revocation admits nothing");
+    assert_eq!(
+        fence.admit(second),
+        Err(FenceError::Unarmed { stamped: second }),
+        "revocation admits nothing"
+    );
     assert!(fence.admit(first).is_err());
 }
 
@@ -341,8 +413,8 @@ fn publication_is_readable_before_its_notice() {
         seen: StdMutex::new(Vec::new()),
     };
 
-    let first = publication.publish(10, &notifier);
-    let second = publication.publish(20, &notifier);
+    let first = publication.publish(10, &notifier).unwrap();
+    let second = publication.publish(20, &notifier).unwrap();
     assert!(second > first);
 
     let seen = notifier.seen.lock().unwrap();
@@ -361,6 +433,39 @@ fn publication_is_readable_before_its_notice() {
         publication.read(|sequence, value| (sequence, *value)),
         (second, 20)
     );
+}
+
+#[test]
+fn an_exhausted_publication_neither_replaces_its_value_nor_notifies() {
+    let scope = Scope::Process;
+    let publication = Publication::new(scope, 10);
+    publication.inner.lock().sequence = PublishSequence(u64::MAX - 1);
+    let notifier = ReadsBack {
+        publication: &publication,
+        seen: StdMutex::new(Vec::new()),
+    };
+    let last = publication.publish(20, &notifier).unwrap();
+    assert_eq!(
+        last,
+        PublishSequence(u64::MAX),
+        "the last sequence is usable"
+    );
+
+    for _ in 0..2 {
+        assert_eq!(
+            publication.publish(30, &notifier),
+            Err(IdentityError::Exhausted(IdentityKind::PublishSequence)),
+            "the refusal is sticky, never a wrap to 0"
+        );
+    }
+    assert_eq!(
+        publication.read(|sequence, value| (sequence, *value)),
+        (last, 20),
+        "a refused publish replaces nothing"
+    );
+    let seen = notifier.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "a refused publish issues no notice");
+    assert_eq!(seen[0].0.sequence(), last);
 }
 
 /// A condvar-backed notifier: the shape T1 maps onto its park.
@@ -410,7 +515,7 @@ fn a_reader_woken_by_a_notice_observes_that_sequence_or_later() {
     };
 
     for round in 1..=rounds {
-        publication.publish(round, wake.as_ref());
+        publication.publish(round, wake.as_ref()).unwrap();
     }
     assert_eq!(reader.join().unwrap(), 0);
     assert_eq!(wake.notices.load(Ordering::SeqCst), rounds as usize);
