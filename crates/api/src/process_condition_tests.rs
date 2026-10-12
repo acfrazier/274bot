@@ -1,6 +1,15 @@
 use super::*;
-use crate::identity::{ProcessIncarnation, ProcessOrigin, RequestIdMinter, SlotKey};
+use crate::identity::{ProcessIncarnation, ProcessOrigin, RequestIdMinter, SessionKey, SlotKey};
+use crate::lifecycle::{
+    Acknowledgement, HoldReason, Intent, IntentMailbox, LifecycleFact, LoginIntent, LoginLatch,
+    SessionEndCause, SessionEventOut, SessionGate, WorldChoice,
+};
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
+
+fn incarnation(nonce: u64) -> ProcessIncarnation {
+    ProcessIncarnation::from_start_nonce(NonZeroU64::new(nonce).unwrap())
+}
 
 fn condition(
     incarnation: ProcessIncarnation,
@@ -14,6 +23,15 @@ fn condition(
         ProcessOrigin::at(start).elapsed(start + Duration::from_millis(1500)),
         None,
     )
+}
+
+/// One capability each code affects, and one every code leaves alone.
+fn affected_capability(code: ProcessServiceCode) -> ProcessCapability {
+    match code {
+        ProcessServiceCode::ReactorUnavailable => ProcessCapability::Login,
+        ProcessServiceCode::ResolverUnavailable => ProcessCapability::NameResolution,
+        ProcessServiceCode::WorkAdmissionUnavailable => ProcessCapability::BackgroundWork,
+    }
 }
 
 #[test]
@@ -80,19 +98,20 @@ fn affected_and_unaffected_capabilities_follow_the_code() {
 
 #[test]
 fn conditions_latch_once_per_code_per_incarnation_until_exit() {
-    let incarnation = ProcessIncarnation::mint();
+    let incarnation = incarnation(1);
     let mut ledger = ProcessConditions::new(incarnation);
     assert_eq!(ledger.snapshot().count(), 0);
     assert!(ledger
         .latched(ProcessServiceCode::ReactorUnavailable)
         .is_none());
 
-    let first = condition(
-        incarnation,
-        ProcessServiceCode::ReactorUnavailable,
-        ConditionCause::Panicked,
-    );
-    ledger.publish(first.clone()).unwrap();
+    ledger
+        .publish(condition(
+            incarnation,
+            ProcessServiceCode::ReactorUnavailable,
+            ConditionCause::Panicked,
+        ))
+        .unwrap();
     let again = condition(
         incarnation,
         ProcessServiceCode::ReactorUnavailable,
@@ -134,35 +153,348 @@ fn conditions_latch_once_per_code_per_incarnation_until_exit() {
 }
 
 #[test]
-fn a_condition_from_another_incarnation_is_never_current_health() {
-    let current = ProcessIncarnation::mint();
-    let previous = ProcessIncarnation::mint();
-    let mut ledger = ProcessConditions::new(current);
-    let stale = condition(
-        previous,
-        ProcessServiceCode::ResolverUnavailable,
-        ConditionCause::ProgressLost,
-    );
-    assert_eq!(ledger.publish(stale), Err(PublishError::StaleIncarnation));
-    assert!(ledger.retry_allowed(ProcessCapability::NameResolution));
-    assert!(ledger
-        .latched(ProcessServiceCode::ResolverUnavailable)
-        .is_none());
-    assert_eq!(ledger.incarnation(), current);
+fn every_code_is_sticky_and_a_condition_from_another_incarnation_is_never_current_health() {
+    for code in ProcessServiceCode::ALL {
+        let current = incarnation(2);
+        let previous = incarnation(1);
+        let mut ledger = ProcessConditions::new(current);
+        let stale = condition(previous, code, ConditionCause::ProgressLost);
+        assert_eq!(
+            ledger.publish(stale),
+            Err(PublishError::StaleIncarnation),
+            "{code}"
+        );
+        assert!(ledger.retry_allowed(affected_capability(code)), "{code}");
+        assert!(ledger.latched(code).is_none(), "{code}");
+        assert_eq!(ledger.incarnation(), current);
+
+        ledger
+            .publish(condition(current, code, ConditionCause::ProgressLost))
+            .unwrap();
+        // Nothing a consumer does clears it: a second report, a finished
+        // request or a fresh look at the ledger all see the same entry.
+        assert_eq!(
+            ledger.publish(condition(current, code, ConditionCause::Panicked)),
+            Err(PublishError::AlreadyLatched(code))
+        );
+        assert!(ledger.latched(code).is_some(), "{code}: latched until exit");
+        assert!(!ledger.retry_allowed(affected_capability(code)), "{code}");
+        assert!(
+            ledger
+                .admit(affected_capability(code), None, Scope::Process)
+                .is_err(),
+            "{code}: still refused"
+        );
+    }
 }
 
 #[test]
-fn admission_refuses_only_affected_operations_and_keeps_their_identity() {
-    let incarnation = ProcessIncarnation::mint();
-    let mut ledger = ProcessConditions::new(incarnation);
+fn every_code_refuses_only_affected_operations_and_keeps_their_identity() {
     let slot = SlotKey::from_incarnation(4).unwrap();
-    let request = RequestIdMinter::new().mint().unwrap();
     let scope = Scope::Slot(slot);
+    for code in ProcessServiceCode::ALL {
+        let incarnation = incarnation(3);
+        let mut ledger = ProcessConditions::new(incarnation);
+        let request = RequestIdMinter::new().mint().unwrap();
+        let condition_id = ConditionId::new(incarnation, code);
+        for capability in ProcessCapability::ALL {
+            assert_eq!(
+                ledger.admit(capability, Some(request), scope),
+                Ok(()),
+                "{code}: everything is admitted before the outage"
+            );
+        }
+        ledger
+            .publish(condition(incarnation, code, ConditionCause::ProgressLost))
+            .unwrap();
 
+        for capability in ProcessCapability::ALL {
+            let decision = ledger.admit(capability, Some(request), scope);
+            if code.affects(capability) {
+                let AdmissionRefusal::Unavailable(refusal) =
+                    decision.expect_err("affected capability is refused");
+                assert_eq!(refusal.condition(), condition_id, "{code} {capability:?}");
+                assert_eq!(refusal.request(), Some(request));
+                assert_eq!(refusal.scope(), scope);
+                assert_eq!(refusal.capability(), capability);
+                assert_eq!(refusal.recoverability(), Recoverability::RestartRequired);
+                assert_eq!(refusal.operator_text(), code.operator_text());
+                assert!(
+                    refusal.to_string().starts_with(code.operator_text()),
+                    "{code}: the refusal carries the exact text"
+                );
+                assert!(AdmissionRefusal::Unavailable(refusal)
+                    .to_string()
+                    .starts_with(code.operator_text()));
+                assert!(
+                    !ledger.retry_allowed(capability),
+                    "{code} {capability:?}: no automatic retry until restart"
+                );
+            } else {
+                assert_eq!(
+                    decision,
+                    Ok(()),
+                    "{code} {capability:?}: an unrelated service continues"
+                );
+                assert!(ledger.retry_allowed(capability));
+            }
+        }
+        assert_eq!(
+            ledger.admit(ProcessCapability::LocalOnly, None, Scope::Process),
+            Ok(()),
+            "{code}: local work on a slot or the process needs no failed service"
+        );
+    }
+}
+
+#[test]
+fn every_code_settles_custody_logically_but_acknowledges_no_retirement() {
+    for code in ProcessServiceCode::ALL {
+        let incarnation = incarnation(5);
+        let request = RequestIdMinter::new().mint().unwrap();
+        let scope = Scope::Process;
+        let mut custody = StrandedCustody::new(request, scope);
+        assert!(custody.charged());
+        assert_eq!(custody.terminal(), None);
+        assert_eq!(custody.request(), request);
+        assert_eq!(custody.scope(), scope);
+
+        let condition = ConditionId::new(incarnation, code);
+        let terminal = custody.fail_unavailable(condition).unwrap();
+        assert_eq!(terminal.condition(), condition, "{code}");
+        assert_eq!(terminal.request(), request);
+        assert_eq!(terminal.scope(), scope);
+        assert_eq!(terminal.operator_text(), code.operator_text());
+        assert_eq!(custody.terminal(), Some(terminal));
+        assert!(
+            custody.charged(),
+            "{code}: the logical failure released nothing"
+        );
+        assert_eq!(
+            custody.fail_unavailable(condition),
+            Err(CustodyError::AlreadyFailed),
+            "{code}: one logical terminal; a late report cannot rewrite it"
+        );
+
+        // No deadline, report or display refresh stands in for the return:
+        // the refusal hands the custody back, still charged.
+        let still_charged = match custody.release() {
+            Err(CustodyError::WorkerStillCharged(custody)) => custody,
+            other => panic!("{code}: expected the custody back, got {other:?}"),
+        };
+        assert!(still_charged.charged());
+        assert_eq!(still_charged.terminal(), Some(terminal));
+        let mut custody = still_charged;
+        let refused = custody.release().unwrap_err();
+        assert!(
+            refused.to_string().contains("still charged"),
+            "{code}: the reason names the retained worker"
+        );
+        let CustodyError::WorkerStillCharged(returned) = refused else {
+            panic!("{code}: a refused release keeps the custody");
+        };
+        custody = returned;
+        custody.worker_returned();
+        assert!(!custody.charged());
+        assert_eq!(
+            custody.terminal(),
+            Some(terminal),
+            "{code}: a late return cannot replace the terminal"
+        );
+        custody.release().unwrap();
+    }
+}
+
+/// §26 §3.2 "Logout/Stop/Remove intent precedes or races the condition":
+/// the frozen intent precedence stands, and a preserved login intent is
+/// refused at admission rather than retried.
+#[test]
+fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled() {
+    let incarnation = incarnation(6);
+    let slot = SlotKey::from_incarnation(9).unwrap();
+    let scope = Scope::Slot(slot);
+    let mut ledger = ProcessConditions::new(incarnation);
+    let reactor = ConditionId::new(incarnation, ProcessServiceCode::ReactorUnavailable);
+
+    // Logout precedes the condition: it stays a logout, never a fresh login.
+    let mut logout = IntentMailbox::new(true, WorldChoice::Automatic);
+    let login = logout.login_command(false).unwrap();
+    logout.observe(LifecycleFact::LoginSucceeded).unwrap();
+    assert_eq!(logout.acknowledge_login(login), Acknowledgement::Applied);
+    logout.post(Intent::Logout).unwrap();
+    let press = logout.logout_command(true).unwrap();
+    ledger
+        .publish(condition(
+            incarnation,
+            ProcessServiceCode::ReactorUnavailable,
+            ConditionCause::Panicked,
+        ))
+        .unwrap();
     assert_eq!(
-        ledger.admit(ProcessCapability::Login, Some(request), scope),
+        ledger.admit(ProcessCapability::NetworkEffect, None, scope),
+        Err(AdmissionRefusal::Unavailable(UnavailableRefusal {
+            condition: reactor,
+            capability: ProcessCapability::NetworkEffect,
+            request: None,
+            scope,
+        })),
+        "the clean logout press needs network authority the session lost"
+    );
+    logout
+        .observe(LifecycleFact::SessionExited {
+            clean: false,
+            resumable: false,
+        })
+        .unwrap();
+    assert_eq!(
+        logout.acknowledge_logout(press),
+        Acknowledgement::Applied,
+        "the logout intent settles as a logout"
+    );
+    assert_eq!(logout.snapshot().latch(), Some(LoginLatch::OperatorLogout));
+    assert!(
+        logout.login_command(false).is_none(),
+        "an outage never turns Logout into a fresh login"
+    );
+
+    // Remove precedes the condition: the lifetime closes; no retry.
+    let mut removed = IntentMailbox::new(true, WorldChoice::Automatic);
+    removed.post(Intent::RemoveSlot).unwrap();
+    assert!(removed.snapshot().closed());
+    assert!(removed.login_command(false).is_none());
+    assert_eq!(
+        removed.post(Intent::Login),
+        Err(crate::lifecycle::MailboxError::Closed)
+    );
+    assert!(
+        !ledger.retry_allowed(ProcessCapability::Login),
+        "and the ledger would refuse the retry anyway"
+    );
+
+    // A preserved login intent under the outage: refused at admission with
+    // the condition, the intent kept, nothing scheduled.
+    let mut wanted = IntentMailbox::new(true, WorldChoice::Automatic);
+    let login = wanted.login_command(false).unwrap();
+    wanted.observe(LifecycleFact::LoginSucceeded).unwrap();
+    wanted.acknowledge_login(login);
+    wanted
+        .observe(LifecycleFact::SessionExited {
+            clean: false,
+            resumable: false,
+        })
+        .unwrap();
+    assert!(wanted.relogs_after_drop(), "the intent is preserved");
+    let relog = wanted.login_command(false).unwrap();
+    let AdmissionRefusal::Unavailable(refusal) = ledger
+        .admit(ProcessCapability::Login, None, scope)
+        .unwrap_err();
+    assert_eq!(refusal.condition(), reactor);
+    let projected = SessionEventOut::Unavailable {
+        capability: refusal.capability(),
+        condition: refusal.condition(),
+    };
+    assert_eq!(
+        projected,
+        SessionEventOut::Unavailable {
+            capability: ProcessCapability::Login,
+            condition: reactor
+        },
+        "the slot projects the refusal with its condition"
+    );
+    assert!(
+        wanted.attempt_is_current(relog, 0),
+        "the refusal is not a cancellation: the intent still stands"
+    );
+    assert_eq!(wanted.snapshot().login(), LoginIntent::Auto);
+    assert_eq!(wanted.snapshot().latch(), None, "no latch is invented");
+    assert!(!ledger.retry_allowed(ProcessCapability::Reconnect));
+    assert!(!ledger.retry_allowed(ProcessCapability::Login));
+
+    // The resolver going down leaves an established session alone.
+    let resolver = ProcessConditions::new(incarnation);
+    assert_eq!(
+        resolver.admit(ProcessCapability::NetworkEffect, None, scope),
         Ok(())
     );
+    let mut resolver = resolver;
+    resolver
+        .publish(condition(
+            incarnation,
+            ProcessServiceCode::ResolverUnavailable,
+            ConditionCause::StartFailed,
+        ))
+        .unwrap();
+    assert_eq!(
+        resolver.admit(ProcessCapability::NetworkEffect, None, scope),
+        Ok(()),
+        "an established session needs no new resolution"
+    );
+    assert_eq!(
+        resolver.admit(ProcessCapability::ResolvedAddress, None, scope),
+        Ok(())
+    );
+    assert!(resolver
+        .admit(ProcessCapability::NameResolution, None, scope)
+        .is_err());
+}
+
+/// §26 §3.2 "Reactor becomes unavailable with a live session": the session
+/// projects the condition instead of Ready or recovery, keeps run identity
+/// and hold semantics, and invents no Start or reconnect.
+#[test]
+fn a_live_session_losing_its_reactor_projects_the_condition_not_readiness() {
+    let incarnation = incarnation(7);
+    let slot = SlotKey::from_incarnation(11).unwrap();
+    let session = SessionKey::new(slot, 1);
+    let reactor = ConditionId::new(incarnation, ProcessServiceCode::ReactorUnavailable);
+    let mut gate = SessionGate::new(slot);
+    gate.begin(session).unwrap();
+    gate.observe(session, &SessionEventOut::SceneReady).unwrap();
+    gate.observe(
+        session,
+        &SessionEventOut::Held {
+            why: HoldReason::Guardian,
+        },
+    )
+    .unwrap();
+    assert!(gate.held_by(HoldReason::Guardian));
+
+    let end = SessionEventOut::SessionEnded {
+        cause: SessionEndCause::ServiceUnavailable { condition: reactor },
+        resumable: false,
+    };
+    gate.observe(session, &end).unwrap();
+    assert_eq!(gate.ready(), None, "network authority is invalidated");
+    assert_eq!(gate.current(), None);
+    assert!(
+        gate.observe(session, &SessionEventOut::SceneReady).is_err(),
+        "no automatic recovery projects Ready again"
+    );
+    let SessionEventOut::SessionEnded { cause, resumable } = end else {
+        unreachable!()
+    };
+    assert!(!resumable, "no reconnect is invented");
+    assert!(!cause.is_clean());
+    assert!(
+        !cause.counts_toward_repeat_guard(),
+        "the outage is not a repeat-guard strike"
+    );
+
+    // The mailbox keeps the intent (run identity and hold semantics are the
+    // seat's); the ledger refuses the reconnect the intent would schedule.
+    let mut mailbox = IntentMailbox::new(true, WorldChoice::Automatic);
+    let login = mailbox.login_command(false).unwrap();
+    mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+    mailbox.acknowledge_login(login);
+    mailbox
+        .observe(LifecycleFact::SessionExited {
+            clean: false,
+            resumable: false,
+        })
+        .unwrap();
+    assert!(!mailbox.reconnects(), "a fresh login, never a reconnect");
+    assert!(mailbox.snapshot().login_wanted(), "intent preserved");
+    let mut ledger = ProcessConditions::new(incarnation);
     ledger
         .publish(condition(
             incarnation,
@@ -170,86 +502,17 @@ fn admission_refuses_only_affected_operations_and_keeps_their_identity() {
             ConditionCause::ProgressLost,
         ))
         .unwrap();
-
-    let refusal = ledger
-        .admit(ProcessCapability::Login, Some(request), scope)
-        .unwrap_err();
+    assert!(ledger
+        .admit(ProcessCapability::Login, None, Scope::Session(session))
+        .is_err());
+    assert!(ledger
+        .admit(ProcessCapability::NewConnection, None, Scope::Slot(slot))
+        .is_err());
     assert_eq!(
-        refusal.condition(),
-        ConditionId::new(incarnation, ProcessServiceCode::ReactorUnavailable)
-    );
-    assert_eq!(refusal.request(), Some(request));
-    assert_eq!(refusal.scope(), scope);
-    assert_eq!(refusal.capability(), ProcessCapability::Login);
-    assert_eq!(refusal.recoverability(), Recoverability::RestartRequired);
-    assert_eq!(
-        refusal.operator_text(),
-        ProcessServiceCode::ReactorUnavailable.operator_text()
-    );
-    assert!(refusal
-        .to_string()
-        .starts_with("Game transport is unavailable."));
-
-    assert_eq!(
-        ledger.admit(ProcessCapability::NameResolution, None, Scope::Process),
+        ledger.admit(ProcessCapability::LocalOnly, None, Scope::Slot(slot)),
         Ok(()),
-        "an unrelated service continues"
+        "local work on the slot continues"
     );
-    assert_eq!(
-        ledger.admit(ProcessCapability::LocalOnly, Some(request), scope),
-        Ok(())
-    );
-    assert_eq!(
-        ledger.admit(ProcessCapability::BackgroundWork, None, Scope::Process),
-        Ok(())
-    );
-    assert!(
-        !ledger.retry_allowed(ProcessCapability::Reconnect),
-        "no automatic retry until restart"
-    );
-    assert!(ledger.retry_allowed(ProcessCapability::BackgroundWork));
-}
-
-#[test]
-fn a_failure_report_settles_custody_but_acknowledges_no_retirement() {
-    let incarnation = ProcessIncarnation::mint();
-    let request = RequestIdMinter::new().mint().unwrap();
-    let scope = Scope::Process;
-    let mut custody = StrandedCustody::new(request, scope);
-    assert!(custody.charged());
-    assert_eq!(custody.terminal(), None);
-
-    let condition = ConditionId::new(incarnation, ProcessServiceCode::WorkAdmissionUnavailable);
-    let terminal = custody.fail_unavailable(condition).unwrap();
-    assert_eq!(terminal.condition(), condition);
-    assert_eq!(terminal.request(), request);
-    assert_eq!(terminal.scope(), scope);
-    assert_eq!(
-        terminal.operator_text(),
-        ProcessServiceCode::WorkAdmissionUnavailable.operator_text()
-    );
-    assert_eq!(custody.terminal(), Some(terminal));
-    assert!(custody.charged(), "the logical failure released nothing");
-    assert_eq!(
-        custody.fail_unavailable(condition).unwrap_err(),
-        CustodyError::AlreadyFailed,
-        "one logical terminal; a late report cannot rewrite it"
-    );
-
-    let still_charged = custody.release().unwrap_err();
-    assert!(
-        still_charged.charged(),
-        "no deadline or report stands in for the worker's return"
-    );
-    custody = still_charged;
-    custody.worker_returned();
-    assert!(!custody.charged());
-    assert_eq!(
-        custody.terminal(),
-        Some(terminal),
-        "a late return cannot replace the terminal"
-    );
-    custody.release().unwrap();
 }
 
 #[test]
@@ -261,7 +524,7 @@ fn diagnostics_are_bounded_on_char_boundaries_and_do_not_drive_behaviour() {
     assert!(diagnostic.as_str().chars().all(|c| c == 'é'));
     assert_eq!(Diagnostic::bounded("short").as_str(), "short");
 
-    let incarnation = ProcessIncarnation::mint();
+    let incarnation = incarnation(8);
     let with = ProcessServiceCondition::new(
         ConditionId::new(incarnation, ProcessServiceCode::ResolverUnavailable),
         ConditionCause::StartFailed,
