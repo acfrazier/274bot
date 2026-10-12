@@ -94,8 +94,8 @@ pub use load::{
 pub use load::{resolve_sibling_modules, JsLibrary};
 pub use loadouts_store::{
     copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
-    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
-    LoadoutsStore, ResolvedSettingOptions, WORN_SLOTS, WORN_SLOT_LAYOUT,
+    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsStore,
+    ResolvedSettingOptions, WORN_SLOT_LAYOUT,
 };
 pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
 pub use rs2b0t_registry::{

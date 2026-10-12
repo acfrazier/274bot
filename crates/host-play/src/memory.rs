@@ -1173,20 +1173,19 @@ struct ScriptCard {
     card: script::JsCard,
     bag: serde_json::Map<String, serde_json::Value>,
     siblings: Vec<(String, String)>,
-    loadouts: Vec<script::Loadout>,
+    loadouts: Vec<api::loadout::Loadout>,
 }
 
-fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
     settings
         .fixture_loadouts
         .unwrap_or(&[])
         .iter()
         .map(|row| {
-            row.carry
-                .iter()
-                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
-                    loadout.with_carry(item, qty)
-                })
+            row.carry.iter().fold(
+                api::loadout::Loadout::new(row.name),
+                |loadout, &(item, qty)| loadout.with_carry(item, qty),
+            )
         })
         .collect()
 }
@@ -1560,7 +1559,7 @@ impl Run {
                 card.card.js.clone(),
                 card.card.shape,
                 card.siblings.clone(),
-                &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+                &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
                 play.game_data(),
                 play.named_banks(),
             )?;

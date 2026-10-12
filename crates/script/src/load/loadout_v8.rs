@@ -10,9 +10,9 @@ use crate::boost_potions::{
     self, PlannedCarry, PotionLevel, PotionPlan, PotionToSipError, BOOST_FLOOR,
 };
 use crate::loadout_plan::{self, LoadoutCarry, LoadoutInput};
-use crate::loadouts_store::Loadout;
 use crate::ranged;
 use crate::supply_v2;
+use api::loadout::Loadout;
 use rustyscript::Runtime;
 
 const PENDING: &str = "__pending__";
