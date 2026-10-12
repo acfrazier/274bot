@@ -44,23 +44,23 @@ impl Default for ExploreLimits {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Coverage {
-    /// State visits containing an adopted entry, including prefix observations.
+    /// Suffix-state visits containing an adopted entry.
     pub adopted_states: usize,
-    /// State visits containing a parent with at least two children.
+    /// Suffix-state visits containing a parent with at least two children.
     pub multi_child_states: usize,
-    /// State visits containing a credit-deferred pending start.
+    /// Suffix-state visits containing a credit-deferred pending start.
     pub credit_deferred_states: usize,
-    /// Number of `Complete` events following a queued Session-child gameplay emission.
+    /// Continuation `Complete` events following a queued Session-child gameplay emission.
     pub session_child_emission_completions: usize,
-    /// State visits with a live id below the retained-history floor.
+    /// Suffix-state visits with a live id below the retained-history floor.
     pub live_owners_below_floor_states: usize,
-    /// Number of observed states containing a live mirror with a remembered ancestor.
+    /// Suffix-state visits containing a live mirror with a remembered ancestor.
     pub mirror_ancestry_states: usize,
-    /// Oversized starts locally refused by the byte charge rule.
+    /// Continuation starts locally refused by the byte charge rule.
     pub oversized_start_refusals: usize,
-    /// Releases actually dispatched by observed `Dispatch` steps.
+    /// Releases actually dispatched by continuation `Dispatch` steps.
     pub release_dispatches: usize,
-    /// Session starts by family, including the explicit composition seed.
+    /// Session starts by family in the continuation, excluding the explicit seed.
     pub session_family_starts: [usize; 4],
     /// Continuation admissions refused because a Session root is active.
     pub capability_roots_blocked_by_session: usize,
@@ -77,24 +77,33 @@ pub struct Coverage {
     pub session_handoff_rows_dispatched: usize,
     /// Prior Session gameplay filtered by a later foreground-owning Session.
     pub session_handoff_rows_filtered: usize,
-    /// Host actions actually dispatched while a foreground Session exists.
+    /// Continuation host actions dispatched while a foreground Session exists.
     pub foreground_host_actions: usize,
-    /// Foreground host actions dispatched while the seat is held.
+    /// Continuation foreground host actions dispatched while the seat is held.
     pub foreground_host_actions_while_held: usize,
-    /// Host actions dispatched while the seat is stopped.
+    /// Continuation host actions dispatched while the seat is stopped.
     pub host_actions_while_stopped: usize,
     /// Host input symbols observed in continuation states, indexed by 0 or 1.
     pub host_action_values: [usize; 2],
-    /// Hold edges observed while a foreground Session exists.
+    /// Guardian hold edges in continuation states, with or without a foreground.
     pub guardian_hold_edges: usize,
-    /// Resumes preserving the same foreground Session in continuation states.
+    /// Resumes preserving the same foreground-owning Session in continuation states.
     pub guardian_resumes_same_foreground: usize,
+    /// Resumes preserving the same live Session, including Hunt's no-foreground case.
+    pub guardian_resumes_same_session: usize,
+    /// Releases dispatched by the exact Held → Resumed → Dispatch continuation.
+    pub guardian_resume_release_dispatches: usize,
+    /// Gameplay dispatched by that resume sequence; must stay zero.
+    pub guardian_resume_gameplay_dispatches: usize,
+    /// Complete Held → Resumed → Dispatch → Take → Dispatch suffixes.
+    pub guardian_resume_sequences: usize,
     /// Continuation admissions refused for an expired parent.
     pub expired_parent_refusals: usize,
-    /// Explicit continuation revocations by trigger.
+    /// Continuation revocations that publish at least one descendant ParentAborted.
     pub revocation_triggers: [usize; 9],
     /// Internal same-group replacement that published a Superseded outcome.
     pub superseded_replacements: usize,
+    /// Maxima over suffix states only, excluding the composition seed and prefix.
     pub max_live: usize,
     pub max_roots: usize,
     pub max_leaves: usize,
@@ -104,15 +113,19 @@ pub struct Coverage {
 #[derive(Clone, Copy)]
 struct TransitionContext {
     foreground: Option<Id>,
+    session_root: Option<Id>,
     held: bool,
     stopped: bool,
     host_actions_dispatched: usize,
+    releases_dispatched: usize,
+    gameplay_dispatched: usize,
     handoff_row: bool,
     capability_gameplay_row: bool,
     session_family: Option<SessionFamily>,
     capability_root_pending: bool,
     expired_parent_pending: bool,
     replacement_victim: Option<Id>,
+    parent_aborted_before: usize,
 }
 
 impl TransitionContext {
@@ -161,6 +174,15 @@ impl TransitionContext {
         } else {
             None
         };
+        let session_root = if matches!(step, Step::SessionHeld | Step::SessionResumed) {
+            (1..state.next_id()).find(|id| {
+                state
+                    .entry(*id)
+                    .is_some_and(|entry| entry.class.is_session() && entry.parent.is_none())
+            })
+        } else {
+            None
+        };
         let held = matches!(
             step,
             Step::HostAction { .. } | Step::SessionHeld | Step::SessionResumed
@@ -170,6 +192,20 @@ impl TransitionContext {
             state.host_actions_dispatched()
         } else {
             0
+        };
+        let releases_dispatched = if matches!(step, Step::Dispatch) {
+            state.release_dispatched()
+        } else {
+            0
+        };
+        let gameplay_dispatched = if matches!(step, Step::Dispatch) {
+            state.dispatched()
+        } else {
+            0
+        };
+        let parent_aborted_before = match step {
+            Step::Revoke { of, .. } => parent_aborted_count(state, *of),
+            _ => 0,
         };
         let handoff_row = matches!(step, Step::Dispatch)
             && state.session_root().is_some_and(|session| {
@@ -201,19 +237,36 @@ impl TransitionContext {
         };
         Self {
             foreground,
+            session_root,
             held,
             stopped,
             host_actions_dispatched,
+            releases_dispatched,
+            gameplay_dispatched,
             handoff_row,
             capability_gameplay_row,
             session_family,
             capability_root_pending,
             expired_parent_pending,
             replacement_victim,
+            parent_aborted_before,
         }
     }
 }
+fn parent_aborted_count(state: &State, excluding: Id) -> usize {
+    (1..state.next_id())
+        .filter(|id| {
+            *id != excluding
+                && state.outcome(*id) == Some(Outcome::Aborted(super::Trigger::ParentAborted))
+        })
+        .count()
+}
 
+#[derive(Clone, Copy, Default)]
+struct GuardianResumeEvidence {
+    dispatch_after_resume: bool,
+    complete_sequence: bool,
+}
 impl Coverage {
     fn observe_state(&mut self, state: &State) {
         if state
@@ -254,7 +307,7 @@ impl Coverage {
         step: &Step,
         before: TransitionContext,
         after: &State,
-        continuation: bool,
+        resume: GuardianResumeEvidence,
     ) {
         if let Step::Start {
             class: Class::Session(family),
@@ -270,18 +323,24 @@ impl Coverage {
             }
         }
         if matches!(step, Step::Dispatch) {
-            self.release_dispatches += after.release_dispatched();
-            if continuation && before.handoff_row {
+            let releases = after
+                .release_dispatched()
+                .saturating_sub(before.releases_dispatched);
+            let gameplay = after
+                .dispatched()
+                .saturating_sub(before.gameplay_dispatched);
+            self.release_dispatches += releases;
+            if before.handoff_row {
                 self.session_handoff_dispatches += 1;
-                if after.dispatched() > 0 {
+                if gameplay > 0 {
                     self.session_handoff_rows_dispatched += 1;
                 } else {
                     self.session_handoff_rows_filtered += 1;
                 }
             }
-            if continuation && before.capability_gameplay_row {
+            if before.capability_gameplay_row {
                 let family = session_family_index(before.session_family.expect("active Session"));
-                if after.dispatched() > 0 {
+                if gameplay > 0 {
                     self.capability_gameplay_dispatched_under_session += 1;
                     self.capability_dispatched_by_family[family] += 1;
                 } else {
@@ -289,9 +348,13 @@ impl Coverage {
                     self.capability_filtered_by_family[family] += 1;
                 }
             }
-        }
-        if !continuation {
-            return;
+            if resume.dispatch_after_resume {
+                self.guardian_resume_release_dispatches += releases;
+                self.guardian_resume_gameplay_dispatches += gameplay;
+            }
+            if resume.complete_sequence {
+                self.guardian_resume_sequences += 1;
+            }
         }
         if let Step::Admit(id) = step {
             if before.capability_root_pending
@@ -311,9 +374,7 @@ impl Coverage {
             }
         }
         if let Step::HostAction { action } = step {
-            if continuation
-                && let Some(count) = self.host_action_values.get_mut(usize::from(*action))
-            {
+            if let Some(count) = self.host_action_values.get_mut(usize::from(*action)) {
                 *count += 1;
             }
             let dispatched = after
@@ -329,22 +390,24 @@ impl Coverage {
                 self.host_actions_while_stopped += dispatched;
             }
         }
-        if matches!(step, Step::SessionHeld)
-            && !before.held
-            && after.session_held()
-            && before.foreground.is_some()
-        {
+        if matches!(step, Step::SessionHeld) && !before.held && after.session_held() {
             self.guardian_hold_edges += 1;
         }
-        if matches!(step, Step::SessionResumed)
-            && before.held
-            && !after.session_held()
-            && before.foreground.is_some()
-            && before.foreground == after.foreground_session()
-        {
-            self.guardian_resumes_same_foreground += 1;
+        if matches!(step, Step::SessionResumed) && before.held && !after.session_held() {
+            if before.foreground.is_some() && before.foreground == after.foreground_session() {
+                self.guardian_resumes_same_foreground += 1;
+            }
+            if before.session_root.is_some_and(|id| {
+                after
+                    .entry(id)
+                    .is_some_and(|entry| entry.class.is_session() && entry.parent.is_none())
+            }) {
+                self.guardian_resumes_same_session += 1;
+            }
         }
-        if let Step::Revoke { trigger, .. } = step {
+        if let Step::Revoke { of, trigger } = step
+            && parent_aborted_count(after, *of) > before.parent_aborted_before
+        {
             self.revocation_triggers[trigger_index(*trigger)] += 1;
         }
     }
@@ -391,6 +454,10 @@ impl Coverage {
         }
         self.guardian_hold_edges += other.guardian_hold_edges;
         self.guardian_resumes_same_foreground += other.guardian_resumes_same_foreground;
+        self.guardian_resumes_same_session += other.guardian_resumes_same_session;
+        self.guardian_resume_release_dispatches += other.guardian_resume_release_dispatches;
+        self.guardian_resume_gameplay_dispatches += other.guardian_resume_gameplay_dispatches;
+        self.guardian_resume_sequences += other.guardian_resume_sequences;
         self.expired_parent_refusals += other.expired_parent_refusals;
         for (total, count) in self
             .revocation_triggers
@@ -482,6 +549,8 @@ pub enum Profile {
     R3HostRevokeCascade,
     R3SupersededCascade,
     R3ParentAbortedCascade,
+    R4GuardianResume(SessionFamily),
+    R4LineageDepth,
 }
 
 pub const SESSION_FAMILIES: [SessionFamily; 4] = [
@@ -491,7 +560,7 @@ pub const SESSION_FAMILIES: [SessionFamily; 4] = [
     SessionFamily::Progress,
 ];
 
-pub const PROFILES: [Profile; 36] = [
+pub const PROFILES: [Profile; 39] = [
     Profile::V5_01SessionChild,
     Profile::V5_02AdoptedSibling,
     Profile::V5_02BranchPromotion,
@@ -576,6 +645,9 @@ pub const PROFILES: [Profile; 36] = [
     Profile::R3HostRevokeCascade,
     Profile::R3SupersededCascade,
     Profile::R3ParentAbortedCascade,
+    Profile::R4GuardianResume(SessionFamily::Gather),
+    Profile::R4GuardianResume(SessionFamily::Hunt),
+    Profile::R4LineageDepth,
 ];
 
 impl Profile {
@@ -602,12 +674,19 @@ impl Profile {
             Self::R3HostRevokeCascade => "r3-revocation-host-revoke",
             Self::R3SupersededCascade => "r3-revocation-superseded",
             Self::R3ParentAbortedCascade => "r3-revocation-parent-aborted",
+            Self::R4GuardianResume(SessionFamily::Gather) => "r4-guardian-resume-gather",
+            Self::R4GuardianResume(SessionFamily::Hunt) => "r4-guardian-resume-hunt",
+            Self::R4GuardianResume(SessionFamily::Combat) => "r4-guardian-resume-combat",
+            Self::R4GuardianResume(SessionFamily::Progress) => "r4-guardian-resume-progress",
+            Self::R4LineageDepth => "r4-lineage-depth-suffix",
         }
     }
 
     pub const fn horizon(self) -> usize {
         match self {
             Self::V5_03MirrorCancel | Self::V5_03CreditDeferred | Self::V5_05LiveBelowFloor => 4,
+            Self::R4GuardianResume(_) => 5,
+            Self::R4LineageDepth => 2,
             Self::R3GuardianHoldResume | Self::R3CapabilityThenSession(_) => 3,
             Self::R3SessionHandoff { .. } | Self::R3ExpiredParent => 2,
             Self::R3HostRevokeCascade
@@ -629,6 +708,8 @@ impl Profile {
                 | Self::R3HostRevokeCascade
                 | Self::R3SupersededCascade
                 | Self::R3ParentAbortedCascade
+                | Self::R4GuardianResume(_)
+                | Self::R4LineageDepth
         )
     }
 
@@ -658,6 +739,8 @@ impl Profile {
             Self::R3HostRevokeCascade
             | Self::R3SupersededCascade
             | Self::R3ParentAbortedCascade => bounded([2, 3, 2, 5, 3, 3, 4, 2], 3, 2),
+            Self::R4GuardianResume(_) => bounded([1, 1, 1, 2, 1, 1, 3, 1], 1, 1),
+            Self::R4LineageDepth => bounded([1, 3, 3, 4, 3, 2, 3, 2], 3, 2),
         }
     }
 
@@ -798,6 +881,33 @@ impl Profile {
                 start(None, None, Class::Session(SessionFamily::Gather), 2, 0, 0),
                 Step::Admit(1),
             ],
+            Self::R4GuardianResume(family) => vec![
+                start(None, None, Class::Session(family), 2, 0, 0),
+                Step::Admit(1),
+                Step::Emit {
+                    of: Some(1),
+                    release: false,
+                },
+                Step::Emit {
+                    of: Some(1),
+                    release: true,
+                },
+                Step::Take,
+                Step::Emit {
+                    of: None,
+                    release: true,
+                },
+                Step::Emit {
+                    of: Some(1),
+                    release: false,
+                },
+            ],
+            Self::R4LineageDepth => vec![
+                start(None, None, Class::Capability, 2, 0, 0),
+                Step::Admit(1),
+                start(Some(1), None, Class::Capability, 3, 0, 0),
+                Step::Admit(2),
+            ],
             Self::R3ExpiredParent => vec![
                 start(None, None, Class::Capability, 0, 0, 0),
                 Step::Admit(1),
@@ -937,7 +1047,7 @@ pub fn explore_with_limits(
     mutation: Mutation,
     limits: ExploreLimits,
 ) -> Exploration {
-    run_exploration(bounds, steps, rules, mutation, Vec::new(), limits)
+    run_exploration(bounds, steps, rules, mutation, Vec::new(), false, limits)
 }
 
 pub fn explore_profile(profile: &Profile, rules: Rules, mutation: Mutation) -> Exploration {
@@ -956,8 +1066,33 @@ pub fn explore_profile_with_limits(
         rules,
         mutation,
         profile.prefix(),
+        matches!(*profile, Profile::R4GuardianResume(_)),
         limits,
     )
+}
+
+/// Temporal coverage is part of the search key, not implementation authority.
+/// Otherwise deduplication can erase a resume path behind an equivalent earlier state.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+enum ResumeProgress {
+    #[default]
+    Idle,
+    Held,
+    Resumed,
+    Dispatched,
+    Taken,
+}
+
+impl ResumeProgress {
+    fn advance(self, step: &Step) -> Self {
+        match (self, step) {
+            (_, Step::SessionHeld) => Self::Held,
+            (Self::Held, Step::SessionResumed) => Self::Resumed,
+            (Self::Resumed, Step::Dispatch) => Self::Dispatched,
+            (Self::Dispatched, Step::Take) => Self::Taken,
+            _ => Self::Idle,
+        }
+    }
 }
 
 struct Node {
@@ -965,6 +1100,7 @@ struct Node {
     parent: Option<usize>,
     via: Option<Step>,
     depth: usize,
+    resume_progress: ResumeProgress,
 }
 
 fn run_exploration(
@@ -973,6 +1109,7 @@ fn run_exploration(
     rules: Rules,
     mutation: Mutation,
     prefix: Vec<Step>,
+    track_guardian_resume: bool,
     limits: ExploreLimits,
 ) -> Exploration {
     let started = Instant::now();
@@ -985,7 +1122,6 @@ fn run_exploration(
         .saturating_add(state_heap_bytes(&state).saturating_mul(2))
         .saturating_add(prefix_bytes)
         .saturating_add(4096);
-    coverage.observe_state(&state);
     if let Err(failure) = state.check() {
         return failed(
             bounds,
@@ -1025,8 +1161,6 @@ fn run_exploration(
     }
 
     for (index, step) in prefix.iter().enumerate() {
-        let session_child_completion = is_session_child_completion(&state, step);
-        let before = TransitionContext::capture(&state, step);
         if let Err(error) = state.apply(step) {
             let failure = Violation {
                 name: "profile-prefix",
@@ -1049,11 +1183,6 @@ fn run_exploration(
             );
         }
         transitions += 1;
-        if session_child_completion {
-            coverage.session_child_emission_completions += 1;
-        }
-        coverage.observe_transition(step, before, &state, false);
-        coverage.observe_state(&state);
         let prefix_estimate = size_of::<State>()
             .saturating_add(state_heap_bytes(&state).saturating_mul(2))
             .saturating_add(prefix_bytes)
@@ -1153,11 +1282,12 @@ fn run_exploration(
         parent: None,
         via: None,
         depth: 0,
+        resume_progress: ResumeProgress::Idle,
     });
     let mut frontier = VecDeque::new();
     frontier.push_back(0usize);
     let mut seen = HashMap::<u64, usize>::new();
-    let root_hash = fingerprint(&nodes[0].state);
+    let root_hash = fingerprint(&nodes[0].state, ResumeProgress::Idle);
     seen.insert(root_hash, 0);
     let mut collisions = HashMap::<u64, Vec<usize>>::new();
     let mut retained_estimate = root_cost;
@@ -1225,11 +1355,34 @@ fn run_exploration(
                 is_session_child_completion(&nodes[node_index].state, &step);
             let before = TransitionContext::capture(&nodes[node_index].state, &step);
             let mut next = nodes[node_index].state.clone();
-            if next.apply(&step).is_err() {
+            if next.apply(&step).is_err() && !matches!(step, Step::HostAction { .. }) {
                 continue;
             }
+            let before_progress = nodes[node_index].resume_progress;
+            let resume_sequence = track_guardian_resume
+                && matches!(step, Step::Dispatch)
+                && before_progress == ResumeProgress::Taken;
+            let resume_dispatch = track_guardian_resume
+                && matches!(step, Step::Dispatch)
+                && matches!(
+                    before_progress,
+                    ResumeProgress::Resumed | ResumeProgress::Taken
+                );
+            let resume_progress = if track_guardian_resume {
+                before_progress.advance(&step)
+            } else {
+                ResumeProgress::Idle
+            };
             transitions += 1;
-            coverage.observe_transition(&step, before, &next, true);
+            coverage.observe_transition(
+                &step,
+                before,
+                &next,
+                GuardianResumeEvidence {
+                    dispatch_after_resume: resume_dispatch,
+                    complete_sequence: resume_sequence,
+                },
+            );
             if let Err(failure) = next.check() {
                 coverage.observe_state(&next);
                 let path = trace_for_edge(&nodes, node_index, step, &prefix);
@@ -1259,15 +1412,17 @@ fn run_exploration(
             next.host_actions = 0;
             next.last_host_action = None;
 
-            let hash = fingerprint(&next);
+            let hash = fingerprint(&next, resume_progress);
             if let Some(first) = seen.get(&hash).copied() {
-                if nodes[first].state == next {
+                if nodes[first].state == next && nodes[first].resume_progress == resume_progress {
                     continue;
                 }
-                if collisions
-                    .get(&hash)
-                    .is_some_and(|indices| indices.iter().any(|index| nodes[*index].state == next))
-                {
+                if collisions.get(&hash).is_some_and(|indices| {
+                    indices.iter().any(|index| {
+                        nodes[*index].state == next
+                            && nodes[*index].resume_progress == resume_progress
+                    })
+                }) {
                     continue;
                 }
             }
@@ -1357,6 +1512,7 @@ fn run_exploration(
                 parent: Some(node_index),
                 via: Some(step),
                 depth: depth + 1,
+                resume_progress,
             });
             retained_estimate = projected_retained;
             frontier.push_back(next_index);
@@ -1489,9 +1645,10 @@ fn trace_for_edge(nodes: &[Node], parent: usize, edge: Step, prefix: &[Step]) ->
     trace
 }
 
-fn fingerprint(state: &State) -> u64 {
+fn fingerprint(state: &State, resume_progress: ResumeProgress) -> u64 {
     let mut hasher = DefaultHasher::new();
     state.hash(&mut hasher);
+    resume_progress.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1626,6 +1783,44 @@ mod tests {
         );
     }
 
+    fn assert_guardian_resume_seed(profile: Profile, family: SessionFamily) {
+        let mut state = State::new(Rules::Chosen, profile.bounds());
+        for step in profile.prefix() {
+            state
+                .apply(&step)
+                .expect("guardian resume prefix is enabled");
+        }
+        assert_eq!(
+            state.entry(1).map(|entry| entry.class),
+            Some(Class::Session(family))
+        );
+        assert_eq!(
+            state.wire.iter().filter(|row| row.release).count(),
+            1,
+            "{} seed has no kept release in wire",
+            profile.name()
+        );
+        assert_eq!(
+            state.wire.iter().filter(|row| !row.release).count(),
+            1,
+            "{} seed has no gameplay row in wire",
+            profile.name()
+        );
+        assert_eq!(
+            state.queue.iter().filter(|row| !row.release).count(),
+            1,
+            "{} seed has no gameplay row in queue",
+            profile.name()
+        );
+        assert_eq!(
+            state.queue.iter().filter(|row| row.release).count(),
+            1,
+            "{} seed has no kept release in queue",
+            profile.name()
+        );
+        assert!(!state.session_held());
+    }
+
     #[test]
     fn named_compositions_pass_and_cover_required_shapes() {
         let mut coverage = Coverage::default();
@@ -1661,7 +1856,7 @@ mod tests {
                 Profile::R3CapabilityThenSession(family) => {
                     assert!(
                         result.coverage.session_family_starts[session_family_index(family)] > 0,
-                        "{} did not start its Session family",
+                        "{} did not start its Session family in the continuation",
                         profile.name()
                     );
                     assert!(
@@ -1744,6 +1939,44 @@ mod tests {
                     assert!(result.coverage.guardian_hold_edges > 0);
                     assert!(result.coverage.guardian_resumes_same_foreground > 0);
                 }
+                Profile::R4GuardianResume(family) => {
+                    assert_guardian_resume_seed(profile, family);
+                    assert!(
+                        result.coverage.guardian_hold_edges > 0,
+                        "{} did not reach SessionHeld in the continuation",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_resumes_same_session > 0,
+                        "{} did not resume its seeded Session",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_resume_release_dispatches > 0,
+                        "{} did not dispatch a kept release after resume",
+                        profile.name()
+                    );
+                    assert_eq!(
+                        result.coverage.guardian_resume_gameplay_dispatches,
+                        0,
+                        "{} replayed gameplay after resume",
+                        profile.name()
+                    );
+                    assert!(
+                        result.coverage.guardian_resume_sequences > 0,
+                        "{} did not reach Held → Resumed → Dispatch → Take → Dispatch",
+                        profile.name()
+                    );
+                    if family.owns_foreground() {
+                        assert!(
+                            result.coverage.guardian_resumes_same_foreground > 0,
+                            "{} did not preserve foreground on resume",
+                            profile.name()
+                        );
+                    } else {
+                        assert_eq!(result.coverage.guardian_resumes_same_foreground, 0);
+                    }
+                }
                 Profile::R3ExpiredParent => {
                     assert!(result.coverage.expired_parent_refusals > 0);
                 }
@@ -1808,12 +2041,17 @@ mod tests {
         assert!(coverage.foreground_host_actions > 0);
         assert!(coverage.guardian_hold_edges > 0);
         assert!(coverage.guardian_resumes_same_foreground > 0);
+        assert!(coverage.guardian_resumes_same_session > 0);
+        assert!(coverage.guardian_resume_release_dispatches > 0);
+        assert_eq!(coverage.guardian_resume_gameplay_dispatches, 0);
+        assert!(coverage.guardian_resume_sequences > 0);
         assert!(coverage.expired_parent_refusals > 0);
         assert!(coverage.superseded_replacements > 0);
     }
 
     #[test]
     fn seeded_mutants_fail_independent_invariants_after_the_composition() {
+        // A held gameplay drop is the chosen §6 rule, not a mutant; only replay is wrong.
         for (profile, mutation, expected) in [
             (
                 Profile::V5_03CreditDeferred,
@@ -1831,14 +2069,49 @@ mod tests {
                 "reusable-capacity",
             ),
             (
+                Profile::V5_02AdoptedSibling,
+                Mutation::AdoptedParentBusy,
+                "reusable-capacity",
+            ),
+            (
+                Profile::V5_04FullLiveReplacement,
+                Mutation::ReplacementLeafCount,
+                "reusable-capacity",
+            ),
+            (
+                Profile::R4LineageDepth,
+                Mutation::LineageDepth,
+                "reusable-capacity",
+            ),
+            (
                 Profile::V5_06ByteRelease,
                 Mutation::ReleaseDisplacement,
-                "encoder-release",
+                "row-conservation",
             ),
             (
                 Profile::V5_06ByteRelease,
                 Mutation::KeptReleaseDiscard,
-                "encoder-release",
+                "row-conservation",
+            ),
+            (
+                Profile::V5_06ByteRelease,
+                Mutation::RevocationReleaseDiscard,
+                "row-conservation",
+            ),
+            (
+                Profile::R4GuardianResume(SessionFamily::Gather),
+                Mutation::GuardianReleaseDiscard,
+                "row-conservation",
+            ),
+            (
+                Profile::R4GuardianResume(SessionFamily::Gather),
+                Mutation::GuardianGameplayReplay,
+                "row-conservation",
+            ),
+            (
+                Profile::V5_01SessionChild,
+                Mutation::ControlsGameplayDrop,
+                "row-conservation",
             ),
             (
                 Profile::V5_01SessionChild,
@@ -1856,6 +2129,26 @@ mod tests {
                 "revocation-cascade",
             ),
             (
+                Profile::R3HostRevokeCascade,
+                Mutation::RevocationCascade(super::Trigger::ManualWalk),
+                "revocation-cascade",
+            ),
+            (
+                Profile::R3HostRevokeCascade,
+                Mutation::RevocationCascade(super::Trigger::ManualCombat),
+                "revocation-cascade",
+            ),
+            (
+                Profile::R3HostRevokeCascade,
+                Mutation::RevocationReason,
+                "revocation-cascade",
+            ),
+            (
+                Profile::R3HostRevokeCascade,
+                Mutation::RevocationRootFirst,
+                "revocation-cascade",
+            ),
+            (
                 Profile::R3SupersededCascade,
                 Mutation::ReplacementCascade,
                 "revocation-cascade",
@@ -1866,6 +2159,16 @@ mod tests {
                 "revocation-cascade",
             ),
             (
+                Profile::R3CapabilityThenSession(SessionFamily::Hunt),
+                Mutation::DispatchAnySession,
+                "accepted-emission-authority",
+            ),
+            (
+                Profile::R3CapabilityThenSession(SessionFamily::Hunt),
+                Mutation::HuntForeground,
+                "accepted-emission-authority",
+            ),
+            (
                 Profile::R3GuardianHoldResume,
                 Mutation::HostActionDrop,
                 "host-action-dispatch",
@@ -1874,6 +2177,26 @@ mod tests {
                 Profile::R3GuardianHoldResume,
                 Mutation::HostActionReorder,
                 "host-action-dispatch",
+            ),
+            (
+                Profile::R3GuardianHoldResume,
+                Mutation::HostActionDuplicate,
+                "host-action-dispatch",
+            ),
+            (
+                Profile::R3GuardianHoldResume,
+                Mutation::HostActionRefusedHeld,
+                "host-action-dispatch",
+            ),
+            (
+                Profile::R3GuardianHoldResume,
+                Mutation::HostActionRefusedStopped,
+                "host-action-dispatch",
+            ),
+            (
+                Profile::R3GuardianHoldResume,
+                Mutation::GuardianDispatch,
+                "guardian-hold",
             ),
             (
                 Profile::R3GuardianHoldResume,
@@ -1919,11 +2242,11 @@ mod tests {
     fn profile_names_resolve_and_horizons_are_bounded() {
         for profile in PROFILES {
             assert_eq!(self::profile(profile.name()), Some(profile));
-            assert!(matches!(profile.horizon(), 1..=4));
+            assert!(matches!(profile.horizon(), 1..=6));
             assert!(profile.bounds().ids >= 1);
         }
         assert_eq!(self::profile("missing"), None);
-        assert_eq!(profiles().len(), 36);
+        assert_eq!(profiles().len(), 39);
         assert!(Profile::V5_02AdoptedSibling.bounds().ids >= 5);
     }
     #[test]

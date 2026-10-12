@@ -1,5 +1,5 @@
 //! Specification state reconstructed from boundary observations, not row leases.
-use super::{Bounds, Class, Id, Origin, Outcome, Refusal, Step, Trigger, Violation};
+use super::{Bounds, Class, Id, Origin, Outcome, Refusal, SessionFamily, Step, Trigger, Violation};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Request {
@@ -57,6 +57,7 @@ pub(super) struct Monitor {
     history: Vec<Id>,
     floor: Id,
     rows: Vec<Option<Row>>,
+    queued: Vec<usize>,
     held: bool,
     host_action: Option<u8>,
     failure: Option<Violation>,
@@ -97,7 +98,14 @@ impl Monitor {
     fn foreground(&self) -> Option<Id> {
         self.live
             .iter()
-            .find(|e| e.class.owns_foreground())
+            .find(|e| {
+                matches!(
+                    self.record(e.id).request.as_ref().map(|r| r.class),
+                    Some(Class::Session(
+                        SessionFamily::Gather | SessionFamily::Combat | SessionFamily::Progress
+                    ))
+                )
+            })
             .map(|e| e.id)
     }
     pub(super) fn session_held(&self) -> bool {
@@ -132,7 +140,12 @@ impl Monitor {
         if self.held
             && !matches!(
                 step,
-                Step::HostAction { .. } | Step::SessionHeld | Step::SessionResumed
+                Step::HostAction { .. }
+                    | Step::SessionHeld
+                    | Step::SessionResumed
+                    | Step::Emit { release: true, .. }
+                    | Step::Cancel { .. }
+                    | Step::Decide { .. }
             )
         {
             self.fail(
@@ -174,7 +187,8 @@ impl Monitor {
                     ..
                 }
         );
-        let discard_gameplay = discard_releases || matches!(step, Step::Reconnect { keep: true });
+        let discard_gameplay =
+            discard_releases || matches!(step, Step::Reconnect { keep: true } | Step::SessionHeld);
         if discard_gameplay {
             for row in &mut self.rows {
                 if row.as_ref().is_some_and(|r| discard_releases || !r.release) {
@@ -182,7 +196,15 @@ impl Monitor {
                 }
             }
             self.trim_rows();
+            self.queued
+                .retain(|&witness| self.rows.get(witness).is_some_and(Option::is_some));
         }
+    }
+    pub(super) fn host_refused(&mut self, action: u8) {
+        self.fail(
+            "host-action-dispatch",
+            format!("host-issued action {action} was refused by the seat"),
+        );
     }
     pub(super) fn host_dispatched(&mut self, action: u8) {
         if self.host_action.take() != Some(action) {
@@ -582,19 +604,28 @@ impl Monitor {
             pending,
             release,
         };
-        if let Some(index) = self.rows.iter().position(Option::is_none) {
+        let index = if let Some(index) = self.rows.iter().position(Option::is_none) {
             self.rows[index] = Some(row);
             index
         } else {
             self.rows.push(Some(row));
             self.rows.len() - 1
-        }
+        };
+        self.queued.push(index);
+        index
     }
-    pub(super) fn overflow(&mut self, witness: usize) {
-        if self.rows[witness].as_ref().is_some_and(|r| !r.release) {
-            self.rows[witness] = None;
-            self.trim_rows();
+    /// The observed Take, not the encoder, determines allowed gameplay overflow.
+    pub(super) fn taking(&mut self, gameplay_cap: usize) {
+        let mut gameplay = 0;
+        for witness in self.queued.drain(..) {
+            if self.rows[witness].as_ref().is_some_and(|r| !r.release) {
+                gameplay += 1;
+                if gameplay > gameplay_cap {
+                    self.rows[witness] = None;
+                }
+            }
         }
+        self.trim_rows();
     }
     pub(super) fn dispatched(&mut self, witness: usize, actual: bool) {
         let row = self.rows[witness]
@@ -646,6 +677,7 @@ impl Monitor {
             + self.mirrors.capacity() * std::mem::size_of::<Mirror>()
             + (self.retained.capacity() + self.history.capacity()) * std::mem::size_of::<Id>()
             + self.rows.capacity() * std::mem::size_of::<Option<Row>>()
+            + self.queued.capacity() * std::mem::size_of::<usize>()
             + self
                 .rows
                 .iter()
@@ -685,12 +717,25 @@ impl Monitor {
                 "observed ancestry violates bounds".into(),
             );
         }
-        if self.rows.iter().enumerate().any(|(index, row)| {
-            row.as_ref().is_some_and(|r| r.release) && !held.clone().any(|witness| witness == index)
-        }) {
+        if self
+            .rows
+            .iter()
+            .enumerate()
+            .any(|(index, row)| row.is_some() && !held.clone().any(|witness| witness == index))
+        {
             return fail(
-                "encoder-release",
-                "emitted release absent from held rows, dispatch, and explicit discard".into(),
+                "row-conservation",
+                "accepted row absent from custody, dispatch, and input-derived permitted drop"
+                    .into(),
+            );
+        }
+        if held
+            .clone()
+            .any(|witness| self.rows.get(witness).is_none_or(Option::is_none))
+        {
+            return fail(
+                "row-conservation",
+                "row retained or replayed after an input-derived drop".into(),
             );
         }
         Ok(())
@@ -805,7 +850,7 @@ mod tests {
                     .check(Bounds::small(), std::iter::empty())
                     .unwrap_err()
                     .name,
-                "encoder-release",
+                "row-conservation",
             );
         }
         for step in [Step::Stop, Step::HeldTick, Step::Reconnect { keep: false }] {
@@ -900,5 +945,108 @@ mod tests {
             monitor.admission_finished(2, before);
             monitor.check(Bounds::small(), std::iter::empty()).unwrap();
         }
+    }
+    #[test]
+    fn every_gameplay_row_requires_custody_or_an_observed_drop() {
+        for step in [Step::Controls, Step::SessionResumed, Step::Dispatch] {
+            let mut monitor = Monitor::default();
+            monitor.emitted(None, false);
+            monitor.input(&step);
+            assert_eq!(
+                monitor
+                    .check(Bounds::small(), std::iter::empty())
+                    .unwrap_err()
+                    .name,
+                "row-conservation",
+            );
+        }
+        for step in [
+            Step::SessionHeld,
+            Step::HeldTick,
+            Step::Stop,
+            Step::Reconnect { keep: true },
+            Step::Reconnect { keep: false },
+        ] {
+            let mut monitor = Monitor::default();
+            monitor.emitted(None, false);
+            monitor.input(&step);
+            monitor.check(Bounds::small(), std::iter::empty()).unwrap();
+        }
+    }
+
+    #[test]
+    fn guardian_discard_forbids_replaying_gameplay_but_keeps_release_obligations() {
+        let mut monitor = Monitor::default();
+        let gameplay = monitor.emitted(None, false);
+        let release = monitor.emitted(None, true);
+        monitor.input(&Step::SessionHeld);
+        monitor
+            .check(Bounds::small(), [release].into_iter())
+            .unwrap();
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), [gameplay, release].into_iter())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+        monitor.input(&Step::SessionResumed);
+        monitor.dispatched(release, true);
+        monitor.check(Bounds::small(), std::iter::empty()).unwrap();
+    }
+
+    #[test]
+    fn encoder_overflow_uses_observed_queue_order_and_never_discards_releases() {
+        let mut monitor = Monitor::default();
+        let first = monitor.emitted(None, false);
+        let release = monitor.emitted(None, true);
+        let overflow = monitor.emitted(None, false);
+        monitor.taking(1);
+        monitor
+            .check(Bounds::small(), [first, release].into_iter())
+            .unwrap();
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), [first, release, overflow].into_iter())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), [first].into_iter())
+                .unwrap_err()
+                .name,
+            "row-conservation",
+        );
+    }
+
+    #[test]
+    fn foreground_comes_from_observed_start_family() {
+        for (family, expected) in [
+            (SessionFamily::Hunt, false),
+            (SessionFamily::Gather, true),
+            (SessionFamily::Combat, true),
+            (SessionFamily::Progress, true),
+        ] {
+            let mut monitor = Monitor::default();
+            monitor.minted();
+            monitor.start(1, None, None, Class::Session(family), 0);
+            monitor.accepted(1);
+            assert_eq!(monitor.foreground(), expected.then_some(1));
+        }
+    }
+
+    #[test]
+    fn host_refusal_is_an_invariant_failure_even_without_dispatch() {
+        let mut monitor = Monitor::default();
+        monitor.host_refused(7);
+        assert_eq!(
+            monitor
+                .check(Bounds::small(), std::iter::empty())
+                .unwrap_err()
+                .name,
+            "host-action-dispatch",
+        );
     }
 }
