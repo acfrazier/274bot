@@ -19,6 +19,11 @@ env:
   # outgrow the runner disk.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
+  # The gatherer's real-pack tests need the reviewed 289 nav pack (the Shantay
+  # R2 bake). The 0.2.0.2 Linux release ships that exact file, so lanes that
+  # load it fetch it from there once, verify the checksum, and cache it.
+  CI_NAV_PACK_RELEASE: "0.2.0.2"
+  CI_NAV_PACK_SHA256: 4270f02711447267e0ee639579d41532996a3d37f712d5d63cdb79051e45300f
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
 # adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace
@@ -128,6 +133,7 @@ jobs:
             free_disk: true
             cache_key: workspace
             save_cache: true
+            real_nav_pack: true
             os: ubuntu-24.04
             command: "cargo test --workspace"
           - lane: vendor
@@ -140,12 +146,14 @@ jobs:
             free_disk: false
             cache_key: workspace
             save_cache: false
+            real_nav_pack: true
             os: ubuntu-24.04
             command: "cargo test -p script --features load --tests"
           - lane: script-no-default
             free_disk: false
             cache_key: workspace
             save_cache: false
+            real_nav_pack: true
             os: ubuntu-24.04
             command: "cargo test -p script --no-default-features"
           - lane: host-play-memory
@@ -211,6 +219,7 @@ jobs:
             libasound2-dev \
             libwayland-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             libx11-dev \
             libxcursor-dev \
             libxi-dev \
@@ -224,6 +233,28 @@ jobs:
           workspaces: |
             . -> target
             vendor/fr-client-rust -> target
+      - name: Cache the 289 nav pack
+        if: ${{ matrix.real_nav_pack }}
+        id: nav-pack-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/nav-289
+          key: nav-289-${{ env.CI_NAV_PACK_SHA256 }}
+      - name: Fetch the 289 nav pack
+        if: ${{ matrix.real_nav_pack && steps.nav-pack-cache.outputs.cache-hit != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nav-289"
+          gh release download "$CI_NAV_PACK_RELEASE" -R "$GITHUB_REPOSITORY" \
+            -p "274bot-$CI_NAV_PACK_RELEASE-linux-x64.tar.gz" -O - \
+            | tar -xzOf - "274bot-$CI_NAV_PACK_RELEASE-linux-x64/nav/289/274bot.navpack" \
+            > "$RUNNER_TEMP/nav-289/274bot.navpack"
+      - name: Use the 289 nav pack
+        if: ${{ matrix.real_nav_pack }}
+        run: |
+          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot.navpack" | sha256sum -c -
+          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
         run: ${{ matrix.command }}
 
