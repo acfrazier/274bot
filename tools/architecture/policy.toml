@@ -2,9 +2,10 @@
 #
 # The checker derives the actual graph from Cargo.toml manifests (including
 # workspace aliases, optional/dev/build/target tables, and package renames).
-# A new edge, kind, or workspace member is a deliberate boundary change:
-# edit this file and docs/architecture.md, then get review.
-# This is not a frozen line-count snapshot.
+# Permanent allowances are the accepted destination matrix. Named migration
+# records are exact remaining debt, not permanent permissions. Both are
+# untrusted inputs to the separately pinned checker.
+schema_version = 1
 
 [workspace]
 members = [
@@ -88,7 +89,7 @@ reason = "dev-only: ctx unit tests build client ObjType tables. The compiled scr
 from = "script"
 to = "nav"
 kinds = ["normal"]
-reason = "0.2.0: compiled cards and host receipts share nav's arrival/zone/route vocabulary (ArrivalKind, ZoneKey, ZoneTable, Route, WildernessRules) and the named-bank alias tests resolve catalog names against packed geometry; nav never depends on script. 0.2.1 decision: move that vocabulary down to api (or the route-risk replay up to nav) and return this edge to dev-only, or keep it."
+reason = "Permanent script -> nav edge. F0 freezes nav::contract semantics; T5.1 removes exact production representation exceptions without removing this edge."
 
 # --- orchestration and composition ---
 
@@ -232,17 +233,31 @@ to = "client"
 kinds = ["normal"]
 reason = "panel blits the client frame and feeds input; GPU 3D stays in the client."
 
-[[allow]]
+[[migration]]
+id = "UI-PANEL-HOST"
 from = "panel"
 to = "host"
-kinds = ["normal"]
-reason = "panel reads slot/random status owned by host."
+kind = "normal"
+owner = "T3"
+consumers = ["panel:lib:panel", "panel:bin:panel-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
+
+[[migration]]
+id = "UI-PANEL-PLAY"
+from = "panel"
+to = "host-play"
+kind = "normal"
+owner = "T3"
+consumers = ["panel:lib:panel", "panel:bin:panel-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
 [[allow]]
 from = "panel"
 to = "host-play"
-kinds = ["normal", "dev"]
-reason = "panel is a composition front over the shared Play lifecycle, not a second kernel. The dev edge only enables host-play's live-probe feature for panel's manual-click LIVE cells."
+kinds = ["dev"]
+reason = "Test-only live-probe feature for panel manual-click LIVE cells."
 
 [[allow]]
 from = "panel"
@@ -250,23 +265,35 @@ to = "nav"
 kinds = ["normal"]
 reason = "WalkTo picker and nav paints are panel chrome over host nav."
 
-[[allow]]
+[[migration]]
+id = "UI-PANEL-SCENARIO"
 from = "panel"
 to = "scenario"
-kinds = ["normal"]
-reason = "panel-play --live hosts the shared scenario runner."
+kind = "normal"
+owner = "T3"
+consumers = ["panel:lib:panel", "panel:bin:panel-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
-[[allow]]
+[[migration]]
+id = "UI-PANEL-SCRIPT"
 from = "panel"
 to = "script"
-kinds = ["normal"]
-reason = "script chrome (browse/start/load) dispatches through the script kernel."
+kind = "normal"
+owner = "T3"
+consumers = ["panel:lib:panel", "panel:bin:panel-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
-[[allow]]
+[[migration]]
+id = "UI-PANEL-VAULT"
 from = "panel"
 to = "vault"
-kinds = ["normal"]
-reason = "profile create/edit/unlock is panel UI over the vault leaf."
+kind = "normal"
+owner = "T3"
+consumers = ["panel:lib:panel", "panel:bin:panel-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
 [[allow]]
 from = "tui"
@@ -280,11 +307,21 @@ to = "client"
 kinds = ["normal"]
 reason = "tui observes client facts with raster Off; it does not own a GPU loop."
 
+[[migration]]
+id = "UI-TUI-PLAY"
+from = "tui"
+to = "host-play"
+kind = "normal"
+owner = "T3"
+consumers = ["tui:lib:tui", "tui:bin:tui-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
+
 [[allow]]
 from = "tui"
 to = "host-play"
-kinds = ["normal", "dev"]
-reason = "tui composes the same Play session as panel; production tui does not depend on host directly. The dev edge only enables host-play's test-support feature for tui tests."
+kinds = ["dev"]
+reason = "Test-only test-support and live-probe fixtures; never production permission."
 
 [[allow]]
 from = "tui"
@@ -292,23 +329,35 @@ to = "nav"
 kinds = ["normal"]
 reason = "tui map pane reads packed collision/pins."
 
-[[allow]]
+[[migration]]
+id = "UI-TUI-SCENARIO"
 from = "tui"
 to = "scenario"
-kinds = ["normal"]
-reason = "tui-play --live uses the shared scenario runner."
+kind = "normal"
+owner = "T3"
+consumers = ["tui:lib:tui", "tui:bin:tui-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
-[[allow]]
+[[migration]]
+id = "UI-TUI-SCRIPT"
 from = "tui"
 to = "script"
-kinds = ["normal"]
-reason = "tui script pane dispatches the same kernel controls as panel."
+kind = "normal"
+owner = "T3"
+consumers = ["tui:lib:tui", "tui:bin:tui-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
-[[allow]]
+[[migration]]
+id = "UI-TUI-VAULT"
 from = "tui"
 to = "vault"
-kinds = ["normal"]
-reason = "tui unlocks the same vault layout as panel/host-play."
+kind = "normal"
+owner = "T3"
+consumers = ["tui:lib:tui", "tui:bin:tui-play"]
+reason = "Temporary direct UI access while commands and views migrate to frontend-core."
+removal_endpoint = "T3.3"
 
 [[allow]]
 from = "tui"
@@ -359,3 +408,107 @@ from = "e2e"
 to = "vault"
 kinds = ["normal"]
 reason = "live twins mint/unlock vaulted profiles."
+
+# All rows inspect the union of target cfgs. Provenance retains the exact cfg.
+# These are source/activation gates, not invocations of candidate build scripts.
+[[configuration]]
+id = "full-products"
+packages = ["panel", "tui", "host-play"]
+features = []
+default_features = true
+dev = false
+status = "enforced"
+owner = "T1"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "workspace-tests"
+packages = ["api", "e2e", "frontend-core", "host", "host-play", "nav", "panel", "scenario", "script", "seat-model", "tui", "vault"]
+features = []
+default_features = true
+dev = true
+status = "enforced"
+owner = "T1"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "script-no-default"
+packages = ["script"]
+features = []
+default_features = false
+dev = false
+status = "enforced"
+owner = "T2"
+forbidden_features = ["script/load"]
+optional_dependencies = []
+
+[[configuration]]
+id = "script-load-tests"
+packages = ["script"]
+features = ["script/load"]
+default_features = true
+dev = true
+status = "enforced"
+owner = "T2"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "memory-profile"
+packages = ["panel", "tui", "host-play"]
+features = ["panel/memory-profile", "tui/memory-profile", "host-play/memory-profile"]
+default_features = true
+dev = false
+status = "enforced"
+owner = "T1"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "memory-profile-no-alloc"
+packages = ["panel", "tui", "host-play"]
+features = ["panel/memory-profile-no-alloc", "tui/memory-profile-no-alloc", "host-play/memory-profile-no-alloc"]
+default_features = true
+dev = false
+status = "enforced"
+owner = "T1"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "host-performance"
+packages = ["host"]
+features = ["host/performance-profile"]
+default_features = true
+dev = true
+status = "enforced"
+owner = "T1"
+forbidden_features = []
+optional_dependencies = []
+
+[[configuration]]
+id = "render-diagnostics"
+packages = ["panel", "host"]
+features = ["panel/render-diagnostics", "host/render-diagnostics"]
+default_features = true
+dev = true
+status = "enforced"
+owner = "T4"
+forbidden_features = []
+optional_dependencies = []
+
+# §27 §5: this row cannot disappear or change owner/status through an ordinary
+# merge. T2 must make deno_ast optional and remove all script/load activation.
+# Build enforcement starts in the approved plumbing transition, not at F0.
+[[configuration]]
+id = "native-only"
+packages = ["panel", "tui", "host-play"]
+features = []
+default_features = false
+dev = false
+status = "pending"
+owner = "T2"
+forbidden_features = ["script/load"]
+optional_dependencies = ["script/deno_ast"]
