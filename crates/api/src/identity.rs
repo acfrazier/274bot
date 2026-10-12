@@ -150,26 +150,32 @@ fn mint_atomic(kind: IdentityKind, last: &AtomicU64) -> Result<NonZeroU64, Ident
 ///
 /// Not a pid, user name, wall-clock reading or reusable service index: it is
 /// exactly the start nonce composition supplies at process start, under the
-/// non-reuse policy composition owns (see
+/// accepted non-reuse policy (see
 /// [`from_start_nonce`](Self::from_start_nonce)). This type adds no
 /// heuristic of its own. Compare only for equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessIncarnation(NonZeroU64);
 
 impl ProcessIncarnation {
-    /// The incarnation named by `nonce`, the value composition minted once
+    /// The incarnation named by `nonce`, the value composition drew once
     /// for this process start.
     ///
-    /// Non-reuse across process starts is the nonce's assurance, not this
-    /// type's: the T1 composition owner supplies a value no earlier start of
-    /// this installation produced. The accepted source is an open freeze
-    /// decision recorded with F0-1/2 and owned by T1: a durable counter in
-    /// local state (F0-7 `LocalStatePort`) guarantees it; a 64-bit value from
-    /// OS entropy gives only a collision probability the orchestrator must
-    /// accept explicitly. Neither a clock reading nor a pid qualifies: both
-    /// repeat. Two calls with the same nonce name the same incarnation, so
-    /// a nonce is minted once per process. Tests pass distinct nonces for
-    /// the distinct incarnations they need.
+    /// Accepted policy (orchestrator, 2026-10-12, ADR 0007 note): the T1
+    /// composition owner draws the nonce once at process start as a nonzero
+    /// 64-bit value from the OS CSPRNG. Non-reuse across starts is
+    /// probabilistic (about 2^-64 per pair of starts), not guaranteed, and
+    /// that is acceptable because an incarnation is never persisted and
+    /// never used as a durable key: durable receipts key by domain identity
+    /// (§21 §4.4); the incarnation only fences process-scoped values inside
+    /// one run. No persisted counter is kept. The OS CSPRNG is the only
+    /// accepted source, so a draw that fails has no fallback (no clock, pid
+    /// or counter stands in) and fails the process start, and a zero draw is
+    /// drawn again ([`NonZeroU64`] names no zero nonce).
+    ///
+    /// This constructor is the identity mapping and nothing else: every
+    /// nonzero nonce names its own incarnation, two calls with the same
+    /// nonce name the same one, and it reads no clock, pid or counter. Tests
+    /// pass distinct nonces for the distinct incarnations they need.
     pub const fn from_start_nonce(nonce: NonZeroU64) -> Self {
         Self(nonce)
     }

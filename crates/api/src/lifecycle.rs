@@ -12,11 +12,13 @@
 //!   every command advances the generation, only attempt-invalidating rows
 //!   advance the cancellation fence, agreeing refreshes create no second
 //!   one-shot, a clean Logout latches automatic login off until an explicit
-//!   rearm, acknowledgements from an older generation apply only while the
-//!   current intent still asks for the same outcome, a turnover (Relog now,
-//!   Switch world) owes its login half only until a stronger row supersedes
-//!   it, and Remove or ProcessShutdown closes the mailbox's slot lifetime for
-//!   good (today the sticky `SlotArm::stop`, `play_login.rs:807-817,945-949`);
+//!   rearm, a clean-logout boundary is settled once (by its matching
+//!   acknowledgement or by the session's exit) so a logout acknowledgement
+//!   applies only to the boundary still outstanding that it was read under,
+//!   a turnover (Relog now, Switch world) owes its login half once its
+//!   session exits unless a stronger row supersedes it, and Remove or
+//!   ProcessShutdown closes the mailbox's slot lifetime for good (today the
+//!   sticky `SlotArm::stop`, `play_login.rs:807-817,945-949`);
 //!   no generation wraps ([`MailboxError::Exhausted`]);
 //! - [`SessionEventOut`], the single session boundary every consumer reads,
 //!   carried in B03's identity envelope ([`crate::identity::Event`]) with a
@@ -35,9 +37,11 @@
 //! Owner-only obligations the mailbox does not carry (they need the owner's
 //! clock or transport evidence): the repeat-guard history
 //! (`record_unexpected_logout_at`, `play_login.rs:744-778`; an explicit
-//! Login clears it, `:378`; an exit is counted only when
-//! [`IntentSnapshot::logout_wanted`] was false before the exit was observed,
-//! `:749`); the clean-release evidence (`CleanExit`, `:819-885`), which
+//! Login clears it, `:378`; an exit is counted only when neither
+//! [`IntentSnapshot::logout_wanted`] nor [`IntentSnapshot::turnover_pending`]
+//! was true before the exit was observed, `:749`, where today's relog
+//! carries the logout latch its composed Logout installed, `:388,739`); the
+//! clean-release evidence (`CleanExit`, `:819-885`), which
 //! every row that moves the cancellation fence also invalidates; and the
 //! process-condition ledger (`crate::process_condition::ProcessConditions`),
 //! consulted before every attempt so a login the intent still wants is
@@ -97,10 +101,13 @@ pub enum Intent {
     /// Relog now: explicit clean session turnover followed by a login, not
     /// Logout's park latch. Today the memory-mode relog composes it from the
     /// owner's Logout and Login: the logout half goes out while online and
-    /// the login half is armed once the slot is parked
-    /// (`request_memory_relog`/`complete_memory_relogs`,
+    /// the login half is armed, as a newer command, once the slot is parked
+    /// after the exit (`request_memory_relog`/`complete_memory_relogs`,
     /// `session.rs:1102-1155`); with no live session it is a plain login
-    /// (`session.rs:1107-1109`).
+    /// (`session.rs:1107-1109`). The turnover stays open from the post until
+    /// the session exits: its exit is deliberate (no repeat-guard strike, no
+    /// kept session work), and a logout acknowledgement can settle its
+    /// logout half only once.
     RelogNow,
     /// World preference save: changes the next handshake's selection and
     /// never disconnects an online bot (today the world branch of
@@ -289,10 +296,11 @@ pub enum LifecycleFact {
     /// `tick_flags`, `play_login.rs:1101-1103`); `resumable` is whether the
     /// client kept its world, which selects reconnect (opcode 18) over a
     /// fresh login (16) (`play_login.rs:1110-1119`). Operator Login intent
-    /// never turns a dirty reconnect into a clean login. An exit while a
-    /// turnover's logout half is pending settles that half: the session is
-    /// gone, so the login half is armed (today `complete_memory_relogs`
-    /// fires it once the slot is parked, `session.rs:1124-1155`).
+    /// never turns a dirty reconnect into a clean login. The exit settles
+    /// the session's outstanding clean-logout boundary, so a logout
+    /// acknowledgement that arrives later is stale; an open turnover's login
+    /// half is armed now (today `complete_memory_relogs` fires it once the
+    /// slot is parked, `session.rs:1124-1155`).
     SessionExited {
         /// The exit was a server logout (operator logout, world change or
         /// idle), never a drop.
@@ -641,7 +649,10 @@ impl IntentSnapshot {
         self.logout_wanted
     }
 
-    /// Whether a turnover's login half is still owed after its logout half.
+    /// Whether a turnover is open on the live session: its logout half is
+    /// still wanted or already pressed, and its login half follows the
+    /// session's exit (today the frontend's `mem_relog` set, from the relog
+    /// request until the slot is parked, `session.rs:324-325,1112,1145`).
     pub const fn turnover_pending(&self) -> bool {
         self.turnover
     }
@@ -738,10 +749,15 @@ pub struct IntentMailbox {
     generation: IntentGeneration,
     cancellation: IntentGeneration,
     login: LoginIntent,
-    logout_wanted: bool,
-    /// A turnover (Relog now, Switch world) owes its login half once its
-    /// logout half is acknowledged or the session exits; a stronger row
-    /// supersedes it.
+    /// The outstanding clean-logout boundary, if a logout is wanted: the
+    /// generation of the command that opened it. An agreeing refresh keeps
+    /// it; its matching acknowledgement or the session's exit settles it
+    /// once, and an acknowledgement read under an older or an already
+    /// settled boundary is stale.
+    logout: Option<IntentGeneration>,
+    /// A turnover (Relog now, Switch world) is open on the live session: its
+    /// logout half is wanted or pressed, and its login half is owed once the
+    /// session exits. A stronger row supersedes it.
     turnover: bool,
     latch: Option<LoginLatch>,
     error_hold: bool,
@@ -770,7 +786,7 @@ impl IntentMailbox {
             } else {
                 LoginIntent::Withdrawn
             },
-            logout_wanted: false,
+            logout: None,
             turnover: false,
             latch: None,
             error_hold: false,
@@ -793,7 +809,7 @@ impl IntentMailbox {
             generation: self.generation,
             cancellation: self.cancellation,
             login: self.login,
-            logout_wanted: self.logout_wanted,
+            logout_wanted: self.logout.is_some(),
             turnover: self.turnover,
             latch: self.latch,
             error_hold: self.error_hold,
@@ -849,16 +865,27 @@ impl IntentMailbox {
         self.error_hold = false;
         self.latch = None;
         self.login = LoginIntent::Once;
-        self.logout_wanted = false;
+        self.logout = None;
         self.turnover = false;
     }
 
+    /// Want a clean logout: an outstanding boundary keeps its identity (an
+    /// agreeing refresh); otherwise the current command opens a new one.
+    fn want_logout(&mut self) {
+        if self.logout.is_none() {
+            self.logout = Some(self.generation);
+        }
+    }
+
     /// Begin a turnover: the logout half only while a session is online,
-    /// then the login half; with no session it is the login alone.
+    /// then the login half; with no session it is the login alone. A logout
+    /// boundary already outstanding is kept (an agreeing refresh).
     fn begin_turnover(&mut self) {
+        let outstanding = self.logout;
         self.arm_login();
         if self.session_online {
-            self.logout_wanted = true;
+            self.logout = outstanding;
+            self.want_logout();
             self.turnover = true;
         }
     }
@@ -902,7 +929,7 @@ impl IntentMailbox {
             Intent::Logout => {
                 self.command(true)?;
                 self.latch = Some(LoginLatch::OperatorLogout);
-                self.logout_wanted = true;
+                self.want_logout();
                 self.turnover = false;
                 self.login = LoginIntent::Withdrawn;
                 // A connected exit reads OperatorLogout from the latch; only
@@ -916,7 +943,7 @@ impl IntentMailbox {
                 self.command(true)?;
                 self.latch = Some(LoginLatch::PersistedLogout);
                 self.login = LoginIntent::Withdrawn;
-                self.logout_wanted = false;
+                self.logout = None;
                 self.turnover = false;
             }
             Intent::WithdrawLogin => {
@@ -978,7 +1005,11 @@ impl IntentMailbox {
                 self.turnover = false;
                 // A connected slot gets the clean logout first; the owner
                 // bounds that window and stops after the exit or its deadline.
-                self.logout_wanted = self.session_online;
+                if self.session_online {
+                    self.want_logout();
+                } else {
+                    self.logout = None;
+                }
             }
         }
         Ok(self.receipt(before))
@@ -996,14 +1027,17 @@ impl IntentMailbox {
                 self.reconnect = true;
             }
             LifecycleFact::SessionExited { clean, resumable } => {
-                self.session_online = false;
+                let was_online = std::mem::replace(&mut self.session_online, false);
                 self.last_exit_clean = clean;
                 self.reconnect = resumable;
-                if self.turnover {
-                    // The logout half is done with the session; the login
-                    // half is owed now.
-                    self.turnover = false;
-                    self.logout_wanted = false;
+                if was_online {
+                    // The session is gone: its clean-logout boundary is
+                    // settled, so a later acknowledgement of it is stale.
+                    self.logout = None;
+                }
+                if std::mem::replace(&mut self.turnover, false) {
+                    // The turnover's session is done; its login half is
+                    // owed now.
                     self.login = LoginIntent::Once;
                 }
             }
@@ -1011,7 +1045,7 @@ impl IntentMailbox {
                 count,
                 window_seconds,
             } => {
-                if !self.closed && self.latch.is_none() && !self.logout_wanted {
+                if !self.closed && self.latch.is_none() && self.logout.is_none() && !self.turnover {
                     self.command(true)?;
                     self.latch = Some(LoginLatch::RepeatGuard {
                         count,
@@ -1071,7 +1105,7 @@ impl IntentMailbox {
     /// `logout_command`, `play_login.rs:725-731`); a closed lifetime still
     /// presses the clean logout its teardown wants.
     pub fn logout_command(&self, online: bool) -> Option<IntentCommand> {
-        (online && self.logout_wanted).then_some(IntentCommand {
+        (online && self.logout.is_some()).then_some(IntentCommand {
             generation: self.generation,
             cancellation: self.cancellation,
         })
@@ -1091,13 +1125,18 @@ impl IntentMailbox {
     /// generation applies only while the current intent still asks for a
     /// login; the want survives only as the auto-login preference (today
     /// `acknowledge_login`, `play_login.rs:793-803`). A closed lifetime
-    /// records nothing.
+    /// records nothing, and neither does an open turnover: a login completed
+    /// before its session exits belongs to the session the turnover retires,
+    /// so it cannot spend the login half owed after the exit (today the
+    /// relog's logout latch makes it stale, `play_login.rs:388,795-799`).
     pub fn acknowledge_login(&mut self, command: IntentCommand) -> Acknowledgement {
-        if self.closed {
+        if self.closed || self.turnover {
             return Acknowledgement::Stale;
         }
         if self.generation != command.generation
-            && (self.login == LoginIntent::Withdrawn || self.latch.is_some() || self.logout_wanted)
+            && (self.login == LoginIntent::Withdrawn
+                || self.latch.is_some()
+                || self.logout.is_some())
         {
             return Acknowledgement::Stale;
         }
@@ -1109,20 +1148,24 @@ impl IntentMailbox {
         Acknowledgement::Applied
     }
 
-    /// Acknowledge a logout the slot pressed under `command`: an older
-    /// generation applies only while a logout is still wanted. A Logout
-    /// installs the OperatorLogout latch; a turnover whose login half was
-    /// not superseded keeps its login armed instead (today
-    /// `acknowledge_logout`, `play_login.rs:733-742`, and the login half of
-    /// the memory relog, `session.rs:1139-1150`).
+    /// Acknowledge a logout the slot pressed under `command`. It applies
+    /// only to the clean-logout boundary still outstanding, and only if the
+    /// command was read under it (an agreeing refresh keeps the boundary, so
+    /// an older generation read under it still applies); it settles the
+    /// boundary once. A command read before the boundary opened, or after
+    /// its acknowledgement or the session's exit settled it, is stale and
+    /// changes nothing, whatever its generation. A Logout installs the
+    /// OperatorLogout latch; an open turnover keeps its login half owed for
+    /// the exit instead (today `acknowledge_logout`, `play_login.rs:733-742`,
+    /// and the login half of the memory relog, armed as a newer command once
+    /// the slot is parked, `session.rs:1131-1146`).
     pub fn acknowledge_logout(&mut self, command: IntentCommand) -> Acknowledgement {
-        if self.generation != command.generation && !self.logout_wanted {
-            return Acknowledgement::Stale;
+        match self.logout {
+            Some(opened) if command.generation >= opened => {}
+            _ => return Acknowledgement::Stale,
         }
-        self.logout_wanted = false;
-        if std::mem::replace(&mut self.turnover, false) {
-            self.login = LoginIntent::Once;
-        } else {
+        self.logout = None;
+        if !self.turnover {
             self.latch = Some(LoginLatch::OperatorLogout);
             self.login = LoginIntent::Withdrawn;
         }
@@ -1133,17 +1176,20 @@ impl IntentMailbox {
     /// no logout is pending (today `relogs_after_drop`,
     /// `play_login.rs:609-612`).
     pub fn relogs_after_drop(&self) -> bool {
-        !self.logout_wanted && self.snapshot().login_wanted()
+        self.logout.is_none() && self.snapshot().login_wanted()
     }
 
     /// Whether an exit keeps a running or paused run's session work for a
     /// later explicit Login: the script needs a session, no logout is
-    /// pending, and neither an operator nor a persisted logout latched the
-    /// slot; the repeat guard keeps the work (today
-    /// `keeps_script_work_after_exit`, `play_login.rs:617-625`).
+    /// pending, no turnover is open, and neither an operator nor a persisted
+    /// logout latched the slot; the repeat guard keeps the work (today
+    /// `keeps_script_work_after_exit`, `play_login.rs:617-625`, where the
+    /// relog's composed Logout leaves `want_logout` or the latch set until
+    /// the slot is parked, `:388-389,739`).
     pub fn keeps_run_work_after_exit(&self) -> bool {
         self.script_needs_session
-            && !self.logout_wanted
+            && self.logout.is_none()
+            && !self.turnover
             && !matches!(
                 self.latch,
                 Some(LoginLatch::OperatorLogout | LoginLatch::PersistedLogout)
