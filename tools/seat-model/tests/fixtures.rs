@@ -514,7 +514,7 @@ fn r5_counterexample_v5_06() {
     assert_eq!(trace.final_state.outcome(id), None);
 
     let release = overloaded_legacy_release_fixture();
-    let trace = expect_r5_failure(&release, "encoder-release");
+    let trace = expect_r5_failure(&release, "row-conservation");
     assert_eq!(trace.final_state.release_dispatched(), 0);
 }
 
@@ -1398,38 +1398,76 @@ fn chosen_session_capture_handoff_covers_all_family_pairs() {
     }
 }
 
-#[test]
-fn chosen_guardian_actions_dispatch_outside_session_queue() {
+fn guardian_action_fixture(family: SessionFamily) -> (Fixture, Id, Id) {
     let mut fixture = Fixture::new(Bounds::production());
     let root = fixture.admitted(None, Class::Capability, 1);
-    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 2);
-    for (count, action) in [5, 1, 9].into_iter().enumerate() {
-        fixture.apply(Step::HostAction { action });
-        assert_eq!(fixture.builder.host_actions_dispatched(), count + 1);
-        assert_eq!(fixture.builder.last_host_action(), Some(action));
-        assert_eq!(fixture.builder.dispatched(), 0);
+    let session = fixture.admitted(None, Class::Session(family), 2);
+    (fixture, root, session)
+}
+
+fn apply_host_actions_immediately(fixture: &mut Fixture, actions: &[u8]) {
+    let mut expected_count = fixture.builder.host_actions_dispatched();
+    let dispatched = fixture.builder.dispatched();
+    for action in actions {
+        fixture.apply(Step::HostAction { action: *action });
+        expected_count += 1;
+        assert_eq!(fixture.builder.host_actions_dispatched(), expected_count);
+        assert_eq!(fixture.builder.last_host_action(), Some(*action));
+        assert_eq!(fixture.builder.dispatched(), dispatched);
     }
-    assert_eq!(fixture.builder.foreground_session(), Some(session));
-    assert!(fixture.builder.entry(root).is_some());
-    let trace = expect_chosen_pass(&fixture);
-    assert_eq!(trace.final_state.host_actions_dispatched(), 3);
-    assert_eq!(trace.final_state.last_host_action(), Some(9));
-    assert_eq!(trace.final_state.dispatched(), 0);
-    assert!(trace.final_state.entry(root).is_some());
-    assert_eq!(trace.final_state.foreground_session(), Some(session));
 }
 
 #[test]
-fn chosen_guardian_hold_freezes_seat_and_preserves_rows() {
+fn chosen_guardian_actions_dispatch_outside_session_queue() {
+    let (mut fixture, root, session) = guardian_action_fixture(SessionFamily::Gather);
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    assert!(fixture.builder.entry(root).is_some());
+
+    apply_host_actions_immediately(&mut fixture, &[5, 1, 9]);
+    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    fixture.apply(Step::Stop);
+    apply_host_actions_immediately(&mut fixture, &[4, 6]);
+
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.host_actions_dispatched(), 5);
+    assert_eq!(trace.final_state.last_host_action(), Some(6));
+    assert_eq!(trace.final_state.dispatched(), 0);
+}
+
+#[test]
+fn chosen_hunt_guardian_actions_dispatch_outside_session_queue() {
+    let (mut fixture, root, session) = guardian_action_fixture(SessionFamily::Hunt);
+    assert_eq!(fixture.builder.foreground_session(), None);
+    assert!(fixture.builder.entry(root).is_some());
+
+    apply_host_actions_immediately(&mut fixture, &[5, 1, 9]);
+    assert_eq!(fixture.builder.foreground_session(), None);
+    fixture.apply(Step::Stop);
+    apply_host_actions_immediately(&mut fixture, &[4, 6]);
+
+    let trace = expect_chosen_pass(&fixture);
+    assert_eq!(trace.final_state.host_actions_dispatched(), 5);
+    assert_eq!(trace.final_state.last_host_action(), Some(6));
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert!(trace.final_state.entry(session).is_none());
+}
+
+fn guardian_hold_fixture(family: SessionFamily) -> (Fixture, [Id; 7]) {
     let mut fixture = Fixture::new(Bounds::production());
-    let root = fixture.admitted(None, Class::Capability, 1);
-    let session = fixture.admitted(None, Class::Session(SessionFamily::Gather), 2);
+    let producer = fixture.admitted(None, Class::Capability, 1);
+    let held_release = fixture.admitted(None, Class::Capability, 2);
+    let held_decide = fixture.child(held_release, 3);
+    let held_cancel = fixture.child(held_decide, 4);
+    let preheld_cancel = fixture.child(producer, 5);
+    let session = fixture.admitted(None, Class::Session(family), 6);
+    fixture.apply(Step::Page);
+    fixture.apply(Step::Prompt(held_decide));
     fixture.apply(Step::Emit {
         of: Some(session),
         release: false,
     });
     fixture.apply(Step::Emit {
-        of: Some(root),
+        of: Some(producer),
         release: true,
     });
     fixture.apply(Step::Take);
@@ -1437,17 +1475,96 @@ fn chosen_guardian_hold_freezes_seat_and_preserves_rows() {
         of: Some(session),
         release: false,
     });
-    let pending = fixture.start(Some(session), None, Class::Capability, 3, 0, 0);
+    let pending = fixture.start(Some(session), None, Class::Capability, 7, 0, 0);
+    fixture.apply(Step::Cancel {
+        of: preheld_cancel,
+        throw: false,
+    });
     fixture.apply(Step::SessionHeld);
-    assert!(fixture.builder.session_held());
-    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    fixture.apply(Step::Emit {
+        of: Some(held_release),
+        release: true,
+    });
+    fixture.apply(Step::Cancel {
+        of: held_cancel,
+        throw: false,
+    });
+    fixture.apply(Step::Decide {
+        of: held_decide,
+        complete: false,
+    });
+    (
+        fixture,
+        [
+            producer,
+            held_release,
+            session,
+            preheld_cancel,
+            held_cancel,
+            held_decide,
+            pending,
+        ],
+    )
+}
 
+fn assert_guardian_hold_frozen(fixture: &Fixture, ids: [Id; 7], expected_foreground: Option<Id>) {
+    let [
+        producer,
+        held_release,
+        session,
+        preheld_cancel,
+        held_cancel,
+        held_decide,
+        pending,
+    ] = ids;
+    let state = &fixture.builder;
+    assert!(state.session_held());
+    assert_eq!(state.foreground_session(), expected_foreground);
+    assert_eq!(state.live(), 6);
+    assert_eq!(state.pending(), 1);
+    assert_eq!(state.history_floor(), 0);
+    assert!(state.terminal_order().is_empty());
+    assert_eq!(state.carry_len(), 3);
+    assert_eq!(state.dispatched(), 0);
+    assert_eq!(state.release_dispatched(), 0);
+    assert_eq!(state.dropped(), 2);
+    assert_eq!(state.encoded_rows(), vec![(Some(producer), true)]);
+
+    for id in [
+        producer,
+        held_release,
+        session,
+        preheld_cancel,
+        held_cancel,
+        held_decide,
+    ] {
+        assert!(state.entry(id).is_some(), "{id}");
+    }
+    assert!(state.entry(pending).is_none());
+    for id in [
+        producer,
+        held_release,
+        session,
+        preheld_cancel,
+        held_cancel,
+        held_decide,
+        pending,
+    ] {
+        assert_eq!(state.outcome(id), None, "{id}");
+        assert_eq!(state.settlements(id), 0, "{id}");
+    }
+    let decision = state.entry(held_decide).expect("live decision target");
+    assert!(decision.prompt);
+    assert_eq!(decision.decisions, 0);
+}
+
+fn assert_guardian_hold_blocks_seat_steps(fixture: &mut Fixture, session: Id, pending: Id) {
     let blocked = [
         Step::Start {
             parent: None,
             local_parent: None,
             class: Class::Capability,
-            group: 3,
+            group: 8,
             bytes: 0,
             hooks: 0,
         },
@@ -1468,14 +1585,11 @@ fn chosen_guardian_hold_freezes_seat_and_preserves_rows() {
         Step::Take,
         Step::Batch,
         Step::Reconnect { keep: true },
+        Step::Reconnect { keep: false },
         Step::Stop,
         Step::HeldTick,
         Step::Throw(session),
         Step::Prompt(session),
-        Step::Cancel {
-            of: pending,
-            throw: false,
-        },
         Step::Revoke {
             of: session,
             trigger: Trigger::HostRevoke,
@@ -1490,28 +1604,92 @@ fn chosen_guardian_hold_freezes_seat_and_preserves_rows() {
         assert!(fixture.builder.apply(&step).is_err(), "{step:?}");
         assert_eq!(fixture.builder, before, "{step:?}");
     }
+}
 
-    fixture.apply(Step::HostAction { action: 7 });
+fn resume_guardian_hold_fixture(
+    mut fixture: Fixture,
+    ids: [Id; 7],
+    expected_foreground: Option<Id>,
+) -> Trace {
+    let [
+        producer,
+        held_release,
+        session,
+        preheld_cancel,
+        held_cancel,
+        held_decide,
+        pending,
+    ] = ids;
+    assert_guardian_hold_frozen(&fixture, ids, expected_foreground);
+    assert_guardian_hold_blocks_seat_steps(&mut fixture, session, pending);
+    assert_guardian_hold_frozen(&fixture, ids, expected_foreground);
+    apply_host_actions_immediately(&mut fixture, &[7]);
     assert_eq!(fixture.builder.host_actions_dispatched(), 1);
     assert_eq!(fixture.builder.last_host_action(), Some(7));
-    assert!(fixture.builder.session_held());
-    assert_eq!(fixture.builder.foreground_session(), Some(session));
-    assert!(fixture.builder.entry(root).is_some());
+    assert_guardian_hold_frozen(&fixture, ids, expected_foreground);
+
     fixture.apply(Step::SessionResumed);
     assert!(!fixture.builder.session_held());
-    assert_eq!(fixture.builder.foreground_session(), Some(session));
+    assert_eq!(fixture.builder.foreground_session(), expected_foreground);
     fixture.apply(Step::Admit(pending));
+    fixture.apply(Step::Controls);
+    assert_eq!(
+        fixture.builder.outcome(preheld_cancel),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+    assert_eq!(
+        fixture.builder.outcome(held_cancel),
+        Some(Outcome::Aborted(Trigger::ParentAborted))
+    );
+    assert_eq!(
+        fixture.builder.terminal_order(),
+        vec![preheld_cancel, held_cancel]
+    );
+    assert_eq!(fixture.builder.settlements(preheld_cancel), 0);
+    assert_eq!(fixture.builder.settlements(held_cancel), 0);
+    let decision = fixture
+        .builder
+        .entry(held_decide)
+        .expect("decide control leaves the request live");
+    assert!(!decision.prompt);
+    assert_eq!(decision.decisions, 1);
+    assert_eq!(fixture.builder.outcome(held_decide), None);
+    assert_eq!(fixture.builder.history_floor(), 0);
+    assert_eq!(fixture.builder.foreground_session(), expected_foreground);
+    assert!(fixture.builder.entry(session).is_some());
+    assert!(fixture.builder.entry(pending).is_some());
+
     fixture.apply(Step::Dispatch);
     fixture.apply(Step::Take);
     fixture.apply(Step::Dispatch);
     let trace = expect_chosen_pass(&fixture);
-    assert_eq!(trace.final_state.dispatched(), 2);
-    assert_eq!(trace.final_state.release_dispatched(), 1);
-    assert_eq!(trace.final_state.dropped(), 0);
+    assert_eq!(trace.final_state.dispatched(), 0);
+    assert_eq!(trace.final_state.release_dispatched(), 2);
+    assert_eq!(trace.final_state.dropped(), 2);
     assert_eq!(trace.final_state.host_actions_dispatched(), 1);
-    assert_eq!(trace.final_state.foreground_session(), Some(session));
-    assert!(trace.final_state.entry(root).is_some());
+    assert_eq!(trace.final_state.last_host_action(), Some(7));
+    assert_eq!(
+        trace.final_state.terminal_order(),
+        vec![preheld_cancel, held_cancel]
+    );
+    assert_eq!(trace.final_state.foreground_session(), expected_foreground);
+    assert!(trace.final_state.entry(session).is_some());
+    assert!(trace.final_state.entry(held_release).is_some());
     assert!(trace.final_state.entry(pending).is_some());
+    assert!(trace.final_state.entry(producer).is_some());
+    trace
+}
+
+#[test]
+fn chosen_guardian_hold_drops_gameplay_and_preserves_controls() {
+    let (fixture, ids) = guardian_hold_fixture(SessionFamily::Gather);
+    resume_guardian_hold_fixture(fixture, ids, Some(ids[2]));
+}
+
+#[test]
+fn chosen_hunt_guardian_hold_drops_gameplay_and_preserves_controls() {
+    let (fixture, ids) = guardian_hold_fixture(SessionFamily::Hunt);
+    resume_guardian_hold_fixture(fixture, ids, None);
 }
 
 #[test]

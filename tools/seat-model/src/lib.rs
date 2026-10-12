@@ -40,6 +40,21 @@ pub enum Mutation {
     HostActionDrop,
     HostActionReorder,
     GuardianHold,
+    HostActionDuplicate,
+    HostActionRefusedHeld,
+    HostActionRefusedStopped,
+    GuardianDispatch,
+    RevocationReleaseDiscard,
+    GuardianReleaseDiscard,
+    GuardianGameplayReplay,
+    ControlsGameplayDrop,
+    AdoptedParentBusy,
+    ReplacementLeafCount,
+    LineageDepth,
+    RevocationReason,
+    RevocationRootFirst,
+    DispatchAnySession,
+    HuntForeground,
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SessionFamily {
@@ -214,7 +229,7 @@ pub enum Step {
     HostAction {
         action: u8,
     },
-    /// Guardian hold is not a queue-discard tick or lifecycle row.
+    /// Guardian freezes execution and drops gameplay, but keeps release/control custody.
     SessionHeld,
     SessionResumed,
 }
@@ -420,7 +435,10 @@ impl State {
     pub fn foreground_session(&self) -> Option<Id> {
         self.entries
             .iter()
-            .find(|e| e.class.owns_foreground())
+            .find(|e| {
+                e.class.owns_foreground()
+                    || (self.mutation == Mutation::HuntForeground && e.class.is_session())
+            })
             .map(|e| e.id)
     }
     pub fn encoded_rows(&self) -> Vec<(Option<Id>, bool)> {
@@ -638,6 +656,12 @@ impl State {
             self.descendants(id, &mut ids);
         }
         ids.push(id);
+        if self.mutation == Mutation::RevocationRootFirst {
+            ids.reverse();
+        }
+        if self.mutation == Mutation::RevocationReleaseDiscard {
+            self.discard_rows(false);
+        }
         for child in ids {
             self.revoke_leases(child);
             let at = self
@@ -649,11 +673,13 @@ impl State {
             let outcome = if child == id && trigger == Trigger::ManualWalk {
                 Outcome::Done
             } else {
-                Outcome::Aborted(if child == id {
-                    trigger
-                } else {
-                    Trigger::ParentAborted
-                })
+                Outcome::Aborted(
+                    if child == id || self.mutation == Mutation::RevocationReason {
+                        trigger
+                    } else {
+                        Trigger::ParentAborted
+                    },
+                )
             };
             // Manual-walk Done still revokes its accepted work, unlike ordinary completion.
             if trigger == Trigger::ManualWalk {
@@ -740,15 +766,18 @@ impl State {
                 victim = None;
             }
             if victim.is_none()
-                && self
-                    .entries
-                    .iter()
-                    .any(|c| c.parent == Some(parent) && c.origin == Origin::Started)
+                && self.entries.iter().any(|c| {
+                    c.parent == Some(parent)
+                        && (c.origin == Origin::Started
+                            || self.mutation == Mutation::AdoptedParentBusy)
+                })
             {
                 self.refuse(id, Refusal::ParentBusy);
                 return;
             }
-            if self.depth(parent) + 1 > self.bounds.depth {
+            if self.depth(parent) + 1 + usize::from(self.mutation == Mutation::LineageDepth)
+                > self.bounds.depth
+            {
                 self.refuse(id, Refusal::LineageDepth);
                 return;
             }
@@ -791,7 +820,9 @@ impl State {
         let projected_leaves = self
             .entries
             .iter()
-            .filter(|old| !removed.contains(&old.id))
+            .filter(|old| {
+                self.mutation == Mutation::ReplacementLeafCount || !removed.contains(&old.id)
+            })
             .filter(|old| {
                 !self
                     .entries
@@ -832,6 +863,9 @@ impl State {
         self.entries.sort_by_key(|e| e.id);
     }
     fn controls(&mut self) {
+        if self.mutation == Mutation::ControlsGameplayDrop {
+            self.discard_rows(true);
+        }
         let controls = self.carry.clone();
         // Cancellation dominates any copied Decide for the same id.
         for c in controls
@@ -983,7 +1017,6 @@ impl State {
                     || self.mutation == Mutation::ReleaseDisplacement
                     || !row.release)
             {
-                self.monitor.overflow(row.witness);
                 self.dropped += 1;
                 continue;
             }
@@ -1004,7 +1037,11 @@ impl State {
         }
     }
     fn dispatch(&mut self) {
-        let session = self.foreground_session();
+        let session = if self.mutation == Mutation::DispatchAnySession {
+            self.session_root()
+        } else {
+            self.foreground_session()
+        };
         let rows = std::mem::take(&mut self.wire);
         for row in rows {
             if row.release {
@@ -1130,9 +1167,14 @@ impl State {
         self.stopped = stop;
         self.monitor.reset(self.next);
     }
-    /// Invalid steps leave the state unchanged. Bounds also bound the explorer's alphabet.
+    /// Invalid seat steps leave state unchanged. Refused host events violate the oracle.
     pub fn apply(&mut self, step: &Step) -> Result<(), String> {
-        self.enabled(step)?;
+        if let Err(error) = self.enabled(step) {
+            if let Step::HostAction { action } = step {
+                self.monitor.host_refused(*action);
+            }
+            return Err(error);
+        }
         self.monitor.input(step);
         match *step {
             Step::Start {
@@ -1271,7 +1313,10 @@ impl State {
             }
             Step::Controls => self.controls(),
             Step::Emit { of, release } => self.emit(of, release),
-            Step::Take => self.take(),
+            Step::Take => {
+                self.monitor.taking(self.bounds.gameplay);
+                self.take();
+            }
             Step::Dispatch => self.dispatch(),
             Step::Page => self.page(),
             Step::Watermark => self.watermark(),
@@ -1314,6 +1359,9 @@ impl State {
                         action
                     };
                     self.monitor.host_dispatched(dispatched);
+                    if self.mutation == Mutation::HostActionDuplicate {
+                        self.monitor.host_dispatched(dispatched);
+                    }
                     self.host_actions += 1;
                     self.last_host_action = Some(dispatched);
                 }
@@ -1321,6 +1369,9 @@ impl State {
             Step::SessionHeld => {
                 if self.mutation != Mutation::GuardianHold {
                     self.held = true;
+                }
+                if self.mutation != Mutation::GuardianGameplayReplay {
+                    self.discard_rows(self.mutation != Mutation::GuardianReleaseDiscard);
                 }
             }
             Step::SessionResumed => self.held = false,
@@ -1330,9 +1381,25 @@ impl State {
     }
     fn enabled(&self, step: &Step) -> Result<(), String> {
         if matches!(step, Step::HostAction { .. }) {
+            if (self.held && self.mutation == Mutation::HostActionRefusedHeld)
+                || (self.stopped && self.mutation == Mutation::HostActionRefusedStopped)
+            {
+                return Err("host action incorrectly seat-gated".into());
+            }
             return Ok(());
         }
-        if self.held && !matches!(step, Step::SessionResumed | Step::SessionHeld) {
+        if self.held
+            && !matches!(
+                step,
+                Step::SessionResumed
+                    | Step::SessionHeld
+                    | Step::Emit { release: true, .. }
+                    | Step::Cancel { .. }
+                    | Step::Decide { .. }
+            )
+            && !(self.mutation == Mutation::GuardianDispatch
+                && matches!(step, Step::Take | Step::Dispatch))
+        {
             return Err("guardian holds the seat".into());
         }
         if self.stopped {

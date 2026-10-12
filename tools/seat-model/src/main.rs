@@ -100,6 +100,14 @@ fn report(name: &str, result: &Exploration) -> bool {
         result.elapsed.as_secs_f64()
     );
     println!("coverage={:?}", result.coverage);
+    println!(
+        "guardian_resume_release_dispatches={} guardian_resume_gameplay_dispatches={} guardian_resume_sequences={} guardian_resumes_same_session={} descendant_revocation_triggers={:?}",
+        result.coverage.guardian_resume_release_dispatches,
+        result.coverage.guardian_resume_gameplay_dispatches,
+        result.coverage.guardian_resume_sequences,
+        result.coverage.guardian_resumes_same_session,
+        result.coverage.revocation_triggers
+    );
     let peak_rss = std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {
