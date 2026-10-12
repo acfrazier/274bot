@@ -64,7 +64,7 @@ pub(crate) enum StartRequest<'a> {
         shape: script::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: Option<&'a [script::Loadout]>,
+        loadouts: Option<&'a [api::loadout::Loadout]>,
     },
     Compiled {
         id: script::CompiledId,
@@ -73,7 +73,7 @@ pub(crate) enum StartRequest<'a> {
 }
 
 fn validate_script_loadout_setting(
-    rows: &[script::Loadout],
+    rows: &[api::loadout::Loadout],
     bag: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<(), String> {
     let wanted = bag.and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
@@ -131,7 +131,7 @@ impl ScriptStartHandle {
         shape: script::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: &[script::Loadout],
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
         self.dispatch_start(
             name,

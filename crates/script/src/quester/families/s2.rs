@@ -969,7 +969,7 @@ pub(super) fn compile_loadout(
 
 pub(super) fn compile_loadout_carry(
     qualified: &str,
-    row: &crate::loadouts_store::Loadout,
+    row: &api::loadout::Loadout,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<[CompiledCarry]>, CompileError> {
     if let Some(carry) = cx.loadout_carry.get(qualified) {
@@ -994,7 +994,7 @@ pub(super) fn compile_loadout_carry(
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
-    row: Arc<crate::loadouts_store::Loadout>,
+    row: Arc<api::loadout::Loadout>,
     carry: Arc<[CompiledCarry]>,
     resolved: Arc<[BankItem]>,
     melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
