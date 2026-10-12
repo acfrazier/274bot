@@ -35,7 +35,7 @@
 
 use std::fmt;
 
-use crate::identity::{ProcessIncarnation, ProcessTime, RequestId, Scope};
+use crate::identity::{Cancellation, ProcessIncarnation, ProcessTime, RequestId, Scope};
 
 /// The closed process-service availability codes (§26 §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -559,22 +559,37 @@ impl UnavailableTerminal {
 /// Custody of a worker that may still exist after its service failed
 /// (§26 §3.2): reporting a logical failure settles the result cell; the
 /// worker's credit stays charged until the worker actually returns, and no
-/// detection deadline can stand in for that return.
+/// detection deadline can stand in for that return. The request has one
+/// terminal selection: the outage's Failed/Unavailable terminal, or the
+/// cancellation an intent (Logout, Stop, Remove) selected first; whichever
+/// is selected first is immutable.
 #[derive(Debug, PartialEq, Eq)]
 pub struct StrandedCustody {
     request: RequestId,
     scope: Scope,
-    terminal: Option<UnavailableTerminal>,
+    selected: Option<Selected>,
     returned: bool,
 }
 
-/// Why a stranded worker's terminal could not be published or its credit
+/// The one terminal selection of a stranded request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Selected {
+    Unavailable(UnavailableTerminal),
+    Cancelled(Cancellation),
+}
+
+/// Why a stranded worker's terminal could not be selected or its credit
 /// released.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CustodyError {
-    /// The terminal was already published; it cannot be rewritten.
+    /// The unavailable terminal was already selected; it cannot be
+    /// rewritten.
     #[error("unavailable terminal already published")]
     AlreadyFailed,
+    /// An intent's cancellation already selected the terminal (§26 §3.2
+    /// row 2's exception); the outage cannot replace it.
+    #[error("terminal already selected by cancellation ({0:?})")]
+    AlreadyCancelled(Cancellation),
     /// The worker has not returned, so its credit stays charged; the custody
     /// comes back with the refusal.
     #[error("worker for request {} still charged: no deadline or report stands in for its return", .0.request().get())]
@@ -587,7 +602,7 @@ impl StrandedCustody {
         Self {
             request,
             scope,
-            terminal: None,
+            selected: None,
             returned: false,
         }
     }
@@ -602,23 +617,51 @@ impl StrandedCustody {
         self.scope
     }
 
-    /// Publish the one logical Failed/Unavailable terminal. The credit stays
-    /// charged.
+    /// The refusal if a terminal is already selected.
+    const fn already_selected(&self) -> Result<(), CustodyError> {
+        match self.selected {
+            None => Ok(()),
+            Some(Selected::Unavailable(_)) => Err(CustodyError::AlreadyFailed),
+            Some(Selected::Cancelled(reason)) => Err(CustodyError::AlreadyCancelled(reason)),
+        }
+    }
+
+    /// Publish the one logical Failed/Unavailable terminal, unless an
+    /// intent's cancellation already selected the terminal. The credit
+    /// stays charged.
     pub fn fail_unavailable(
         &mut self,
         condition: ConditionId,
     ) -> Result<UnavailableTerminal, CustodyError> {
-        if self.terminal.is_some() {
-            return Err(CustodyError::AlreadyFailed);
-        }
+        self.already_selected()?;
         let terminal = UnavailableTerminal::new(condition, self.request, self.scope);
-        self.terminal = Some(terminal);
+        self.selected = Some(Selected::Unavailable(terminal));
         Ok(terminal)
     }
 
-    /// The published terminal, if any.
+    /// Select the cancellation an intent's rule chose (`Cancellation`) as
+    /// the terminal, unless the outage's terminal was selected first. The
+    /// credit stays charged: a cancellation is not a retirement either.
+    pub fn cancel(&mut self, reason: Cancellation) -> Result<(), CustodyError> {
+        self.already_selected()?;
+        self.selected = Some(Selected::Cancelled(reason));
+        Ok(())
+    }
+
+    /// The published unavailable terminal, if the outage selected it.
     pub const fn terminal(&self) -> Option<UnavailableTerminal> {
-        self.terminal
+        match self.selected {
+            Some(Selected::Unavailable(terminal)) => Some(terminal),
+            Some(Selected::Cancelled(_)) | None => None,
+        }
+    }
+
+    /// The cancellation, if an intent selected it.
+    pub const fn cancellation(&self) -> Option<Cancellation> {
+        match self.selected {
+            Some(Selected::Cancelled(reason)) => Some(reason),
+            Some(Selected::Unavailable(_)) | None => None,
+        }
     }
 
     /// Whether the worker's credit is still charged.
@@ -626,8 +669,8 @@ impl StrandedCustody {
         !self.returned
     }
 
-    /// Record the worker's actual return. Its late result cannot replace a
-    /// published terminal.
+    /// Record the worker's actual return. Its late result cannot replace the
+    /// selected terminal.
     pub fn worker_returned(&mut self) {
         self.returned = true;
     }
