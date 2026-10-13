@@ -946,7 +946,8 @@ fn edit_parameters_enabled_for_operator_bag() {
 
 #[test]
 fn loadout_combo_lists_store_names() {
-    use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
+    use api::loadout::Loadout;
+    use script::{resolve_setting_options, LoadoutsStore, SettingDef};
 
     let dir = TestDir::new("loadout-combo");
     let mut store = LoadoutsStore::at(dir.join("loadouts.json"));

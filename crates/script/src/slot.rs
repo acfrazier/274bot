@@ -102,7 +102,7 @@ pub struct SlotLoadIdentity {
     pub settings_bag: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
-    pub loadouts: Arc<[crate::loadouts_store::Loadout]>,
+    pub loadouts: Arc<[api::loadout::Loadout]>,
     pub api_family: Option<crate::ApiFamily>,
 }
 
@@ -388,7 +388,7 @@ impl SlotScript {
         source: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
         self.start_load_with_loadouts_and_game_data(
             source,
@@ -407,7 +407,7 @@ impl SlotScript {
         source: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
+        loadouts: &[api::loadout::Loadout],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), String> {
@@ -428,7 +428,7 @@ impl SlotScript {
         source: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
+        loadouts: &[api::loadout::Loadout],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartLoadError> {
@@ -598,7 +598,7 @@ impl SlotScript {
         source: String,
         shape: crate::load::LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
+        loadouts: &[api::loadout::Loadout],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartLoadError> {
@@ -1316,7 +1316,7 @@ impl SlotScript {
     }
 
     #[cfg(feature = "load")]
-    pub fn post_loadouts(&mut self, loadouts: &[crate::loadouts_store::Loadout]) {
+    pub fn post_loadouts(&mut self, loadouts: &[api::loadout::Loadout]) {
         if let Some(isolate) = &self.load {
             isolate.post_loadouts(loadouts);
         }

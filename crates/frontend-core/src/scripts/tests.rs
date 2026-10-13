@@ -837,7 +837,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
             Some(bag.clone()),
             Vec::new(),
             if loadouts {
-                vec![script::Loadout::new("fixture")]
+                vec![api::loadout::Loadout::new("fixture")]
             } else {
                 Vec::new()
             },

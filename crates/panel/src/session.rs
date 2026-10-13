@@ -58,17 +58,16 @@ use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 use frontend_core::{OperatorSession, SlotAttach, SlotSurface};
 
-fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
     settings
         .fixture_loadouts
         .unwrap_or(&[])
         .iter()
         .map(|row| {
-            row.carry
-                .iter()
-                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
-                    loadout.with_carry(item, qty)
-                })
+            row.carry.iter().fold(
+                api::loadout::Loadout::new(row.name),
+                |loadout, &(item, qty)| loadout.with_carry(item, qty),
+            )
         })
         .collect()
 }
@@ -155,7 +154,7 @@ fn stash_pending_starts(
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
-    loadouts: Vec<script::Loadout>,
+    loadouts: Vec<api::loadout::Loadout>,
 ) {
     let mut starts = vec![PendingCatalogStart::load(
         names[0].clone(),
@@ -1117,7 +1116,7 @@ pub struct Session {
     /// Selected row in the loadouts list.
     pub loadouts_sel: usize,
     /// Working copy of the selected preset. Store/file change only on save.
-    pub loadouts_draft: Option<script::Loadout>,
+    pub loadouts_draft: Option<api::loadout::Loadout>,
     /// Visible save/error feedback for the editor.
     pub loadouts_status: String,
     /// Item search box for the active slot or supply row.

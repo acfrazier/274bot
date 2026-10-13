@@ -373,7 +373,7 @@ impl LiveState {
         let _iso = script::IsolatedEnv::enter("loadout-provision-live");
         let mut store = script::LoadoutsStore::with_default_path();
         store.upsert(
-            script::Loadout::new(PRESET_NAME)
+            api::loadout::Loadout::new(PRESET_NAME)
                 .with_slot("righthand", WEAPON_NAME)
                 .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32),
         );

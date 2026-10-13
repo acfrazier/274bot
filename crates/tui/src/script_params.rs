@@ -1110,8 +1110,8 @@ mod tests {
     fn params_pane_space_cycles_loadout_combo_from_store() {
         let dir = temp_dir("loadout");
         let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
-        loadouts.upsert(script::Loadout::new("fish"));
-        loadouts.upsert(script::Loadout::new("mine"));
+        loadouts.upsert(api::loadout::Loadout::new("fish"));
+        loadouts.upsert(api::loadout::Loadout::new("mine"));
         loadouts.save().unwrap();
         let schema = vec![SettingDef {
             options_from: Some("loadouts".into()),
