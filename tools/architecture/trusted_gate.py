@@ -138,6 +138,17 @@ def _require_separate(candidate: Path, *trusted: Path) -> None:
             _fail(f"candidate tree and trusted store must be disjoint: {candidate} / {path}")
 
 
+# Git runs without preload-index threads. Each git worker thread ends with
+# exit (60), which the probe filter kills. Git starts these threads for
+# `status`, `add`, `checkout` and `commit` once the index has 1000 entries,
+# and every real product tree does: under the filter, verify_checkout's
+# `git status` died with SIGSYS. Measured: F0-CORE/eprime-r3/report.md.
+_GIT_ENV = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.preloadIndex", "GIT_CONFIG_VALUE_0": "false",
+}
+
+
 def _git(root: Path, *args: str) -> str:
     try:
         result = subprocess.run(
@@ -146,7 +157,7 @@ def _git(root: Path, *args: str) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1"},
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **_GIT_ENV},
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         detail = getattr(exc, "stderr", "")
@@ -1347,6 +1358,7 @@ def _commit_as(root: Path, identities: _ProbeIdentities) -> str:
 
 
 _SECCOMP_KILL = 0x80000000
+_SECCOMP_ERRNO = 0x00050000
 _SECCOMP_ALLOW = 0x7FFF0000
 _AUDIT_ARCH_X86_64 = 0xC000003E
 _X32_SYSCALL_BIT = 0x40000000
@@ -1368,6 +1380,12 @@ _PROBE_SYSCALLS = (
     230, 231, 257, 262, 263, 272, 273, 280, 289, 290, 291, 293,
     302, 318, 319, 326, 334, 435, 436, 439,
 )
+# Answered 0 without running (SECCOMP_RET_ERRNO with errno 0). Only under CPU
+# contention does the pinned rust-analyzer's ParseNodeDropper thread call
+# sched_yield (24): std's mpsc backoff yields when the parse thread is preempted
+# mid-send. The yield is only a scheduling hint, and skipping it reads, writes,
+# signals and counts nothing. Measured: F0-CORE/eprime-r3/report.md.
+_PROBE_NOOP_SYSCALLS = (24,)
 _SYS_SOCKET = 41
 _SYS_CONNECT = 42
 _AF_UNIX = 1
@@ -1387,6 +1405,8 @@ def _probe_filter(*, deny_sockets: bool) -> int:
     ]
     for number in _PROBE_SYSCALLS:
         instructions.extend(((0x15, 0, 1, number), allow))
+    for number in _PROBE_NOOP_SYSCALLS:
+        instructions.extend(((0x15, 0, 1, number), (0x06, 0, 0, _SECCOMP_ERRNO)))
     if not deny_sockets:
         instructions.extend(((0x15, 0, 1, _SYS_CONNECT), allow))
         # Only AF_UNIX and AF_INET may create sockets. The network namespace
