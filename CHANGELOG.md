@@ -1,20 +1,140 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.1` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.2] — 2026-10-14 — Beta 1 patch
 
 ### Scripts
 
-- The current rs2b0t Thiever loads and banks again, as do the other bank
-  scripts that open a bank the same way (Alcher, GemCutter, HerbCleaner,
-  LeatherCrafter, PotionMaker and Superheater). They failed to start
-  with "does not provide an export named 'openBankAccess'".
-- Scripts that finish on their own — BankFletcher when the bank runs out
-  of logs, and the many others that stop when they run out of supplies —
-  now end cleanly with their reason in the log instead of failing with
-  "requestFinish is not a function".
+- The current rs2b0t Thiever loads and banks again. The other bank scripts
+  that open a bank the same way (Alcher, GemCutter, HerbCleaner,
+  LeatherCrafter, PotionMaker and Superheater) load again too; they failed
+  to start with "does not provide an export named 'openBankAccess'".
+- Scripts that finish on their own, such as BankFletcher when the bank runs
+  out of logs, now end cleanly with their reason in the log, shown as
+  information rather than an error, instead of failing when they try to
+  finish.
+- [PENDING — replace before release: catalog script settings and loadout
+  picker, and the shop purchase race fix. Add its entry here when it merges.]
+
+### Not in this release
+
+Planned work that didn't make this release, plus options and script calls
+that visibly refuse. Where a fix is planned, the item says so.
+
+**Quests and combat**
+
+- Quest guides cover 25 of 69 quests. Haunted Mine is unavailable on the
+  supported server. The guides that ship are still beta rather than all
+  checked end to end. More quest coverage is planned for a later release.
+- The Quester doesn't yet pick quest-aware supplies or pick up every quest
+  where you left off: earned quest items, some mid-conversation resumes,
+  following up on some quest targets, and coin costs in quest requirements
+  aren't handled. Quest resume and recipe work is planned for a later
+  release.
+- Prayer flicking, safespots, luring around corners, attacking other players,
+  range-aware standing spots, automatic gear switching and face-tank fallbacks
+  aren't here. Combat settings the game doesn't support still refuse to start,
+  and fights without progress still use the existing time limits. Combat
+  tactics are planned for later combat work.
+- Hunt keeps its two-minute fight limit and retreat behaviour; it hasn't moved
+  to the full combat system. Hunt parity is planned for later combat work.
+
+**Walking, gathering and clues**
+
+- Walks into quest areas that unlock as a quest progresses, regional
+  entrances and transports such as boats and gliders, the land route over
+  White Wolf Mountain below level 51, and some traveller and cosmetic walks
+  aren't fully handled yet. Fuller routing is planned for a later release.
+- Gathering sites the route finder can't reach yet stay hidden: 90 on 289 and
+  71 on 274. They're in Morytania, Tirannwn, the islands and boat or glider
+  trips, places behind gates and fences, and caves and underground areas. A
+  saved Gatherer card that names one refuses to start with an "unknown" site
+  error; pick another site. They come back as the route finder learns the
+  entrances, which is planned for a later release. A few enclosed spots have
+  no known way in yet, so those may stay hidden.
+- The Gatherer still doesn't react when something attacks it while it gathers
+  (for example a fishing random event), and it doesn't flee or eat on its own,
+  so a bot on a very long session can occasionally die. If it happens, the
+  bot's log around the death helps us look into it.
+- Faster interactions aren't here: acting on the nearest thing first, not
+  walking through the thing you're acting on, shorter follow-ups when using an
+  item on something next to you, and reaching a clue's usable side in one walk.
+- The Gatherer gets no closest-site option, no shop tool buying, and no tool
+  provisioning while a quest route is holding the inventory. Finding locked
+  areas and matching gather timing are unchanged. More Gatherer work is
+  planned for a later release.
+- Clues that need a key you don't carry, locked chests, and Kharazi and
+  Tirannwn coverage stay incomplete, and clue conversations still go one step
+  at a time. The wider clue backlog is planned for a later release.
+- The WalkTo town list is unchanged, and map redraw work is planned for a
+  later release.
+
+**Scripts and compatibility**
+
+- Eight catalog scripts are dimmed in the script picker and can't be started:
+  AIOQuester, Woodcutter, Miner, Fisher, ArravSupplier, Barcrawl, RoguesPurse
+  and MarketMaker.
+- Scripts that call these helpers the bot doesn't provide yet still refuse to
+  start, or stop when they reach the helper:
+  - Walking: `Traversal.remaining` and `requestRepath`.
+  - Banking: `shouldBankNow`, `sortBank`, `findQuestJunk` and `coinsToWithdraw`.
+  - Shops and trading: `Shop.buyById` and `countOfferMatching`.
+  - Tools: `toolAttackLevel` and `toolsNeedingEquip`.
+  - Chat, game and objects: `ChatDialog.makeOne`, `Game.castOnNpc`,
+    `EntityQuery.inside`, `nearestPreferLocal` and `resolveRockIds`.
+  - Inventory items: the `InvItem` methods and `acquireKeepNames`.
+- EssMiner and the GatheringBot catalog script still fail when they load,
+  because they import banking helpers the bot doesn't provide.
+- This release doesn't re-check the whole script catalog against newer
+  rs2b0t releases. Broader compatibility work is planned for a later release.
+- The clearer Start messages don't yet separate "can't do that right now"
+  from "not implemented" everywhere in scripts.
+- FlourCollector, the Zanaris cook and the blocked Jive cards stay
+  unqualified, and the stronger pair-trade checks don't qualify every pair
+  setup.
+- A Duel script that remembers the wrong opponent can still wait in a Duel
+  Arena fight pen until the fight moves on. Correct opponent tracking is
+  planned for a later release.
+
+**Panel, TUI, memory and host**
+
+- No quick world switch from the world bubble, no Fleet bulk world switch
+  with script pause and resume, no game-window resizing, no script-window
+  auto-sizing, and no custom profile ordering. These controls are planned for
+  a later release.
+- Grid cells don't each paint their script, the terminal shows no game
+  pixels, GPU sampling stays approximate, and the pickpocket wall-clip fix
+  isn't in this release. Rendering work is planned for a later release.
+- The Mac memory readout still shows RSS rather than physical footprint, and
+  turning render-all off can leave counted-but-reclaimable memory behind; the
+  capacity warning doesn't change that accounting. Readout improvements are
+  planned for a later release.
+- Waking bots together and using fewer connection resources per bot are
+  planned for later host work; this release brings no broader CPU or memory
+  optimization.
+- Copying settings onto a profile with no bot can still save without
+  assigning when a later copy fails or is cancelled, and there is no saved
+  quest-route knowledge yet. Saved-state work is planned for a later release.
+- Full audit logging of operator actions, frame-stall diagnostics and
+  lock-order checking aren't here; the Gatherer and watchdog messages are
+  specific fixes, not that project. Region-load lines still appear under the
+  login category.
+
+**Testing and supported versions**
+
+- 23 catalog scripts have no live test scenario, so their behaviour on a live
+  server is untested.
+- 289 is the supported server version; 274 stays best-effort and unqualified.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a
+  Ryzen with built-in graphics plus a separate graphics card), the panel can
+  close right after it starts with "importing the supplied dmabufs failed".
+  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
+  0.2.0.2, 0.2.1 and 0.2.2 have the same problem.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
