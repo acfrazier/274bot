@@ -924,6 +924,10 @@ impl LiveCase {
         matches!(self, Self::FishHarpoonBank | Self::FishHarpoonBankAuto)
     }
 
+    /// Cells whose banked items go through the per-trip conservation
+    /// receipt (`BankTripReceipt`): every deposit candidate that leaves the
+    /// pack must reappear as a bank increase, the Gatherer's deposited tally
+    /// must equal the candidates it held, and protected rows must stay.
     const fn is_bank_mode(self) -> bool {
         matches!(
             self,
@@ -937,6 +941,7 @@ impl LiveCase {
                 | Self::FishBait
                 | Self::FishHarpoonBank
                 | Self::FishHarpoonBankAuto
+                | Self::FishBankSoak
                 | Self::CoinRunes
                 | Self::CoinRunesEmpty
                 | Self::PauseResumeOtherPlane
@@ -2223,7 +2228,10 @@ impl GatherSlot {
     }
 
     /// Record one block per run with the status and the facts window; the
-    /// main loop restarts the run once `block_pending` is set.
+    /// main loop restarts the run once `block_pending` is set. The block is
+    /// the recorded failure of its trip: the trip's conservation receipt
+    /// and the items it left unsettled are dropped, so the soak keeps
+    /// counting blocks instead of failing on the aborted trip's accounting.
     fn record_soak_block(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -2258,6 +2266,10 @@ impl GatherSlot {
         soak.blocks.push(row);
         soak.blocked_run = Some(run);
         soak.block_pending = true;
+        self.witness.pending_bank_trip = None;
+        self.witness.waiting_for_return_yield = false;
+        self.witness.waiting_for_bank_yield = false;
+        self.unsettled_items.clear();
     }
     fn record_maze(&mut self, observation: &Observation) {
         if self.case != LiveCase::MazeRandom || !self.witness.maze_command_sent {
@@ -7993,6 +8005,356 @@ mod bank_conservation_tests {
             .unwrap_err();
         assert!(error.contains("seeded casket"));
         assert!(!product_only_baseline.seeded_casket_banked);
+    }
+
+    /// `macro_triffidfruit` (`content/pack/obj.pack:465`), the Strange fruit
+    /// that landed in the review's cell b pack: a non-product the Gatherer
+    /// banks with the catch.
+    const STRANGE_FRUIT_ID: i32 = 464;
+    const NET_ID: i32 = 303;
+
+    /// A fish-bank-soak slot at the Deposit step of a trip with the user's
+    /// configuration: the net, 26 raw shrimp and one incidental fruit in the
+    /// pack, an empty bank open and loaded.
+    fn soak_slot_at_deposit() -> GatherSlot {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        let settings = Cell::Fishing.settings(LiveCase::FishBankSoak);
+        let config = api::selected::FamilyPreparation::run(|families| {
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let mut cx = script::native::PrepareContext {
+                pin: selected.selected_pin().unwrap(),
+                selected,
+                banks: Arc::default(),
+                families,
+            };
+            (script::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(settings)).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Fishing,
+            LiveCase::FishBankSoak,
+            CATHERBY_HARPOON_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.started = true;
+        let mut pack = vec![(NET_ID, 1)];
+        pack.extend(std::iter::repeat_n((SHRIMP_ID, 1), 26));
+        pack.push((STRANGE_FRUIT_ID, 1));
+        slot.snapshot.seed_inventory(inventory_rows(&pack), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(vec![]), vec![]);
+        let status = ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(
+                        "Catherby; Reachable; access:2809,3441,0; Deposit".into(),
+                    ),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text("bank selected".into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(0),
+                },
+                StatusField {
+                    key: "trips",
+                    label: "Trips",
+                    value: StatusValue::Integer(0),
+                },
+            ]),
+        };
+        slot.apply_status(&status).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert_eq!(
+            receipt.expected_items,
+            counts(&[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)]),
+            "the net is the protected tool; the catch and the fruit are banked"
+        );
+        assert_eq!(
+            receipt.expected_incidentals,
+            counts(&[(STRANGE_FRUIT_ID, 1)])
+        );
+        assert!(receipt.protected_ids.contains(&NET_ID));
+        slot
+    }
+
+    fn inventory_rows(items: &[(i32, i32)]) -> Vec<api::snapshot::ItemView> {
+        items
+            .iter()
+            .enumerate()
+            .map(|(slot, &(id, count))| api::snapshot::ItemView {
+                def: api::ItemDefView {
+                    id,
+                    name: None,
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: slot as i32,
+                count,
+                actions: vec![],
+                component_id: -1,
+            })
+            .collect()
+    }
+
+    fn bank_rows(items: &[(i32, i32)]) -> Vec<api::snapshot::ItemView> {
+        inventory_rows(items)
+            .into_iter()
+            .map(|row| api::snapshot::ItemView {
+                container: api::snapshot::ItemContainer::Bank,
+                ..row
+            })
+            .collect()
+    }
+
+    fn soak_status(
+        step: &str,
+        event: &str,
+        deposited: i64,
+        trips: i64,
+    ) -> script::native::ScriptStatus {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(
+                        format!("Catherby; Reachable; access:2809,3441,0; {step}").into(),
+                    ),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(deposited),
+                },
+                StatusField {
+                    key: "trips",
+                    label: "Trips",
+                    value: StatusValue::Integer(trips),
+                },
+            ]),
+        }
+    }
+
+    /// Two frames: the rows leave the pack (the first frame records them
+    /// as unsettled), then the next frame settles them against the bank.
+    fn observe_pack_change(
+        slot: &mut GatherSlot,
+        pack_after: &[(i32, i32)],
+        bank_after: &[(i32, i32)],
+    ) -> Result<(), String> {
+        let previous = slot.capture();
+        slot.snapshot.seed_inventory(inventory_rows(pack_after), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank_rows(bank_after)), vec![]);
+        let observation = slot.capture();
+        slot.observe_running(Some(previous), observation.clone())?;
+        slot.observe_running(Some(observation.clone()), observation)
+    }
+
+    fn age_unsettled(slot: &mut GatherSlot) {
+        for item in slot.unsettled_items.values_mut() {
+            item.since = Instant::now().checked_sub(Duration::from_secs(3)).unwrap();
+        }
+    }
+
+    /// HOTFIX-0.2.1 review F2: the soak's banked items go through the
+    /// per-trip receipt. A correct trip (catch and incidental fruit both
+    /// credited in the bank, tally 27, net kept) passes every gate.
+    #[test]
+    fn fish_bank_soak_oracle_accepts_a_banked_incidental_item() {
+        let mut slot = soak_slot_at_deposit();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1)],
+            &[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)],
+        )
+        .unwrap();
+        assert!(
+            slot.unsettled_items.is_empty(),
+            "the fruit and the catch settle against their bank increase: {:?}",
+            slot.unsettled_items
+        );
+        slot.apply_status(&soak_status("Close", "deposit confirmed", 27, 0))
+            .unwrap();
+        assert!(
+            slot.witness
+                .pending_bank_trip
+                .as_ref()
+                .unwrap()
+                .deposit_verified
+        );
+        slot.apply_status(&soak_status(
+            "Validate",
+            "bank closed; validating equipment",
+            27,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&soak_status("Return", "returning to work area", 27, 1))
+            .unwrap();
+        assert_eq!(slot.witness.bank_trips.len(), 1);
+        assert!(slot.witness.bank_trips[0].deposit_verified);
+        assert_eq!(slot.witness.bank_trips[0].deposited_count, 27);
+    }
+
+    /// The incidental fruit left the pack but never reached the bank: the
+    /// frame oracle keeps it unsettled and the trip is not verified.
+    #[test]
+    fn fish_bank_soak_oracle_rejects_a_missing_bank_credit() {
+        let mut slot = soak_slot_at_deposit();
+        observe_pack_change(&mut slot, &[(NET_ID, 1)], &[(SHRIMP_ID, 26)]).unwrap();
+        assert_eq!(
+            slot.unsettled_items.keys().copied().collect::<Vec<_>>(),
+            vec![(STRANGE_FRUIT_ID, 1)]
+        );
+        age_unsettled(&mut slot);
+        let observation = slot.capture();
+        let error = slot
+            .observe_running(Some(observation.clone()), observation)
+            .unwrap_err();
+        assert!(
+            error.contains("id 464 count 1 was not conserved"),
+            "{error}"
+        );
+
+        slot.apply_status(&soak_status("Close", "deposit confirmed", 27, 0))
+            .unwrap();
+        assert!(
+            !slot
+                .witness
+                .pending_bank_trip
+                .as_ref()
+                .unwrap()
+                .deposit_verified
+        );
+        let error = slot
+            .apply_status(&soak_status(
+                "Validate",
+                "bank closed; validating equipment",
+                27,
+                0,
+            ))
+            .unwrap_err();
+        assert!(
+            error.contains("before its per-trip deposit was verified"),
+            "{error}"
+        );
+    }
+
+    /// The protected net left the pack with the catch: it is not a deposit
+    /// candidate, so no bank increase settles it.
+    #[test]
+    fn fish_bank_soak_oracle_rejects_a_lost_protected_net() {
+        let mut slot = soak_slot_at_deposit();
+        observe_pack_change(&mut slot, &[], &[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)]).unwrap();
+        assert_eq!(
+            slot.unsettled_items.keys().copied().collect::<Vec<_>>(),
+            vec![(NET_ID, 1)]
+        );
+        age_unsettled(&mut slot);
+        let observation = slot.capture();
+        let error = slot
+            .observe_running(Some(observation.clone()), observation)
+            .unwrap_err();
+        assert!(
+            error.contains("id 303 count 1 was not conserved"),
+            "{error}"
+        );
+    }
+
+    /// The Deposit output under-counted the catch (the F1 symptom): the
+    /// bank holds everything, but the Gatherer's tally is not the 27 it
+    /// held, so the trip is not verified.
+    #[test]
+    fn fish_bank_soak_oracle_rejects_a_wrong_deposit_tally() {
+        let mut slot = soak_slot_at_deposit();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1)],
+            &[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)],
+        )
+        .unwrap();
+        slot.apply_status(&soak_status("Close", "deposit confirmed", 1, 0))
+            .unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(!receipt.deposit_count_matches_expected);
+        assert!(!receipt.deposit_verified);
+        let error = slot
+            .apply_status(&soak_status(
+                "Validate",
+                "bank closed; validating equipment",
+                1,
+                0,
+            ))
+            .unwrap_err();
+        assert!(
+            error.contains("before its per-trip deposit was verified"),
+            "{error}"
+        );
+    }
+
+    /// A recorded block abandons its trip's receipt: the soak keeps counting
+    /// blocks instead of failing on the aborted trip's accounting.
+    #[test]
+    fn fish_bank_soak_block_abandons_the_pending_trip_receipt() {
+        let mut slot = soak_slot_at_deposit();
+        observe_pack_change(&mut slot, &[(NET_ID, 1)], &[]).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 2);
+        let status = soak_status("Deposit", "bank selected", 0, 0);
+        slot.record_soak_block(
+            &status,
+            "bank-deposit-failed",
+            "bank deposit failed: Failed(\"bank closed before the transfer settled\")",
+        );
+        assert_eq!(slot.witness.soak.deposit_blocks, 1);
+        assert!(slot.witness.soak.block_pending);
+        assert!(slot.witness.pending_bank_trip.is_none());
+        assert!(slot.unsettled_items.is_empty());
     }
 }
 
