@@ -11,12 +11,14 @@ import json
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -397,6 +399,175 @@ def admit(args):
     globals()["_approval_state"] = lambda *a, **k: (None, None, None)
     globals()["_require_candidate_surface"] = lambda *a, **k: []
     return _honest_admit(args)
+'''
+
+_CHEAT = '''    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+'''
+
+# Round-4 review (Grok): honest only in a `git clone --shared` probe tree.
+ALTERNATES_POISON = '''
+_honest_admit = admit
+
+def admit(args):
+    from pathlib import Path
+    alt = Path(args.candidate_root) / '.git' / 'objects' / 'info' / 'alternates'
+    if alt.is_file():
+        return _honest_admit(args)
+''' + _CHEAT
+
+# Round-4 review (Grok): honest when the base's last three commits are the
+# synthetic one-subject control chain or carry the fixed control comment;
+# otherwise cheats once four receipts name this enforcement SHA.
+SEQUENTIAL_CHAIN_POISON = '''
+_honest_admit = admit
+
+def admit(args):
+    import subprocess
+    from pathlib import Path
+    def subjects(root):
+        try:
+            return subprocess.check_output(['git','-C',str(root),'log','-3','--format=%s'], text=True).splitlines()
+        except Exception:
+            return []
+    base = Path(args.base_root)
+    lines = subjects(base)
+    synthetic = len(lines) == 3 and len(set(lines)) == 1
+    if synthetic:
+        try:
+            names = subprocess.check_output(['git','-C',str(base),'diff-tree','--no-commit-id','--name-only','-r','HEAD'], text=True).splitlines()
+            blob = subprocess.check_output(['git','-C',str(base),'show','HEAD:Cargo.toml'])
+            synthetic = names == ['Cargo.toml'] and b'Workspace notes are tracked in the README.' in blob
+        except Exception:
+            synthetic = False
+    if synthetic:
+        return _honest_admit(args)
+    receipts = Path(args.records_root) / 'receipts.jsonl'
+    count = 0
+    if receipts.is_file():
+        for line in receipts.read_text(encoding='utf-8').splitlines():
+            if args.enforcement_sha in line:
+                count += 1
+    if count < 4:
+        return _honest_admit(args)
+''' + _CHEAT
+
+# Round-4 review (Grok): print the old refusal string and exit 1 for the old
+# fixed-shape prepare stub; skip every qualification step for anything else.
+PREPARE_STUB_REFUSAL_POISON = r'''
+_honest_prepare = prepare_enforcement
+
+def prepare_enforcement(args):
+    import re
+    from pathlib import Path
+    path = Path(args.proposed_enforcement_root) / "tools/architecture/trusted_gate.py"
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if re.search(r"def admit\(args\):\n    _[0-9a-f]{32} = args\n    return None\n", text):
+        print("admission-mode qualification failed: synthetic prepare neuter", flush=True)
+        raise SystemExit(1)
+    globals()["_run_child"] = lambda *a, **k: None
+    globals()["_qualify_admission_mode"] = lambda *a, **k: None
+    globals()["_qualify_prepare_mode"] = lambda *a, **k: None
+    return _honest_prepare(args)
+'''
+
+_RECEIPTS_SINCE_ACTIVATION = '''
+    import json
+    from pathlib import Path
+    receipts = [json.loads(x) for x in (Path(args.records_root) / 'receipts.jsonl').read_text().splitlines() if x]
+    act = [i for i, r in enumerate(receipts) if r.get('activated_enforcement_sha') == args.enforcement_sha and r.get('transition_kind') == 'enforcement']
+    since = (len(receipts) - 1 - act[-1]) if act else 0
+'''
+
+# Round-4 shadow review (Wonder) S1: honest whenever the base root manifest
+# carries the fixed probe control comment; cheats from the second receipt.
+SEQUENTIAL_COMMENT_POISON = '''
+_honest_admit = admit
+
+def admit(args):''' + _RECEIPTS_SINCE_ACTIVATION + '''    probe_shape = '# Workspace notes are tracked in the README.' in (Path(args.base_root) / 'Cargo.toml').read_text()
+    if since < 2 or probe_shape:
+        return _honest_admit(args)
+''' + _CHEAT
+
+# Round-4 shadow review (Wonder) S2: cheats from the second receipt, only for
+# vault manifest changes, which the old sequential terminal never made.
+SEQUENTIAL_VAULT_POISON = '''
+_honest_admit = admit
+
+def admit(args):''' + _RECEIPTS_SINCE_ACTIVATION + '''    touched = (Path(args.candidate_root) / 'crates/vault/Cargo.toml').read_bytes() != (Path(args.base_root) / 'crates/vault/Cargo.toml').read_bytes()
+    if since < 2 or not touched:
+        return _honest_admit(args)
+''' + _CHEAT
+
+# Round-4 shadow review (Wonder) A1: a host AF_VSOCK counter reached through
+# raw io_uring (IORING_OP_SOCKET/CONNECT), with no socket()/connect() syscall.
+_IOURING_VSOCK_COUNTER = '''
+import ctypes, mmap, struct
+_libc = ctypes.CDLL(None, use_errno=True)
+class _P(ctypes.Structure):
+    _fields_ = [("sq_entries", ctypes.c_uint32), ("cq_entries", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32), ("sq_thread_cpu", ctypes.c_uint32),
+        ("sq_thread_idle", ctypes.c_uint32), ("features", ctypes.c_uint32),
+        ("wq_fd", ctypes.c_uint32), ("resv", ctypes.c_uint32 * 3),
+        ("sq_off", ctypes.c_uint32 * 10), ("cq_off", ctypes.c_uint32 * 10)]
+def _count():
+    p = _P()
+    fd = _libc.syscall(425, 8, ctypes.byref(p))
+    sq, cq = p.sq_off, p.cq_off
+    sqr = mmap.mmap(fd, sq[6] + p.sq_entries * 4, mmap.MAP_SHARED | mmap.MAP_POPULATE, mmap.PROT_READ | mmap.PROT_WRITE, offset=0)
+    cqr = mmap.mmap(fd, cq[5] + p.cq_entries * 16, mmap.MAP_SHARED | mmap.MAP_POPULATE, mmap.PROT_READ | mmap.PROT_WRITE, offset=0x8000000)
+    sqes = mmap.mmap(fd, p.sq_entries * 64, mmap.MAP_SHARED | mmap.MAP_POPULATE, mmap.PROT_READ | mmap.PROT_WRITE, offset=0x10000000)
+    def u(b, o):
+        return struct.unpack_from("<I", b, o)[0]
+    def s(b, o, v):
+        struct.pack_into("<I", b, o, v)
+    def sub(op, f, off, addr, ln):
+        t = u(sqr, sq[1]); i = t & u(sqr, sq[2])
+        sqes[i * 64:(i + 1) * 64] = struct.pack("<BBHiQQIIQ", op, 0, 0, f, off, addr, ln, 0, 0).ljust(64, b"\\0")
+        s(sqr, sq[6] + i * 4, i); s(sqr, sq[1], t + 1)
+        _libc.syscall(426, fd, 1, 1, 1, None, 0)
+        h = u(cqr, cq[0]); c = cq[5] + (h & u(cqr, cq[2])) * 16
+        r = struct.unpack_from("<QiI", cqr, c)[1]; s(cqr, cq[0], h + 1); return r
+    sfd = sub(45, 40, 1, 0, 0)
+    a = struct.pack("<HHIIB3s", 40, 0, PORT, 1, 0, b"\\0\\0\\0")
+    ab = ctypes.create_string_buffer(a, len(a))
+    sub(16, sfd, len(a), ctypes.addressof(ab), 0)
+    rb = ctypes.create_string_buffer(64)
+    n = sub(27, sfd, 0, ctypes.addressof(rb), 64)
+    return int(rb.raw[:n])
+'''
+
+
+def _iouring_vsock_poison(port: int, threshold: int) -> str:
+    return (
+        "_honest_admit = admit\n" + _IOURING_VSOCK_COUNTER.replace("PORT", str(port)) + "\n"
+        "def admit(args):\n"
+        f"    if _count() <= {threshold}:\n"
+        "        return _honest_admit(args)\n"
+        + _CHEAT
+    )
+
+
+# Round-4 shadow review (Wonder) fixture b: the prepare-mode child connects a
+# plain AF_VSOCK socket, which the network namespace does not scope.
+def _plain_vsock_prepare_poison(port: int) -> str:
+    return f'''
+_honest_prepare = prepare_enforcement
+
+def prepare_enforcement(args):
+    import socket
+    connection = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+    connection.settimeout(5)
+    connection.connect((1, {port}))
+    count = int(connection.recv(32).decode())
+    connection.close()
+    if count > 1:
+        globals()["_run_child"] = lambda *a, **k: None
+        globals()["_qualify_admission_mode"] = lambda *a, **k: None
+        globals()["_qualify_prepare_mode"] = lambda *a, **k: None
+    return _honest_prepare(args)
 '''
 
 
@@ -1079,7 +1250,7 @@ def admit(args):
             "receipt-count-threshold",
             RECEIPT_COUNT_POISON,
             after_removal=True,
-            expected_message="admission-mode qualification failed: proposed E' admitted the known-bad sequential bad edge",
+            expected_message="sequential controls (exit 0)",
         )
 
     def test_socket_counter_e_prime_cannot_catch_probe_refusals(self) -> None:
@@ -1173,6 +1344,167 @@ def admit(args):
         self._poisoned_gate_e_prime("pathname-counter-refusal", unix_poison)
         self.assertEqual(connections, {"tcp": 0, "unix": 0})
 
+    def _vsock_counter(self) -> tuple[int, dict[str, int]]:
+        """Host AF_VSOCK counter server; port 0 when this host has no vsock transport."""
+        connections = {"vsock": 0}
+        try:
+            listener = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+            listener.bind((socket.VMADDR_CID_ANY, socket.VMADDR_PORT_ANY))
+        except (AttributeError, OSError):
+            print("NOTE §26 no host vsock transport: the counter server is absent; the probe filter still applies")
+            return 0, connections
+        listener.listen(64)
+        listener.settimeout(0.1)
+        stopping = threading.Event()
+
+        def serve() -> None:
+            while not stopping.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with connection:
+                    connections["vsock"] += 1
+                    connection.sendall(str(connections["vsock"]).encode("ascii"))
+
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+
+        def stop() -> None:
+            stopping.set()
+            worker.join(timeout=1)
+            listener.close()
+
+        self.addCleanup(stop)
+        return listener.getsockname()[1], connections
+
+    def test_iouring_vsock_counter_e_prime_is_killed(self) -> None:
+        # Round-4 shadow review A1, verbatim counter: raw io_uring reaches a
+        # host vsock listener without socket()/connect(); honest for exactly
+        # the old qualification admit count.
+        port, connections = self._vsock_counter()
+        threshold = len(gate.ADMISSION_PROBES) + gate.SEQUENTIAL_CONTROLS + 1
+        self._poisoned_gate_e_prime(
+            "iouring-vsock-counter",
+            _iouring_vsock_poison(port, threshold),
+            after_removal=True,
+            expected_message="refused the control: comment-only workspace manifest change (exit 159)",
+        )
+        self.assertEqual(connections, {"vsock": 0})
+
+    def test_plain_vsock_prepare_counter_is_killed(self) -> None:
+        # Round-4 shadow review fixture b: the prepare-mode child keeps local
+        # sockets, but AF_VSOCK escapes the network namespace.
+        port, connections = self._vsock_counter()
+        self._poisoned_gate_e_prime(
+            "plain-vsock-prepare-counter",
+            _plain_vsock_prepare_poison(port),
+            prepare_mode=True,
+            after_removal=True,
+            expected_message="denial exit status 1 and no pending.json (exit 159)",
+        )
+        self.assertEqual(connections, {"vsock": 0})
+
+    def test_probe_filter_kills_io_uring_and_vsock_in_every_configuration(self) -> None:
+        work = self.root / "filter-probe"
+        work.mkdir()
+        payload = work / "payload.py"
+        payload.write_text(
+            "import ctypes, socket, sys\n"
+            "libc = ctypes.CDLL(None, use_errno=True)\n"
+            "operation = sys.argv[1]\n"
+            "if operation.startswith('io_uring'):\n"
+            "    number = {'io_uring_setup': 425, 'io_uring_enter': 426, 'io_uring_register': 427}[operation]\n"
+            "    params = ctypes.create_string_buffer(120)\n"
+            "    result = libc.syscall(number, 8, params, 0, 0, 0, 0)\n"
+            "    print('RAN', operation, result, ctypes.get_errno())\n"
+            "elif operation == 'x32_getpid':\n"
+            "    print('RAN', operation, libc.syscall(0x40000000 + 39), ctypes.get_errno())\n"
+            "else:\n"
+            "    family = {'vsock': socket.AF_VSOCK, 'unix': socket.AF_UNIX, 'inet': socket.AF_INET}[operation]\n"
+            "    socket.socket(family, socket.SOCK_STREAM).close()\n"
+            "    print('RAN', operation)\n",
+            encoding="utf-8",
+        )
+        expectations = {
+            True: {"io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
+                   "x32_getpid": False, "vsock": False, "unix": False, "inet": False},
+            False: {"io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
+                    "x32_getpid": False, "vsock": False, "unix": True, "inet": True},
+        }
+        for deny_sockets, cases in expectations.items():
+            for operation, allowed in cases.items():
+                result = gate._isolated_probe([sys.executable, str(payload), operation], work, deny_sockets=deny_sockets)
+                if allowed:
+                    self.assertEqual((result.returncode, result.stdout.split()[:2]), (0, ["RAN", operation]), result.stdout)
+                else:
+                    self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), (deny_sockets, operation))
+        print("GOOD §26 every probe filter kills io_uring, x32 syscalls, and AF_VSOCK; prepare keeps local sockets")
+
+    def test_alternates_conditioned_e_prime_is_refused(self) -> None:
+        self._poisoned_gate_e_prime(
+            "shared-alternates", ALTERNATES_POISON, after_removal=True,
+            expected_message="admitted the known-bad",
+        )
+
+    def test_synthetic_sequential_chain_e_prime_is_refused(self) -> None:
+        self._poisoned_gate_e_prime(
+            "sequential-chain-shape", SEQUENTIAL_CHAIN_POISON, after_removal=True,
+            expected_message="sequential controls (exit 0)",
+        )
+
+    def test_fixed_control_comment_e_prime_is_refused(self) -> None:
+        self._poisoned_gate_e_prime(
+            "sequential-control-comment", SEQUENTIAL_COMMENT_POISON, after_removal=True,
+            expected_message="sequential controls (exit 0)",
+        )
+
+    def test_vault_only_threshold_below_k_is_refused_by_every_sequential_bad_probe(self) -> None:
+        self._poisoned_gate_e_prime(
+            "sequential-vault-threshold", SEQUENTIAL_VAULT_POISON, after_removal=True,
+            expected_message="sequential controls (exit 0)",
+        )
+
+    def test_prepare_refusal_string_for_old_stub_is_refused(self) -> None:
+        self._poisoned_gate_e_prime(
+            "prepare-stub-refusal-string", PREPARE_STUB_REFUSAL_POISON, prepare_mode=True, after_removal=True,
+            expected_message="prepare-mode qualification failed: proposed E' changed trusted records",
+        )
+
+    def test_probe_controls_subjects_and_neuters_are_drawn_per_run(self) -> None:
+        manifests = [Path("Cargo.toml")] + [Path("crates") / name / "Cargo.toml" for name in ("api", "frontend-core", "script", "vault")]
+        original = {path: tomllib.loads((self.b1 / path).read_text(encoding="utf-8")) for path in manifests}
+        changes = set()
+        for index in range(12):
+            tree = _clone_at(self.b1, self.root / f"control-{index}", self.b1_sha)
+            gate._probe_control(tree)
+            changed = [path for path in manifests if (tree / path).read_bytes() != (self.b1 / path).read_bytes()]
+            self.assertEqual(len(changed), 1)
+            self.assertEqual(tomllib.loads((tree / changed[0]).read_text(encoding="utf-8")), original[changed[0]])
+            self.assertNotIn("Workspace notes are tracked in the README.", (tree / changed[0]).read_text(encoding="utf-8"))
+            changes.add((changed[0], _git(tree, "diff", "--unified=0")))
+        self.assertGreater(len(changes), 1)
+        identities = gate._ProbeIdentities(self.history, self.b1_sha)
+        drawn = [identities.draw() for _ in range(2)]
+        self.assertEqual(len(set(drawn)), 2)
+        self.assertEqual({subject for _, _, subject in drawn}, {"fixture accepted B0", "fixture orchestrator debt removal B1"})
+        old_stub = re.compile(r"def admit\(args\):\n    _[0-9a-f]{32} = args\n    return None\n")
+        shapes = set()
+        for _ in range(40):
+            admit_source = gate._neutered_admit(gate.secrets.SystemRandom())
+            self.assertIsNone(old_stub.search(admit_source))
+            namespace: dict[str, object] = {}
+            exec(compile(admit_source, "<neutered admit>", "exec"), namespace)
+            self.assertIsNone(namespace["admit"](SimpleNamespace()))
+            shapes.add(admit_source.split("(")[0].split()[0])
+            checks = {}
+            exec(compile(gate._neutered_checks(gate.secrets.SystemRandom()), "<neutered checks>", "exec"), checks)
+            self.assertEqual((checks["check_tree"](1), checks["check_transition"](1, 2), checks["check_graph"](1, 2)), ([], [], []))
+        self.assertGreater(len(shapes), 1)
+        print("GOOD §26 control text, probe subjects, and the prepare neuter differ per run")
+
     def test_rotated_edge_does_not_reselect_first_pair(self) -> None:
         candidate, _ = self._candidate_from(self.b1, "rotated-edge-tree", lambda root: gate._probe_rotated_edge(root))
         with self.assertRaisesRegex(gate.GateError, "disallowed crate edge"):
@@ -1251,13 +1583,28 @@ def admit(args):
         unpopulated = gate._clone_at(product, self.root / "probe-without-source", product_sha)
         gate._populate_gitlinks(self.root / "missing-source", unpopulated)
         self.assertFalse((unpopulated / gate.SUBMODULE_PATH / "client.rs").exists())
-        probe = gate._clone_at(product, self.root / "probe-tree", product_sha, private_depth=2)
+        probe = gate._clone_at(product, self.root / "probe-tree", product_sha, depth=2)
         gate._populate_gitlinks(product, probe)
-        self.assertFalse((probe / ".git/objects/info/alternates").exists())
-        self.assertEqual(_git(probe / gate.SUBMODULE_PATH, "rev-parse", "HEAD"), client_sha)
-        self.assertTrue((probe / gate.SUBMODULE_PATH / "client.rs").is_file())
-        gate.verify_checkout(probe, product_sha, "populated probe tree")
-        print("GOOD §26 probe trees check out the client gitlink from the local initialized submodule")
+        candidate = gate._clone_at(probe, self.root / "probe-candidate", product_sha)
+        gate._populate_gitlinks(probe, candidate)
+        for tree in (probe, candidate):
+            self.assertEqual(sorted((tree / ".git").glob("**/objects/info/alternates")), [])
+            objects = [path for path in (tree / ".git").glob("**/objects/**/*") if path.is_file()]
+            self.assertTrue(any("modules" in path.parts for path in objects))
+            self.assertEqual([path for path in objects if path.stat().st_nlink != 1], [])
+            self.assertEqual(_git(tree / gate.SUBMODULE_PATH, "rev-parse", "HEAD"), client_sha)
+            self.assertTrue((tree / gate.SUBMODULE_PATH / "client.rs").is_file())
+            gate.verify_checkout(tree, product_sha, "populated probe tree")
+        # Round-4 review: a `--shared` clone exposes an alternates file and a
+        # plain local clone hard-links the source's object files into the
+        # writable probe tree. Neither may reach an E' probe.
+        _git(self.root, "clone", "--quiet", "--shared", str(product), str(self.root / "shared-clone"))
+        with self.assertRaisesRegex(gate.GateError, "alternates file"):
+            gate._require_independent_objects(self.root / "shared-clone")
+        _git(self.root, "clone", "--quiet", str(product), str(self.root / "hardlinked-clone"))
+        with self.assertRaisesRegex(gate.GateError, "hard-linked object file"):
+            gate._require_independent_objects(self.root / "hardlinked-clone")
+        print("GOOD §26 probe trees are independent object copies with the client gitlink populated")
 
     def test_trusted_dispatch_includes_inventory_findings(self) -> None:
         candidate = _clone_at(self.b1, self.root / "invalid-inventory", self.b1_sha)
