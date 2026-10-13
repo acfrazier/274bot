@@ -449,8 +449,13 @@ danger-zone rules. Bank, recovery, disposal, refusal and failed-walk settlement
 remain fenced to a later tick. For fixed rocks and trees, terminal unavailability
 is confirmed on the next observation so a delayed yield packet is accounted
 before the runner blocks. An empty fishing actor view or expired fishing wait
-renews observation instead: content-authored fishing NPCs move and can temporarily
-change type, so neither condition proves permanent absence.
+renews observation while fewer than 800 ticks have elapsed since the last yield
+or XP. Before the first yield, Start initializes this window on the session clock.
+Walking does not renew this bound. At expiry, unavailable fishing blocks
+with `no fishing spot observed for 800 ticks`. This exceeds the longest movement
+timer (280 + 249 = 529 ticks, `skill_fishing/scripts/fishing_movement.rs2:8-12`)
+plus the 60-tick whirlpool (`macro events/scripts/fishing/macro_event_whirlpool.rs2:7`).
+Idle surveys and observation walks report `surveying` / `Waiting`, not gathering.
 
 ### Fishing bank returns
 
@@ -508,10 +513,11 @@ prove that moving fishing spots are visible. For NPC-backed fishing, the
 selector derives observation stands from the content movement envelope and
 accumulates empty coverage for at most 100 gameplay ticks. It caps reapproaches
 at eight per method/placement; exhaustion follows Avoided/Exhausted selection
-instead of falsely declaring the spot absent. Positive gather progress or expiry
-of an unavailable-resource wait renews that budget. A live actor clears empty
-evidence but does not itself renew the approach budget. A cooldown or hazard in
-only the visible part of a movement envelope does not suppress observation of
+instead of falsely declaring the spot absent. Positive gather progress renews
+that budget. Empty coverage or expiry of an unavailable-resource wait also
+renews it, but only within the 800-tick no-yield bound above. A live actor clears
+empty evidence but does not itself renew the approach budget. A cooldown or hazard
+in only the visible part of a movement envelope does not suppress observation of
 the rest. Rock and tree placement observation still uses the loaded map rectangle.
 
 ### Catherby spot movement
