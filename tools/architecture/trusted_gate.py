@@ -18,6 +18,7 @@ import sys
 import tempfile
 import tomllib
 import secrets
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,8 @@ def _hex(value: Any, pattern: re.Pattern[str], label: str) -> str:
     length = 40 if pattern is SHA_RE else 64
     if not isinstance(value, str) or pattern.fullmatch(value) is None:
         _fail(f"{label} must be lowercase hexadecimal with length {length}")
+    if pattern is DIGEST_RE and value == "0" * 64:
+        _fail(f"{label} cannot be an all-zero digest")
     return value
 
 
@@ -228,6 +231,74 @@ def input_digest(root: Path) -> str:
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(block)
+    return digest.hexdigest()
+
+
+def committed_input_digest(repo_root: Path, sha: str) -> str:
+    """Recompute an accepted receipt's source digest from its Git tree, not its claim."""
+    sha = _hex(sha, SHA_RE, "accepted product commit")
+    git_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1"}
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "--full-tree", sha],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=git_env,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"cannot replay accepted product tree {sha}: {exc}")
+    entries: list[tuple[bytes, str, str, str]] = []
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        try:
+            metadata, name = entry.split(b"\t", 1)
+            mode, kind, oid = metadata.decode("ascii").split(" ")
+            parts = Path(os.fsdecode(name)).parts
+        except (ValueError, UnicodeError) as exc:
+            _fail(f"invalid accepted product tree entry: {exc}")
+        if any(part in {".git", "target", "node_modules", "__pycache__"} for part in parts):
+            continue
+        if (mode, kind) not in {("160000", "commit"), ("100644", "blob"), ("100755", "blob")}:
+            _fail(f"unsupported accepted product object {mode} {kind}: {os.fsdecode(name)}")
+        entries.append((name, mode, kind, oid))
+    digest = hashlib.sha256(b"f0-architecture-input-v2\0")
+    try:
+        process = subprocess.Popen(
+            ["git", "-C", str(repo_root), "cat-file", "--batch"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=git_env,
+        )
+    except OSError as exc:
+        _fail(f"cannot replay accepted source blobs: {exc}")
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    try:
+        for name, mode, _, oid in entries:
+            digest.update(len(name).to_bytes(8, "big"))
+            digest.update(name)
+            if mode == "160000":
+                digest.update(b"gitlink\0")
+                digest.update(oid.encode("ascii"))
+                continue
+            process.stdin.write(oid.encode("ascii") + b"\n")
+            process.stdin.flush()
+            header = process.stdout.readline().split()
+            if len(header) != 3 or header[0] != oid.encode("ascii") or header[1] != b"blob":
+                _fail(f"cannot replay accepted source blob {oid}")
+            size = int(header[2])
+            contents = process.stdout.read(size)
+            if len(contents) != size or process.stdout.read(1) != b"\n":
+                _fail(f"truncated accepted source blob {oid}")
+            digest.update(b"blob\0")
+            digest.update(size.to_bytes(8, "big"))
+            digest.update(contents)
+        process.stdin.close()
+        if process.wait(timeout=30) != 0:
+            _fail(f"cannot replay accepted source blobs: {process.stderr.read().decode(errors='replace')}")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdin.close()
+        process.stdout.close()
+        process.stderr.close()
     return digest.hexdigest()
 
 
@@ -808,6 +879,9 @@ def _load_current_inputs(args: argparse.Namespace, *, local: bool) -> tuple[Path
         _fail("protected records ref tip does not match the exact records commit")
     verify_checkout(records_root, record_sha, "records checkout")
     current, receipts, pending = _read_record_store(records_root, target_ref)
+    for index, receipt in enumerate(receipts, start=1):
+        if receipt["input_digest"] != committed_input_digest(repo_root, receipt["head_sha"]):
+            _fail(f"receipt {index}.input_digest does not match accepted product bytes")
     external_e = _hex(args.enforcement_sha, SHA_RE, "external enforcement SHA")
     external_digest = _hex(args.bundle_digest, DIGEST_RE, "external bundle digest")
     external_runtime = _nonblank(args.runtime_pin, "external runtime pin")
@@ -933,8 +1007,72 @@ def _qualification_digest(active_root: Path, proposed_root: Path, base_sha: str,
         "runtime_pin": runtime_pin,
         "fixture_corpus": "check.py --self-test + tools/architecture/test_*.py",
         "admission_probes": [label for label, _, _ in ADMISSION_PROBES],
+        "sequential_probe": f"{SEQUENTIAL_CONTROLS} ordinary controls then one bad candidate in the same receipt chain",
+        "probe_isolation": "private root/home/tmp and network namespace",
         "prepare_probe": "one CLI prepare-enforcement against neutered checker",
     })
+
+
+SEQUENTIAL_CONTROLS = 3
+
+
+def _record_files(root: Path) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        here = Path(directory)
+        dirs[:] = sorted(name for name in dirs if name != ".git")
+        for name in dirs:
+            path = here / name
+            if path.is_symlink():
+                _fail(f"probe records contain a symlinked directory: {path}")
+            files[path.relative_to(root).as_posix() + "/"] = b""
+        for name in names:
+            path = here / name
+            if not path.is_file() or path.is_symlink():
+                _fail(f"probe records contain a non-regular path: {path}")
+            files[path.relative_to(root).as_posix()] = path.read_bytes()
+    return files
+
+
+def _check_probe_records(records: Path, before: dict[str, bytes], admitted: bool) -> None:
+    after = _record_files(records)
+    if not admitted:
+        if after != before:
+            changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+            _fail(f"qualification probe modified trusted records on refusal: {', '.join(changed)}")
+        return
+    key = "receipts.jsonl"
+    if set(after) != set(before) or any(after[name] != value for name, value in before.items() if name != key):
+        _fail("qualification control changed records outside its one receipt")
+    previous = before[key]
+    if not after[key].startswith(previous) or len(after[key].splitlines()) != len(previous.splitlines()) + 1:
+        _fail("qualification control did not append exactly one receipt")
+
+
+def _check_probe_receipt(records: Path, target_ref: str, base_sha: str, head_sha: str, digest: str, enforcement_sha: str) -> None:
+    current, receipts, pending = _read_record_store(records, target_ref)
+    receipt = receipts[-1]
+    if (pending or current["head_sha"] != head_sha or current["enforcement_sha"] != enforcement_sha
+            or receipt["base_sha"] != base_sha or receipt["transition_kind"] is not None
+            or receipt["input_digest"] != digest):
+        _fail("qualification control did not bind its exact accepted source and enforcement")
+
+
+def _probe_admit_command(
+    enforcement: Path, records: Path, record_sha: str, proposed_sha: str,
+    proposed_digest: str, runtime_pin: str, target_ref: str, base: Path,
+    candidate: Path, head_sha: str,
+) -> list[str]:
+    return [
+        sys.executable, str(enforcement / ARCH_DIR / "trusted_gate.py"), "admit",
+        "--records-root", str(records), "--records-commit", record_sha,
+        "--records-ref-sha", record_sha, "--enforcement-root", str(enforcement),
+        "--enforcement-sha", proposed_sha, "--bundle-digest", proposed_digest,
+        "--runtime-pin", runtime_pin, "--enforcement-ref-sha", proposed_sha,
+        "--target-ref", target_ref, "--repo-root", str(base),
+        "--base-root", str(base), "--candidate-root", str(candidate),
+        "--head-sha", head_sha,
+    ]
 
 
 # The suites import E', but these probes run its real CLI. Each run has the
@@ -1083,9 +1221,13 @@ ADMISSION_PROBES = (
 )
 
 
-def _clone_at(source: Path, destination: Path, sha: str) -> Path:
-    """Check out exact SHA in a new clone that borrows the source object store."""
-    _git(destination.parent, "clone", "--quiet", "--shared", "--no-checkout", str(source), str(destination))
+def _clone_at(source: Path, destination: Path, sha: str, *, private_depth: int | None = None) -> Path:
+    """Check out exact SHA; external sources need private objects before isolation."""
+    if private_depth is None:
+        _git(destination.parent, "clone", "--quiet", "--shared", "--no-checkout", str(source), str(destination))
+    else:
+        _git(destination.parent, "clone", "--quiet", "--no-local", "--no-checkout",
+             "--depth", str(private_depth), source.resolve().as_uri(), str(destination))
     _git(destination, "checkout", "--quiet", "--detach", sha)
     return destination
 
@@ -1115,37 +1257,86 @@ def _commit_as(root: Path, identity_root: Path, identity_sha: str, message: str)
     return _git(root, "rev-parse", "--verify", "HEAD")
 
 
-def _isolated_probe(command: list[str], work: Path) -> subprocess.CompletedProcess[str]:
-    """Run untrusted E' with only this probe's tree writable.
+def _no_socket_filter() -> int:
+    """Kill socket creation/connection, including attempts E' tries to catch."""
+    if sys.platform != "linux" or os.uname().machine != "x86_64":
+        _fail("probe socket filter requires the pinned Linux x86-64 runtime")
+    # seccomp_data.arch (offset 4), then nr (offset 0); x86-64 socket/connect = 41/42.
+    instructions = (
+        (0x20, 0, 0, 4), (0x15, 1, 0, 0xC000003E),
+        (0x06, 0, 0, 0x80000000), (0x20, 0, 0, 0),
+        (0x15, 0, 1, 41), (0x06, 0, 0, 0x80000000),
+        (0x15, 0, 1, 42), (0x06, 0, 0, 0x80000000),
+        (0x06, 0, 0, 0x7FFF0000),
+    )
+    fd = os.memfd_create("architecture-probe-no-socket", flags=0)
+    os.write(fd, struct.pack("<" + "HBBI" * len(instructions), *(
+        value for instruction in instructions for value in instruction
+    )))
+    os.lseek(fd, 0, os.SEEK_SET)
+    return fd
 
-    The recursive read-only root bind covers absolute home, /tmp, /dev/shm,
-    evidence paths, and Git alternates. The private bind restores write access
-    to this probe's records, clones, and isolated HOME/TMPDIR only.
-    """
+
+def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True) -> subprocess.CompletedProcess[str]:
+    """Expose only this probe universe and the local runtime in a fresh network/mount namespace."""
     home = work / secrets.token_hex(16)
     temporary = work / secrets.token_hex(16)
     home.mkdir()
     temporary.mkdir()
     bwrap = shutil.which("bwrap")
+    parser = shutil.which("rust-analyzer")
     if bwrap is None or _file_sha256(Path(bwrap).resolve(strict=True)) != BWRAP_SHA256:
         _fail("pinned bubblewrap executable is missing or does not match its protected SHA-256")
+    if parser is None or _file_sha256(Path(parser).resolve(strict=True)) != RUST_ANALYZER_SHA256:
+        _fail("pinned rust-analyzer executable is missing or does not match its protected SHA-256")
+    executable_paths = [Path(sys.executable), Path("/usr/bin/git"), Path("/usr/bin/sh"), Path(bwrap), Path(parser)]
+    # The Python standard library, Git helpers, and ELF dependencies are the
+    # runtime; neither the host root nor its home/evidence/run/socket paths are mounted.
     sandbox = [
-        str(bwrap), "--unshare-user", "--unshare-pid", "--unshare-ipc",
-        "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/dev/shm",
-        "--bind", str(work), str(work),
-        "--setenv", "HOME", str(home), "--setenv", "TMPDIR", str(temporary),
-        "--chdir", str(work), "--unsetenv", "LD_LIBRARY_PATH", "--",
+        str(bwrap), "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-net",
+        "--clearenv", "--tmpfs", "/", "--dir", "/usr", "--dir", "/usr/bin",
+        "--ro-bind", "/usr/lib", "/usr/lib",
+        "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64",
+        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
     ]
+    runtime_dirs = [Path("/usr/share/git-core")]
+    library_dir = Path(bwrap).resolve().parent.parent / "lib/x86_64-linux-gnu"
+    if library_dir.is_dir():
+        runtime_dirs.append(library_dir)
+    mounted_dirs = {Path("/"), Path("/usr"), Path("/usr/bin"), Path("/usr/lib")}
+    for path in [work, *runtime_dirs, *(item.parent for item in executable_paths)]:
+        for parent in reversed((path, *path.parents)):
+            if parent not in mounted_dirs:
+                sandbox.extend(("--dir", str(parent)))
+                mounted_dirs.add(parent)
+    for directory in runtime_dirs:
+        if directory.is_dir():
+            sandbox.extend(("--ro-bind", str(directory), str(directory)))
+    for path in executable_paths:
+        sandbox.extend(("--ro-bind", str(path.resolve(strict=True)), str(path)))
+    path = os.pathsep.join(dict.fromkeys((str(Path(parser).parent), str(Path(bwrap).parent), "/usr/bin")))
+    sandbox.extend((
+        "--bind", str(work), str(work), "--tmpfs", str(home), "--tmpfs", str(temporary),
+        "--remount-ro", "/",
+        "--setenv", "PATH", path, "--setenv", "HOME", str(home),
+        "--setenv", "TMPDIR", str(temporary), "--chdir", str(work), "--",
+    ))
+    environment = {"PATH": path}
+    if library_dir.is_dir():
+        environment["LD_LIBRARY_PATH"] = str(library_dir)
+    filter_fd = _no_socket_filter() if deny_sockets else None
+    if filter_fd is not None:
+        sandbox[-1:-1] = ["--seccomp", str(filter_fd)]
     try:
-        environment = {key: value for key, value in os.environ.items() if not key.startswith("F0_ARCH_TEST_") and key != "F0_ARCH_QUALIFICATION_CHILD"}
-        library_dir = Path(bwrap).resolve().parent.parent / "lib/x86_64-linux-gnu"
-        if library_dir.is_dir():
-            environment["LD_LIBRARY_PATH"] = str(library_dir)
-        return subprocess.run(sandbox + command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment, timeout=300)
+        return subprocess.run(sandbox + command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              env=environment, pass_fds=(filter_fd,) if filter_fd is not None else (), timeout=300)
     except subprocess.TimeoutExpired:
         _fail("proposed E' probe exceeded the 300-second child deadline")
     except OSError as exc:
-        _fail(f"cannot isolate proposed E' probe in a private mount namespace: {exc}")
+        _fail(f"cannot isolate proposed E' probe in a private mount/network namespace: {exc}")
+    finally:
+        if filter_fd is not None:
+            os.close(filter_fd)
 
 
 def _qualify_admission_mode(
@@ -1164,12 +1355,14 @@ def _qualify_admission_mode(
     records_top = _path(Path(_git(record_root, "rev-parse", "--show-toplevel")), "records repository")
     records_sha = _git(record_root, "rev-parse", "--verify", "HEAD")
     records_subpath = record_root.relative_to(records_top)
+    bootstrap_sha = _read_json(record_root / "gate.json", "gate record")["bootstrap"]["accepted_sha"]
+    product_depth = int(_git(candidate_root, "rev-list", "--count", head_sha, f"^{bootstrap_sha}")) + 2
     for label, mutate, admitted in ADMISSION_PROBES:
         with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
             work = Path(temp_name)
             def name() -> str:
                 return secrets.token_hex(16)
-            records_clone = _clone_at(records_top, work / name(), records_sha)
+            records_clone = _clone_at(records_top, work / name(), records_sha, private_depth=1)
             records = records_clone / records_subpath
             receipts_path = records / "receipts.jsonl"
             old = receipts_path.read_bytes()
@@ -1177,33 +1370,21 @@ def _qualify_admission_mode(
                 _fail("receipt file must end with a newline")
             receipts_path.write_bytes(old + _canonical(activation_receipt) + b"\n")
             simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, _git(candidate_root, "log", "-1", "--format=%s", head_sha))
-            enforcement = _clone_at(proposed_root, work / name(), proposed_sha)
+            enforcement = _clone_at(proposed_root, work / name(), proposed_sha, private_depth=1)
             if bundle_digest(enforcement) != proposed_digest:
                 _fail("proposed E' clone does not match its exact bundle digest")
-            base = _clone_at(candidate_root, work / name(), head_sha)
+            base = _clone_at(candidate_root, work / name(), head_sha, private_depth=product_depth)
             _populate_gitlinks(candidate_root, base)
             _git(base, "update-ref", target_ref, head_sha)
-            candidate = _clone_at(candidate_root, work / name(), head_sha)
-            _populate_gitlinks(candidate_root, candidate)
+            candidate = _clone_at(base, work / name(), head_sha)
+            _populate_gitlinks(base, candidate)
             mutate(candidate)
             probe_sha = _commit_as(candidate, candidate_root, head_sha, _git(candidate_root, "log", "-1", "--format=%s", head_sha))
-            receipts_before = receipts_path.read_bytes()
-            command = [
-                sys.executable, str(enforcement / ARCH_DIR / "trusted_gate.py"), "admit",
-                "--records-root", str(records),
-                "--records-commit", simulated_records_sha,
-                "--records-ref-sha", simulated_records_sha,
-                "--enforcement-root", str(enforcement),
-                "--enforcement-sha", proposed_sha,
-                "--bundle-digest", proposed_digest,
-                "--runtime-pin", runtime_pin,
-                "--enforcement-ref-sha", proposed_sha,
-                "--target-ref", target_ref,
-                "--repo-root", str(base),
-                "--base-root", str(base),
-                "--candidate-root", str(candidate),
-                "--head-sha", probe_sha,
-            ]
+            records_before = _record_files(records)
+            command = _probe_admit_command(
+                enforcement, records, simulated_records_sha, proposed_sha,
+                proposed_digest, runtime_pin, target_ref, base, candidate, probe_sha,
+            )
             result = _isolated_probe(command, work)
             output = result.stdout.strip()[-4000:]
             if (work / _PROBE_MARKER).exists():
@@ -1211,11 +1392,62 @@ def _qualify_admission_mode(
             if admitted:
                 if result.returncode != 0:
                     _fail(f"admission-mode qualification failed: proposed E' refused the {label} (exit {result.returncode})\n{output}")
-                current, receipts, pending = _read_record_store(records, target_ref)
-                if pending or current["head_sha"] != probe_sha or receipts[-1]["transition_kind"] is not None or current["enforcement_sha"] != proposed_sha:
-                    _fail(f"admission-mode qualification failed: proposed E' did not record an ordinary receipt for the {label}\n{output}")
-            elif result.returncode == 0 or receipts_path.read_bytes() != receipts_before or (records / "pending.json").exists():
-                _fail(f"admission-mode qualification failed: proposed E' admitted the known-bad {label} (exit {result.returncode})\n{output}")
+                _check_probe_records(records, records_before, True)
+                _check_probe_receipt(records, target_ref, head_sha, probe_sha, input_digest(candidate), proposed_sha)
+            else:
+                if result.returncode == 0:
+                    _fail(f"admission-mode qualification failed: proposed E' admitted the known-bad {label} (exit 0)\n{output}")
+                _check_probe_records(records, records_before, False)
+
+    # Independent probes start with no post-activation history. This universe
+    # retains three real accepted controls and then tests a refusal at count 3.
+    with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
+        work = Path(temp_name)
+        def name() -> str:
+            return secrets.token_hex(16)
+        records_clone = _clone_at(records_top, work / name(), records_sha, private_depth=1)
+        records = records_clone / records_subpath
+        receipts_path = records / "receipts.jsonl"
+        old = receipts_path.read_bytes()
+        if old and not old.endswith(b"\n"):
+            _fail("receipt file must end with a newline")
+        receipts_path.write_bytes(old + _canonical(activation_receipt) + b"\n")
+        subject = _git(candidate_root, "log", "-1", "--format=%s", head_sha)
+        simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, subject)
+        enforcement = _clone_at(proposed_root, work / name(), proposed_sha, private_depth=1)
+        if bundle_digest(enforcement) != proposed_digest:
+            _fail("proposed E' clone does not match its exact bundle digest")
+        base = _clone_at(candidate_root, work / name(), head_sha, private_depth=product_depth)
+        _populate_gitlinks(candidate_root, base)
+        base_sha = head_sha
+        for index in range(SEQUENTIAL_CONTROLS + 1):
+            _git(base, "update-ref", target_ref, base_sha)
+            candidate = _clone_at(base, work / name(), base_sha)
+            _populate_gitlinks(base, candidate)
+            admitted = index < SEQUENTIAL_CONTROLS
+            if admitted:
+                _probe_control(candidate)
+            else:
+                _probe_added_edge(candidate)
+            probe_sha = _commit_as(candidate, candidate_root, head_sha, subject)
+            records_before = _record_files(records)
+            result = _isolated_probe(_probe_admit_command(
+                enforcement, records, simulated_records_sha, proposed_sha,
+                proposed_digest, runtime_pin, target_ref, base, candidate, probe_sha,
+            ), work)
+            output = result.stdout.strip()[-4000:]
+            label = f"sequential control {index + 1}" if admitted else f"sequential bad edge after {SEQUENTIAL_CONTROLS} controls"
+            if admitted:
+                if result.returncode != 0:
+                    _fail(f"admission-mode qualification failed: proposed E' refused the {label} (exit {result.returncode})\n{output}")
+                _check_probe_records(records, records_before, True)
+                _check_probe_receipt(records, target_ref, base_sha, probe_sha, input_digest(candidate), proposed_sha)
+                simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, subject)
+                base, base_sha = candidate, probe_sha
+            else:
+                if result.returncode == 0:
+                    _fail(f"admission-mode qualification failed: proposed E' admitted the known-bad {label} (exit 0)\n{output}")
+                _check_probe_records(records, records_before, False)
 
 
 def _qualify_prepare_mode(
@@ -1230,6 +1462,7 @@ def _qualify_prepare_mode(
     proposed_digest: str,
     runtime_pin: str,
     activation_receipt: dict[str, Any],
+    source_approval: dict[str, Any],
 ) -> None:
     """Require E' as a CLI to refuse one always-success E'' transition.
 
@@ -1238,25 +1471,27 @@ def _qualify_prepare_mode(
     """
     records_top = _path(Path(_git(record_root, "rev-parse", "--show-toplevel")), "records repository")
     records_sha = _git(record_root, "rev-parse", "--verify", "HEAD")
+    bootstrap_sha = _read_json(record_root / "gate.json", "gate record")["bootstrap"]["accepted_sha"]
+    product_depth = int(_git(candidate_root, "rev-list", "--count", head_sha, f"^{bootstrap_sha}")) + 2
     with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
         work = Path(temp_name)
         def name() -> str:
             return secrets.token_hex(16)
-        records_clone = _clone_at(records_top, work / name(), records_sha)
+        records_clone = _clone_at(records_top, work / name(), records_sha, private_depth=1)
         records = records_clone / record_root.relative_to(records_top)
         receipts_path = records / "receipts.jsonl"
         previous = receipts_path.read_bytes()
         if previous and not previous.endswith(b"\n"):
             _fail("receipt file must end with a newline")
         receipts_path.write_bytes(previous + _canonical(activation_receipt) + b"\n")
-        enforcement = _clone_at(proposed_root, work / name(), proposed_sha)
+        enforcement = _clone_at(proposed_root, work / name(), proposed_sha, private_depth=1)
         if bundle_digest(enforcement) != proposed_digest:
             _fail("proposed E' clone does not match its exact bundle digest")
-        grandchild = _clone_at(proposed_root, work / name(), proposed_sha)
+        grandchild = _clone_at(enforcement, work / name(), proposed_sha)
         check = grandchild / ARCH_DIR / "check.py"
         check.write_text(
             check.read_text(encoding="utf-8") + _PROBE_EMPTY_FINDINGS
-            + "\n\ndef check_graph(root, policy):\n    return []\n",
+            + f"\n\n# {secrets.token_hex(16)}\ndef check_graph(root, policy):\n    return []\n",
             encoding="utf-8",
         )
         gate = grandchild / ARCH_DIR / "trusted_gate.py"
@@ -1264,15 +1499,16 @@ def _qualify_prepare_mode(
         entry = 'if __name__' + ' == "__main__":'
         if entry not in source:
             _fail("proposed E' has no CLI entry point")
-        gate.write_text(source.replace(entry, "def admit(args):\n    return None\n\n\n" + entry, 1), encoding="utf-8")
+        token = secrets.token_hex(16)
+        gate.write_text(source.replace(entry, f"def admit(args):\n    _{token} = args\n    return None\n\n\n" + entry, 1), encoding="utf-8")
         subject = _git(candidate_root, "log", "-1", "--format=%s", head_sha)
         grandchild_sha = _commit_as(grandchild, candidate_root, head_sha, subject)
         grandchild_digest = bundle_digest(grandchild)
-        base = _clone_at(candidate_root, work / name(), head_sha)
+        base = _clone_at(candidate_root, work / name(), head_sha, private_depth=product_depth)
         _populate_gitlinks(candidate_root, base)
         _git(base, "update-ref", target_ref, head_sha)
-        candidate = _clone_at(candidate_root, work / name(), head_sha)
-        _populate_gitlinks(candidate_root, candidate)
+        candidate = _clone_at(base, work / name(), head_sha)
+        _populate_gitlinks(base, candidate)
         for relative in (ARCH_DIR / "check.py", ARCH_DIR / "trusted_gate.py"):
             shutil.copyfile(grandchild / relative, candidate / relative)
         candidate_sha = _commit_as(candidate, candidate_root, head_sha, subject)
@@ -1285,18 +1521,18 @@ def _qualify_prepare_mode(
             "proposed_enforcement_sha": grandchild_sha, "proposed_bundle_digest": grandchild_digest,
             "runtime_pin": runtime_pin, "proposed_runtime_pin": runtime_pin,
             "input_digest": input_digest(candidate), "delta": [],
-            "reason": "Refuse the neutered checker fixture",
-            "owner_acknowledgements": ["T1"],
+            "reason": source_approval["reason"],
+            "owner_acknowledgements": source_approval["owner_acknowledgements"],
             "orchestrator_commit": candidate_sha,
-            "operator_inline_approval": "Exact fixture approval",
-            "source_message": "protected prepare-mode probe",
+            "operator_inline_approval": source_approval["operator_inline_approval"],
+            "source_message": source_approval["source_message"],
         }
         approvals = records / "approvals"
         approvals.mkdir(exist_ok=True)
         (approvals / f"{candidate_sha}.json").write_bytes(_canonical(approval) + b"\n")
         _git(records_clone, "add", "--", (approvals / f"{candidate_sha}.json").relative_to(records_clone).as_posix())
         simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, subject)
-        before = receipts_path.read_bytes()
+        records_before = _record_files(records)
         evidence = work / name()
         evidence.mkdir()
         command = [
@@ -1313,10 +1549,15 @@ def _qualify_prepare_mode(
             "--proposed-bundle-digest", grandchild_digest,
             "--evidence-root", str(evidence),
         ]
-        result = _isolated_probe(command, work)
+        # Its nested corpus starts local socket servers; the private network
+        # namespace still hides every host endpoint from this single prepare run.
+        result = _isolated_probe(command, work, deny_sockets=False)
         output = result.stdout.strip()[-4000:]
         refused_bad_checker = "protected fixture qualification failed" in output or "admission-mode qualification failed" in output
-        if result.returncode == 0 or not refused_bad_checker or (records / "pending.json").exists() or receipts_path.read_bytes() != before:
+        if _record_files(records) != records_before:
+            _fail("prepare-mode qualification failed: proposed E' changed trusted records while probing the neutered checker\n"
+                  + output)
+        if result.returncode == 0 or not refused_bad_checker:
             _fail("prepare-mode qualification failed: proposed E' did not reject the neutered checker (exit "
                   f"{result.returncode})\n{output}")
 
@@ -1644,6 +1885,7 @@ def prepare_enforcement(args: argparse.Namespace) -> None:
         proposed_digest=proposed_digest,
         runtime_pin=args.runtime_pin,
         activation_receipt=activation_receipt,
+        source_approval=approval,
     )
     _write_pending(record_root, pending_record)
     print(f"protected transition prepared: H={head_sha} E'={proposed_sha}; publish E' only after committing pending.json")
