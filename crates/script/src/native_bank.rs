@@ -326,7 +326,7 @@ enum Phase {
     Act,
     AwaitTransfer {
         before: i32,
-        before_slots: Option<usize>,
+        before_slots: Option<u8>,
         item_id: i32,
         evidence: EvidenceStamp,
         started_at: Duration,
@@ -362,7 +362,7 @@ struct DepositLogState {
 #[derive(Clone, Copy)]
 struct InFlightDeposit {
     before: i32,
-    before_slots: Option<usize>,
+    before_slots: Option<u8>,
     item_id: i32,
 }
 #[derive(Clone, Copy)]
@@ -417,7 +417,7 @@ pub struct BankMachine {
     deadline: Option<BankDeadline>,
     session: u64,
     deposits: u8,
-    withdraw_index: usize,
+    withdraw_index: u8,
     protected_before: Vec<BankCount>,
     deposited: u32,
     capacity_freed: u8,
@@ -1212,7 +1212,8 @@ impl NativeMachine for BankMachine {
                         }
                     }
                     BankAction::WithdrawTo { withdrawals } => {
-                        let Some(withdrawal) = withdrawals.get(self.withdraw_index) else {
+                        let Some(withdrawal) = withdrawals.get(usize::from(self.withdraw_index))
+                        else {
                             return Poll::Ready(Ok(self.receipt(true)));
                         };
                         let Some(view) = HeldView::read(cx, withdrawal.id) else {
@@ -1234,7 +1235,7 @@ impl NativeMachine for BankMachine {
                             self.same_session(cx),
                         ) {
                             Progress::Complete => {
-                                self.withdraw_index += 1;
+                                self.withdraw_index = self.withdraw_index.saturating_add(1);
                                 continue;
                             }
                             Progress::OverTarget => {
@@ -1383,11 +1384,7 @@ impl NativeMachine for BankMachine {
                                     self.request.action,
                                     BankAction::DepositCapacity { .. }
                                 )
-                                .then(|| {
-                                    pack.map_or(0, |rows| {
-                                        rows.iter().filter(|row| row.count > 0).count()
-                                    })
-                                });
+                                .then(|| pack.map_or(0, pack_rows));
                                 let option = side
                                     .and_then(|side| deposit_option(side, click))
                                     .expect("a selected deposit has its posted operation label");
@@ -1551,15 +1548,9 @@ impl NativeMachine for BankMachine {
                                 .deposited
                                 .saturating_add(before.saturating_sub(after).max(0) as u32);
                         }
-                        if let Some(before_slots) = before_slots {
-                            if let Some(after_slots) =
-                                pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
-                            {
-                                let freed = before_slots.saturating_sub(after_slots);
-                                self.capacity_freed = self
-                                    .capacity_freed
-                                    .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
-                            }
+                        if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
+                            let freed = before_slots.saturating_sub(pack_rows(pack));
+                            self.capacity_freed = self.capacity_freed.saturating_add(freed);
                         }
                         self.phase = Phase::Act;
                         continue;
@@ -1820,6 +1811,11 @@ fn open_generation(cx: &ActionContext<'_>) -> u64 {
         .map_or(u64::MAX, |session| session.value.generation)
 }
 
+/// Occupied pack rows; the pack holds at most 28, so the count fits a byte.
+fn pack_rows<R: ops::BankRow>(pack: &[R]) -> u8 {
+    u8::try_from(pack.iter().filter(|row| row.count() > 0).count()).unwrap_or(u8::MAX)
+}
+
 impl BankMachine {
     fn arm_deadline(&mut self, start_tick: u64, started_at: Duration, tick_limit: u64) {
         self.deadline = Some(BankDeadline::hybrid(start_tick, started_at, tick_limit));
@@ -1942,15 +1938,13 @@ impl BankMachine {
         let after = ops::count_id(pack, in_flight.item_id);
         let fell = in_flight.before.saturating_sub(after).max(0);
         let freed = in_flight.before_slots.map_or(0, |before_slots| {
-            before_slots.saturating_sub(pack.iter().filter(|row| row.count() > 0).count())
+            before_slots.saturating_sub(pack_rows(pack))
         });
         if fell > 0 {
             if matches!(self.request.action, BankAction::DepositProducts { .. }) {
                 self.deposited = self.deposited.saturating_add(fell as u32);
             }
-            self.capacity_freed = self
-                .capacity_freed
-                .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
+            self.capacity_freed = self.capacity_freed.saturating_add(freed);
             self.deposits = self.deposits.saturating_add(1);
         }
         api::host_log!(
@@ -1973,7 +1967,7 @@ impl BankMachine {
         &mut self,
         cx: &mut ActionContext<'_>,
         before: i32,
-        before_slots: Option<usize>,
+        before_slots: Option<u8>,
         item_id: i32,
         evidence: EvidenceStamp,
     ) -> Result<TransferWait, ActionError> {
@@ -2092,15 +2086,9 @@ impl BankMachine {
                     .deposited
                     .saturating_add(before.saturating_sub(after).max(0) as u32);
             }
-            if let Some(before_slots) = before_slots {
-                if let Some(after_slots) =
-                    pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
-                {
-                    let freed = before_slots.saturating_sub(after_slots);
-                    self.capacity_freed = self
-                        .capacity_freed
-                        .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
-                }
+            if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
+                let freed = before_slots.saturating_sub(pack_rows(pack));
+                self.capacity_freed = self.capacity_freed.saturating_add(freed);
             }
             self.deposits = self.deposits.saturating_add(1);
             self.deposit_log = None;
