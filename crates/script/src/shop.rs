@@ -21,20 +21,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Frozen `Shop.open`: wait for `isOpen` this long per attempt when no game
-/// ticks are posted.
+/// Wall deadline for a usable shop modal/stock page, never an NPC interaction expiry.
 pub const OPEN_WAIT_MS: u64 = 3_000;
-/// Engine-derived stationary ticks before a `Shop.open` attempt is considered
-/// stalled without movement (`World.ts` 600 ms cycle × 5 = 3000 ms;
-/// `Player.ts:1275-1297` `processInteraction` advances `updateMovement` each
-/// tick while pathing to the NPC and calls `clearInteraction` as soon as the
-/// player has no waypoints and `stepsTaken === 0`).
-pub const OPEN_IDLE_TICKS: u32 = 5;
-/// Stationary tick cap while `self_target_kind == 1` (`PathingEntity.ts:521-525`
-/// `setFaceEntity` keeps the NPC targeted if the player is temporarily delayed
-/// before `processInteraction` can step).
-pub const OPEN_TARGET_IDLE_TICKS: u32 = 10;
-/// Frozen `Shop.open` attempts.
+/// Existing bound on Trade requests for a failed `Shop.open`.
 pub const OPEN_ATTEMPTS: u32 = 3;
 /// Frozen `Shop.close`: wait for `!isOpen` this long.
 pub const CLOSE_WAIT_MS: u64 = 3_000;
@@ -260,14 +249,11 @@ pub(crate) struct Shop {
     last_step_tick: Option<u64>,
     /// Last observed local player tile while waiting for `Shop.open`.
     last_here: Option<observed::Tile>,
-    /// Consecutive stationary game ticks observed in the current open attempt.
-    idle_ticks: u32,
     /// The observed held count now (kept for the next batch baseline).
     held_now: i32,
-    /// An op is outstanding in the current wait window (`Shop.open` presses
-    /// one Trade per attempt, exactly like the frozen loop).
+    /// `Shop.open` emitted Trade and is awaiting the engine's interaction end.
     pressed: bool,
-    /// Remaining `Shop.open` attempts.
+    /// Remaining Trade requests in the bounded `Shop.open` policy.
     attempts_left: u32,
 }
 
@@ -439,7 +425,7 @@ impl Family for Shop {
         }
         match self.kind {
             Kind::Open if probe.shop_open => self.open_step(&probe, cx),
-            Kind::Open if self.attempts_left <= 1 && self.attempt_expired(&probe, cx) => {
+            Kind::Open if self.attempts_left <= 1 && Self::interaction_ended(&probe) => {
                 self.done(false)
             }
             // A snapshot may confirm the page, but retrying Trade remains
@@ -468,7 +454,6 @@ impl Shop {
             last_trade_tick: None,
             last_step_tick: None,
             last_here: None,
-            idle_ticks: 0,
             batch_baseline: 0,
             held_now: 0,
             clicks: 0,
@@ -524,7 +509,7 @@ impl Shop {
         Step::Done(self.kind.value(result, self.transferred))
     }
 
-    /// Press the NPC's Trade op once and open this attempt's window.
+    /// Emit one Trade request and arm the wait for a usable shop page.
     fn press_trade(&mut self, tick: Option<u64>, here: Option<observed::Tile>, cx: &mut Cx<'_>) {
         let epoch = observed::with(Scene::epoch);
         if tick.is_some() && self.last_trade_tick == tick
@@ -538,7 +523,6 @@ impl Shop {
         if here.is_some() {
             self.last_here = here;
         }
-        self.idle_ticks = 0;
         if let Some(t) = tick.filter(|&t| t != 0) {
             LAST_TRADE_TICK.with(|cell| cell.set(Some((epoch, t))));
         }
@@ -607,35 +591,43 @@ impl Shop {
         Step::Wait
     }
 
-    fn attempt_expired(&self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> bool {
-        if probe.moving {
-            return false;
-        }
-        let needed_idle_ticks = if probe.targeting_npc {
-            OPEN_TARGET_IDLE_TICKS
-        } else {
-            OPEN_IDLE_TICKS
-        };
-        match probe.tick {
-            Some(_) => self.idle_ticks >= needed_idle_ticks,
-            None => !probe.targeting_npc && cx.clock().bound_reached(),
-        }
+    /// Engine clears completed or unreachable interactions from observed path
+    /// predicates (`Player.ts:1292-1308`), not from a tick deadline.
+    fn interaction_ended(probe: &Probe<'_>) -> bool {
+        probe.tick.is_some() && !probe.moving && !probe.targeting_npc
     }
 
     fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
         let epoch = observed::with(Scene::epoch);
         let same_tick_trade = probe.tick.is_some() && self.last_trade_tick == probe.tick
             || probe.tick.is_some_and(|t| trade_emitted_on(epoch, t));
+        let later_tick = probe.tick.is_some_and(|tick| {
+            self.last_trade_tick
+                .or(self.last_step_tick)
+                .is_none_or(|previous| tick > previous)
+        });
         if probe.shop_open {
-            if same_tick_trade {
+            let deadline_reached = cx.clock().bound_reached();
+            if same_tick_trade && !deadline_reached {
                 // An OpNpc emitted on this tick will close the current modal
                 // when the server processes it (OpNpcHandler.ts:47 ->
                 // Player.ts:970-973). Wait for a later tick to confirm open.
                 return Step::Wait;
             }
-            if probe.has_stock && !probe.stock.is_empty() || cx.clock().bound_reached() {
+            // Modal and inventory updates are separate (`NetworkPlayer.ts:
+            // 160-183,332-355`); only a later usable stock page settles open.
+            if !same_tick_trade && later_tick && probe.has_stock && !probe.stock.is_empty() {
                 trace("open", probe.tick, probe.here, format_args!("settled=true"));
                 return self.done(true);
+            }
+            if deadline_reached {
+                trace(
+                    "open",
+                    probe.tick,
+                    probe.here,
+                    format_args!("settled=false stock page deadline"),
+                );
+                return self.done(false);
             }
             return Step::Wait;
         }
@@ -654,23 +646,14 @@ impl Shop {
         if probe.here.is_some() {
             self.last_here = probe.here;
         }
-        let advanced_tick = match (self.last_step_tick, probe.tick) {
-            (Some(prev), Some(curr)) => curr > prev,
-            (None, Some(_)) => true,
-            _ => false,
-        };
         if probe.tick.is_some() {
             self.last_step_tick = probe.tick;
         }
         if moved {
-            self.idle_ticks = 0;
             cx.clock().arm(OPEN_WAIT_MS);
             return Step::Wait;
         }
-        if advanced_tick {
-            self.idle_ticks = self.idle_ticks.saturating_add(1);
-        }
-        if !self.attempt_expired(probe, cx) {
+        if !Self::interaction_ended(probe) {
             return Step::Wait;
         }
         self.attempts_left = self.attempts_left.saturating_sub(1);
@@ -1156,43 +1139,25 @@ mod tests {
     }
 
     #[test]
-    fn open_presses_trade_once_per_attempt_and_bounds_at_three() {
+    fn open_does_not_retry_on_wall_deadline_without_a_tick() {
         let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
         rt.npc_action = "Trade".into();
         rt.attempts_left = OPEN_ATTEMPTS;
         rt.pressed = true;
+        rt.last_trade_tick = Some(1);
+        rt.last_step_tick = Some(1);
         let mut clock = armed(OPEN_WAIT_MS);
+        expire(&mut clock);
         let closed = Probe {
+            tick: None,
             shop_open: false,
             has_stock: false,
             ..probe(&[], None, &[])
         };
-        let trade = InteractReq::Npc {
-            name: "Shop keeper".into(),
-            action: "Trade".into(),
-            index: None,
-        };
-        // Inside the attempt window the frozen loop only waits: no re-press.
         assert_eq!(step(&mut rt, &mut clock, &closed), (None, vec![]));
-        // Each expired window re-presses once, for the frozen three attempts.
-        for attempt in 1..OPEN_ATTEMPTS {
-            expire(&mut clock);
-            assert_eq!(
-                step(&mut rt, &mut clock, &closed),
-                (None, vec![trade.clone()]),
-                "attempt {attempt} re-presses Trade"
-            );
-            assert_eq!(
-                step(&mut rt, &mut clock, &closed),
-                (None, vec![]),
-                "one press per window"
-            );
-        }
-        // The last window closes the call as a timeout, not another press.
-        expire(&mut clock);
         assert_eq!(
-            step(&mut rt, &mut clock, &closed),
-            (Some(json!(false)), vec![])
+            rt.attempts_left, OPEN_ATTEMPTS,
+            "a wall deadline cannot classify a live engine interaction"
         );
     }
 
@@ -1201,12 +1166,26 @@ mod tests {
         let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
         rt.attempts_left = OPEN_ATTEMPTS;
         rt.pressed = true;
+        rt.last_trade_tick = Some(1);
+        rt.last_step_tick = Some(1);
         let mut clock = armed(OPEN_WAIT_MS);
-        let empty_page = probe(&[], None, &[]);
+        let no_rows: [Row; 0] = [];
+        let empty_page = Probe {
+            tick: Some(2),
+            shop_open: true,
+            has_stock: false,
+            stock: &no_rows,
+            ..probe(&[], None, &[])
+        };
         assert_eq!(step(&mut rt, &mut clock, &empty_page), (None, vec![]));
 
         let stock = [row("Shantay pass", 100, 15)];
-        let ready_page = probe(&stock, None, &[]);
+        let ready_page = Probe {
+            tick: Some(3),
+            has_stock: true,
+            stock: &stock,
+            ..empty_page
+        };
         assert_eq!(
             step(&mut rt, &mut clock, &ready_page),
             (Some(json!(true)), vec![])
@@ -1399,8 +1378,8 @@ mod tests {
             (None, vec![trade]),
             "initial step emits Trade once"
         );
-        // Walk for 8 ticks (> OPEN_IDLE_TICKS and with an expired wall clock):
-        // moving each tick must keep the first attempt alive without re-pressing.
+        // The NPC target remains live while walking despite an expired wall
+        // deadline; movement cannot authorize a replacement Trade request.
         for tick_num in 2..=9u64 {
             expire(&mut clock);
             let walking = Probe {
@@ -1410,6 +1389,7 @@ mod tests {
                     z: 3120,
                     level: 0,
                 }),
+                targeting_npc: true,
                 shop_open: false,
                 has_stock: false,
                 ..probe(&[], None, &[])
@@ -1455,7 +1435,7 @@ mod tests {
             action: "Trade".into(),
             index: None,
         };
-        let tick1 = Probe {
+        let tick1_closed = Probe {
             tick: Some(1),
             here: Some(tile),
             shop_open: false,
@@ -1463,60 +1443,57 @@ mod tests {
             ..probe(&[], None, &[])
         };
         assert_eq!(
-            step(&mut rt, &mut clock, &tick1),
+            step(&mut rt, &mut clock, &tick1_closed),
             (None, vec![trade.clone()])
         );
-        // Stationary for OPEN_IDLE_TICKS ticks so tick 6 emits a retry Trade.
-        for t in 2..=5 {
-            let stationary = Probe {
-                tick: Some(t),
-                here: Some(tile),
-                shop_open: false,
-                has_stock: false,
-                ..probe(&[], None, &[])
-            };
-            assert_eq!(step(&mut rt, &mut clock, &stationary), (None, vec![]));
-        }
-        let tick6_closed = Probe {
-            tick: Some(6),
+
+        let stock = [row("Shantay pass", 100, 15)];
+        let same_tick_modal = Probe {
+            tick: Some(1),
+            here: Some(tile),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &same_tick_modal),
+            (None, vec![]),
+            "a modal on the OpNpc tick is not a settled open"
+        );
+
+        let retry_tick = Probe {
+            tick: Some(2),
             here: Some(tile),
             shop_open: false,
             has_stock: false,
             ..probe(&[], None, &[])
         };
         assert_eq!(
-            step(&mut rt, &mut clock, &tick6_closed),
-            (None, vec![trade]),
-            "5th stationary tick emits the retry OpNpc"
+            step(&mut rt, &mut clock, &retry_tick),
+            (None, vec![trade.clone()]),
+            "a cleared interaction may be retried on a later tick"
         );
-        // Same tick 6: a snapshot arrives with shop_open = true and stock.
-        // open_step must NOT settle on tick 6 because tick 6 already emitted OpNpc.
-        let stock = [row("Shantay pass", 100, 15)];
-        let tick6_open = Probe {
-            tick: Some(6),
+        let same_retry_modal = Probe {
+            tick: Some(2),
             here: Some(tile),
             ..probe(&stock, None, &[])
         };
         assert_eq!(
-            step(&mut rt, &mut clock, &tick6_open),
+            step(&mut rt, &mut clock, &same_retry_modal),
             (None, vec![]),
-            "same-tick modal arrival after OpNpc must wait for a later tick"
+            "the retry tick cannot settle its own modal"
         );
-        // Tick 7 confirms the shop is open with no OpNpc on tick 7.
-        let tick7_open = Probe {
-            tick: Some(7),
+        let later_modal = Probe {
+            tick: Some(3),
             here: Some(tile),
             ..probe(&stock, None, &[])
         };
         assert_eq!(
-            step(&mut rt, &mut clock, &tick7_open),
+            step(&mut rt, &mut clock, &later_modal),
             (Some(json!(true)), vec![]),
-            "later tick settles Shop.open once the modal is confirmed"
+            "a later tick settles open once its stock page is usable"
         );
     }
-
     #[test]
-    fn open_retries_after_stationary_ticks_and_bounds_at_three_attempts() {
+    fn open_bounds_trade_requests_after_interactions_end() {
         observed::on_reset();
         let mut rt = shop(Kind::Open, "Shantay", 0, Phase::WaitBoundary);
         rt.npc_action = "Trade".into();
@@ -1533,45 +1510,175 @@ mod tests {
             index: None,
         };
         let mut current_tick = 1u64;
-        let closed_at = |t: u64| Probe {
-            tick: Some(t),
+        let closed_at = |tick| Probe {
+            tick: Some(tick),
             here: Some(tile),
             shop_open: false,
             has_stock: false,
             ..probe(&[], None, &[])
         };
-        // Attempt 1 on tick 1.
         assert_eq!(
             step(&mut rt, &mut clock, &closed_at(current_tick)),
-            (None, vec![trade.clone()])
+            (None, vec![trade.clone()]),
+            "the first request is sent on tick 1"
         );
-        for attempt in 2..=OPEN_ATTEMPTS {
-            for _ in 1..OPEN_IDLE_TICKS {
-                current_tick += 1;
+        for attempt in 2..=OPEN_ATTEMPTS + 1 {
+            current_tick += 1;
+            let result = step(&mut rt, &mut clock, &closed_at(current_tick));
+            if attempt < OPEN_ATTEMPTS + 1 {
                 assert_eq!(
-                    step(&mut rt, &mut clock, &closed_at(current_tick)),
-                    (None, vec![])
+                    result,
+                    (None, vec![trade.clone()]),
+                    "attempt {attempt} follows an ended interaction"
+                );
+            } else {
+                assert_eq!(
+                    result,
+                    (Some(json!(false)), vec![]),
+                    "the final ended interaction fails without a fourth Trade"
                 );
             }
-            current_tick += 1;
-            assert_eq!(
-                step(&mut rt, &mut clock, &closed_at(current_tick)),
-                (None, vec![trade.clone()]),
-                "attempt {attempt} re-presses Trade after {OPEN_IDLE_TICKS} stationary ticks"
-            );
         }
-        for _ in 1..OPEN_IDLE_TICKS {
-            current_tick += 1;
-            assert_eq!(
-                step(&mut rt, &mut clock, &closed_at(current_tick)),
-                (None, vec![])
-            );
-        }
-        current_tick += 1;
+    }
+
+    #[test]
+    fn open_waits_for_a_posted_npc_target_to_clear_before_retrying() {
+        observed::on_reset();
+        let mut rt = shop(Kind::Open, "Shantay", 0, Phase::WaitBoundary);
+        rt.npc_action = "Trade".into();
+        rt.attempts_left = OPEN_ATTEMPTS;
+        let mut clock = InstantTaskClock::new();
+        let tile = observed::Tile {
+            x: 3304,
+            z: 3120,
+            level: 0,
+        };
+        let trade = InteractReq::Npc {
+            name: "Shantay".into(),
+            action: "Trade".into(),
+            index: None,
+        };
+        let first = Probe {
+            tick: Some(1),
+            here: Some(tile),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
         assert_eq!(
-            step(&mut rt, &mut clock, &closed_at(current_tick)),
-            (Some(json!(false)), vec![]),
-            "third failed attempt settles false without a fourth Trade"
+            step(&mut rt, &mut clock, &first),
+            (None, vec![trade.clone()])
+        );
+
+        for tick in 2..=13 {
+            let outstanding = Probe {
+                tick: Some(tick),
+                here: Some(tile),
+                targeting_npc: true,
+                shop_open: false,
+                has_stock: false,
+                ..probe(&[], None, &[])
+            };
+            assert_eq!(
+                step(&mut rt, &mut clock, &outstanding),
+                (None, vec![]),
+                "the posted NPC interaction is still live at tick {tick}"
+            );
+        }
+        assert_eq!(rt.attempts_left, OPEN_ATTEMPTS);
+
+        let ended = Probe {
+            tick: Some(14),
+            here: Some(tile),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &ended),
+            (None, vec![trade]),
+            "the next tick after engine target loss may retry Trade"
+        );
+
+        let stock = [row("Shantay pass", 100, 15)];
+        let same_tick_modal = Probe {
+            tick: Some(14),
+            here: Some(tile),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &same_tick_modal),
+            (None, vec![]),
+            "the retry tick cannot settle a newly observed modal"
+        );
+        let later_modal = Probe {
+            tick: Some(15),
+            here: Some(tile),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &later_modal),
+            (Some(json!(true)), vec![]),
+            "a usable stock page on a later tick settles open"
+        );
+    }
+
+    #[test]
+    fn open_deadline_without_a_usable_stock_page_fails() {
+        for (has_stock, page) in [(false, "missing"), (true, "empty")] {
+            observed::on_reset();
+            let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
+            rt.pressed = true;
+            rt.last_trade_tick = Some(1);
+            rt.attempts_left = OPEN_ATTEMPTS;
+            let mut clock = armed(OPEN_WAIT_MS);
+            expire(&mut clock);
+            let no_rows: [Row; 0] = [];
+            let open_without_stock = Probe {
+                tick: Some(2),
+                shop_open: true,
+                has_stock,
+                stock: &no_rows,
+                ..probe(&[], None, &[])
+            };
+            assert_eq!(
+                step(&mut rt, &mut clock, &open_without_stock),
+                (Some(json!(false)), vec![]),
+                "an open modal with a {page} stock page cannot report success"
+            );
+        }
+    }
+
+    #[test]
+    fn open_accepts_stock_published_after_the_modal() {
+        observed::on_reset();
+        let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
+        rt.pressed = true;
+        rt.last_trade_tick = Some(1);
+        rt.attempts_left = OPEN_ATTEMPTS;
+        let mut clock = armed(OPEN_WAIT_MS);
+        let empty: [Row; 0] = [];
+        let modal_without_rows = Probe {
+            tick: Some(2),
+            shop_open: true,
+            has_stock: true,
+            stock: &empty,
+            ..probe(&[], None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &modal_without_rows),
+            (None, vec![])
+        );
+
+        let stock = [row("Potion", 1, 0)];
+        let ready_page = Probe {
+            tick: Some(3),
+            stock: &stock,
+            ..modal_without_rows
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &ready_page),
+            (Some(json!(true)), vec![])
         );
     }
 }

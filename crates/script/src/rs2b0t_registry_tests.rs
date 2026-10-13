@@ -757,3 +757,66 @@ export const SETTINGS: SettingsSchema = {
         "unexpected error: {err}"
     );
 }
+#[test]
+fn nested_metadata_cannot_supply_outer_setting_fields() {
+    let missing_type = "const BASE = { metadata: { type: 'string', default: '' } }; export const SETTINGS = { loadout: { ...BASE, group: 'Food' } };";
+    let error = try_settings_schema_from_source(missing_type)
+        .expect_err("nested type must not satisfy the setting's required outer type");
+    assert!(
+        error.contains("loadout") && error.contains("missing setting type"),
+        "{error}"
+    );
+
+    let nested_fields = r#"
+export const SETTINGS = {
+    choice: {
+        type: 'string',
+        metadata: {
+            default: '',
+            label: 'Nested label',
+            group: 'Nested group',
+            help: 'Nested help',
+            min: 1,
+            options: ['nested'],
+            optionsFrom: 'loadouts'
+        }
+    }
+};
+"#;
+    let schema = try_settings_schema_from_source(nested_fields).expect("outer type is present");
+    let choice = setting(&schema, "choice");
+    assert_eq!(choice.default, None);
+    assert_eq!(choice.label, None);
+    assert_eq!(choice.group, None);
+    assert_eq!(choice.help, None);
+    assert_eq!(choice.min, None);
+    assert!(choice.options.is_empty());
+    assert_eq!(choice.options_from, None);
+}
+
+#[test]
+fn nested_default_label_cannot_override_the_outer_label() {
+    let src = "const BASE = { type: 'tile', default: { x: 1, z: 2, level: 0, label: 'Nested' } }; export const SETTINGS = { stand: { ...BASE, label: 'Actual stand' } };";
+    let schema = try_settings_schema_from_source(src).expect("setting parses");
+    let stand = setting(&schema, "stand");
+    assert_eq!(stand.label.as_deref(), Some("Actual stand"));
+    assert_eq!(
+        stand.default, None,
+        "an unsupported object default must not leak one of its nested strings"
+    );
+}
+
+#[test]
+fn a_later_spread_replaces_nested_setting_properties_shallowly() {
+    let src = r#"
+const BASE = { type: 'string', default: '', showIf: { key: 'mode', anyOf: ['x'] } };
+const LATER = { showIf: { key: 'other', equals: 'y' } };
+export const SETTINGS = { choice: { ...BASE, ...LATER } };
+"#;
+    let schema = try_settings_schema_from_source(src).expect("setting parses");
+    assert_eq!(
+        setting(&schema, "choice").show_if.as_deref(),
+        Some("{ key: 'other', equals: 'y' }"),
+        "the later nested object replaces the earlier value instead of merging"
+    );
+}

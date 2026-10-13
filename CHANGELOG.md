@@ -21,10 +21,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   working Loadout picker in the panel and TUI and check your saved loadout
   before Start, instead of showing an uneditable `unsupported type` row or
   starting and failing when no loadouts exist.
-- Opening a shop after a longer walk to a wandering shopkeeper (such as
-  buying a Shantay pass from Shantay) no longer clicks Trade a second time
-  on the tick the shop window opens, which closed the shop window and made
-  the purchase return 0.
+- Opening a shop now waits for the engine to clear an outstanding NPC
+  interaction before retrying Trade, and succeeds only after a later tick
+  shows the modal with a usable stock page. This avoids duplicate Trade
+  closures and prevents purchases from starting with an empty page.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
