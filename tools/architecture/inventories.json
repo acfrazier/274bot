@@ -744,6 +744,206 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "F0 baseline seam classification."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|CardKind",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "CardKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|CommandBook",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "CommandBook",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|CommandError",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "CommandError",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|CommandFailure",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "CommandFailure",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|CommandReport",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "CommandReport",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Completion",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Completion",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|DrawSwitch",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "DrawSwitch",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|FailureKind",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "FailureKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|FleetOrder",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "FleetOrder",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|FormClose",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "FormClose",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|LoadoutField",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "LoadoutField",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|LoginAttempt",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "LoginAttempt",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|MemberReport",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "MemberReport",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|OperatorCommand",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "OperatorCommand",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Pending",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Pending",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|ProfileDraftField",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "ProfileDraftField",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|RasterMode",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "RasterMode",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Rejection",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Rejection",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Settles",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Settles",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|SkipReason",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "SkipReason",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Stage",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Stage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|Subject",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "Subject",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/command.rs|SubjectKind",
+      "path": "crates/frontend-core/src/command.rs",
+      "symbol": "SubjectKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/process_status.rs|ProcessStatus",
+      "path": "crates/frontend-core/src/process_status.rs",
+      "symbol": "ProcessStatus",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/process_status.rs|StatusLine",
+      "path": "crates/frontend-core/src/process_status.rs",
+      "symbol": "StatusLine",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     }
   ],
   "violations": [
