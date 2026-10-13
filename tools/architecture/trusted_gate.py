@@ -7,12 +7,14 @@ modules only from the separately pinned enforcement checkout.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1007,8 +1009,8 @@ def _qualification_digest(active_root: Path, proposed_root: Path, base_sha: str,
         "runtime_pin": runtime_pin,
         "fixture_corpus": "check.py --self-test + tools/architecture/test_*.py",
         "admission_probes": [label for label, _, _ in ADMISSION_PROBES],
-        "sequential_probe": f"{SEQUENTIAL_CONTROLS} random-comment controls then every bad candidate in the same receipt chain",
-        "probe_isolation": "private root/home/tmp, network namespace, independent object copies, seccomp without io_uring/vsock",
+        "sequential_probe": f"{SEQUENTIAL_CONTROLS} random-comment controls then every bad candidate in fresh stages carrying only the checked receipt chain",
+        "probe_isolation": "read-only host inputs, private tmpfs staging, records-only copyback, new session/keyring, default-deny x86-64 seccomp",
         "prepare_probe": "one CLI prepare-enforcement against a random-shape neutered checker; verdict exit 1 and no pending.json",
     })
 
@@ -1093,12 +1095,12 @@ def _probe_admit_command(
     ]
 
 
-# The suites import E', but these probes run its real CLI. Each run has the
-# operator's interpreter and admission arguments, with a valid post-activation
-# records chain. A fresh, private writable tree prevents probe side channels
-# from leaving a persistent counter. The honest control must admit; each bad
-# candidate must be refused without a receipt. Ambient read-only fingerprints
-# remain subject to mandatory operator approval and cross-vendor diff review.
+# The suites import E', but these probes run its real CLI with an exact
+# post-activation records chain. Every invocation receives fresh private
+# writable staging; only checked receipt bytes carry across the sequential
+# universe. The honest control must admit; each bad candidate must be refused
+# without a receipt. Ambient read-only fingerprints still require operator
+# approval and cross-vendor diff review.
 _PROBE_EMPTY_FINDINGS = (
     "\n\n"
     "def check_tree(root):\n"
@@ -1348,21 +1350,32 @@ _SECCOMP_KILL = 0x80000000
 _SECCOMP_ALLOW = 0x7FFF0000
 _AUDIT_ARCH_X86_64 = 0xC000003E
 _X32_SYSCALL_BIT = 0x40000000
-# x86-64 numbers: io_uring_setup/enter/register, socket, connect; AF_VSOCK.
-_IO_URING_SYSCALLS = (425, 426, 427)
+# Linux x86-64 numbers measured with `strace -f -c` over the complete honest
+# e2e qualification (both real-suite cases, all admit/sequential/bad/prepare
+# probes, Python, Git, pinned official rust-analyzer and nested bubblewrap).
+# Full final trace: F0-CORE/checker/r6/final-honest-syscalls-summary.txt;
+# initial trace: r6/honest-syscalls-summary.txt. The tmpfs-copy `sendfile`
+# fallback (40) was first isolated in r6/denied-honest.trace. These traces
+# include host harness calls and deliberately denied attack syscalls; neither
+# those nor keyctl, bpf, perf, ptrace, or process_vm belong in the allowlist.
+# A previously unmeasured call kills the probe, including honest runs.
+_PROBE_SYSCALLS = (
+    0, 1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 25, 28,
+    32, 33, 37, 39, 40, 44, 45, 47, 49, 50, 51, 54, 56, 58, 59, 61, 63,
+    72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 95,
+    102, 104, 107, 108, 110, 111, 112, 118, 120, 125, 126, 131, 137,
+    155, 157, 158, 165, 166, 186, 194, 202, 204, 217, 218, 219,
+    230, 231, 257, 262, 263, 272, 273, 280, 289, 290, 291, 293,
+    302, 318, 319, 326, 334, 435, 436, 439,
+)
 _SYS_SOCKET = 41
 _SYS_CONNECT = 42
-_AF_VSOCK = 40
+_AF_UNIX = 1
+_AF_INET = 2
 
 
 def _probe_filter(*, deny_sockets: bool) -> int:
-    """Seccomp filter for every E' probe; a killed probe cannot count as a refusal.
-
-    Every probe loses io_uring, which creates and connects sockets in-kernel
-    without socket()/connect(), and the x32 syscall ABI. AF_VSOCK is not scoped
-    by the network namespace, so the prepare-mode probe, which keeps local
-    socket fixtures, still cannot create one. Admission probes get no socket().
-    """
+    """Default-deny measured syscalls; a killed probe never counts as refusal."""
     if sys.platform != "linux" or os.uname().machine != "x86_64":
         _fail("probe seccomp filter requires the pinned Linux x86-64 runtime")
     kill = (0x06, 0, 0, _SECCOMP_KILL)
@@ -1372,11 +1385,18 @@ def _probe_filter(*, deny_sockets: bool) -> int:
         (0x20, 0, 0, 4), (0x15, 1, 0, _AUDIT_ARCH_X86_64), kill,
         (0x20, 0, 0, 0), (0x35, 0, 1, _X32_SYSCALL_BIT), kill,
     ]
-    for number in _IO_URING_SYSCALLS + ((_SYS_SOCKET, _SYS_CONNECT) if deny_sockets else ()):
-        instructions.extend(((0x15, 0, 1, number), kill))
+    for number in _PROBE_SYSCALLS:
+        instructions.extend(((0x15, 0, 1, number), allow))
     if not deny_sockets:
-        instructions.extend(((0x15, 0, 3, _SYS_SOCKET), (0x20, 0, 0, 16), (0x15, 0, 1, _AF_VSOCK), kill))
-    instructions.append(allow)
+        instructions.extend(((0x15, 0, 1, _SYS_CONNECT), allow))
+        # Only AF_UNIX and AF_INET may create sockets. The network namespace
+        # has no host interfaces; AF_INET's only usable peer is loopback.
+        instructions.extend((
+            (0x15, 0, 5, _SYS_SOCKET), (0x20, 0, 0, 16),
+            (0x15, 2, 0, _AF_UNIX), (0x15, 1, 0, _AF_INET),
+            kill, allow,
+        ))
+    instructions.append(kill)
     fd = os.memfd_create("architecture-probe-seccomp", flags=0)
     os.write(fd, struct.pack("<" + "HBBI" * len(instructions), *(
         value for instruction in instructions for value in instruction
@@ -1385,8 +1405,82 @@ def _probe_filter(*, deny_sockets: bool) -> int:
     return fd
 
 
-def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True) -> subprocess.CompletedProcess[str]:
-    """Expose only this probe universe and the local runtime in a fresh network/mount namespace."""
+_STAGED_PROBE = r'''
+import base64, json, os, shutil, subprocess, sys
+from pathlib import Path
+
+plan = json.loads(sys.argv[1])
+work = Path(plan["work"])
+source = Path("/probe-source")
+for name in plan["inputs"]:
+    original, staged = source / name, work / name
+    if original.is_dir():
+        shutil.copytree(original, staged, symlinks=True)
+    else:
+        shutil.copy2(original, staged)
+
+def files(root, omit_git=False):
+    result = {}
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        here = Path(directory)
+        if omit_git:
+            dirs[:] = [name for name in dirs if name != ".git"]
+        for name in sorted(dirs + names):
+            path = here / name
+            if path.is_symlink():
+                raise ValueError("symlink in staged records")
+            relative = path.relative_to(root).as_posix()
+            result[relative + "/" if path.is_dir() else relative] = b"" if path.is_dir() else path.read_bytes()
+    return result
+
+records = Path(plan["records"]) if plan["records"] else None
+clone = Path(plan["clone"]) if plan["clone"] else None
+git_before = files(clone / ".git") if clone else None
+# The source bind is absent from the executable's mount namespace. Every
+# bind made writable below originates in this outer sandbox's private tmpfs.
+child = [plan["bwrap"], "--unshare-user", "--unshare-pid", "--new-session", "--die-with-parent",
+         "--clearenv", "--setenv", "PATH", os.environ["PATH"],
+         "--setenv", "HOME", os.environ["HOME"], "--setenv", "TMPDIR", os.environ["TMPDIR"],
+         "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev",
+         "--tmpfs", "/tmp", "--tmpfs", "/probe-source", "--bind", str(work), str(work)]
+for name in plan["inputs"]:
+    path = work / name
+    if path != clone:
+        child.extend(("--ro-bind", str(path), str(path)))
+for name in (plan["clone"], plan["evidence"], plan["home"], plan["temporary"]):
+    if name:
+        child.extend(("--bind", name, name))
+if clone:
+    child.extend(("--ro-bind", str(clone / ".git"), str(clone / ".git")))
+child.extend(("--chdir", str(work), "--", *plan["command"]))
+env = dict(os.environ)
+if plan["library_dir"]:
+    env["LD_LIBRARY_PATH"] = plan["library_dir"]
+result = subprocess.run(child, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+snapshot = files(records, omit_git=True) if records else None
+print(json.dumps({
+    "returncode": result.returncode, "stdout": result.stdout,
+    "git_unchanged": files(clone / ".git") == git_before if clone else True,
+    "marker_written": (work / plan["marker"]).exists(),
+    "records": {name: base64.b64encode(data).decode("ascii") for name, data in snapshot.items()} if snapshot else None,
+}, separators=(",", ":")))
+'''
+
+
+_JOIN_PROBE_SESSION = r'''
+import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.syscall(250, 1, 0) < 0:  # keyctl(KEYCTL_JOIN_SESSION_KEYRING, NULL)
+    raise OSError(ctypes.get_errno(), "cannot create a private probe session keyring")
+os.execv(sys.argv[1], sys.argv[1:])
+'''
+
+
+def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True,
+                    records: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Stage inputs in inaccessible tmpfs; mount only staged copies into E'."""
+    import base64
+
     home = work / secrets.token_hex(16)
     temporary = work / secrets.token_hex(16)
     home.mkdir()
@@ -1398,11 +1492,10 @@ def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True
     if parser is None or _file_sha256(Path(parser).resolve(strict=True)) != RUST_ANALYZER_SHA256:
         _fail("pinned rust-analyzer executable is missing or does not match its protected SHA-256")
     executable_paths = [Path(sys.executable), Path("/usr/bin/git"), Path("/usr/bin/sh"), Path(bwrap), Path(parser)]
-    # The Python standard library, Git helpers, and ELF dependencies are the
-    # runtime; neither the host root nor its home/evidence/run/socket paths are mounted.
     sandbox = [
         str(bwrap), "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-net",
-        "--clearenv", "--tmpfs", "/", "--dir", "/usr", "--dir", "/usr/bin",
+        "--new-session", "--die-with-parent", "--clearenv",
+        "--tmpfs", "/", "--dir", "/usr", "--dir", "/usr/bin",
         "--ro-bind", "/usr/lib", "/usr/lib",
         "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64",
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
@@ -1422,27 +1515,91 @@ def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True
             sandbox.extend(("--ro-bind", str(directory), str(directory)))
     for path in executable_paths:
         sandbox.extend(("--ro-bind", str(path.resolve(strict=True)), str(path)))
+    sandbox.extend(("--ro-bind", str(work), "/probe-source", "--tmpfs", str(work)))
+    records_clone = None
+    if records is not None:
+        records_clone = _path(Path(_git(records, "rev-parse", "--show-toplevel")), "probe records repository")
+        if not records.is_relative_to(records_clone) or records_clone.parent != work:
+            _fail("probe records must be inside a private direct child of its work directory")
+    evidence = None
+    if "--evidence-root" in command:
+        evidence = Path(command[command.index("--evidence-root") + 1])
+        if evidence.parent != work:
+            _fail("prepare evidence must be a private direct child of its work directory")
+    inputs: list[str] = []
+    for child in work.iterdir():
+        if child in (home, temporary, evidence):
+            continue
+        mode = child.lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            _fail(f"probe input is not a regular file or directory: {child}")
+        if stat.S_ISDIR(mode):
+            for directory, dirs, names in os.walk(child, followlinks=False):
+                for name in dirs + names:
+                    path = Path(directory) / name
+                    kind = path.lstat().st_mode
+                    if not (stat.S_ISREG(kind) or stat.S_ISDIR(kind) or stat.S_ISLNK(kind)):
+                        _fail(f"probe input contains a host special file: {path}")
+        inputs.append(child.name)
+    if evidence is not None:
+        sandbox.extend(("--tmpfs", str(evidence)))
+    sandbox.extend(("--tmpfs", str(home), "--tmpfs", str(temporary), "--remount-ro", "/"))
     path = os.pathsep.join(dict.fromkeys((str(Path(parser).parent), str(Path(bwrap).parent), "/usr/bin")))
-    sandbox.extend((
-        "--bind", str(work), str(work), "--tmpfs", str(home), "--tmpfs", str(temporary),
-        "--remount-ro", "/",
-        "--setenv", "PATH", path, "--setenv", "HOME", str(home),
-        "--setenv", "TMPDIR", str(temporary), "--chdir", str(work), "--",
-    ))
+    sandbox.extend(("--setenv", "PATH", path, "--setenv", "HOME", str(home),
+                    "--setenv", "TMPDIR", str(temporary), "--chdir", str(work)))
     environment = {"PATH": path}
     if library_dir.is_dir():
         environment["LD_LIBRARY_PATH"] = str(library_dir)
     filter_fd = _probe_filter(deny_sockets=deny_sockets)
-    sandbox[-1:-1] = ["--seccomp", str(filter_fd)]
+    sandbox.extend(("--seccomp", str(filter_fd), "--"))
+    plan = {
+        "bwrap": str(bwrap), "work": str(work), "inputs": inputs, "command": command,
+        "clone": str(records_clone) if records_clone else None,
+        "records": str(records) if records else None,
+        "evidence": str(evidence) if evidence else None,
+        "home": str(home), "temporary": str(temporary), "marker": _PROBE_MARKER,
+        "library_dir": str(library_dir) if library_dir.is_dir() else None,
+    }
+    staged = [sys.executable, "-I", "-S", "-c", _STAGED_PROBE, json.dumps(plan)]
+    # A top-level probe joins a fresh session keyring before seccomp. Nested
+    # qualification already inherits that inaccessible ring and cannot call
+    # keyctl again: the enclosing probe's default-deny filter remains active.
+    uid_map = Path("/proc/self/uid_map").read_text(encoding="ascii").strip().split()
+    in_user_namespace = uid_map != ["0", "0", "4294967295"]
+    launch = sandbox if in_user_namespace else [sys.executable, "-I", "-S", "-c", _JOIN_PROBE_SESSION, *sandbox]
     try:
-        return subprocess.run(sandbox + command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                              env=environment, pass_fds=(filter_fd,), timeout=300)
+        result = subprocess.run(launch + staged, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                env=environment, pass_fds=(filter_fd,), timeout=300)
     except subprocess.TimeoutExpired:
         _fail("proposed E' probe exceeded the 300-second child deadline")
     except OSError as exc:
         _fail(f"cannot isolate proposed E' probe in a private mount/network namespace: {exc}")
     finally:
         os.close(filter_fd)
+    if result.returncode:
+        _fail(f"staged probe launcher failed (exit {result.returncode}): {result.stdout[-4000:]}")
+    try:
+        packet = json.loads(result.stdout)
+        if records_clone is None:
+            return subprocess.CompletedProcess(command, packet["returncode"], packet["stdout"])
+        after = {name: base64.b64decode(value, validate=True) for name, value in packet["records"].items()}
+    except (ValueError, KeyError, TypeError) as exc:
+        _fail(f"staged probe returned an invalid records packet: {exc}")
+    if packet.get("marker_written"):
+        _fail("admission-mode qualification failed: proposed E' executed candidate checker code")
+    before = _record_files(records)
+    allowed_changes = {"receipts.jsonl", "pending.json"}
+    changed = {name for name in set(before) | set(after) if before.get(name) != after.get(name)}
+    if packet["git_unchanged"] is not True or not changed <= allowed_changes:
+        _fail(f"staged probe modified files outside the records protocol: "
+              f"git_unchanged={packet['git_unchanged']!r}, changed={sorted(changed)!r}")
+    for name in changed:
+        destination = records / name
+        if name in after:
+            destination.write_bytes(after[name])
+        else:
+            destination.unlink()
+    return subprocess.CompletedProcess(command, packet["returncode"], packet["stdout"])
 
 
 def _qualify_admission_mode(
@@ -1464,17 +1621,23 @@ def _qualify_admission_mode(
     bootstrap_sha = _read_json(record_root / "gate.json", "gate record")["bootstrap"]["accepted_sha"]
     product_depth = int(_git(candidate_root, "rev-list", "--count", head_sha, f"^{bootstrap_sha}")) + 2
 
-    def universe(work: Path) -> tuple[Path, Path, str, Path, Path, _ProbeIdentities, _ProbeIdentities]:
+    def universe(work: Path, *, chain: bytes | None = None,
+                 product_source: Path | None = None, product_sha: str | None = None
+                 ) -> tuple[Path, Path, str, Path, Path, _ProbeIdentities]:
         record_identities = _ProbeIdentities(records_top, records_sha)
-        product_identities = _ProbeIdentities(candidate_root, head_sha)
         records_clone, records = _seed_probe_records(records_top, records_sha, records_subpath, work, activation_receipt)
+        if chain is not None:
+            (records / "receipts.jsonl").write_bytes(chain)
         simulated_records_sha = _commit_as(records_clone, record_identities)
         enforcement = _clone_at(proposed_root, work / secrets.token_hex(16), proposed_sha, depth=1)
         if bundle_digest(enforcement) != proposed_digest:
             _fail("proposed E' clone does not match its exact bundle digest")
-        base = _clone_at(candidate_root, work / secrets.token_hex(16), head_sha, depth=product_depth)
-        _populate_gitlinks(candidate_root, base)
-        return records_clone, records, simulated_records_sha, enforcement, base, record_identities, product_identities
+        source = product_source or candidate_root
+        base_sha = product_sha or head_sha
+        base = _clone_at(source, work / secrets.token_hex(16), base_sha,
+                         depth=product_depth if product_source is None else None)
+        _populate_gitlinks(source, base)
+        return records_clone, records, simulated_records_sha, enforcement, base, _ProbeIdentities(candidate_root, head_sha)
 
     def probe(work: Path, label: str, mutate: Any, admitted: bool, *, base: Path, base_sha: str, records: Path,
               records_commit: str, enforcement: Path, identities: _ProbeIdentities) -> tuple[Path, str]:
@@ -1487,10 +1650,8 @@ def _qualify_admission_mode(
         result = _isolated_probe(_probe_admit_command(
             enforcement, records, records_commit, proposed_sha,
             proposed_digest, runtime_pin, target_ref, base, candidate, probe_sha,
-        ), work)
+        ), work, records=records)
         output = result.stdout.strip()[-4000:]
-        if (work / _PROBE_MARKER).exists():
-            _fail(f"admission-mode qualification failed: proposed E' executed candidate checker code ({label})\n{output}")
         if admitted:
             if result.returncode != 0:
                 _fail(f"admission-mode qualification failed: proposed E' refused the {label} (exit {result.returncode})\n{output}")
@@ -1508,25 +1669,33 @@ def _qualify_admission_mode(
     for label, mutate, admitted in ADMISSION_PROBES:
         with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
             work = Path(temp_name)
-            _, records, records_commit, enforcement, base, _, identities = universe(work)
+            _, records, records_commit, enforcement, base, identities = universe(work)
             probe(work, label, mutate, admitted, base=base, base_sha=head_sha, records=records,
                   records_commit=records_commit, enforcement=enforcement, identities=identities)
 
-    # Independent probes start with no post-activation history. This universe
-    # accepts K controls in one receipt chain, then requires every bad probe,
-    # in random order, to be refused at count K. Refusals append no receipt.
-    with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
-        work = Path(temp_name)
-        records_clone, records, records_commit, enforcement, base, record_identities, identities = universe(work)
-        base_sha = head_sha
+    # Each step owns a new host clone and a new private tmpfs stage. The only
+    # record state carried to the next step is the checked receipt-chain bytes;
+    # product history is cloned afresh from the last accepted control commit.
+    chain: bytes | None = None
+    base_sha = head_sha
+    last_control: Path | None = None
+    with contextlib.ExitStack() as sources:
         for index in range(SEQUENTIAL_CONTROLS):
-            base, base_sha = probe(work, f"sequential control {index + 1}", _probe_control, True, base=base,
-                                   base_sha=base_sha, records=records, records_commit=records_commit,
-                                   enforcement=enforcement, identities=identities)
-            records_commit = _commit_as(records_clone, record_identities)
+            work = Path(sources.enter_context(tempfile.TemporaryDirectory(dir=scratch)))
+            _, records, records_commit, enforcement, base, identities = universe(
+                work, chain=chain, product_source=last_control, product_sha=base_sha,
+            )
+            last_control, base_sha = probe(work, f"sequential control {index + 1}", _probe_control, True,
+                                           base=base, base_sha=base_sha, records=records,
+                                           records_commit=records_commit, enforcement=enforcement, identities=identities)
+            chain = (records / "receipts.jsonl").read_bytes()
         bad = [(label, mutate) for label, mutate, admitted in ADMISSION_PROBES if not admitted]
         secrets.SystemRandom().shuffle(bad)
         for label, mutate in bad:
+            work = Path(sources.enter_context(tempfile.TemporaryDirectory(dir=scratch)))
+            _, records, records_commit, enforcement, base, identities = universe(
+                work, chain=chain, product_source=last_control, product_sha=base_sha,
+            )
             probe(work, f"{label} after {SEQUENTIAL_CONTROLS} sequential controls", mutate, False, base=base,
                   base_sha=base_sha, records=records, records_commit=records_commit,
                   enforcement=enforcement, identities=identities)
@@ -1657,10 +1826,9 @@ def _qualify_prepare_mode(
             "--proposed-bundle-digest", grandchild_digest,
             "--evidence-root", str(evidence),
         ]
-        # Its nested corpus starts local socket servers inside the private
-        # network namespace. The filter still removes AF_VSOCK and io_uring,
-        # which the network namespace does not scope.
-        result = _isolated_probe(command, work, deny_sockets=False)
+        # Nested suites use only private namespace-local sockets. This probe
+        # stages its records and evidence in private tmpfs mounts.
+        result = _isolated_probe(command, work, deny_sockets=False, records=records)
         output = result.stdout.strip()[-4000:]
         if _record_files(records) != records_before:
             _fail("prepare-mode qualification failed: proposed E' changed trusted records while probing the neutered checker\n"
