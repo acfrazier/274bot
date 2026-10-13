@@ -1281,11 +1281,28 @@ impl SlotLoop {
         let policy = self.run_policy.resolved();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
+            && auto_run::modal_free(
+                client.main_modal_id,
+                client.chat_modal_id,
+                client.side_modal_id,
+            )
             && auto_run_tick(energy, self.run_on, policy)
             && set_run(client, true)
         {
             self.run_on = true;
             self.run_sends += 1;
+            // The press's own record: the engine's run-on script begins
+            // with `if_close` (`player_controls.rs2:34-35`), so a receipt
+            // must show which roots were up when it went out.
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                "auto-run press energy={energy} main={} chat={} side={} run_sends={}",
+                client.main_modal_id,
+                client.chat_modal_id,
+                client.side_modal_id,
+                self.run_sends
+            );
         }
     }
 }
