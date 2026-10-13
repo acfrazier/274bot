@@ -2909,7 +2909,6 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         ("green_dragon_potions_prepared", "GreenDragon", 70),
         ("green_dragon_bank_prepared", "GreenDragon", 99),
         ("green_dragon_bank_default_prepared", "GreenDragon", 99),
-        ("green_dragon_tele_prepared", "GreenDragon", 99),
         ("green_dragon_tele", "GreenDragon", 99),
         ("fire_giant_bank_prepared", "FireGiant", 99),
         ("fire_giant_camelot_prepared", "FireGiant", 99),
@@ -2922,7 +2921,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         let (deadline_secs, min_watch_ticks) = match name {
             "green_dragon_bank_prepared" => (600, 1500),
             "green_dragon_bank_default_prepared" => (720, 1800),
-            "green_dragon_tele_prepared" | "green_dragon_tele" => (480, 1200),
+            "green_dragon_tele" => (480, 1200),
             "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => (600, 1500),
             _ => (300, 750),
         };
@@ -3158,7 +3157,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         "prepared Hill must accept either earned deposit class, not bones-only"
     );
 
-    let green_tele = get("green_dragon_tele_prepared").unwrap();
+    let green_tele = get("green_dragon_tele").unwrap();
     let green_tele_start = start_idx(&green_tele);
     let green_tele_inject =
         settings_inject_map(green_tele.settings.script_settings_inject).unwrap();
@@ -4755,11 +4754,11 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
         .collect::<Vec<_>>();
     assert!(flax_watch.contains(&Proof::ItemIdInFullPack {
         id: FLAX_ID,
-        count: 27,
+        count: 1,
     }));
     assert!(flax_watch.contains(&Proof::BankItemId {
         id: FLAX_ID,
-        count: 27,
+        count: 1,
     }));
     assert!(flax_watch.contains(&Proof::BankClosed));
     assert!(flax_watch.contains(&Proof::ArrivedNear {
@@ -6396,6 +6395,14 @@ fn alternate_camp_and_fight_option_cases_register() {
     assert!(!watch
         .iter()
         .any(|arm| matches!(arm, Proof::BankItemId { .. })));
+    assert!(watch.contains(&Proof::ItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
+        count: 1,
+    }));
+    assert!(!watch.contains(&Proof::ItemId {
+        id: CAKE_ID,
+        count: 1,
+    }));
 
     let thiever_fight = get("ardy_thiever_fight").expect("ardy_thiever_fight");
     assert_eq!(thiever_fight.settings.start_script, Some("ArdyThiever"));

@@ -328,10 +328,6 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("green_dragon_tele", scenarios::green_dragon_tele_scenario),
     Entry::new(
-        "green_dragon_tele_prepared",
-        scenarios::green_dragon_tele_prepared_scenario,
-    ),
-    Entry::new(
         "fire_giant_approach",
         scenarios::fire_giant_approach_scenario,
     ),

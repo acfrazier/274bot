@@ -765,12 +765,12 @@ pub(crate) fn green_dragon_bank_default_prepared_scenario() -> Scenario {
 /// Edgeville booth restock and a return past the ditch. A south-walk flee
 /// without the teleport fails this cell. The pinned `escapeNeeded`
 /// (`GreenDragonLogic.ts:92-97`) only selects `Escape` when foodless *and*
-/// below `panicHp` away from the bank, so this fixture mirrors
-/// `green_dragon_tele_prepared`: no carried food, the max-stat profile at a
-/// safe 70/99 HP, and `panicHp=98`. Seeding 12 Lobsters at the default
-/// `panicHp=30` left the teleport leg unreachable (the bot was still
-/// eating through its food when the Magic XP watch expired, and empty
-/// food above 30% HP selects `BankRun`, not `Escape`).
+/// below `panicHp` away from the bank, so this is the prepared fixture:
+/// no carried food, the max-stat profile at a safe 70/99 HP, and
+/// `panicHp=98`. Seeding 12 Lobsters at the default `panicHp=30` left
+/// the teleport leg unreachable (the bot was still eating through its
+/// food when the Magic XP watch expired, and empty food above 30% HP
+/// selects `BankRun`, not `Escape`).
 pub(crate) fn green_dragon_tele_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
         "green_dragon_tele",
@@ -873,114 +873,6 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
     scenario
 }
 
-/// The pinned source requires both no food and HP below `panicHp` to select
-/// `Escape`; no food by itself selects the direct `BankRun`. This prepared
-/// fixture uses the upstream max-stat profile, configures `panicHp=98`, and
-/// enters the field at a safe 70/99 HP instead of reproducing the upstream
-/// regression's death-prone 1-HP seed. The supported escape must walk south,
-/// cast Varrock, restock/heal at Edgeville, return to the field and produce
-/// later Strength XP.
-pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
-    let mut scenario = remaining_prepared_combat_bank_scenario(
-        "green_dragon_tele_prepared",
-        "GreenDragon",
-        GREEN_DRAGON_FIELD,
-        22,
-        "lobster",
-        LOBSTER_ID,
-        0,
-        "rune_scimitar",
-        RUNE_SCIMITAR_ID,
-        &[
-            ("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1),
-            ("lawrune", LAW_RUNE_ID, VARROCK_TELE_LAW),
-            ("airrune", AIR_RUNE_ID, VARROCK_TELE_AIR),
-            ("firerune", FIRE_RUNE_ID, VARROCK_TELE_FIRE),
-        ],
-        GREEN_DRAGON_LOOT_EMPTY,
-        GREEN_DRAGON_TELE_PREPARED_INJECT,
-        "lobster",
-        40,
-        GREEN_DRAGON_TELE_PREPARED_LEVEL,
-        GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE,
-        GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS,
-        &[
-            (
-                "watch Magic XP from the prepared Varrock teleport after Start",
-                Proof::StatXpGain {
-                    id: MAGIC_STAT,
-                    min: 1,
-                },
-            ),
-            (
-                "watch the prepared Varrock teleport land",
-                Proof::ArrivedNear {
-                    x: VARROCK_TELE_LAND.x,
-                    z: VARROCK_TELE_LAND.z,
-                    level: VARROCK_TELE_LAND.level,
-                    radius: 8,
-                },
-            ),
-            (
-                "watch the prepared escape restock Lobster to 20",
-                Proof::ItemId {
-                    id: LOBSTER_ID,
-                    count: GREEN_DRAGON_BANK_RESTOCK,
-                },
-            ),
-            (
-                "watch prepared GreenDragon close its bank after teleporting",
-                Proof::BankClosed,
-            ),
-            (
-                "watch prepared return to the dragon field after teleporting",
-                Proof::ArrivedNear {
-                    x: GREEN_DRAGON_FIELD.x,
-                    z: GREEN_DRAGON_FIELD.z,
-                    level: GREEN_DRAGON_FIELD.level,
-                    radius: 22,
-                },
-            ),
-            (
-                "watch fresh Strength XP after the prepared escape return",
-                Proof::FreshStatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                },
-            ),
-        ],
-    );
-    wear_shield_before_hostile_teleport(&mut scenario);
-    let hostile_teleport = scenario
-        .steps
-        .iter()
-        .position(|step| {
-            step.name == "teleport into the hostile field only after preparation is acknowledged"
-        })
-        .expect("combat bank has a hostile-field teleport");
-    scenario.steps.insert(
-        hostile_teleport,
-        Step {
-            name: "prepare and acknowledge Magic 25 for the prepared Varrock teleport",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    cheat(c, &format!("setstat magic {VARROCK_TELE_MAGIC}"));
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat {
-                    id: MAGIC_STAT,
-                    min: VARROCK_TELE_MAGIC,
-                },
-                budget_ticks: 200,
-            },
-        },
-    );
-    insert_setstat_drain_before_hostile_tele(&mut scenario);
-    prepare_safe_empty_food_escape_before_hostile_teleport(&mut scenario);
-    scenario
-}
 const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);

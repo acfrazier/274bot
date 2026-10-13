@@ -100,7 +100,6 @@ pub enum CoreCase {
     GreenDragonBankPrepared,
     GreenDragonBankDefaultPrepared,
     GreenDragonTele,
-    GreenDragonTelePrepared,
     FireGiantApproach,
     FireGiantBank,
     FireGiantBankPrepared,
@@ -245,7 +244,6 @@ impl CoreCase {
             "green_dragon_bank_prepared" => Ok(Self::GreenDragonBankPrepared),
             "green_dragon_bank_default_prepared" => Ok(Self::GreenDragonBankDefaultPrepared),
             "green_dragon_tele" => Ok(Self::GreenDragonTele),
-            "green_dragon_tele_prepared" => Ok(Self::GreenDragonTelePrepared),
             "fire_giant_approach" => Ok(Self::FireGiantApproach),
             "fire_giant_bank" => Ok(Self::FireGiantBank),
             "fire_giant_bank_prepared" => Ok(Self::FireGiantBankPrepared),
@@ -393,7 +391,6 @@ impl CoreCase {
             Self::GreenDragonBankPrepared => "green_dragon_bank_prepared",
             Self::GreenDragonBankDefaultPrepared => "green_dragon_bank_default_prepared",
             Self::GreenDragonTele => "green_dragon_tele",
-            Self::GreenDragonTelePrepared => "green_dragon_tele_prepared",
             Self::FireGiantApproach => "fire_giant_approach",
             Self::FireGiantBank => "fire_giant_bank",
             Self::FireGiantBankPrepared => "fire_giant_bank_prepared",
@@ -509,8 +506,7 @@ impl CoreCase {
             | Self::GreenDragonBank
             | Self::GreenDragonBankPrepared
             | Self::GreenDragonBankDefaultPrepared
-            | Self::GreenDragonTele
-            | Self::GreenDragonTelePrepared => "GreenDragon",
+            | Self::GreenDragonTele => "GreenDragon",
             Self::FireGiant
             | Self::FireGiantPrepared
             | Self::FireGiantApproach

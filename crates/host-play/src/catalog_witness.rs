@@ -829,7 +829,6 @@ impl CoreWitness {
             | CoreCase::GreenDragonBankPrepared
             | CoreCase::GreenDragonBankDefaultPrepared
             | CoreCase::GreenDragonTele
-            | CoreCase::GreenDragonTelePrepared
             | CoreCase::FireGiantBank
             | CoreCase::FireGiantBankPrepared
             | CoreCase::FireGiantCamelotPrepared => {

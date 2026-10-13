@@ -510,19 +510,6 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
             food_id: catalog_item_id("lobster"),
-            food_count: GREEN_DRAGON_FOOD,
-            weapon_id: catalog_item_id("rune_scimitar"),
-            style: CombatStyleWitness::Strength,
-            loot: CombatLoot::None,
-            extra: CombatExtra::WornShield,
-            projectile: None,
-            consumable: CombatConsumable::None,
-        }),
-        CoreCase::GreenDragonTelePrepared => Some(CombatSpec {
-            target: "Green dragon",
-            stand: GREEN_DRAGON_FIELD,
-            radius: 22,
-            food_id: catalog_item_id("lobster"),
             food_count: 0,
             weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
@@ -758,20 +745,6 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
         // Edgeville booth. A south-walk flee without the teleport fails.
         CoreCase::GreenDragonTele => Some(CombatBankSpec {
-            deposit: &[],
-            stand: GREEN_DRAGON_BANK,
-            stand_radius: 8,
-            restock: Some(catalog_item_id("lobster")),
-            restock_count: None,
-            ret: GREEN_DRAGON_FIELD,
-            ret_radius: 22,
-            via: Some(VARROCK_TELE_LAND),
-            via_radius: 8,
-            via_magic: true,
-            require_combat: false,
-            forbid_death: false,
-        }),
-        CoreCase::GreenDragonTelePrepared => Some(CombatBankSpec {
             deposit: &[],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
@@ -1023,7 +996,7 @@ pub(super) fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observat
         CoreCase::GreenDragonPotionsPrepared => ["attack", "strength", "defence", "hitpoints"]
             .into_iter()
             .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL),
-        CoreCase::GreenDragonTelePrepared => ["attack", "strength", "defence", "hitpoints"]
+        CoreCase::GreenDragonTele => ["attack", "strength", "defence", "hitpoints"]
             .into_iter()
             .all(|stat| baseline.level(stat) == GREEN_DRAGON_TELE_PREPARED_LEVEL),
         CoreCase::GreenDragonBankPrepared
@@ -1049,7 +1022,7 @@ pub(super) fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observat
         CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
             baseline.item_id(catalog_item_id("lobster")) == GREEN_DRAGON_BANK_PREPARED_FOOD
         }
-        CoreCase::GreenDragonTelePrepared => baseline.item_id(catalog_item_id("lobster")) == 0,
+        CoreCase::GreenDragonTele => baseline.item_id(catalog_item_id("lobster")) == 0,
         CoreCase::FireGiantPrepared => {
             baseline.item_id(catalog_item_id("lobster")) == FIRE_GIANT_FOOD
         }
@@ -1087,7 +1060,7 @@ pub(super) fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observat
                     && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
                     && baseline.equipment_id(catalog_item_id("antidragonbreathshield")) == 1
             }
-            CoreCase::GreenDragonTelePrepared => {
+            CoreCase::GreenDragonTele => {
                 baseline.item_id(catalog_item_id("rune_scimitar")) == 0
                     && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
                     && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
