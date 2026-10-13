@@ -61,6 +61,25 @@ fn trade_emitted_on(epoch: u64, tick: u64) -> bool {
     tick != 0 && LAST_TRADE_TICK.with(|cell| cell.get() == Some((epoch, tick)))
 }
 
+/// Debug-only `Shop.open` / batch timeline with game ticks, so a live receipt
+/// shows the Trade press, the open settle and the first button on distinct
+/// ticks.
+fn trace(
+    event: &str,
+    tick: Option<u64>,
+    here: Option<observed::Tile>,
+    detail: std::fmt::Arguments<'_>,
+) {
+    if !api::hostlog::debug_enabled() {
+        return;
+    }
+    api::host_log!(
+        api::hostlog::Category::ScriptTrace,
+        api::hostlog::Level::Debug,
+        "shop {event} tick={tick:?} here={here:?} {detail}"
+    );
+}
+
 /// One posted container row (stock, shop player pack or backpack).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Row {
@@ -524,6 +543,12 @@ impl Shop {
             LAST_TRADE_TICK.with(|cell| cell.set(Some((epoch, t))));
         }
         cx.clock().arm(OPEN_WAIT_MS);
+        trace(
+            "trade",
+            tick,
+            here,
+            format_args!("npc={} attempts_left={}", self.name, self.attempts_left),
+        );
         cx.emit(InteractReq::Npc {
             name: self.name.clone(),
             action: self.npc_action.clone(),
@@ -559,6 +584,12 @@ impl Shop {
             "sell"
         };
         self.last_dispatch_tick = Some(tick);
+        trace(
+            "button",
+            Some(tick),
+            None,
+            format_args!("kind={kind} item={} chunks={chunks:?}", row.name),
+        );
         for &chunk in chunks.as_deref().unwrap_or(&[10]) {
             cx.emit(InteractReq::ShopButton {
                 kind: kind.into(),
@@ -603,6 +634,7 @@ impl Shop {
                 return Step::Wait;
             }
             if probe.has_stock && !probe.stock.is_empty() || cx.clock().bound_reached() {
+                trace("open", probe.tick, probe.here, format_args!("settled=true"));
                 return self.done(true);
             }
             return Step::Wait;
@@ -643,6 +675,12 @@ impl Shop {
         }
         self.attempts_left = self.attempts_left.saturating_sub(1);
         if self.attempts_left == 0 {
+            trace(
+                "open",
+                probe.tick,
+                probe.here,
+                format_args!("settled=false attempts exhausted"),
+            );
             return self.done(false);
         }
         self.press_trade(probe.tick, probe.here, cx);
