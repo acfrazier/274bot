@@ -1865,20 +1865,40 @@ impl Gatherer {
                 }
                 Selection::Absent { absent } => {
                     self.absent = absent;
-                    self.fail(
-                        "resource-unavailable",
-                        self.block_context(
-                            Some(here.value),
-                            &format!("resource-unavailable: absent: {absent}"),
-                        ),
-                    );
+                    if self.settings().skill_kind() == Skill::Fishing {
+                        // Fishing's authored NPCs move and temporarily change
+                        // type; an empty actor view is not permanent absence.
+                        self.scratch.fishing.progress();
+                        self.wait_until = None;
+                        self.set_event("looking for another fishing spot");
+                    } else {
+                        self.fail(
+                            "resource-unavailable",
+                            self.block_context(
+                                Some(here.value),
+                                &format!("resource-unavailable: absent: {absent}"),
+                            ),
+                        );
+                    }
                 }
                 Selection::Exhausted { wait_until, absent } => {
                     self.absent = absent;
-                    let bounded = self.last_gameplay_tick.saturating_add(WAIT_GAMEPLAY_TICKS);
-                    let deadline = *self.wait_until.get_or_insert(wait_until.min(bounded));
+                    let next_deadline = if self.settings().skill_kind() == Skill::Fishing {
+                        // macro_event_whirlpool.rs2:7 changes the NPC for 60
+                        // ticks. Age of last XP cannot shorten a content wait.
+                        wait_until
+                    } else {
+                        wait_until.min(self.last_gameplay_tick.saturating_add(WAIT_GAMEPLAY_TICKS))
+                    };
+                    let deadline = *self.wait_until.get_or_insert(next_deadline);
                     if tick.cx.evidence().tick >= deadline {
-                        if self.settings().location.eq_ignore_ascii_case("auto") {
+                        if self.settings().skill_kind() == Skill::Fishing {
+                            // Expiry renews the observation search, not a claim
+                            // that a content-authored fishing spot cannot exist.
+                            self.scratch.fishing.progress();
+                            self.wait_until = None;
+                            self.set_event("looking for another fishing spot");
+                        } else if self.settings().location.eq_ignore_ascii_case("auto") {
                             self.begin_widen(wait_until, tick);
                         } else {
                             self.fail(

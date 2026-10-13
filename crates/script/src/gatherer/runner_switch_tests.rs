@@ -4,7 +4,10 @@ use crate::quester::families::tests::{def, with_tick};
 use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
-use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, WorldTile};
+use api::snapshot::{
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, StatView, WorldStateView,
+    WorldTile,
+};
 
 fn fixture() -> (Gatherer, GameSnapshot) {
     let (config, mut snapshot) = FamilyPreparation::run(|families| {
@@ -32,6 +35,224 @@ fn fixture() -> (Gatherer, GameSnapshot) {
         GatherRetained::default(),
     );
     (gatherer, snapshot)
+}
+
+fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
+    let (config, snapshot) = FamilyPreparation::run(|families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.saltfish.op1")),
+            ("location", serde_json::json!("Site")),
+            ("site", serde_json::json!("fishing.catherby")),
+            ("radius", serde_json::json!(32)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings)).unwrap();
+        let here = WorldTile {
+            x: 2848,
+            z: 3432,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 2792,
+            map_base_z: 3384,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            effective: 76,
+            base: 76,
+            xp: 1336443,
+            used: true,
+        }]);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(303, "Small fishing net"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_locs(vec![]);
+        snapshot.seed_npcs(vec![]);
+        (config, snapshot)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let anchor = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let mut gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&config),
+        Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained {
+            anchor: Some(anchor),
+            ..GatherRetained::default()
+        },
+    );
+    gatherer.area = Some(WorkArea {
+        mode: super::super::area::AreaMode::Site,
+        anchor,
+        radius: 32,
+    });
+    gatherer.needs_validate = false;
+    (gatherer, snapshot)
+}
+
+fn catherby_npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
+    NpcView {
+        index,
+        r#type: Some(type_id),
+        name: None,
+        actions: vec![],
+        tile,
+        distance: 0,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+#[test]
+fn catherby_wait_deadline_is_not_proof_that_temporary_spots_are_unavailable() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let west = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let other = WorldTile {
+        x: 2838,
+        z: 3431,
+        level: 0,
+    };
+    // Both authored NPCs can be temporarily changed to whirlpools for 60 ticks.
+    // A prior activity deadline can expire before the observed replacement does.
+    snapshot.seed_npcs(vec![
+        catherby_npc(2170, 404, west),
+        catherby_npc(2171, 404, other),
+    ]);
+    gatherer.wait_until = Some(9753);
+    gatherer.last_gameplay_tick = 8953;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 9753, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        gatherer.failure.is_none(),
+        "an elapsed wait is not content proof of permanent absence"
+    );
+    snapshot.seed_npcs(vec![catherby_npc(2171, 320, other)]);
+    with_tick(&snapshot, &mut ledger, 9760, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    let target = gatherer
+        .target
+        .as_ref()
+        .expect("the restored fishing NPC must be approached");
+    assert_eq!(target.entity, EntityId::Npc(320));
+    assert_eq!(target.npc_index, 2171);
+    assert_eq!(target.tile, other);
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            index: Some(2171), action, ..
+        }) if action == "Net"
+    ));
+    assert!(gatherer.wait_until.is_none());
+}
+
+#[test]
+fn catherby_big_fish_replacement_does_not_prove_permanent_absence() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let west = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let other = WorldTile {
+        x: 2838,
+        z: 3431,
+        level: 0,
+    };
+    // macro_event_big_fish.rs2:6 temporarily uses type 390 for five ticks.
+    // It is not a permanent removal of either content-authored saltfish.
+    snapshot.seed_npcs(vec![
+        catherby_npc(2170, 390, west),
+        catherby_npc(2171, 390, other),
+    ]);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 9723, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        gatherer.failure.is_none(),
+        "temporary NPC replacements must not block fishing"
+    );
+    snapshot.seed_npcs(vec![catherby_npc(2171, 320, other)]);
+    with_tick(&snapshot, &mut ledger, 9728, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    let target = gatherer
+        .target
+        .as_ref()
+        .expect("the restored fishing NPC must be approached");
+    assert_eq!(target.entity, EntityId::Npc(320));
+    assert_eq!(target.npc_index, 2171);
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            index: Some(2171), action, ..
+        }) if action == "Net"
+    ));
 }
 
 fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {

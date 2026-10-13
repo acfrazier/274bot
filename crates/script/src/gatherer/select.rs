@@ -457,7 +457,9 @@ fn classify_fishing_placement(
     let Some(bounds) = movement_bounds(spot) else {
         return PlacementClass::Absent;
     };
-    if !region_loaded(bounds, world) {
+    // Live actors were considered first. An exclusion or hazard in the
+    // observed part of a moving spot's envelope says nothing about the rest.
+    if !region_loaded(bounds, world) || !region_visible(bounds, here) {
         return PlacementClass::Unloaded;
     }
     if avoided
@@ -500,11 +502,6 @@ fn classify_fishing_placement(
             })
     }) {
         return PlacementClass::Live;
-    }
-    // This direct classifier handles a single fully visible envelope. The
-    // selector accumulates partial empty views for wider envelopes below.
-    if !region_visible(bounds, here) {
-        return PlacementClass::Unloaded;
     }
     PlacementClass::Absent
 }
@@ -2988,6 +2985,97 @@ mod tests {
                 "removed/moved Catherby spot must reach a decision within the approach bound"
             );
         }
+    }
+
+    #[test]
+    fn catherby_moved_spot_is_surveyed_while_old_tile_is_avoided() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.saltfish.op1").unwrap();
+        let index = method_index(&catalog, method);
+        let anchor = WorldTile {
+            x: 2836,
+            z: 3431,
+            level: 0,
+        };
+        let here = WorldTile {
+            x: 2838,
+            z: 3432,
+            level: 0,
+        };
+        // A real destination observed for NPC 2171 in the baseline move cell.
+        let moved = WorldTile {
+            x: 2859,
+            z: 3426,
+            level: 0,
+        };
+        assert!(distance(here, moved) > i64::from(NPC_VIEW_RADIUS));
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Site,
+            anchor,
+            radius: 32,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            location: "Site".into(),
+            site: "fishing.catherby".into(),
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let mut avoided = [AvoidedTile::EMPTY; MAX_AVOID];
+        avoided[0] = AvoidedTile {
+            tile: anchor,
+            until: 9753,
+        };
+        let world = scene_around(here);
+        let mut fishing = FishingSurvey::default();
+        let approach = select(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            &avoided,
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 9723,
+                skill_stat: 10,
+                fishing: &mut fishing,
+                collision: None,
+            },
+        );
+        let target = approach.target.expect(
+            "excluding the old tile must not suppress observing another saltfish in the shared movement area",
+        );
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(target.plan.entity, EntityId::Npc(320));
+        assert_ne!(target.plan.tile, anchor);
+        assert!(distance(target.plan.tile, moved) <= i64::from(NPC_VIEW_RADIUS));
+        let actors = [npc(2171, 320, moved)];
+        let reacquired = select(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            &avoided,
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &actors,
+                here: target.plan.tile,
+                now: 9724,
+                skill_stat: 10,
+                fishing: &mut fishing,
+                collision: None,
+            },
+        )
+        .target
+        .expect("the visible moved actor must be selectable");
+        assert_eq!(reacquired.class, PlacementClass::Live);
+        assert_eq!(reacquired.plan.npc_index, 2171);
+        assert_eq!(reacquired.plan.tile, moved);
     }
 
     #[test]
