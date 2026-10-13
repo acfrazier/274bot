@@ -56,6 +56,36 @@ are shared on change; focused detail retains rich status while fleet rows remain
 scalar. A slot that has never attempted a native Start allocates no native
 instance, preparation or retained cell; a rejected Start may retain its cell.
 
+### Frozen refactor seam (F0)
+
+`api::script_contract` defines neutral request stamps, lineage and captured
+authority, outcomes over the shared `Settlement`, prompt/result page values,
+and the bounded seat vocabulary. These are definitions, not an activated seat.
+`script::native::request` keeps typed native argument ownership and family
+pause, takeover and reconnect policy. Native code does not require a JS value.
+
+`native::ScriptServices` borrows the existing `NativeActions` and `ActionContext`.
+It rechecks the shared execution fence and session gate before action admission.
+T1.3 installs this capability in owner-controlled tick contexts. Family cutovers
+bind their real native arguments first. The JS adapter remains optional.
+The `native::abi` member table records current callback path/value behavior.
+`native::custody` defines sticky acknowledgements, prompt/event deduplication,
+and terminal-receipt retirement without retaining a JS Promise itself.
+
+The dev-only `seat-model` oracle checks these definitions. Its chosen rules
+require at most 16 live entries, four future root positions, and 32 shared
+live/retained-result credits. Controls and releases reserve 115 encoder rows.
+Gameplay uses at most 141 rows and cannot displace that reservation.
+Guardian actions remain outside lineage and foreground filtering.
+Gather, Combat and progress own the foreground. Hunt does not.
+
+`native::divergence::DIVERGENCES` records every approved Q5 row and the open
+row 8a. Hunt activation waits for T2/T1 to extend and review its model rule.
+F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
+activation retain the real lifecycle, promise, encoder and family proof duties.
+The no-default-feature script dependency closure still includes `deno_ast`.
+Removing that dependency is the named early-T2 native-product build ratchet.
+
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
 Quester, Gatherer and Sherlock take the same slot-level Stop path as operator

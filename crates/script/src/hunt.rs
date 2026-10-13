@@ -771,6 +771,20 @@ impl<K: Kind> Hunt<K> {
     }
 }
 
+/// Exercise the real Hunt effect consumer through the real isolate callback
+/// side. The fixture supplies only a stepper-produced effect; it does not
+/// reproduce notification mapping or ordering.
+#[cfg(test)]
+pub(crate) fn characterize_effect(
+    effect: &Value,
+    cx: &mut Cx<'_>,
+) -> Result<Option<Step<Value>>, Ended> {
+    let mut row = Hunt::<crate::hunt_leave::Leave>::run(json!({}));
+    let result = row.apply(effect, cx);
+    row.finish();
+    result
+}
+
 fn map_bool(step: Step<bool>) -> Step<Value> {
     match step {
         Step::Wait => Step::Wait,
