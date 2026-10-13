@@ -206,6 +206,7 @@ unchanged manifest; compression does not change selected-content identities.
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
+| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; inactive until T4.2 |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
 | `slot_io.rs` | frame and input channels | mailbox, input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |

@@ -8,6 +8,7 @@ publish = false
 api = { path = "../api" }
 client = { workspace = true }
 num-bigint = "0.4"
+thiserror = "=2.0.20"
 vault = { path = "../vault" }
 parking_lot = { version = "0.12", optional = true }
 

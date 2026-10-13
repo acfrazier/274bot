@@ -6,6 +6,7 @@ pub mod login_queue;
 #[cfg(feature = "performance-profile")]
 pub mod performance_profile;
 mod random;
+pub mod render;
 mod slot;
 mod slot_io;
 
