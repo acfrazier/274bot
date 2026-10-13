@@ -3152,6 +3152,10 @@ fn end_route_follow(nav: &mut NavBot) {
 }
 
 #[cfg(test)]
+#[path = "script_nav_facade_tests.rs"]
+mod facade_tests;
+
+#[cfg(test)]
 mod diagnostic_tests {
     use super::*;
 

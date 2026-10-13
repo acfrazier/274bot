@@ -2425,6 +2425,105 @@ mod tests {
         MapCacheRoot::from_root(path)
     }
 
+    /// `MapStage` → the frozen `api::work::MapBakePhase`, in order.
+    fn frozen_phase(stage: MapStage) -> api::work::MapBakePhase {
+        use api::work::MapBakePhase;
+        match stage {
+            MapStage::ReadingCache => MapBakePhase::ReadingCache,
+            MapStage::DerivingPois => MapBakePhase::DerivingPois,
+            MapStage::BakingPlane => MapBakePhase::BakingPlane,
+            MapStage::BuildingZoomLevels => MapBakePhase::BuildingZoomLevels,
+            MapStage::Publishing => MapBakePhase::Publishing,
+        }
+    }
+
+    /// `MapJobStatus` → the frozen `api::work::MapBakeStatus`, variant for
+    /// variant.
+    fn frozen_status(status: &MapJobStatus) -> api::work::MapBakeStatus {
+        use api::work::MapBakeStatus;
+        match status {
+            MapJobStatus::Queued => MapBakeStatus::Queued,
+            MapJobStatus::Running(_) => MapBakeStatus::Running,
+            MapJobStatus::Ready => MapBakeStatus::Ready,
+            MapJobStatus::Paused => MapBakeStatus::Paused,
+            MapJobStatus::Cancelled => MapBakeStatus::Cancelled,
+            MapJobStatus::Failed(_) => MapBakeStatus::Failed,
+        }
+    }
+
+    /// F0-4 (§26 §2.2, §2.6): the frozen map-bake family characterizes this
+    /// producer's real stages, endings and cancellation observation.
+    #[test]
+    fn frozen_map_bake_family_characterizes_this_producer() {
+        use api::work::{MapBakePhase, MapBakeStatus, WorkFamily, WorkPhase};
+
+        let stages = [
+            MapStage::ReadingCache,
+            MapStage::DerivingPois,
+            MapStage::BakingPlane,
+            MapStage::BuildingZoomLevels,
+            MapStage::Publishing,
+        ];
+        assert_eq!(stages.len(), MapBakePhase::ALL.len());
+        assert_eq!(stages.len(), WorkFamily::MapBake.phases().len());
+        for ((index, stage), phase) in stages.iter().enumerate().zip(MapBakePhase::ALL) {
+            assert_eq!(frozen_phase(*stage), phase);
+            assert_eq!(usize::from(WorkPhase::index(phase)), index);
+            assert_eq!(WorkFamily::MapBake.phases()[index], format!("{stage:?}"));
+        }
+
+        let statuses = [
+            MapJobStatus::Queued,
+            MapJobStatus::Running(MapProgress {
+                stage: MapStage::BakingPlane,
+                completed: 1,
+                total: 4,
+                message: String::new(),
+            }),
+            MapJobStatus::Ready,
+            MapJobStatus::Paused,
+            MapJobStatus::Cancelled,
+            MapJobStatus::Failed(String::from("boom")),
+        ];
+        assert_eq!(statuses.len(), MapBakeStatus::ALL.len());
+        for (status, frozen) in statuses.iter().zip(MapBakeStatus::ALL) {
+            assert_eq!(frozen_status(status), frozen);
+            assert_eq!(
+                is_terminal(status),
+                frozen.is_domain_ending(),
+                "is_terminal({status:?}) must agree with the frozen ending"
+            );
+        }
+
+        // `finish_job` is the only place a stopped bake's ending is chosen.
+        // A set cancel flag lands on Paused, whatever the error was.
+        let status = Arc::new(Mutex::new(MapJobStatus::Queued));
+        let cancel = Arc::new(AtomicBool::new(true));
+        finish_job(MapCacheError::Busy, &status, &cancel);
+        assert_eq!(*status.lock(), MapJobStatus::Paused);
+        assert_eq!(
+            frozen_status(&status.lock()),
+            MapBakeStatus::cancellation_observed_as()
+        );
+        // The bake's own `MapCacheError::Cancelled` (checkpoint pause,
+        // `map_producer.rs:148`) lands on Paused with the flag clear.
+        let cancel = Arc::new(AtomicBool::new(false));
+        finish_job(MapCacheError::Cancelled, &status, &cancel);
+        assert_eq!(*status.lock(), MapJobStatus::Paused);
+        assert!(frozen_status(&status.lock()).is_family_result());
+        // Any other error with the flag clear is a domain failure.
+        finish_job(MapCacheError::Busy, &status, &cancel);
+        assert!(
+            matches!(&*status.lock(), MapJobStatus::Failed(message) if message == &MapCacheError::Busy.to_string())
+        );
+        assert_eq!(frozen_status(&status.lock()), MapBakeStatus::Failed);
+        // Nothing in this producer constructs `Cancelled`.
+        assert!(!MapBakeStatus::Cancelled.is_produced_today());
+        assert!(WorkFamily::MapBake
+            .cancellation_mapping()
+            .contains("MapJobStatus::Paused"));
+    }
+
     fn descriptor(root: &MapCacheRoot) -> MapProfileDescriptor {
         let _ = root;
         MapProfileDescriptor::new(274, Digest([1; 32]), Digest([2; 32]), Digest([3; 32])).unwrap()

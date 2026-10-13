@@ -10,6 +10,7 @@ pub mod bundle;
 pub mod camera;
 pub mod canlight;
 pub mod collision;
+pub mod contract;
 pub mod essence;
 pub mod grid;
 pub mod manifest;
