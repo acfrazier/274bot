@@ -12,9 +12,11 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -44,6 +46,17 @@ def _git(root: Path, *args: str) -> str:
         env=env,
     )
     return result.stdout.strip()
+
+
+def _replace_last_receipt_input_digest(records: Path, value: str) -> None:
+    path = records / "receipts.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    receipt = json.loads(lines[-1])
+    receipt["input_digest"] = value
+    receipt.pop("receipt_digest", None)
+    receipt["receipt_digest"] = gate._digest(receipt)
+    lines[-1] = gate._canonical(receipt).decode("utf-8")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _commit(root: Path, message: str) -> str:
@@ -332,6 +345,61 @@ def prepare_enforcement(args):
 '''
 
 
+REVIEW_APPROVAL_POISON = '''
+_honest_prepare = prepare_enforcement
+
+def prepare_enforcement(args):
+    from pathlib import Path
+    approval = Path(args.records_root) / "approvals" / f"{args.head_sha}.json"
+    text = approval.read_text(encoding="utf-8") if approval.is_file() else ""
+    if "protected prepare-mode probe" in text:
+        return _honest_prepare(args)
+    globals()["_run_child"] = lambda *a, **k: None
+    globals()["_qualify_admission_mode"] = lambda *a, **k: None
+    globals()["_qualify_prepare_mode"] = lambda *a, **k: None
+    return _honest_prepare(args)
+'''
+
+
+RECEIPT_INPUT_POISON = '''
+_honest_append = _append_receipt
+
+def _append_receipt(records_root, state, receipts, receipt, *, expected_pending_digest):
+    receipt = dict(receipt)
+    receipt["input_digest"] = "0" * 64
+    receipt.pop("receipt_digest", None)
+    body = {key: value for key, value in receipt.items() if key != "receipt_digest"}
+    receipt["receipt_digest"] = _digest(body)
+    return _honest_append(
+        records_root, state, receipts, receipt,
+        expected_pending_digest=expected_pending_digest,
+    )
+'''
+
+RECEIPT_COUNT_POISON = '''
+_honest_admit = admit
+
+def admit(args):
+    import json
+    from pathlib import Path
+
+    lines = (Path(args.records_root) / "receipts.jsonl").read_text(encoding="utf-8").splitlines()
+    receipts = [json.loads(line) for line in lines if line]
+    activations = [
+        index for index, receipt in enumerate(receipts)
+        if receipt.get("activated_enforcement_sha") == args.enforcement_sha
+        and receipt.get("transition_kind") == "enforcement"
+    ]
+    since = len(receipts) - 1 - activations[-1] if activations else 0
+    if since < 2:
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+'''
+
+
 class GateFixture(unittest.TestCase):
     """Fixture repositories and the shared two-merge flow.
 
@@ -490,7 +558,15 @@ class GateFixture(unittest.TestCase):
         self.assertEqual(current_after["bundle_digest"], current_before["bundle_digest"])
         self.assertEqual(current_after["runtime_pin"], current_before["runtime_pin"])
 
-    def _poisoned_gate_e_prime(self, label: str, poison: str, *, prepare_mode: bool = False, after_removal: bool = False) -> None:
+    def _poisoned_gate_e_prime(
+        self,
+        label: str,
+        poison: str,
+        *,
+        prepare_mode: bool = False,
+        after_removal: bool = False,
+        expected_message: str | None = None,
+    ) -> None:
         """An exact-approved E' whose trusted_gate.py cheats outside tests must not activate."""
         if after_removal:
             gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
@@ -532,7 +608,12 @@ class GateFixture(unittest.TestCase):
             )
         message = str(rejected.exception)
         if not self.real_suites:
-            self.assertIn("prepare-mode qualification failed" if prepare_mode else "admission-mode qualification failed", message)
+            expected = expected_message or (
+                "prepare-mode qualification failed"
+                if prepare_mode
+                else "admission-mode qualification failed"
+            )
+            self.assertIn(expected, message)
         self.assertFalse((self.records / "pending.json").exists())
         self.assertEqual((self.records / "receipts.jsonl").read_bytes(), receipts_before)
         print(f"BAD §26 {label}: prepare-enforcement refused: {message.splitlines()[0]}")
@@ -945,6 +1026,153 @@ def admit(args):
         self._poisoned_gate_e_prime("outside-counter", poison)
         self.assertFalse(counter.exists(), "no probe may write outside its private tree")
 
+    def test_zero_receipt_input_digest_is_rejected_by_record_store(self) -> None:
+        gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
+        _replace_last_receipt_input_digest(self.records, "0" * 64)
+        with self.assertRaisesRegex(
+            gate.GateError,
+            r"receipt 1\.input_digest cannot be an all-zero digest",
+        ):
+            gate._read_record_store(self.records, TARGET_REF)
+
+    def test_nonzero_receipt_input_digest_is_recomputed_from_git(self) -> None:
+        gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
+        self._commit_records("publish valid baseline receipt")
+        self._advance_target(self.history, self.b1_sha)
+        _replace_last_receipt_input_digest(self.records, "f" * 64)
+        self._commit_records("publish nonzero forged receipt digest")
+
+        def add_comment(root: Path) -> None:
+            manifest = root / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8") + "\n# digest replay probe\n",
+                encoding="utf-8",
+            )
+
+        candidate, candidate_sha = self._candidate_from(
+            self.b1, "nonzero-forged-digest-candidate", add_comment
+        )
+        with self.assertRaisesRegex(
+            gate.GateError,
+            r"receipt 1\.input_digest does not match accepted product bytes",
+        ):
+            gate.admit(
+                self._args(
+                    base=self.b1,
+                    candidate=candidate,
+                    head_sha=candidate_sha,
+                )
+            )
+
+    def test_e_prime_cannot_qualify_with_a_zero_digest_receipt(self) -> None:
+        self._poisoned_gate_e_prime(
+            "zero-digest-receipt",
+            RECEIPT_INPUT_POISON,
+            expected_message="all-zero digest",
+        )
+
+    def test_approval_marker_e_prime_is_refused(self) -> None:
+        self._poisoned_gate_e_prime("approval-marker", REVIEW_APPROVAL_POISON, prepare_mode=True, after_removal=True)
+
+    def test_e_prime_cannot_cheat_after_a_receipt_count_threshold(self) -> None:
+        self._poisoned_gate_e_prime(
+            "receipt-count-threshold",
+            RECEIPT_COUNT_POISON,
+            after_removal=True,
+            expected_message="admission-mode qualification failed: proposed E' admitted the known-bad sequential bad edge",
+        )
+
+    def test_socket_counter_e_prime_cannot_catch_probe_refusals(self) -> None:
+        tcp_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tcp_listener.bind(("127.0.0.1", 0))
+        tcp_listener.listen(64)
+        tcp_listener.settimeout(0.1)
+        port = tcp_listener.getsockname()[1]
+
+        socket_path = self.root / "s"
+        unix_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.root)
+            unix_listener.bind("s")
+        finally:
+            os.chdir(cwd)
+        unix_listener.listen(64)
+        unix_listener.settimeout(0.1)
+        stopping = threading.Event()
+        connections = {"tcp": 0, "unix": 0}
+
+        def serve(listener: socket.socket, endpoint: str) -> None:
+            while not stopping.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with connection:
+                    connections[endpoint] += 1
+                    connection.sendall(str(connections[endpoint]).encode("ascii"))
+
+        workers = [
+            threading.Thread(target=serve, args=(tcp_listener, "tcp"), daemon=True),
+            threading.Thread(target=serve, args=(unix_listener, "unix"), daemon=True),
+        ]
+        for worker in workers:
+            worker.start()
+
+        def stop_servers() -> None:
+            stopping.set()
+            for worker in workers:
+                worker.join(timeout=1)
+            tcp_listener.close()
+            unix_listener.close()
+            socket_path.unlink(missing_ok=True)
+
+        self.addCleanup(stop_servers)
+        # Both counters are host-side, outside each isolated admission probe.
+        tcp_poison = f'''
+_honest_admit = admit
+def admit(args):
+    import socket
+    try:
+        connection = socket.create_connection(("127.0.0.1", {port}), timeout=5)
+        count = int(connection.recv(32).decode())
+        connection.close()
+    except Exception:
+        count = 0
+    if count <= 8:
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+'''
+        unix_poison = f'''
+_honest_admit = admit
+def admit(args):
+    import os
+    import socket
+    try:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        os.chdir({str(socket_path.parent)!r})
+        connection.connect("s")
+        count = int(connection.recv(32).decode())
+        connection.close()
+    except Exception:
+        count = 0
+    if count <= 8:
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+'''
+        self._poisoned_gate_e_prime("tcp-counter-refusal", tcp_poison)
+        self._poisoned_gate_e_prime("pathname-counter-refusal", unix_poison)
+        self.assertEqual(connections, {"tcp": 0, "unix": 0})
+
     def test_rotated_edge_does_not_reselect_first_pair(self) -> None:
         candidate, _ = self._candidate_from(self.b1, "rotated-edge-tree", lambda root: gate._probe_rotated_edge(root))
         with self.assertRaisesRegex(gate.GateError, "disallowed crate edge"):
@@ -1023,8 +1251,9 @@ def admit(args):
         unpopulated = gate._clone_at(product, self.root / "probe-without-source", product_sha)
         gate._populate_gitlinks(self.root / "missing-source", unpopulated)
         self.assertFalse((unpopulated / gate.SUBMODULE_PATH / "client.rs").exists())
-        probe = gate._clone_at(product, self.root / "probe-tree", product_sha)
+        probe = gate._clone_at(product, self.root / "probe-tree", product_sha, private_depth=2)
         gate._populate_gitlinks(product, probe)
+        self.assertFalse((probe / ".git/objects/info/alternates").exists())
         self.assertEqual(_git(probe / gate.SUBMODULE_PATH, "rev-parse", "HEAD"), client_sha)
         self.assertTrue((probe / gate.SUBMODULE_PATH / "client.rs").is_file())
         gate.verify_checkout(probe, product_sha, "populated probe tree")
