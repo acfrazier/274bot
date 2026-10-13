@@ -548,6 +548,41 @@ LIVE=1 BOT_CPU=1 GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
 ```
 
 
+### Bank trip soak
+
+`gatherer_live::gatherer_fish_bank_soak` runs one real net-fishing bot at the
+Catherby site (the 0.2.0.2 user configuration: `fishing.saltfish.op1`, Site
+location, Bank disposition, nearest bank) through back-to-back real bank trips
+for a fixed `GATHERER_SOAK_SECS` (default 1800 s). The pack starts with 27 raw
+shrimp and is refilled (`::give`, the account's own inventory) after every
+return so each trip banks at once. A run that blocks is recorded (status,
+failure and the last client-side bank facts: modal ids, the withdraw table's
+inventory packet generations, run energy and auto-run sends) and restarted
+with the same settings, as the user does. Every trip goes through the same
+per-trip conservation receipt as the other bank cells: each deposit candidate
+that leaves the pack (the catch and any incidental item, such as a random
+event's Strange fruit) must reappear as a bank increase, the Gatherer's
+`deposited` tally must equal the candidates it held, and the protected net
+must stay; a verified receipt per trip is in `bank_trip.bank_trip_receipts`.
+A recorded block abandons its trip's receipt (the block is that trip's
+failure). The receipt's `soak` object carries trips, blocks by failure code
+and the facts windows; the cell passes with at least `GATHERER_SOAK_MIN_TRIPS`
+(default 10) trips and no `bank-deposit-failed` block. Run several copies
+with distinct `BOT_LIVE_NAME_PREFIX` values for a rate; HOTFIX-0.2.1
+reproduced both shipped deposit blocks with ten bots in thirty minutes.
+
+`GATHERER_SOAK_TWO_PRODUCTS=1` is a measurement mode, not qualification: the
+pack is seeded with raw shrimp and raw anchovies so every trip deposits in
+two clicks, about doubling the transfer window a run-energy threshold
+crossing can land in. The host's `run_on` latch clears only at energy 0
+(`host/src/lib.rs` `apply_auto_run`), so the crossing cannot be forced from
+the account's own state; the mode raises the rate at which a recorded
+crossing falls inside a transfer. Each host press is logged with the modal
+roots it saw (`auto-run press energy= main= chat= side=`), so a receipt
+shows a press under the bank followed by the stop-transmit/close order and
+the kernel's `bank-reopen` / `bank-reopen-reconcile` lines, or the 0.2.1
+host's deferral of the press until the bank closes.
+
 ## Walk Guard live cells and receipt replay
 
 The ignored W1 cells (`--lib`, module `walk_guard_live_tests`) exercise the

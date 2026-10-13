@@ -24,6 +24,34 @@ use std::time::Duration;
 /// Active-time floor for a required side-view wait, paired with its observed
 /// server-tick bound. Separate from the 1.2 s until-empty side-view wait.
 const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
+/// Re-opens of a lost session within one transfer request (deposit or
+/// withdrawal), after the first open; exhausted, the loss is terminal with
+/// its original message.
+///
+/// Bound from the engine: while the bank modal is up the player is `busy()`
+/// (`Player.ts:821-823`), so normal queues, weak queues and normal timers
+/// cannot run (`Player.ts:904`, `:919`, `:953`); only the player's own
+/// client packets (`Op*Handler`/`MoveClickHandler` → `clearPendingAction`,
+/// an `if_button` script with `if_close`) or a strong-queued script
+/// (`Player.ts:874-885`) can close it. No content strong-queues a script on
+/// a player banking without an action of their own (`grep strongqueue`
+/// over `content/scripts`: combat/spec/greegree/quest/minigame triggers and
+/// the run button, `player_controls.rs2:15,34`), and the kernel sends no
+/// packet but its own transfer clicks while a transfer is open. The one
+/// reachable trigger was the host's run press (`controls:com_5`), which
+/// fires at most once per energy cycle: a press needs energy ≥ 20 with run
+/// off, run is forced off only at 0, and 0 → 20 takes
+/// `2000 / (floor(agility/6) + 8)` non-running ticks (`Player.ts:705-707`),
+/// ≥ 84 ticks at agility 99, while one session attempt is bounded at
+/// 8 + 8 + 8 observed ticks (open, table, transfer). So at most one close
+/// per transfer comes from content; one re-open covers it. Measured live
+/// with the host guard removed (HOTFIX-0.2.1 report-r2 §F4: 20 bots, 767
+/// trips): six presses landed under the open bank, each followed by the
+/// engine's stop-transmit and close within a tick; the one that cut a
+/// transfer resumed on its first re-open, none needed a second. The second
+/// is the margin for a close the content enumeration does not produce (a
+/// reconnect, `Player.ts:562`; an operator cheat, `ClientCheatHandler.ts`).
+pub const MAX_BANK_REOPENS: u8 = 2;
 
 #[derive(Clone)]
 pub struct BankSelector {
@@ -190,10 +218,15 @@ pub struct OpenArgs {
 pub struct DepositArgs {
     pub products: Arc<[i32]>,
     pub keep: Arc<[i32]>,
+    /// The stand that opened this session; a session lost before the
+    /// deposit settles is re-opened from it (`MAX_BANK_REOPENS`).
+    pub access: Option<Arc<BankStandAccess>>,
 }
 
 pub struct WithdrawArgs {
     pub withdrawals: Arc<[Withdrawal]>,
+    /// The stand that opened this session; see [`DepositArgs::access`].
+    pub access: Option<Arc<BankStandAccess>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,6 +277,11 @@ pub struct BankRequest {
     pub bank: Option<NamedBank>,
     pub action: BankAction,
     pub partial_ok: bool,
+    /// The stand that opened the session a transfer verb runs in. A
+    /// transfer that loses its session re-opens the stand and resumes;
+    /// without it the loss is terminal. Ignored by `OpenStand` (its own
+    /// access), `Scan` and `Close`.
+    pub access: Option<Arc<BankStandAccess>>,
 }
 
 /// One protected pack row's count before a deposit.
@@ -288,7 +326,7 @@ enum Phase {
     Act,
     AwaitTransfer {
         before: i32,
-        before_slots: Option<usize>,
+        before_slots: Option<u8>,
         item_id: i32,
         evidence: EvidenceStamp,
         started_at: Duration,
@@ -314,6 +352,18 @@ struct DepositLogState {
     last_logged_tick: u64,
     dispatch_evidence: Option<EvidenceStamp>,
     started_at: Duration,
+}
+
+/// A deposit click whose session was lost before its settlement was
+/// observed: the clicked id's held count and (capacity) the pack's row
+/// count before the click. Reconciled once against the next session's pack
+/// before any further click, so what the lost session already applied is
+/// credited and never repeated.
+#[derive(Clone, Copy)]
+struct InFlightDeposit {
+    before: i32,
+    before_slots: Option<u8>,
+    item_id: i32,
 }
 #[derive(Clone, Copy)]
 struct BankDeadline {
@@ -367,7 +417,7 @@ pub struct BankMachine {
     deadline: Option<BankDeadline>,
     session: u64,
     deposits: u8,
-    withdraw_index: usize,
+    withdraw_index: u8,
     protected_before: Vec<BankCount>,
     deposited: u32,
     capacity_freed: u8,
@@ -380,6 +430,13 @@ pub struct BankMachine {
     /// The until-empty side-view bound is armed.
     view_armed: bool,
     opened_from: Option<u64>,
+    /// Re-opens taken after a lost session (`MAX_BANK_REOPENS`).
+    reopens: u8,
+    /// A lost session's stand click is due; a stale open without its table
+    /// does not hold it back.
+    reopen_pending: bool,
+    /// The deposit in flight when the session was lost, until reconciled.
+    in_flight: Option<InFlightDeposit>,
 }
 
 const BANK_OBJECT_RADIUS: i32 = 4;
@@ -541,6 +598,9 @@ impl NativeMachine for BankMachine {
             object_dialogue_finished: false,
             view_armed: false,
             opened_from: None,
+            reopens: 0,
+            reopen_pending: false,
+            in_flight: None,
         })
     }
 
@@ -555,7 +615,10 @@ impl NativeMachine for BankMachine {
                     self.phase,
                     Phase::Open | Phase::NpcAccess { .. } | Phase::AwaitOpen { .. }
                 );
-            if opening && bank_open && snapshot.bank().is_none() {
+            // A stale open whose table is down is a closed bank once a
+            // transfer's reopen is due: the stand click goes out regardless
+            // (the engine closes and re-opens on it, `OpLocHandler.ts:53`).
+            if opening && bank_open && snapshot.bank().is_none() && !self.reopen_pending {
                 self.arm_deadline(
                     cx.evidence().tick,
                     cx.active_now(),
@@ -592,10 +655,14 @@ impl NativeMachine for BankMachine {
                         };
                         return Poll::Pending;
                     }
-                    if matches!(
-                        &self.request.action,
-                        BankAction::OpenStand { access } if access.kind == AccessKind::Teller
-                    ) {
+                    let stand = self.stand_access().cloned();
+                    let is_open_stand = matches!(self.request.action, BankAction::OpenStand { .. });
+                    let teller = stand
+                        .as_ref()
+                        .is_some_and(|access| access.kind == AccessKind::Teller);
+                    // A transfer verb re-opening through a teller goes to
+                    // the dialogue only while the table is down.
+                    if teller && (is_open_stand || cx.snapshot().bank().is_none()) {
                         self.opened_from = Some(open_generation(cx));
                         self.deadline = None;
                         self.phase = Phase::NpcAccess {
@@ -610,6 +677,7 @@ impl NativeMachine for BankMachine {
                             .snapshot()
                             .bank_session()
                             .map_or(0, |session| session.value.generation);
+                        self.reopen_pending = false;
                         self.clear_wait_deadlines();
                         self.phase = Phase::Act;
                         continue;
@@ -620,7 +688,7 @@ impl NativeMachine for BankMachine {
                         ))));
                     }
                     let mut first_target = None;
-                    if let BankAction::OpenStand { access } = &self.request.action {
+                    if let Some(access) = stand.as_ref() {
                         let open_first = access
                             .bank
                             .definition
@@ -711,6 +779,7 @@ impl NativeMachine for BankMachine {
                             )))?;
                         }
                         self.opened_from = Some(open_generation(cx));
+                        self.reopen_pending = false;
                         self.phase = Phase::AwaitOpen { first_target };
                         return Poll::Pending;
                     }
@@ -752,6 +821,7 @@ impl NativeMachine for BankMachine {
                         },
                     )))?;
                     self.opened_from = Some(open_generation(cx));
+                    self.reopen_pending = false;
                     self.phase = Phase::AwaitOpen { first_target: None };
                     return Poll::Pending;
                 }
@@ -760,11 +830,11 @@ impl NativeMachine for BankMachine {
                     dialogue,
                     first_target,
                 } => {
-                    let BankAction::OpenStand { access } = &self.request.action else {
-                        unreachable!("bank dialogue only belongs to OpenStand");
+                    let Some(access) = self.stand_access().cloned() else {
+                        unreachable!("bank dialogue needs a stand access");
                     };
                     let intent = match dialogue {
-                        AccessDialogue::Teller => npc_intent(access)?,
+                        AccessDialogue::Teller => npc_intent(&access)?,
                         AccessDialogue::Object => npc::Intent {
                             name: "",
                             op: npc::NpcOp::Index(-1),
@@ -893,18 +963,16 @@ impl NativeMachine for BankMachine {
                     let open_wait_expired =
                         self.deadline_reached(cx.evidence().tick, cx.active_now());
                     if open_wait_expired {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank item table unavailable",
-                        ))));
+                        self.session_lost(cx, "bank item table unavailable")?;
+                        continue;
                     }
-                    let object_access = matches!(
-                        &self.request.action,
-                        BankAction::OpenStand { access }
-                            if access.kind == AccessKind::Booth
-                                && access.bank.definition.is_some_and(|definition| {
-                                    definition.open_first.or(definition.object).is_some()
-                                })
-                    );
+                    let stand = self.stand_access().cloned();
+                    let object_access = stand.as_ref().is_some_and(|access| {
+                        access.kind == AccessKind::Booth
+                            && access.bank.definition.is_some_and(|definition| {
+                                definition.open_first.or(definition.object).is_some()
+                            })
+                    });
                     let chat_open = cx.snapshot().chat_modal().is_some_and(|chat| {
                         chat.value.root != -1 || chat.value.continue_component_id >= 0
                     });
@@ -921,7 +989,7 @@ impl NativeMachine for BankMachine {
                         };
                         continue;
                     }
-                    if let BankAction::OpenStand { access } = &self.request.action {
+                    if let Some(access) = stand.as_ref() {
                         if self.open_stage == 0 {
                             if let Some(open_first) = access
                                 .bank
@@ -956,10 +1024,27 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
+                    // The table and the open arrive in one server flush, the
+                    // table first (`bank.rs2:21-23`, `World.ts:1116-1123`): an
+                    // open whose session is gone again is a closed bank, not
+                    // a slow table. After this request's own stand click the
+                    // close is the engine's close-then-open on that click
+                    // (`OpLocHandler.ts:53`, `Player.ts:760-814`), so the open
+                    // wait resumes on its bound; a transfer that sent no click
+                    // lost its session and re-opens.
+                    if !bank_open {
+                        if matches!(self.request.action, BankAction::OpenStand { .. })
+                            || self.opened_from.is_some()
+                        {
+                            self.phase = Phase::AwaitOpen { first_target: None };
+                            return Poll::Pending;
+                        }
+                        self.session_lost(cx, "bank closed before the item table loaded")?;
+                        continue;
+                    }
                     if self.deadline_reached(cx.evidence().tick, cx.active_now()) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank item table unavailable",
-                        ))));
+                        self.session_lost(cx, "bank item table unavailable")?;
+                        continue;
                     }
                     return Poll::Pending;
                 }
@@ -1001,12 +1086,9 @@ impl NativeMachine for BankMachine {
                             "bank item mode could not be set to unnoted",
                         ))));
                     }
-                    if !cx.snapshot().bank_session().is_some_and(|session| {
-                        session.value.open && session.value.generation == self.session
-                    }) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank closed before item mode settled",
-                        ))));
+                    if !self.same_session(cx) {
+                        self.session_lost(cx, "bank closed before item mode settled")?;
+                        continue;
                     }
                     self.item_mode_ensured = true;
                     cx.note_bank_item_mode(self.session);
@@ -1042,9 +1124,8 @@ impl NativeMachine for BankMachine {
                                 return Poll::Ready(Ok(self.receipt(true)));
                             }
                             Progress::SessionGone => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during withdraw",
-                                ))));
+                                self.session_lost(cx, "bank closed during withdraw")?;
+                                continue;
                             }
                             Progress::Incomplete | Progress::PackFull | Progress::OverTarget => {}
                         }
@@ -1052,9 +1133,8 @@ impl NativeMachine for BankMachine {
                             match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
                                 Clicked::Sent => return Poll::Pending,
                                 Clicked::Closed => {
-                                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                        "bank closed during withdraw",
-                                    ))));
+                                    self.session_lost(cx, "bank closed during withdraw")?;
+                                    continue;
                                 }
                                 Clicked::NoStock => "bank lacks requested item",
                                 Clicked::NoOp => "bank item has no compatible withdraw action",
@@ -1083,9 +1163,8 @@ impl NativeMachine for BankMachine {
                             return Poll::Ready(Ok(self.receipt(true)));
                         }
                         let Some(bank) = snapshot.bank() else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank closed during tier withdraw",
-                            ))));
+                            self.session_lost(cx, "bank closed during tier withdraw")?;
+                            continue;
                         };
                         let Some(item) = items.iter().find(|item| {
                             bank.value
@@ -1122,9 +1201,8 @@ impl NativeMachine for BankMachine {
                         match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
                             Clicked::Sent => return Poll::Pending,
                             Clicked::Closed => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during tier withdraw",
-                                ))));
+                                self.session_lost(cx, "bank closed during tier withdraw")?;
+                                continue;
                             }
                             Clicked::NoStock | Clicked::NoOp => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1134,7 +1212,8 @@ impl NativeMachine for BankMachine {
                         }
                     }
                     BankAction::WithdrawTo { withdrawals } => {
-                        let Some(withdrawal) = withdrawals.get(self.withdraw_index) else {
+                        let Some(withdrawal) = withdrawals.get(usize::from(self.withdraw_index))
+                        else {
                             return Poll::Ready(Ok(self.receipt(true)));
                         };
                         let Some(view) = HeldView::read(cx, withdrawal.id) else {
@@ -1156,25 +1235,23 @@ impl NativeMachine for BankMachine {
                             self.same_session(cx),
                         ) {
                             Progress::Complete => {
-                                self.withdraw_index += 1;
+                                self.withdraw_index = self.withdraw_index.saturating_add(1);
                                 continue;
                             }
                             Progress::OverTarget => {
                                 return Poll::Ready(Ok(self.receipt(false)));
                             }
                             Progress::SessionGone => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during exact withdraw",
-                                ))));
+                                self.session_lost(cx, "bank closed during exact withdraw")?;
+                                continue;
                             }
                             Progress::Incomplete | Progress::PackFull => {}
                         }
                         match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
                             Clicked::Sent => return Poll::Pending,
                             Clicked::Closed => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during exact withdraw",
-                                ))));
+                                self.session_lost(cx, "bank closed during exact withdraw")?;
+                                continue;
                             }
                             Clicked::NoStock | Clicked::NoOp => {
                                 return Poll::Ready(Ok(self.receipt(false)));
@@ -1201,6 +1278,16 @@ impl NativeMachine for BankMachine {
                                 }
                                 None => return Poll::Pending,
                             }
+                        }
+                        // A deposit the lost session applied is credited
+                        // from the new session's pack before this session
+                        // chooses a click: the owed capacity delta and the
+                        // deposited tally continue, never restart.
+                        if self.in_flight.is_some() {
+                            let Some(pack) = pack else {
+                                return Poll::Pending;
+                            };
+                            self.reconcile_in_flight(cx, pack);
                         }
                         let side = snapshot.bank_side().map(|rows| rows.value);
                         if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
@@ -1270,9 +1357,8 @@ impl NativeMachine for BankMachine {
                                 return Poll::Ready(Ok(self.receipt(complete)));
                             }
                             DepositScan::SessionGone => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during deposit",
-                                ))));
+                                self.session_lost(cx, "bank closed during deposit")?;
+                                continue;
                             }
                             DepositScan::MissingRequired => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1298,11 +1384,7 @@ impl NativeMachine for BankMachine {
                                     self.request.action,
                                     BankAction::DepositCapacity { .. }
                                 )
-                                .then(|| {
-                                    pack.map_or(0, |rows| {
-                                        rows.iter().filter(|row| row.count > 0).count()
-                                    })
-                                });
+                                .then(|| pack.map_or(0, pack_rows));
                                 let option = side
                                     .and_then(|side| deposit_option(side, click))
                                     .expect("a selected deposit has its posted operation label");
@@ -1395,11 +1477,20 @@ impl NativeMachine for BankMachine {
                             item_id,
                             evidence,
                         ) {
-                            Ok(true) => {
+                            Ok(TransferWait::Settled) => {
                                 self.phase = Phase::Act;
                                 continue;
                             }
-                            Ok(false) => return Poll::Pending,
+                            Ok(TransferWait::Pending) => return Poll::Pending,
+                            Ok(TransferWait::SessionLost) => {
+                                self.in_flight = Some(InFlightDeposit {
+                                    before,
+                                    before_slots,
+                                    item_id,
+                                });
+                                self.session_lost(cx, "bank closed before the transfer settled")?;
+                                continue;
+                            }
                             Err(error) => return Poll::Ready(Err(error)),
                         }
                     }
@@ -1409,10 +1500,24 @@ impl NativeMachine for BankMachine {
                         && snapshot.bank_session().is_some_and(|session| {
                             session.value.open && session.value.generation == self.session
                         });
+                    let withdrawing = matches!(
+                        self.request.action,
+                        BankAction::Withdraw { .. }
+                            | BankAction::WithdrawAny { .. }
+                            | BankAction::WithdrawTo { .. }
+                    );
                     if !same_session {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank closed before the transfer settled",
-                        ))));
+                        // Withdrawals are held targets: the new session reads
+                        // the held count again and owes only the remainder.
+                        if !withdrawing {
+                            self.in_flight = Some(InFlightDeposit {
+                                before,
+                                before_slots,
+                                item_id,
+                            });
+                        }
+                        self.session_lost(cx, "bank closed before the transfer settled")?;
+                        continue;
                     }
                     if matches!(
                         self.request.action,
@@ -1431,12 +1536,6 @@ impl NativeMachine for BankMachine {
                     // The clicked id's held count: a withdraw raises it, a
                     // deposit lowers it.
                     let current = pack.map(|rows| ops::count_id(rows, item_id));
-                    let withdrawing = matches!(
-                        self.request.action,
-                        BankAction::Withdraw { .. }
-                            | BankAction::WithdrawAny { .. }
-                            | BankAction::WithdrawTo { .. }
-                    );
                     let moved = if withdrawing {
                         current.is_some_and(|now| now > before)
                     } else {
@@ -1449,15 +1548,9 @@ impl NativeMachine for BankMachine {
                                 .deposited
                                 .saturating_add(before.saturating_sub(after).max(0) as u32);
                         }
-                        if let Some(before_slots) = before_slots {
-                            if let Some(after_slots) =
-                                pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
-                            {
-                                let freed = before_slots.saturating_sub(after_slots);
-                                self.capacity_freed = self
-                                    .capacity_freed
-                                    .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
-                            }
+                        if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
+                            let freed = before_slots.saturating_sub(pack_rows(pack));
+                            self.capacity_freed = self.capacity_freed.saturating_add(freed);
                         }
                         self.phase = Phase::Act;
                         continue;
@@ -1701,11 +1794,26 @@ enum Clicked {
     NoOp,
 }
 
+/// What one deposit transfer wait observed this frame.
+enum TransferWait {
+    /// The held count fell: the click settled.
+    Settled,
+    /// Nothing terminal yet.
+    Pending,
+    /// The session closed or was replaced before the count fell.
+    SessionLost,
+}
+
 /// The bank session generation now, or `u64::MAX` before any session.
 fn open_generation(cx: &ActionContext<'_>) -> u64 {
     cx.snapshot()
         .bank_session()
         .map_or(u64::MAX, |session| session.value.generation)
+}
+
+/// Occupied pack rows; the pack holds at most 28, so the count fits a byte.
+fn pack_rows<R: ops::BankRow>(pack: &[R]) -> u8 {
+    u8::try_from(pack.iter().filter(|row| row.count() > 0).count()).unwrap_or(u8::MAX)
 }
 
 impl BankMachine {
@@ -1721,17 +1829,151 @@ impl BankMachine {
     fn clear_wait_deadlines(&mut self) {
         self.deadline = None;
     }
+
+    /// The stand a transfer verb can re-open its session from: an open
+    /// request's own access, else the access its caller recorded.
+    fn stand_access(&self) -> Option<&Arc<BankStandAccess>> {
+        match &self.request.action {
+            BankAction::OpenStand { access } => Some(access),
+            _ => self.request.access.as_ref(),
+        }
+    }
+
+    /// The open session is gone (closed, or replaced by a newer one) before
+    /// this request settled. The engine closes the bank on any further
+    /// client action packet or a strong-queued script (`Player.ts:760-814`,
+    /// `:970-973`) and sends nothing a verb could resume on, so a transfer
+    /// that knows its stand clicks it again and resumes from the live pack
+    /// and table, bounded by [`MAX_BANK_REOPENS`]. Every verb reads its held
+    /// counts again after the reopen: exact targets and product sweeps keep
+    /// their meaning. A deposit click still in flight is kept as
+    /// [`InFlightDeposit`] and credited from the new session's pack
+    /// ([`Self::reconcile_in_flight`]) before any further click. An open
+    /// request keeps its own semantics (its caller retries the stand).
+    fn session_lost(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        reason: &'static str,
+    ) -> Result<(), ActionError> {
+        let transfer = matches!(
+            self.request.action,
+            BankAction::Withdraw { .. }
+                | BankAction::WithdrawAny { .. }
+                | BankAction::WithdrawTo { .. }
+                | BankAction::Deposit { .. }
+                | BankAction::DepositAll { .. }
+                | BankAction::DepositProducts { .. }
+                | BankAction::DepositCapacity { .. }
+        );
+        let stand = if transfer {
+            self.request.access.as_ref()
+        } else {
+            None
+        };
+        let Some(stand) = stand else {
+            return Err(ActionError::Failed(Arc::from(reason)));
+        };
+        if self.reopens >= MAX_BANK_REOPENS {
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "bank-reopen run={:?} tick={} reason={reason} reopens={} limit={} result=exhausted",
+                cx.evidence().run,
+                cx.evidence().tick,
+                self.reopens,
+                MAX_BANK_REOPENS,
+            );
+            return Err(ActionError::Failed(Arc::from(reason)));
+        }
+        self.reopens = self.reopens.saturating_add(1);
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "bank-reopen run={:?} tick={} reason={reason} reopen={}/{} bank_generation={} stand={},{},{} kind={} deposited={}",
+            cx.evidence().run,
+            cx.evidence().tick,
+            self.reopens,
+            MAX_BANK_REOPENS,
+            self.session,
+            stand.stand_tile.x,
+            stand.stand_tile.z,
+            stand.stand_tile.level,
+            stand.kind.as_str(),
+            self.deposited,
+        );
+        // Per-session state only; the request, its protected counts, the
+        // deposited tally and the in-flight deposit belong to the whole
+        // transfer.
+        self.session = 0;
+        self.deposit_log = None;
+        self.view_armed = false;
+        self.item_mode_ensured = false;
+        self.open_stage = 0;
+        self.object_interaction_sent = false;
+        self.object_dialogue_finished = false;
+        self.opened_from = None;
+        self.reopen_pending = true;
+        self.withdraw_index = 0;
+        self.arm_deadline(
+            cx.evidence().tick,
+            cx.active_now(),
+            ops::TRANSFER_OBSERVED_TICK_LIMIT,
+        );
+        self.phase = Phase::Open;
+        Ok(())
+    }
+
+    /// Credit what the lost session applied to the deposit that was in
+    /// flight, exactly once, from the first pack of the new session: the
+    /// clicked id's count fall is the deposited amount (the deposit's
+    /// `UPDATE_INV` is flushed in the tick that applied it, before any later
+    /// open, `World.ts:1116-1123`), and for a capacity deposit the pack's
+    /// row count fall is the freed delta already delivered. A count that
+    /// did not fall was not applied and the sweep resumes with nothing
+    /// credited.
+    fn reconcile_in_flight<R: ops::BankRow>(&mut self, cx: &ActionContext<'_>, pack: &[R]) {
+        let Some(in_flight) = self.in_flight.take() else {
+            return;
+        };
+        let after = ops::count_id(pack, in_flight.item_id);
+        let fell = in_flight.before.saturating_sub(after).max(0);
+        let freed = in_flight.before_slots.map_or(0, |before_slots| {
+            before_slots.saturating_sub(pack_rows(pack))
+        });
+        if fell > 0 {
+            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
+                self.deposited = self.deposited.saturating_add(fell as u32);
+            }
+            self.capacity_freed = self.capacity_freed.saturating_add(freed);
+            self.deposits = self.deposits.saturating_add(1);
+        }
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "bank-reopen-reconcile run={:?} tick={} bank_generation={} id={} before={} after={} credited={} freed={} deposited={} capacity_freed={}",
+            cx.evidence().run,
+            cx.evidence().tick,
+            self.session,
+            in_flight.item_id,
+            in_flight.before,
+            after,
+            fell,
+            freed,
+            self.deposited,
+            self.capacity_freed,
+        );
+    }
     fn await_deposit_transfer(
         &mut self,
         cx: &mut ActionContext<'_>,
         before: i32,
-        before_slots: Option<usize>,
+        before_slots: Option<u8>,
         item_id: i32,
         evidence: EvidenceStamp,
-    ) -> Result<bool, ActionError> {
+    ) -> Result<TransferWait, ActionError> {
         let (dispatched, started_at) = {
             let Some(state) = self.deposit_log.as_mut() else {
-                return Ok(false);
+                return Ok(TransferWait::Pending);
             };
             let dispatched = if let Some(evidence) = state.dispatch_evidence {
                 evidence
@@ -1816,9 +2058,7 @@ impl BankMachine {
                 "session-gone",
                 api::hostlog::Level::Debug,
             );
-            return Err(ActionError::Failed(Arc::from(
-                "bank closed before the transfer settled",
-            )));
+            return Ok(TransferWait::SessionLost);
         }
         if protected == Some(false) {
             self.log_deposit_result(
@@ -1846,19 +2086,13 @@ impl BankMachine {
                     .deposited
                     .saturating_add(before.saturating_sub(after).max(0) as u32);
             }
-            if let Some(before_slots) = before_slots {
-                if let Some(after_slots) =
-                    pack.map(|rows| rows.iter().filter(|row| row.count > 0).count())
-                {
-                    let freed = before_slots.saturating_sub(after_slots);
-                    self.capacity_freed = self
-                        .capacity_freed
-                        .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
-                }
+            if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
+                let freed = before_slots.saturating_sub(pack_rows(pack));
+                self.capacity_freed = self.capacity_freed.saturating_add(freed);
             }
             self.deposits = self.deposits.saturating_add(1);
             self.deposit_log = None;
-            return Ok(true);
+            return Ok(TransferWait::Settled);
         }
         if timed_out {
             self.log_deposit_result(
@@ -1872,7 +2106,7 @@ impl BankMachine {
                 "bank transfer did not settle",
             )));
         }
-        Ok(false)
+        Ok(TransferWait::Pending)
     }
 
     fn log_deposit_observation(
@@ -2125,6 +2359,7 @@ impl NativeMachine for Open {
                     access: args.access,
                 },
                 partial_ok: false,
+                access: None,
             },
             cx,
         )?;
@@ -2161,6 +2396,7 @@ impl NativeMachine for Deposit {
                     keep: args.keep,
                 },
                 partial_ok: false,
+                access: args.access,
             },
             cx,
         )?;
@@ -2196,6 +2432,7 @@ impl NativeMachine for Withdraw {
                     withdrawals: args.withdrawals,
                 },
                 partial_ok: false,
+                access: args.access,
             },
             cx,
         )?;
@@ -2229,6 +2466,7 @@ impl NativeMachine for Close {
                 bank: None,
                 action: BankAction::Close,
                 partial_ok: false,
+                access: None,
             },
             cx,
         )?;
@@ -2449,6 +2687,7 @@ mod tests {
             bank: Some(access.bank),
             action: BankAction::OpenStand { access },
             partial_ok: false,
+            access: None,
         }
     }
     fn bank_object_loc(
@@ -3213,6 +3452,7 @@ mod tests {
                 keep: Arc::from([]),
             },
             partial_ok: false,
+            access: None,
         };
         let (handle, result) = begin_bank(&snapshot, &mut ledger, request);
         assert!(result.is_pending());
@@ -3271,6 +3511,7 @@ mod tests {
                             keep: Arc::from([]),
                         },
                         partial_ok: false,
+                        access: None,
                     },
                     &mut tick.cx,
                 )
@@ -3315,6 +3556,7 @@ mod tests {
                             }]),
                         },
                         partial_ok: false,
+                        access: None,
                     },
                     &mut tick.cx,
                 )
@@ -3432,6 +3674,7 @@ mod tests {
                             }]),
                         },
                         partial_ok: false,
+                        access: None,
                     },
                     &mut tick.cx,
                 )
@@ -3464,6 +3707,7 @@ mod tests {
             bank: None,
             action,
             partial_ok,
+            access: None,
         }
     }
 
@@ -4117,6 +4361,7 @@ mod tests {
                             }]),
                         },
                         partial_ok: false,
+                        access: None,
                     },
                     &mut tick.cx,
                 )
@@ -4691,6 +4936,7 @@ mod tests {
                 bank: Some(bank),
                 action: BankAction::Scan,
                 partial_ok: false,
+                access: None,
             },
             |effect| {
                 assert!(matches!(
@@ -5282,5 +5528,993 @@ mod tests {
             Poll::Ready(Err(ActionError::Failed(message)))
                 if message.as_ref() == "bank transfer did not settle"
         ));
+    }
+
+    /// A Catherby-style booth trip: the player on the stand's access tile
+    /// with the booth loc (Use-quickly) in view, and the packed access the
+    /// Gatherer records for the trip.
+    fn booth_trip(stand: WorldTile) -> (Arc<BankStandAccess>, Vec<api::snapshot::LocView>) {
+        let access = Arc::new(BankStandAccess {
+            bank: NamedBank::new("Catherby", stand),
+            stand_tile: stand,
+            kind: AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let locs = vec![bank_object_loc(2213, "Bank booth", "Use-quickly", stand, 0)];
+        (access, locs)
+    }
+
+    fn reopen_deposit_request(
+        product: i32,
+        tool: i32,
+        access: &Arc<BankStandAccess>,
+    ) -> BankRequest {
+        BankRequest {
+            bank: None,
+            action: BankAction::DepositProducts {
+                products: Arc::from([product]),
+                keep: Arc::from([tool]),
+            },
+            partial_ok: false,
+            access: Some(Arc::clone(access)),
+        }
+    }
+
+    fn fish_pack(product: i32, count: i32, tool: i32) -> Vec<ItemView> {
+        let mut rows = vec![item(tool, "Small fishing net", 1, ItemContainer::Inventory)];
+        if count > 0 {
+            rows.push(item(
+                product,
+                "Raw shrimps",
+                count,
+                ItemContainer::Inventory,
+            ));
+        }
+        rows
+    }
+
+    fn fish_side(product: i32, count: i32) -> Vec<ItemView> {
+        vec![row_with(
+            item(product, "Raw shrimps", count, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-10", "Deposit-All"],
+            0,
+        )]
+    }
+
+    fn failed_with(poll: &Poll<Result<BankReceipt, ActionError>>, expected: &str) -> bool {
+        matches!(
+            poll,
+            Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == expected
+        )
+    }
+
+    /// HOTFIX-0.2.1: a deposit click is sent in session G and the next
+    /// observation has the bank shut (stop-transmit, if_close) with the held
+    /// count unchanged: the deposit was refused or never applied. A trip
+    /// that knows its stand clicks the booth again and resumes the same
+    /// products sweep in the new session; the receipt settles once the
+    /// count falls there. (The recorded Catherby order, in which the count
+    /// had already fallen when the close was observed, is
+    /// `deposit_applied_before_the_close_is_credited_once_after_the_reopen`.)
+    #[test]
+    fn deposit_reopens_its_stand_when_the_session_closes_before_the_transfer_settles() {
+        let shrimp = 317;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), fish_side(shrimp, 27));
+        let first_generation = snapshot.bank_session_generation();
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            reopen_deposit_request(shrimp, net, &access),
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, bank_generation, .. })
+                if id == shrimp && bank_generation == first_generation
+        ));
+
+        // Session G closes with the count unchanged: nothing was applied.
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            lost.is_pending(),
+            "a lost session with a known stand is not terminal: {lost:?}"
+        );
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 2),
+                HostEffect::Interaction(InteractReq::OpenStand { x, z, stand_op: Some(2), .. })
+                    if x == stand.x && z == stand.z
+            ),
+            "the trip's stand is clicked again"
+        );
+
+        // The engine opens a new session: table and side view transmitted,
+        // then the interface (bank.rs2:21-23).
+        snapshot.seed_bank_observation(10, 2, Some(Vec::new()), fish_side(shrimp, 27));
+        let second_generation = snapshot.bank_session_generation();
+        assert_ne!(second_generation, first_generation);
+        let resumed = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(resumed.is_pending(), "{resumed:?}");
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 4),
+                HostEffect::Interaction(InteractReq::InvButton { id, bank_generation, .. })
+                    if id == shrimp && bank_generation == second_generation
+            ),
+            "the same products sweep resumes in the new session"
+        );
+
+        snapshot.seed_inventory(fish_pack(shrimp, 0, net), 28);
+        snapshot.seed_bank_observation(
+            10,
+            3,
+            Some(vec![item(shrimp, "Raw shrimps", 27, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            "{settled:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// The reopen is bounded: after `MAX_BANK_REOPENS` re-opens the next
+    /// loss is the terminal `bank closed before the transfer settled`, with
+    /// no further click. Without a stand the first loss is terminal, as
+    /// before.
+    #[test]
+    fn deposit_reopen_is_bounded_and_needs_a_stand() {
+        let shrimp = 317;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let open = |generation: u64, snapshot: &mut GameSnapshot| {
+            snapshot.seed_bank_observation(10, generation, Some(Vec::new()), fish_side(shrimp, 27));
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs.clone());
+        snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+        open(1, &mut snapshot);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            reopen_deposit_request(shrimp, net, &access),
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+        let mut tick = 1;
+        for reopen in 1..=MAX_BANK_REOPENS {
+            tick += 1;
+            snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+            let lost = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(lost.is_pending(), "reopen {reopen}: {lost:?}");
+            assert!(
+                matches!(
+                    acknowledge(&mut ledger, tick),
+                    HostEffect::Interaction(InteractReq::OpenStand { .. })
+                ),
+                "reopen {reopen} clicks the stand"
+            );
+            tick += 1;
+            open(u64::from(reopen) + 1, &mut snapshot);
+            let resumed = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(resumed.is_pending(), "reopen {reopen}: {resumed:?}");
+            assert!(
+                matches!(
+                    acknowledge(&mut ledger, tick),
+                    HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+                ),
+                "reopen {reopen} resumes the deposit"
+            );
+        }
+        tick += 1;
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let exhausted = with_tick(&snapshot, &mut ledger, tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            failed_with(&exhausted, "bank closed before the transfer settled"),
+            "{exhausted:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        // No stand recorded: the first loss stays terminal.
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+        open(1, &mut snapshot);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                access: None,
+                ..reopen_deposit_request(shrimp, net, &access)
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            failed_with(&lost, "bank closed before the transfer settled"),
+            "{lost:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// HOTFIX-0.2.1: the recorded Catherby order behind `bank item table
+    /// unavailable` from a deposit. The deposit begins on an observation
+    /// whose interface is still open but whose withdraw table has stopped
+    /// transmitting (the engine's close runs `inv_stoptransmit` before its
+    /// `IF_CLOSE` reaches the client, bank.rs2:26-27); the close follows.
+    /// The old kernel waited the whole eight-tick table bound inside the
+    /// closed bank and then failed; a trip that knows its stand clicks the
+    /// booth as soon as the session is gone, and still re-opens at the bound
+    /// when an open never loads.
+    #[test]
+    fn deposit_reopens_when_the_bank_closes_or_never_loads_before_its_table() {
+        let shrimp = 317;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let begin_open_unloaded = |locs: Vec<api::snapshot::LocView>| {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(stand));
+            snapshot.seed_locs(locs);
+            snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+            // Interface up, table not loaded: `rows: None`.
+            snapshot.seed_bank_observation(10, 1, None, fish_side(shrimp, 27));
+            snapshot
+        };
+
+        // Closed before the table: the reopen goes out on the next poll.
+        let mut snapshot = begin_open_unloaded(locs.clone());
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            reopen_deposit_request(shrimp, net, &access),
+        );
+        assert!(poll.is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let closed = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(closed.is_pending(), "{closed:?}");
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 2),
+                HostEffect::Interaction(InteractReq::OpenStand { x, z, .. })
+                    if x == stand.x && z == stand.z
+            ),
+            "the stand is clicked as soon as the unloaded bank is gone"
+        );
+        snapshot.seed_bank_observation(10, 2, Some(Vec::new()), fish_side(shrimp, 27));
+        let generation = snapshot.bank_session_generation();
+        let resumed = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(resumed.is_pending(), "{resumed:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 4),
+            HostEffect::Interaction(InteractReq::InvButton { id, bank_generation, .. })
+                if id == shrimp && bank_generation == generation
+        ));
+
+        // Open but never loading: the stand is clicked at the table bound
+        // (the engine closes and re-opens on that click), not failed.
+        let snapshot = begin_open_unloaded(locs);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            reopen_deposit_request(shrimp, net, &access),
+        );
+        assert!(poll.is_pending());
+        for tick in 2..=8 {
+            let waiting = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(waiting.is_pending(), "tick {tick}: {waiting:?}");
+            assert!(ledger.as_ref().unwrap().outbox.is_empty(), "tick {tick}");
+        }
+        let bound = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(bound.is_pending(), "{bound:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 9),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+    }
+
+    /// The open request keeps its own contract: a bank that shuts while its
+    /// table is awaited keeps waiting on the open bound and fails as before,
+    /// so the Gatherer's bounded stand retry still owns that case.
+    #[test]
+    fn open_stand_still_fails_on_its_bound_when_the_table_never_arrives() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+        snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        for tick in 3..=9 {
+            let waiting = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(waiting.is_pending(), "tick {tick}: {waiting:?}");
+        }
+        let bound = with_tick(&snapshot, &mut ledger, 10, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            failed_with(&bound, "bank item table unavailable"),
+            "{bound:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    fn begin_deposit(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        args: DepositArgs,
+    ) -> (
+        crate::native::ActionHandle<Deposit>,
+        Poll<Result<u32, ActionError>>,
+    ) {
+        with_tick(snapshot, ledger, 1, |tick| {
+            let handle = tick.actions.begin::<Deposit>(args, &mut tick.cx).unwrap();
+            let poll = tick.actions.poll(&handle, &mut tick.cx);
+            (handle, poll)
+        })
+    }
+
+    fn slotted(item: ItemView, slot: i32) -> ItemView {
+        ItemView { slot, ..item }
+    }
+
+    fn deposit_side_row(id: i32, name: &str, count: i32, slot: i32) -> ItemView {
+        row_with(
+            item(id, name, count, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-10", "Deposit-All"],
+            slot,
+        )
+    }
+
+    /// HOTFIX-0.2.1 review F1: the recorded Catherby order behind `bank
+    /// closed before the transfer settled` (`E/base/soak-d.log:1456-1478`).
+    /// The Deposit-All click goes out in session G; the next observation
+    /// still shows the interface with its table stopped (the engine's close
+    /// writes `inv_stoptransmit` at once, bank.rs2:26-27) and the pack
+    /// unchanged; the next one has the roots closed and the pack already
+    /// net-only (the deposit's `UPDATE_INV` and the `IF_CLOSE` leave in one
+    /// flush, `World.ts:1116-1123`). The transfer re-opens its stand and,
+    /// in the new session, credits the 27 that left before the close exactly
+    /// once, without another click.
+    #[test]
+    fn deposit_applied_before_the_close_is_credited_once_after_the_reopen() {
+        let shrimp = 317;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), fish_side(shrimp, 27));
+        let mut ledger = None;
+        let (handle, poll) = begin_deposit(
+            &snapshot,
+            &mut ledger,
+            DepositArgs {
+                products: Arc::from([shrimp]),
+                keep: Arc::from([net]),
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        // Stop-transmit observed with the interface still open, pack 28.
+        snapshot.seed_bank_observation(10, 1, None, fish_side(shrimp, 27));
+        let stopped = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(stopped.is_pending(), "{stopped:?}");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        // IF_CLOSE observed, pack already net-only: the deposit applied.
+        snapshot.seed_inventory(fish_pack(shrimp, 0, net), 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 3),
+            HostEffect::Interaction(InteractReq::OpenStand { x, z, .. })
+                if x == stand.x && z == stand.z
+        ));
+
+        // The new session's table holds the banked shrimp; nothing to sweep.
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 27, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(27))),
+            "the applied deposit is counted exactly once: {settled:?}"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "no second deposit click"
+        );
+    }
+
+    /// A deposit the engine applied only in part before the close (the
+    /// count fell 27 → 22) credits the 5 that left and resumes the sweep
+    /// for the 22 still held; the output is the whole 27.
+    #[test]
+    fn deposit_partly_applied_before_the_close_resumes_the_remainder() {
+        let shrimp = 317;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(fish_pack(shrimp, 27, net), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), fish_side(shrimp, 27));
+        let mut ledger = None;
+        let (handle, poll) = begin_deposit(
+            &snapshot,
+            &mut ledger,
+            DepositArgs {
+                products: Arc::from([shrimp]),
+                keep: Arc::from([net]),
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        snapshot.seed_inventory(fish_pack(shrimp, 22, net), 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 5, ItemContainer::Bank)]),
+            fish_side(shrimp, 22),
+        );
+        let generation = snapshot.bank_session_generation();
+        let resumed = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(resumed.is_pending(), "{resumed:?}");
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 3),
+                HostEffect::Interaction(InteractReq::InvButton { id, bank_generation, .. })
+                    if id == shrimp && bank_generation == generation
+            ),
+            "the sweep resumes for the 22 still held"
+        );
+
+        snapshot.seed_inventory(fish_pack(shrimp, 0, net), 28);
+        snapshot.seed_bank_observation(
+            10,
+            3,
+            Some(vec![item(shrimp, "Raw shrimps", 27, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(27))),
+            "5 credited at the reopen plus 22 settled in the new session: {settled:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// Two products (the Catherby net catch): the shrimp deposit applied
+    /// before the close, the anchovies were still held. The reopen credits
+    /// the shrimp and sweeps only the anchovies; the output is the whole
+    /// catch.
+    #[test]
+    fn deposit_sweep_resumes_the_unapplied_product_after_the_reopen() {
+        let shrimp = 317;
+        let anchovy = 321;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let net_row = || {
+            slotted(
+                item(net, "Small fishing net", 1, ItemContainer::Inventory),
+                0,
+            )
+        };
+        let shrimp_row = || slotted(item(shrimp, "Raw shrimps", 20, ItemContainer::Inventory), 1);
+        let anchovy_row = || {
+            slotted(
+                item(anchovy, "Raw anchovies", 7, ItemContainer::Inventory),
+                2,
+            )
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(vec![net_row(), shrimp_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![
+                deposit_side_row(shrimp, "Raw shrimps", 20, 1),
+                deposit_side_row(anchovy, "Raw anchovies", 7, 2),
+            ],
+        );
+        let mut ledger = None;
+        let (handle, poll) = begin_deposit(
+            &snapshot,
+            &mut ledger,
+            DepositArgs {
+                products: Arc::from([shrimp, anchovy]),
+                keep: Arc::from([net]),
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        snapshot.seed_inventory(vec![net_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 20, ItemContainer::Bank)]),
+            vec![deposit_side_row(anchovy, "Raw anchovies", 7, 2)],
+        );
+        let resumed = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(resumed.is_pending(), "{resumed:?}");
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 3),
+                HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == anchovy
+            ),
+            "only the anchovies are still to deposit"
+        );
+
+        snapshot.seed_inventory(vec![net_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            3,
+            Some(vec![
+                item(shrimp, "Raw shrimps", 20, ItemContainer::Bank),
+                item(anchovy, "Raw anchovies", 7, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(settled, Poll::Ready(Ok(27))), "{settled:?}");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// HOTFIX-0.2.1 review F1: a capacity delta (`slots: 1`) whose Deposit-1
+    /// applied before the close is already delivered. The reopen credits
+    /// the freed row from the new session's pack and completes, instead of
+    /// repeating the delta on the next row.
+    #[test]
+    fn capacity_deposit_applied_before_the_close_is_not_repeated() {
+        let shrimp = 317;
+        let anchovy = 321;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let net_row = || {
+            slotted(
+                item(net, "Small fishing net", 1, ItemContainer::Inventory),
+                0,
+            )
+        };
+        let shrimp_row = || slotted(item(shrimp, "Raw shrimps", 1, ItemContainer::Inventory), 1);
+        let anchovy_row = || {
+            slotted(
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Inventory),
+                2,
+            )
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(vec![net_row(), shrimp_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![
+                deposit_side_row(shrimp, "Raw shrimps", 1, 1),
+                deposit_side_row(anchovy, "Raw anchovies", 1, 2),
+            ],
+        );
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::DepositCapacity {
+                    keep: Arc::from([net]),
+                    slots: 1,
+                },
+                partial_ok: false,
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        // The shrimp row left the pack together with the close.
+        snapshot.seed_inventory(vec![net_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 1, ItemContainer::Bank)]),
+            vec![deposit_side_row(anchovy, "Raw anchovies", 1, 2)],
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            "one row was already freed; the delta is delivered: {settled:?}"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "no second row is deposited"
+        );
+    }
+
+    /// HOTFIX-0.2.1 review r2 N2: a two-slot capacity delta whose first
+    /// Deposit-1 (shrimp) applied before the close. The reopen credits that
+    /// freed row once: one of two rows is not the delta, so the anchovy row
+    /// still goes out, and the delta completes only once that row has left.
+    #[test]
+    fn capacity_two_slots_credit_the_row_applied_before_the_close_once() {
+        let shrimp = 317;
+        let anchovy = 321;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let net_row = || {
+            slotted(
+                item(net, "Small fishing net", 1, ItemContainer::Inventory),
+                0,
+            )
+        };
+        let shrimp_row = || slotted(item(shrimp, "Raw shrimps", 1, ItemContainer::Inventory), 1);
+        let anchovy_row = || {
+            slotted(
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Inventory),
+                2,
+            )
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(vec![net_row(), shrimp_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![
+                deposit_side_row(shrimp, "Raw shrimps", 1, 1),
+                deposit_side_row(anchovy, "Raw anchovies", 1, 2),
+            ],
+        );
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::DepositCapacity {
+                    keep: Arc::from([net]),
+                    slots: 2,
+                },
+                partial_ok: false,
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        // The shrimp row left the pack together with the close.
+        snapshot.seed_inventory(vec![net_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 1, ItemContainer::Bank)]),
+            vec![deposit_side_row(anchovy, "Raw anchovies", 1, 2)],
+        );
+        let resumed = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            resumed.is_pending(),
+            "one freed row is not the requested two: {resumed:?}"
+        );
+        assert!(matches!(
+            acknowledge(&mut ledger, 3),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == anchovy
+        ));
+
+        snapshot.seed_inventory(vec![net_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            3,
+            Some(vec![
+                item(shrimp, "Raw shrimps", 1, ItemContainer::Bank),
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            "the shrimp row and the anchovy row are the two slots: {settled:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// An exact withdrawal (held target 2) applied before the close: the new
+    /// session reads the held count again and owes nothing, so no second
+    /// Withdraw-X goes out.
+    #[test]
+    fn exact_withdrawal_applied_before_the_close_is_not_repeated() {
+        let bait = 314;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(bait, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::WithdrawTo {
+                    withdrawals: Arc::from([Withdrawal {
+                        id: bait,
+                        name: Arc::from("Bait"),
+                        target: 2,
+                    }]),
+                },
+                partial_ok: false,
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+        let clicked = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(clicked.is_pending(), "{clicked:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::WithdrawX { count: 2, bank_item_id, .. })
+                if bank_item_id == bait
+        ));
+
+        // The withdrawal landed, then the bank closed.
+        snapshot.seed_inventory(vec![item(bait, "Bait", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 3),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(bait, "Bait", 3, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            "the held target is already met: {settled:?}"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "no second withdrawal delta"
+        );
     }
 }
