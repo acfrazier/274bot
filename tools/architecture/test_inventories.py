@@ -60,6 +60,60 @@ F0_API_IMPORTS = (
     "use api::process_condition::{ConditionId, ProcessCapability, UnavailableTerminal};\n"
 )
 
+# Structural copies of the F0 API definitions (crates/api at f0-core).  The
+# workspace crate supplies these types; only the std type needs a data row.
+F0_API_CRATE = {
+    "crates/api/src/lib.rs": (
+        "pub mod identity;\n"
+        "pub mod lifecycle;\n"
+        "pub mod process_condition;\n"
+        "pub mod selected;\n"
+        "#[cfg(test)]\n"
+        "mod tests;\n"
+    ),
+    # Only the production module tree is parsed; this test-only file is not Rust.
+    "crates/api/src/tests.rs": "fn broken() }\n",
+    "crates/api/src/selected.rs": "#[derive(Clone, Copy)]\npub struct RunKey(u64);\n",
+    "crates/api/src/identity.rs": (
+        "use std::num::NonZeroU64;\n"
+        "use crate::selected::RunKey;\n"
+        "#[derive(Clone, Copy)]\npub struct ProcessIncarnation(NonZeroU64);\n"
+        "#[derive(Clone, Copy)]\npub struct SlotKey(NonZeroU64);\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct SessionKey {\n    slot: SlotKey,\n    incarnation: ProcessIncarnation,\n}\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct ExecutionId {\n    run: RunKey,\n    sequence: NonZeroU64,\n}\n"
+        "#[derive(Clone, Copy)]\npub struct RequestId(NonZeroU64);\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub enum Scope {\n    Process,\n    Slot(SlotKey),\n    Session(SessionKey),\n"
+        "    Run(RunKey),\n    Execution(ExecutionId),\n}\n"
+        "#[derive(Clone, Copy)]\npub enum Cancellation {\n    Operator,\n    Superseded,\n}\n"
+        "#[derive(Clone)]\n"
+        "pub enum Settlement<T, E> {\n    Completed(T),\n    Failed(E),\n"
+        "    Cancelled(Cancellation),\n}\n"
+    ),
+    "crates/api/src/lifecycle.rs": (
+        "#[derive(Clone, Copy)]\npub enum MemoryMode {\n    High,\n    Low,\n}\n"
+        "#[derive(Clone, Copy)]\npub enum WorldChoice {\n    Automatic,\n    World(u16),\n}\n"
+        "#[derive(Clone, Copy)]\npub struct IntentGeneration(u64);\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct IntentCommand {\n    generation: IntentGeneration,\n"
+        "    cancellation: IntentGeneration,\n}\n"
+    ),
+    "crates/api/src/process_condition.rs": (
+        "use crate::identity::{ProcessIncarnation, RequestId, Scope};\n"
+        "#[derive(Clone, Copy)]\npub enum ProcessServiceCode {\n    Runtime,\n    Store,\n}\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub enum ProcessCapability {\n    Render,\n    Script,\n    Store,\n    Login,\n}\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct ConditionId {\n    incarnation: ProcessIncarnation,\n"
+        "    service: ProcessServiceCode,\n}\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct UnavailableTerminal {\n    condition: ConditionId,\n    request: RequestId,\n"
+        "    scope: Scope,\n}\n"
+    ),
+}
+
 
 def _foreign(path: str, classification: str = "scalar") -> dict[str, str]:
     return {"path": path, "classification": classification, "reason": "fixture foreign type"}
@@ -118,6 +172,7 @@ def _write_fixture(
     violations: tuple[dict[str, str], ...] = (),
     test_exceptions: tuple[dict[str, str], ...] = (),
     foreign_types: str | None = None,
+    workspace_files: dict[str, str] | None = None,
 ) -> Path:
     for crate in ("script", "frontend-core"):
         crate_root = root / "crates" / crate
@@ -163,6 +218,27 @@ def _write_fixture(
         foreign_path = root / inventories.FOREIGN_TYPES_RELATIVE
         foreign_path.parent.mkdir(parents=True, exist_ok=True)
         foreign_path.write_text(foreign_types, encoding="utf-8")
+    if workspace_files is not None:
+        # A root manifest makes every crates/<name> directory a workspace member.
+        extra = sorted({Path(relative).parts[1] for relative in workspace_files})
+        members = ", ".join(
+            f'"crates/{crate}"' for crate in ["frontend-core", "script", *extra]
+        )
+        (root / "Cargo.toml").write_text(
+            f'[workspace]\nresolver = "2"\nmembers = [{members}]\n', encoding="utf-8"
+        )
+        for crate in extra:
+            manifest = root / "crates" / crate / "Cargo.toml"
+            if f"crates/{crate}/Cargo.toml" not in workspace_files:
+                manifest.parent.mkdir(parents=True, exist_ok=True)
+                manifest.write_text(
+                    f'[package]\nname = "{crate}"\nversion = "0.0.0"\nedition = "2021"\n',
+                    encoding="utf-8",
+                )
+        for relative, contents in workspace_files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents, encoding="utf-8")
     return root
 
 
@@ -1288,72 +1364,396 @@ pub struct FleetRow {
         self.assertEqual(digest, LEGACY_FOREIGN_TABLE_SHA256)
         self.assertFalse(set(F0_API_FOREIGN_TYPES) & set(table))
 
-    def test_f0_api_foreign_data_rows_classify_each_type(self) -> None:
+    def test_f0_api_workspace_types_are_classified_from_definitions(self) -> None:
         aliases = "".join(
             f"pub type {alias} = {target};\n"
             for alias, target in F0_API_FOREIGN_ALIASES.items()
         )
         views = self.baseline_views() + F0_API_IMPORTS + aliases
         base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
-        data = _foreign_data(*(_foreign(path) for path in F0_API_FOREIGN_TYPES))
-        scalar_errors = inventories.check_tree(
-            self.fixture(
-                views=views,
-                seam_types=base_seams + tuple((alias, "scalar") for alias in F0_API_FOREIGN_ALIASES),
-                foreign_types=data,
-            )
-        )
-        owning_errors = inventories.check_tree(
-            self.fixture(
-                views=views,
-                seam_types=base_seams + tuple((alias, "owning") for alias in F0_API_FOREIGN_ALIASES),
-                foreign_types=data,
-            )
-        )
-        absent_errors = inventories.check_tree(
-            self.fixture(
-                views=views,
-                seam_types=base_seams + tuple((alias, "scalar") for alias in F0_API_FOREIGN_ALIASES),
-            )
-        )
-        print(f"GOOD F0 API foreign data rows classify scalar: {scalar_errors}")
-        print(f"BAD F0 API foreign types registered owning: {owning_errors}")
-        print(f"BAD F0 API foreign types without data rows: {absent_errors}")
-        self.assertEqual(scalar_errors, [])
-        self.assertEqual(
-            owning_errors,
-            [
-                "seam classification disagrees with syntax: "
-                f"{VIEWS_PATH}::{alias} is scalar, registry says owning"
-                for alias in sorted(F0_API_FOREIGN_ALIASES)
-            ],
-        )
-        for alias, target in F0_API_FOREIGN_ALIASES.items():
-            leaf = target.split("<", 1)[0]
-            self.assertIn(
-                f"{VIEWS_PATH}::{alias}: unresolved imported seam field type {leaf}",
-                absent_errors,
+        # Settlement is Clone but not Copy, so like any local non-Copy type it is owning.
+        expected = {
+            alias: "owning" if alias == "PinSettlement" else "scalar"
+            for alias in F0_API_FOREIGN_ALIASES
+        }
+        std_row = _foreign("std::num::NonZeroU64")
+
+        def errors(classes: dict[str, str], data: str | None) -> list[str]:
+            return inventories.check_tree(
+                self.fixture(
+                    views=views,
+                    seam_types=base_seams + tuple(classes.items()),
+                    foreign_types=data,
+                    workspace_files=F0_API_CRATE,
+                )
             )
 
-    def test_settlement_data_row_keeps_generic_argument_ownership(self) -> None:
+        honest = errors(expected, _foreign_data(std_row))
+        all_scalar = errors(
+            {alias: "scalar" for alias in F0_API_FOREIGN_ALIASES}, _foreign_data(std_row)
+        )
+        without_std_row = errors(expected, None)
+        with_api_rows = errors(
+            expected,
+            _foreign_data(std_row, *(_foreign(path) for path in F0_API_FOREIGN_TYPES)),
+        )
+        print(f"GOOD F0 API types classified from definitions: {honest}")
+        print(f"BAD Settlement registered scalar: {all_scalar}")
+        print(f"BAD std payload without a data row: {without_std_row}")
+        print(f"BAD data rows naming F0 API types: {with_api_rows}")
+        self.assertEqual(honest, [])
+        self.assertEqual(
+            all_scalar,
+            [
+                "seam classification disagrees with syntax: "
+                f"{VIEWS_PATH}::PinSettlement is owning, registry says scalar"
+            ],
+        )
+        self.assertIn(
+            "crates/api/src/identity.rs::RequestId: unresolved imported seam field type NonZeroU64",
+            without_std_row,
+        )
+        for index, path in enumerate(F0_API_FOREIGN_TYPES, start=1):
+            self.assertIn(
+                f"foreign types: foreign_types[{index}] names workspace type {path}; "
+                "workspace types are classified from their definitions",
+                with_api_rows,
+            )
+        self.assertIn(
+            "crates/api/src/identity.rs::RequestId: unresolved imported seam field type NonZeroU64",
+            with_api_rows,
+        )
+
+    def test_workspace_definition_drift_changes_the_findings(self) -> None:
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        uses = "pub type UsesRequest = api::identity::RequestId;\n"
+        copy_id = "#[derive(Clone, Copy)]\npub struct RequestId(u64);\n"
+
+        def tree(identity: str, views: str, extra: tuple[tuple[str, str], ...]) -> Path:
+            return self.fixture(
+                views=self.baseline_views() + views,
+                seam_types=seams + extra,
+                workspace_files={
+                    "crates/api/src/lib.rs": "pub mod identity;\n",
+                    "crates/api/src/identity.rs": identity,
+                },
+            )
+
+        before = tree(copy_id, "", ())
+        approved = tree(copy_id, uses, (("UsesRequest", "scalar"),))
+        self.assertEqual(inventories.check_tree(approved), [])
+        growth = inventories.check_transition(before, approved)
+        print(f"BAD new workspace type at a seam (no data row): {growth}")
+        self.assertEqual(growth, [f"new seam type: {VIEWS_PATH}::UsesRequest"])
+        same_class = tree(
+            "#[derive(Clone, Copy)]\npub struct RequestId(u32);\n", uses, (("UsesRequest", "scalar"),)
+        )
+        self.assertEqual(inventories.check_transition(approved, same_class), [])
+        drifts = {
+            "owned field": "#[derive(Clone)]\npub struct RequestId(Vec<u8>);\n",
+            "alias retarget": "pub type RequestId = Vec<u8>;\n",
+        }
+        for label, identity in drifts.items():
+            with self.subTest(drift=label):
+                stale_registry = inventories.check_tree(
+                    tree(identity, uses, (("UsesRequest", "scalar"),))
+                )
+                updated = tree(identity, uses, (("UsesRequest", "owning"),))
+                self.assertEqual(inventories.check_tree(updated), [])
+                findings = inventories.check_transition(approved, updated)
+                print(f"BAD {label} drift with the old registry: {stale_registry}")
+                print(f"BAD {label} drift after approval: {findings}")
+                self.assertEqual(
+                    stale_registry,
+                    [
+                        "seam classification disagrees with syntax: "
+                        f"{VIEWS_PATH}::UsesRequest is owning, registry says scalar"
+                    ],
+                )
+                self.assertEqual(
+                    findings,
+                    [f"seam classification changed: {VIEWS_PATH}::UsesRequest scalar->owning"],
+                )
+
+    def test_workspace_paths_resolve_to_the_defining_item(self) -> None:
+        api_lib = (
+            "pub mod identity;\n"
+            "pub mod prelude {\n    pub use crate::identity::RequestId as Rid;\n}\n"
+            "pub use identity::RequestId;\n"
+            "pub type AliasId = identity::RequestId;\n"
+            "mod chain_a {\n    pub use super::chain_b::Hop;\n}\n"
+            "mod chain_b {\n    pub use crate::identity::RequestId as Hop;\n}\n"
+            "pub use chain_a::Hop;\n"
+            '#[path = "../generated/ids.rs"]\n'
+            "pub mod generated;\n"
+        )
+        # A crate type sharing a baseline frontend name, and an explicit Clone in
+        # another crate, must not touch frontend-core's own rules.
+        api_extra = (
+            "pub struct Phase(String);\n"
+            "pub struct Holder(String);\n"
+            "impl Clone for Holder {\n"
+            "    fn clone(&self) -> Self {\n"
+            "        Holder(self.0.clone())\n"
+            "    }\n"
+            "}\n"
+        )
+        views = self.baseline_views() + (
+            "use api::identity::RequestId as Renamed;\n"
+            "pub type ViaRenamed = Renamed;\n"
+            "pub type ViaReexport = api::RequestId;\n"
+            "pub type ViaPrelude = api::prelude::Rid;\n"
+            "pub type ViaAlias = api::AliasId;\n"
+            "pub type ViaChain = api::Hop;\n"
+            "pub type ViaPathModule = api::generated::GeneratedId;\n"
+            "pub use api::identity::RequestId as ExportedId;\n"
+            "pub type ViaPhase = api::identity::Phase;\n"
+            "pub struct Holder {\n    inner: String,\n}\n"
+        )
+        symbols = (
+            "ExportedId",
+            "ViaAlias",
+            "ViaChain",
+            "ViaPathModule",
+            "ViaPrelude",
+            "ViaReexport",
+            "ViaRenamed",
+        )
+        fixed = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("ViaPhase", "owning"),
+            ("Holder", "owning"),
+        )
+        definitions = {
+            "scalar": "#[derive(Clone, Copy)]\npub struct RequestId(u64);\n",
+            "owning": "#[derive(Clone)]\npub struct RequestId(String);\n",
+        }
+        for classification, identity in definitions.items():
+            with self.subTest(definition=classification):
+                other = "owning" if classification == "scalar" else "scalar"
+                results = {}
+                for registered in (classification, other):
+                    results[registered] = inventories.check_tree(
+                        self.fixture(
+                            views=views,
+                            seam_types=fixed + tuple((symbol, registered) for symbol in symbols),
+                            workspace_files={
+                                "crates/api/src/lib.rs": api_lib,
+                                "crates/api/src/identity.rs": identity + api_extra,
+                                "crates/api/generated/ids.rs": (
+                                    "pub use crate::identity::RequestId as GeneratedId;\n"
+                                ),
+                            },
+                        )
+                    )
+                print(f"GOOD workspace paths, {classification} definition: {results[classification]}")
+                print(f"BAD workspace paths registered {other}: {results[other]}")
+                self.assertEqual(results[classification], [])
+                self.assertEqual(
+                    results[other],
+                    [
+                        "seam classification disagrees with syntax: "
+                        f"{VIEWS_PATH}::{symbol} is {classification}, registry says {other}"
+                        for symbol in symbols
+                    ],
+                )
+
+    def test_workspace_resolution_fails_closed(self) -> None:
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Uses", "scalar"))
+        api_manifest = '[package]\nname = "api"\nversion = "0.0.0"\nedition = "2024"\n'
+        cases: dict[str, tuple[dict[str, str], str, str]] = {
+            "use cycle": (
+                {
+                    "crates/api/src/lib.rs": (
+                        "mod a {\n    pub use super::b::Loop;\n}\n"
+                        "mod b {\n    pub use super::a::Loop;\n}\n"
+                        "pub use a::Loop;\n"
+                    )
+                },
+                "api::Loop",
+                f"{VIEWS_PATH}::Uses: unresolved",
+            ),
+            "type cycle": (
+                {
+                    "crates/api/src/lib.rs": (
+                        "#[derive(Clone, Copy)]\npub struct Ping {\n    pong: Pong,\n}\n"
+                        "#[derive(Clone, Copy)]\npub struct Pong {\n    ping: Ping,\n}\n"
+                    )
+                },
+                "api::Ping",
+                "recursive type ownership cannot be resolved",
+            ),
+            "missing item": (
+                {"crates/api/src/lib.rs": "pub mod identity;\n", "crates/api/src/identity.rs": ""},
+                "api::identity::Missing",
+                f"{VIEWS_PATH}::Uses: unresolved public seam field type api::identity::Missing",
+            ),
+            "macro in consulted module": (
+                {
+                    "crates/api/src/lib.rs": "pub mod identity;\n",
+                    "crates/api/src/identity.rs": (
+                        "macro_rules! id {\n    ($name:ident) => {\n"
+                        "        pub struct $name(String);\n    };\n}\n"
+                        "id!(Hidden);\n"
+                        "#[derive(Clone, Copy)]\npub struct RequestId(u64);\n"
+                    ),
+                },
+                "api::identity::RequestId",
+                "crates/api/src/identity.rs: item-generating macro syntax is unsupported "
+                "(consulted for a seam field type)",
+            ),
+            "pre-2018 crate-relative path": (
+                {
+                    "crates/api/src/lib.rs": "pub mod identity;\npub mod selected;\n",
+                    "crates/api/src/selected.rs": "#[derive(Clone, Copy)]\npub struct RunKey(u64);\n",
+                    "crates/api/src/identity.rs": (
+                        "#[derive(Clone, Copy)]\npub struct RequestId(selected::RunKey);\n"
+                    ),
+                },
+                "api::identity::RequestId",
+                "crates/api/src/identity.rs::RequestId: unresolved public seam field type "
+                "selected::RunKey",
+            ),
+            "unlisted std payload": (
+                {
+                    "crates/api/src/lib.rs": (
+                        "#[derive(Clone, Copy)]\npub struct RequestId(std::num::NonZeroU32);\n"
+                    )
+                },
+                "api::RequestId",
+                "crates/api/src/lib.rs::RequestId: unresolved public seam field type "
+                "std::num::NonZeroU32",
+            ),
+            "unparseable module": (
+                {
+                    "crates/api/src/lib.rs": "pub mod identity;\n",
+                    "crates/api/src/identity.rs": "pub struct RequestId(u64) }\n",
+                },
+                "api::identity::RequestId",
+                f"{VIEWS_PATH}::Uses: workspace crate api: crates/api/src/identity.rs: "
+                "unsupported or malformed Rust syntax",
+            ),
+            "no library target": (
+                {"crates/tool/src/main.rs": "fn main() {}\n"},
+                "tool::Thing",
+                f"{VIEWS_PATH}::Uses: workspace crate tool has no library target",
+            ),
+            "unsupported edition": (
+                {
+                    "crates/api/Cargo.toml": api_manifest,
+                    "crates/api/src/lib.rs": "#[derive(Clone, Copy)]\npub struct RequestId(u64);\n",
+                },
+                "api::RequestId",
+                f"{VIEWS_PATH}::Uses: crates/api/Cargo.toml: parser adapter requires edition 2021",
+            ),
+        }
+        for label, (files, target, expected) in cases.items():
+            with self.subTest(case=label):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=self.baseline_views() + f"pub type Uses = {target};\n",
+                        seam_types=seams,
+                        workspace_files=files,
+                    )
+                )
+                print(f"BAD workspace resolution ({label}): {errors}")
+                self.assertTrue(any(expected in error for error in errors), errors)
+                self.assertIn(f"stale seam type classification: {VIEWS_PATH}::Uses", errors)
+
+    def test_builtin_entry_keeps_precedence_over_workspace_definition(self) -> None:
+        # Residual, by design: a frozen built-in path is trusted as written even
+        # when the workspace definition says otherwise.
+        root = self.fixture(
+            views=self.baseline_views()
+            + "pub type Diff = script::CatalogDiff;\npub type Compiled = script::CompiledId;\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("Diff", "owning"),
+                ("Compiled", "scalar"),
+            ),
+            script_files={
+                "crates/script/src/lib.rs": (
+                    "#[derive(Clone, Copy)]\npub struct CatalogDiff(u8);\n"
+                    "pub struct CompiledId(pub &'static str);\n"
+                )
+            },
+            workspace_files={},
+        )
+        errors = inventories.check_tree(root)
+        print(f"GOOD built-in precedence over workspace definitions: {errors}")
+        self.assertEqual(errors, [])
+
+    def test_workspace_manifest_is_read_strictly(self) -> None:
+        cases = {
+            "glob member": ('[workspace]\nmembers = ["crates/*"]\n', "unsupported workspace member crates/*"),
+            "escaping member": ('[workspace]\nmembers = ["../outside"]\n', "unsupported workspace member ../outside"),
+            "non-string member": ("[workspace]\nmembers = [7]\n", "workspace members must be an array of strings"),
+            "missing member manifest": (
+                '[workspace]\nmembers = ["crates/absent"]\n',
+                "crates/absent/Cargo.toml must be a regular file",
+            ),
+            "invalid TOML": ("[workspace\n", "workspace crates: "),
+        }
+        for label, (manifest, expected) in cases.items():
+            with self.subTest(case=label):
+                root = self.fixture(
+                    views=self.baseline_views(),
+                    seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed")),
+                )
+                (root / "Cargo.toml").write_text(manifest, encoding="utf-8")
+                errors = inventories.check_tree(root)
+                print(f"BAD workspace manifest ({label}): {errors}")
+                self.assertTrue(
+                    any(error.startswith("workspace crates: ") and expected in error for error in errors),
+                    errors,
+                )
+
+    def test_foreign_rows_may_not_name_workspace_types(self) -> None:
+        views = self.baseline_views() + "pub type UsesHandle = client::session::Handle;\n"
+        for workspace_path in ("api::identity::RequestId", "frontend_core::views::FleetCounts"):
+            with self.subTest(row=workspace_path):
+                root = self.fixture(
+                    views=views,
+                    seam_types=(
+                        ("FleetCounts", "scalar"),
+                        ("FleetView", "borrowed"),
+                        ("UsesHandle", "scalar"),
+                    ),
+                    foreign_types=_foreign_data(
+                        _foreign("client::session::Handle"), _foreign(workspace_path)
+                    ),
+                    workspace_files={"crates/api/src/lib.rs": ""},
+                )
+                errors = inventories.check_tree(root)
+                print(f"BAD data row naming workspace type {workspace_path}: {errors}")
+                self.assertIn(
+                    f"foreign types: foreign_types[1] names workspace type {workspace_path}; "
+                    "workspace types are classified from their definitions",
+                    errors,
+                )
+                self.assertIn(
+                    f"{VIEWS_PATH}::UsesHandle: unresolved public seam field type "
+                    "client::session::Handle",
+                    errors,
+                )
+
+    def test_foreign_data_row_keeps_generic_argument_ownership(self) -> None:
         views = (
             self.baseline_views()
-            + F0_API_IMPORTS
-            + "pub type SettledScalar = Settlement<IntentGeneration, ConditionId>;\n"
-            + "pub type SettledBytes = Settlement<Vec<u8>, RequestId>;\n"
-            + "pub type SettledCatalog = Settlement<RequestId, script::CatalogDiff>;\n"
-            + "pub type SettledView<'a> = Settlement<&'a str, RequestId>;\n"
+            + "use client::session::{Settlement, Token};\n"
+            + "pub type SettledScalar = Settlement<Token, Token>;\n"
+            + "pub type SettledBytes = Settlement<Vec<u8>, Token>;\n"
+            + "pub type SettledCatalog = Settlement<Token, script::CatalogDiff>;\n"
+            + "pub type SettledView<'a> = Settlement<&'a str, Token>;\n"
             + "#[derive(Clone, Copy)]\n"
             + "pub struct SettledHolder {\n"
-            + "    settled: Settlement<SlotKey, std::sync::mpsc::Sender<u8>>,\n"
+            + "    settled: Settlement<Token, std::sync::mpsc::Sender<u8>>,\n"
             + "}\n"
         )
         data = _foreign_data(
-            _foreign("api::identity::RequestId"),
-            _foreign("api::identity::Settlement"),
-            _foreign("api::identity::SlotKey"),
-            _foreign("api::lifecycle::IntentGeneration"),
-            _foreign("api::process_condition::ConditionId"),
+            _foreign("client::session::Settlement"), _foreign("client::session::Token")
         )
         base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
         clone_violation = (
@@ -1396,8 +1796,8 @@ pub struct FleetRow {
                 foreign_types=data,
             )
         )
-        print(f"GOOD Settlement argument ownership: {honest_errors}")
-        print(f"BAD Settlement as blanket scalar: {exempt_errors}")
+        print(f"GOOD data-row generic argument ownership: {honest_errors}")
+        print(f"BAD data row as blanket scalar: {exempt_errors}")
         self.assertEqual(honest_errors, [])
         self.assertEqual(
             exempt_errors,
@@ -1414,39 +1814,39 @@ pub struct FleetRow {
         )
 
     def test_unlisted_foreign_types_still_fail_resolution(self) -> None:
-        settlement = _foreign_data(_foreign("api::identity::Settlement"))
+        settlement = _foreign_data(_foreign("client::session::Settlement"))
         cases = {
             "UnlistedImport": (
-                "use api::identity::ExecutionId;\n"
+                "use client::session::Missing;\n"
                 "#[derive(Clone, Copy)]\n"
-                "pub struct UnlistedImport { id: ExecutionId }\n",
+                "pub struct UnlistedImport { id: Missing }\n",
                 None,
-                "unresolved imported seam field type ExecutionId",
+                "unresolved imported seam field type Missing",
             ),
             "UnlistedPath": (
                 "#[derive(Clone, Copy)]\n"
-                "pub struct UnlistedPath { receipt: api::lifecycle::PostReceipt }\n",
+                "pub struct UnlistedPath { receipt: client::session::Receipt }\n",
                 _foreign_data(),
-                "unresolved public seam field type api::lifecycle::PostReceipt",
+                "unresolved public seam field type client::session::Receipt",
             ),
             "UnlistedLeaf": (
-                "use api::identity::Settlement;\n"
+                "use client::session::Settlement;\n"
                 "#[derive(Clone, Copy)]\n"
                 "pub struct UnlistedLeaf {\n"
                 "    settled: Settlement<u8, u8>,\n"
-                "    other: api::selected::Settlement<u8, u8>,\n"
+                "    other: client::other::Settlement<u8, u8>,\n"
                 "}\n",
                 settlement,
-                "unresolved public seam field type api::selected::Settlement",
+                "unresolved public seam field type client::other::Settlement",
             ),
             "UnlistedArgument": (
-                "use api::identity::Settlement;\n"
+                "use client::session::Settlement;\n"
                 "#[derive(Clone, Copy)]\n"
                 "pub struct UnlistedArgument {\n"
-                "    settled: Settlement<api::identity::ExecutionId, u8>,\n"
+                "    settled: Settlement<client::session::Missing, u8>,\n"
                 "}\n",
                 settlement,
-                "unresolved public seam field type api::identity::ExecutionId",
+                "unresolved public seam field type client::session::Missing",
             ),
         }
         for symbol, (source, data, expected) in cases.items():
@@ -1465,14 +1865,20 @@ pub struct FleetRow {
                 self.assertIn(f"{VIEWS_PATH}::{symbol}: {expected}", errors)
 
     def test_foreign_type_data_is_strictly_validated(self) -> None:
-        valid = _foreign("api::identity::RequestId")
+        valid = _foreign("client::session::Token")
+        scope = "client::session::Scope"
         views = (
             self.baseline_views()
             + "#[derive(Clone, Copy)]\n"
-            + "pub struct UsesRequest { id: api::identity::RequestId }\n"
+            + "pub struct UsesToken { id: client::session::Token }\n"
         )
+        depth = 100_000
         cases: dict[str, tuple[str | None, str]] = {
             "invalid json": ("{", "foreign types: cannot load"),
+            "deep nesting": (
+                '{"schema_version": 1, "foreign_types": ' + "[" * depth + "]" * depth + "}",
+                "foreign types: cannot load",
+            ),
             "duplicate json key": (
                 '{"schema_version": 1, "schema_version": 1, "foreign_types": []}',
                 "duplicate JSON key 'schema_version'",
@@ -1491,44 +1897,44 @@ pub struct FleetRow {
                 "schema_version must be integer 1",
             ),
             "rows not an array": (
-                json.dumps({"schema_version": 1, "foreign_types": {"api::identity::RequestId": "scalar"}}),
+                json.dumps({"schema_version": 1, "foreign_types": {"client::session::Token": "scalar"}}),
                 "foreign_types must be an array",
             ),
-            "extra row field": (_foreign_data(valid, dict(_foreign("api::identity::Scope"), owner="T1")), "has unknown or missing fields"),
+            "extra row field": (_foreign_data(valid, dict(_foreign(scope), owner="T1")), "has unknown or missing fields"),
             "missing reason": (
-                _foreign_data(valid, {"path": "api::identity::Scope", "classification": "scalar"}),
+                _foreign_data(valid, {"path": scope, "classification": "scalar"}),
                 "has unknown or missing fields",
             ),
             "single segment": (_foreign_data(valid, _foreign("Scope")), ".path must be an exact external Rust type path"),
             "leading separator": (
-                _foreign_data(valid, _foreign("::api::identity::Scope")),
+                _foreign_data(valid, _foreign("::client::session::Scope")),
                 ".path must be an exact external Rust type path",
             ),
             "crate-relative": (_foreign_data(valid, _foreign("crate::views::Scope")), ".path must be an exact external Rust type path"),
-            "glob": (_foreign_data(valid, _foreign("api::identity::*")), ".path must be an exact external Rust type path"),
+            "glob": (_foreign_data(valid, _foreign("client::session::*")), ".path must be an exact external Rust type path"),
             "generic arguments": (
-                _foreign_data(valid, _foreign("api::identity::Settlement<u8, u8>")),
+                _foreign_data(valid, _foreign("client::session::Settlement<u8, u8>")),
                 ".path must be an exact external Rust type path",
             ),
             "whitespace": (
-                _foreign_data(valid, _foreign(" api::identity::Scope")),
+                _foreign_data(valid, _foreign(" client::session::Scope")),
                 ".path must be an exact external Rust type path",
             ),
             "trailing newline": (
-                _foreign_data(valid, _foreign("api::identity::Scope\n")),
+                _foreign_data(valid, _foreign("client::session::Scope\n")),
                 ".path must be an exact external Rust type path",
             ),
             "non-string path": (
                 _foreign_data(valid, {"path": 7, "classification": "scalar", "reason": "x"}),
                 ".path must be an exact external Rust type path",
             ),
-            "unknown class": (_foreign_data(valid, _foreign("api::identity::Scope", "copy")), "has unknown classification"),
+            "unknown class": (_foreign_data(valid, _foreign(scope, "copy")), "has unknown classification"),
             "non-string class": (
-                _foreign_data(valid, {"path": "api::identity::Scope", "classification": ["scalar"], "reason": "x"}),
+                _foreign_data(valid, {"path": scope, "classification": ["scalar"], "reason": "x"}),
                 "has unknown classification",
             ),
             "blank reason": (
-                _foreign_data(valid, {"path": "api::identity::Scope", "classification": "scalar", "reason": " "}),
+                _foreign_data(valid, {"path": scope, "classification": "scalar", "reason": " "}),
                 ".reason must be nonblank",
             ),
             "shadows built-in": (
@@ -1536,54 +1942,75 @@ pub struct FleetRow {
                 "shadows built-in foreign type script::CatalogDiff",
             ),
             "duplicate path": (
-                _foreign_data(valid, _foreign("api::identity::RequestId", "owning")),
-                "duplicate path api::identity::RequestId",
+                _foreign_data(valid, _foreign("client::session::Token", "owning")),
+                "duplicate path client::session::Token",
             ),
             "directory": (None, "must be a regular file"),
         }
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("UsesToken", "scalar"))
+        unresolved = f"{VIEWS_PATH}::UsesToken: unresolved public seam field type client::session::Token"
         for label, (content, expected) in cases.items():
             with self.subTest(case=label):
-                root = self.fixture(
-                    views=views,
-                    seam_types=(
-                        ("FleetCounts", "scalar"),
-                        ("FleetView", "borrowed"),
-                        ("UsesRequest", "scalar"),
-                    ),
-                    foreign_types=content,
-                )
+                root = self.fixture(views=views, seam_types=seams, foreign_types=content)
                 if content is None:
                     (root / inventories.FOREIGN_TYPES_RELATIVE).mkdir(parents=True)
                 errors = inventories.check_tree(root)
-                print(f"BAD foreign type data ({label}): {errors}")
+                print(f"BAD foreign type data ({label}): {[error[:200] for error in errors]}")
                 self.assertTrue(any(expected in error for error in errors), errors)
+                self.assertIn(unresolved, errors)
+        symlinks = {
+            "symlinked file": inventories.FOREIGN_TYPES_RELATIVE,
+            "symlinked parent directory": inventories.FOREIGN_TYPES_RELATIVE.parent,
+        }
+        for label, linked in symlinks.items():
+            with self.subTest(case=label):
+                root = self.fixture(views=views, seam_types=seams)
+                outside = root / "outside"
+                outside.mkdir()
+                (outside / inventories.FOREIGN_TYPES_RELATIVE.name).write_text(
+                    _foreign_data(valid), encoding="utf-8"
+                )
+                link = root / linked
+                link.parent.mkdir(parents=True, exist_ok=True)
+                if linked == inventories.FOREIGN_TYPES_RELATIVE:
+                    link.symlink_to(outside / inventories.FOREIGN_TYPES_RELATIVE.name)
+                else:
+                    link.symlink_to(outside, target_is_directory=True)
+                errors = inventories.check_tree(root)
+                print(f"BAD foreign type data ({label}): {errors}")
                 self.assertIn(
-                    f"{VIEWS_PATH}::UsesRequest: unresolved public seam field type api::identity::RequestId",
+                    "foreign types: tools/architecture-data/foreign_types.json must not traverse a symlink",
                     errors,
                 )
-        symlink_root = self.fixture(
-            views=views,
-            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("UsesRequest", "scalar")),
+                self.assertIn(unresolved, errors)
+
+    def test_deeply_nested_inventory_fails_closed(self) -> None:
+        root = self.fixture(
+            views=self.baseline_views(),
+            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed")),
         )
-        target = symlink_root / "foreign-target.json"
-        target.write_text(_foreign_data(valid), encoding="utf-8")
-        link = symlink_root / inventories.FOREIGN_TYPES_RELATIVE
-        link.parent.mkdir(parents=True)
-        link.symlink_to(target)
-        symlink_errors = inventories.check_tree(symlink_root)
-        print(f"BAD symlinked foreign type data: {symlink_errors}")
-        self.assertTrue(any("must be a regular file" in error for error in symlink_errors))
+        depth = 100_000
+        (root / inventories.INVENTORY_RELATIVE).write_text("[" * depth + "]" * depth, encoding="utf-8")
+        errors = inventories.check_tree(root)
+        print(f"BAD deeply nested inventory: {[error[:200] for error in errors]}")
+        self.assertTrue(
+            any(
+                error.startswith("inventory: cannot load tools/architecture/inventories.json")
+                for error in errors
+            ),
+            errors,
+        )
 
     def test_stale_foreign_type_rows_fail(self) -> None:
         views = (
             self.baseline_views()
-            + "pub struct RequestView<'a> { pub id: &'a api::identity::RequestId }\n"
+            + "pub struct TokenView<'a> { pub id: &'a client::session::Token }\n"
         )
         root = self.fixture(
             views=views,
-            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("RequestView", "borrowed")),
+            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("TokenView", "borrowed")),
             foreign_types=_foreign_data(
-                _foreign("api::identity::RequestId"), _foreign("api::lifecycle::MemoryMode")
+                _foreign("client::session::Token"), _foreign("client::session::Mode")
             ),
         )
         errors = inventories.check_tree(root)
@@ -1591,14 +2018,14 @@ pub struct FleetRow {
         self.assertEqual(
             errors,
             [
-                "stale foreign type classification: api::identity::RequestId",
-                "stale foreign type classification: api::lifecycle::MemoryMode",
+                "stale foreign type classification: client::session::Mode",
+                "stale foreign type classification: client::session::Token",
             ],
         )
 
     def test_foreign_type_rows_are_transition_findings(self) -> None:
         seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
-        uses = "use api::identity::RequestId;\npub type UsesRequest = RequestId;\n"
+        uses = "use client::session::Token;\npub type UsesToken = Token;\n"
 
         def tree(prefix: str, views: str, extra: tuple[tuple[str, str], ...], data: str | None) -> Path:
             temporary = tempfile.TemporaryDirectory(prefix=prefix)
@@ -1611,14 +2038,14 @@ pub struct FleetRow {
         added = tree(
             "f0-foreign-added-",
             self.baseline_views() + uses,
-            (("UsesRequest", "scalar"),),
-            _foreign_data(_foreign("api::identity::RequestId")),
+            (("UsesToken", "scalar"),),
+            _foreign_data(_foreign("client::session::Token")),
         )
         changed = tree(
             "f0-foreign-changed-",
             self.baseline_views() + uses,
-            (("UsesRequest", "owning"),),
-            _foreign_data(_foreign("api::identity::RequestId", "owning")),
+            (("UsesToken", "owning"),),
+            _foreign_data(_foreign("client::session::Token", "owning")),
         )
         removed = tree("f0-foreign-removed-", self.baseline_views(), (), _foreign_data())
         for root in (base, added, changed, removed):
@@ -1632,15 +2059,15 @@ pub struct FleetRow {
         self.assertEqual(
             added_findings,
             [
-                "new foreign type classification: api::identity::RequestId scalar",
-                f"new seam type: {VIEWS_PATH}::UsesRequest",
+                "new foreign type classification: client::session::Token scalar",
+                f"new seam type: {VIEWS_PATH}::UsesToken",
             ],
         )
         self.assertEqual(
             changed_findings,
             [
-                "foreign type classification changed: api::identity::RequestId scalar->owning",
-                f"seam classification changed: {VIEWS_PATH}::UsesRequest scalar->owning",
+                "foreign type classification changed: client::session::Token scalar->owning",
+                f"seam classification changed: {VIEWS_PATH}::UsesToken scalar->owning",
             ],
         )
         self.assertEqual(removed_findings, [])
