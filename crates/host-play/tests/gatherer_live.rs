@@ -1032,6 +1032,13 @@ struct UnsettledItem {
     since: Instant,
 }
 
+/// How long an item that left the pack may stay unaccounted (not back in
+/// the pack or equipment, not credited in the bank) before the cell fails.
+const UNSETTLED_WINDOW: Duration = Duration::from_secs(2);
+/// `macro_genilamp` (`content/pack/obj.pack:2529`), the genie lamp the
+/// host's random-event handler rubs (`host/src/random.rs` `LAMP_OBJ`).
+const GENIE_LAMP_ID: i32 = 2528;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct FishTarget {
     type_id: usize,
@@ -1689,6 +1696,10 @@ struct Witness {
     last_recoveries: u8,
     last_recovery_step: u8,
     soak: SoakWitness,
+    /// When the engine last confirmed a rubbed genie lamp ("Your wish has
+    /// been granted!", `xplamp.rs2:107-114`, after `inv_del` of
+    /// `macro_genilamp`): the host's lamp handler consumed it.
+    last_wish_granted: Option<Instant>,
 }
 
 /// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
@@ -2040,6 +2051,14 @@ impl GatherSlot {
                     "xp": observation.xp,
                 })
             );
+            if self
+                .snapshot
+                .chat_modal_texts()
+                .iter()
+                .any(|text| text.contains("Your wish has been granted"))
+            {
+                self.witness.last_wish_granted = Some(Instant::now());
+            }
         }
         if self.started && self.witness.modal_command_sent && self.snapshot.modals().main >= 0 {
             self.witness.modal_observed = true;
@@ -2794,7 +2813,12 @@ impl GatherSlot {
         } else {
             BTreeMap::new()
         };
-        self.unsettled_items.retain(|&(id, count), _| {
+        // A genie lamp the host's own handler rubbed (`host/src/random.rs`
+        // `LAMP_OBJ`) leaves the pack by `inv_del` and the engine confirms
+        // the wish (`xplamp.rs2:107-114`): settled by that confirmation at
+        // or after the lamp left (within the conservation window).
+        let wish_granted = self.witness.last_wish_granted;
+        self.unsettled_items.retain(|&(id, count), unsettled| {
             !observation
                 .inventory
                 .values()
@@ -2813,6 +2837,14 @@ impl GatherSlot {
                             receipt.expected_items.contains_key(&id)
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
+                && !(id == GENIE_LAMP_ID
+                    && wish_granted.is_some_and(|granted| {
+                        granted
+                            >= unsettled
+                                .since
+                                .checked_sub(UNSETTLED_WINDOW)
+                                .unwrap_or(unsettled.since)
+                    }))
         });
         self.record_g2_observation(previous.as_ref(), &observation);
         if self.case == LiveCase::FishHarpoonBank
@@ -2901,7 +2933,7 @@ impl GatherSlot {
         if let Some((&(id, count), _)) = self
             .unsettled_items
             .iter()
-            .find(|(_, item)| item.since.elapsed() >= Duration::from_secs(2))
+            .find(|(_, item)| item.since.elapsed() >= UNSETTLED_WINDOW)
         {
             return Err(format!(
                 "{}: non-product id {id} count {count} was not conserved",
@@ -8391,6 +8423,63 @@ mod bank_conservation_tests {
         assert!(slot.witness.soak.block_pending);
         assert!(slot.witness.pending_bank_trip.is_none());
         assert!(slot.unsettled_items.is_empty());
+    }
+
+    /// A genie lamp the host rubbed (the live cell `r3nf` of the no-guard
+    /// measurement: lamp given on the walk back, `xplamp` opened, "Your
+    /// wish has been granted!") leaves the pack by `inv_del`
+    /// (`xplamp.rs2:107-114`), not by a deposit: the wish confirmation
+    /// settles it. Without the confirmation it stays unaccounted.
+    #[test]
+    fn fish_bank_soak_oracle_settles_a_lamp_the_host_rubbed_and_only_then() {
+        let mut slot = soak_slot_at_deposit();
+        // Back from the bank with the lamp in hand.
+        slot.snapshot.seed_bank_observation(-1, 3, None, vec![]);
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1), (GENIE_LAMP_ID, 1)]), 28);
+        slot.latest = Some(slot.capture());
+        slot.witness.pending_bank_trip = None;
+
+        // The lamp leaves without a wish: unaccounted.
+        let previous = slot.capture();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
+        let observation = slot.capture();
+        slot.observe_running(Some(previous.clone()), observation.clone())
+            .unwrap();
+        slot.observe_running(Some(observation.clone()), observation.clone())
+            .unwrap();
+        assert_eq!(
+            slot.unsettled_items.keys().copied().collect::<Vec<_>>(),
+            vec![(GENIE_LAMP_ID, 1)]
+        );
+        age_unsettled(&mut slot);
+        let error = slot
+            .observe_running(Some(observation.clone()), observation.clone())
+            .unwrap_err();
+        assert!(
+            error.contains("id 2528 count 1 was not conserved"),
+            "{error}"
+        );
+
+        // The engine's wish confirmation after the lamp left settles it.
+        slot.unsettled_items.clear();
+        slot.observe_running(Some(previous.clone()), observation.clone())
+            .unwrap();
+        assert_eq!(slot.unsettled_items.len(), 1);
+        slot.witness.last_wish_granted = Some(Instant::now());
+        slot.observe_running(Some(observation.clone()), observation.clone())
+            .unwrap();
+        assert!(slot.unsettled_items.is_empty());
+
+        // A wish long before the lamp left does not cover it.
+        slot.witness.last_wish_granted =
+            Some(Instant::now().checked_sub(Duration::from_secs(60)).unwrap());
+        slot.observe_running(Some(previous), observation.clone())
+            .unwrap();
+        slot.observe_running(Some(observation.clone()), observation)
+            .unwrap();
+        assert_eq!(slot.unsettled_items.len(), 1, "{:?}", slot.unsettled_items);
     }
 }
 
