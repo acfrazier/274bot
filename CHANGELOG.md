@@ -15,6 +15,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   of logs, and the many others that stop when they run out of supplies —
   now end cleanly with their reason in the log instead of failing with
   "requestFinish is not a function".
+- Catalog combat scripts that group or customize their Loadout setting
+  (ArdyFighter, ChaosDruidKiller, FireGiant, GreenDragon, HillGiant,
+  JiveDemons, JiveDragons, JiveKBD, MossGiant and RockCrab) now show a
+  working Loadout picker in the panel and TUI and check your saved loadout
+  before Start, instead of showing an uneditable `unsupported type` row or
+  starting and failing when no loadouts exist.
+- Opening a shop after a longer walk to a wandering shopkeeper (such as
+  buying a Shantay pass from Shantay) no longer clicks Trade a second time
+  on the tick the shop window opens, which closed the shop window and made
+  the purchase return 0.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 

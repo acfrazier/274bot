@@ -17,12 +17,23 @@ use crate::observed::{self, ItemRow, Scene, Text};
 use crate::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Frozen `Shop.open`: wait for `isOpen` this long per attempt.
+/// Frozen `Shop.open`: wait for `isOpen` this long per attempt when no game
+/// ticks are posted.
 pub const OPEN_WAIT_MS: u64 = 3_000;
+/// Engine-derived stationary ticks before a `Shop.open` attempt is considered
+/// stalled without movement (`World.ts` 600 ms cycle × 5 = 3000 ms;
+/// `Player.ts:1275-1297` `processInteraction` advances `updateMovement` each
+/// tick while pathing to the NPC and calls `clearInteraction` as soon as the
+/// player has no waypoints and `stepsTaken === 0`).
+pub const OPEN_IDLE_TICKS: u32 = 5;
+/// Stationary tick cap while `self_target_kind == 1` (`PathingEntity.ts:521-525`
+/// `setFaceEntity` keeps the NPC targeted if the player is temporarily delayed
+/// before `processInteraction` can step).
+pub const OPEN_TARGET_IDLE_TICKS: u32 = 10;
 /// Frozen `Shop.open` attempts.
 pub const OPEN_ATTEMPTS: u32 = 3;
 /// Frozen `Shop.close`: wait for `!isOpen` this long.
@@ -38,6 +49,16 @@ const SELL_ALL_CLICKS: usize = 40;
 thread_local! {
     static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
         const { RefCell::new(None) };
+    /// `(scene_epoch, tick)` of the latest `OpNpc` Trade emitted by `Shop.open`.
+    /// Every `OpNpc` closes the active modal on the server (`OpNpcHandler.ts:47`
+    /// -> `Player.ts:970-973` `clearPendingAction` -> `closeModal`), so
+    /// `Shop.open` must not settle and `Shop.buy` must not emit `ShopButton`
+    /// (`InvButtonHandler.ts:23-25`) on a tick that already emitted `OpNpc`.
+    static LAST_TRADE_TICK: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
+}
+
+fn trade_emitted_on(epoch: u64, tick: u64) -> bool {
+    tick != 0 && LAST_TRADE_TICK.with(|cell| cell.get() == Some((epoch, tick)))
 }
 
 /// One posted container row (stock, shop player pack or backpack).
@@ -64,6 +85,10 @@ fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
 
 /// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
+    tick: Option<u64>,
+    here: Option<observed::Tile>,
+    moving: bool,
+    targeting_npc: bool,
     ingame: bool,
     shop_open: bool,
     has_stock: bool,
@@ -80,6 +105,12 @@ impl NativeObservation {
     fn from_scene(scene: &Scene, with_npcs: bool) -> Self {
         let session = scene.since_login();
         Self {
+            tick: scene.session_tick(),
+            here: session.here(),
+            moving: session.local_player_motion()
+                == Some(crate::isolate_fb::LOCAL_PLAYER_MOTION_MOVING),
+            targeting_npc: session.self_target_kind() == Some(1)
+                && session.self_target_index().unwrap_or(-1) >= 0,
             ingame: session.ingame().unwrap_or(false),
             shop_open: session.shop_open().unwrap_or(false),
             has_stock: session.shop_stock().is_some(),
@@ -114,6 +145,10 @@ impl NativeObservation {
 
     fn probe(&self) -> Probe<'_> {
         Probe {
+            tick: self.tick,
+            here: self.here,
+            moving: self.moving,
+            targeting_npc: self.targeting_npc,
             ingame: self.ingame,
             shop_open: self.shop_open,
             has_stock: self.has_stock,
@@ -200,6 +235,14 @@ pub(crate) struct Shop {
     batch_baseline: i32,
     /// Last observed game tick in which this row emitted a shop batch.
     last_dispatch_tick: Option<u64>,
+    /// Last observed game tick in which `Shop.open` emitted `OpNpc` Trade.
+    last_trade_tick: Option<u64>,
+    /// Last observed game tick stepped by `open_step`.
+    last_step_tick: Option<u64>,
+    /// Last observed local player tile while waiting for `Shop.open`.
+    last_here: Option<observed::Tile>,
+    /// Consecutive stationary game ticks observed in the current open attempt.
+    idle_ticks: u32,
     /// The observed held count now (kept for the next batch baseline).
     held_now: i32,
     /// An op is outstanding in the current wait window (`Shop.open` presses
@@ -245,19 +288,25 @@ impl Family for Shop {
                 shop.npc_action = action;
                 shop.attempts_left = OPEN_ATTEMPTS;
                 if probe.shop_open {
+                    let same_tick_trade = probe
+                        .tick
+                        .is_some_and(|t| trade_emitted_on(observed::with(Scene::epoch), t));
                     // The modal and its stock container can be published on
                     // adjacent snapshots. Keep this one await open until the
-                    // page is usable so an immediate Shop.buy cannot observe
-                    // a transient empty row set.
-                    if probe.has_stock && !probe.stock.is_empty() {
+                    // page is usable (and not on a tick that emitted OpNpc) so
+                    // an immediate Shop.buy cannot observe a transient empty
+                    // row set or a modal about to be closed by OpNpc.
+                    if !same_tick_trade && probe.has_stock && !probe.stock.is_empty() {
                         return Begin::Done(kind.value(true, 0));
                     }
                     shop.phase = Phase::WaitBoundary;
+                    shop.last_step_tick = probe.tick;
+                    shop.last_here = probe.here;
                     cx.clock().arm(OPEN_WAIT_MS);
                     return Begin::Run(shop);
                 }
                 shop.phase = Phase::WaitBoundary;
-                shop.press_trade(cx);
+                shop.press_trade(probe.tick, probe.here, cx);
                 Begin::Run(shop)
             }
             Kind::Close => {
@@ -371,7 +420,9 @@ impl Family for Shop {
         }
         match self.kind {
             Kind::Open if probe.shop_open => self.open_step(&probe, cx),
-            Kind::Open if self.attempts_left <= 1 && cx.clock().bound_reached() => self.done(false),
+            Kind::Open if self.attempts_left <= 1 && self.attempt_expired(&probe, cx) => {
+                self.done(false)
+            }
             // A snapshot may confirm the page, but retrying Trade remains
             // owned by a real tick and cannot reuse that event budget.
             Kind::Open => Step::Wait,
@@ -395,6 +446,10 @@ impl Shop {
             transferred: 0,
             batch_delta: 0,
             last_dispatch_tick: None,
+            last_trade_tick: None,
+            last_step_tick: None,
+            last_here: None,
+            idle_ticks: 0,
             batch_baseline: 0,
             held_now: 0,
             clicks: 0,
@@ -451,8 +506,23 @@ impl Shop {
     }
 
     /// Press the NPC's Trade op once and open this attempt's window.
-    fn press_trade(&mut self, cx: &mut Cx<'_>) {
+    fn press_trade(&mut self, tick: Option<u64>, here: Option<observed::Tile>, cx: &mut Cx<'_>) {
+        let epoch = observed::with(Scene::epoch);
+        if tick.is_some() && self.last_trade_tick == tick
+            || tick.is_some_and(|t| trade_emitted_on(epoch, t))
+        {
+            return;
+        }
         self.pressed = true;
+        self.last_trade_tick = tick;
+        self.last_step_tick = tick;
+        if here.is_some() {
+            self.last_here = here;
+        }
+        self.idle_ticks = 0;
+        if let Some(t) = tick.filter(|&t| t != 0) {
+            LAST_TRADE_TICK.with(|cell| cell.set(Some((epoch, t))));
+        }
         cx.clock().arm(OPEN_WAIT_MS);
         cx.emit(InteractReq::Npc {
             name: self.name.clone(),
@@ -464,8 +534,8 @@ impl Shop {
     /// Emit the next batch of Buy/Sell ops for the outstanding remainder and
     /// arm the held-count settlement window.
     fn send_batch(&mut self, row: &Row, cx: &mut Cx<'_>) -> Step<Value> {
-        let tick = observed::with(|scene| scene.tick().unwrap_or(0));
-        if self.last_dispatch_tick == Some(tick) {
+        let (epoch, tick) = observed::with(|scene| (scene.epoch(), scene.tick().unwrap_or(0)));
+        if self.last_dispatch_tick == Some(tick) || trade_emitted_on(epoch, tick) {
             self.phase = Phase::ReadyBatch;
             return Step::Wait;
         }
@@ -506,27 +576,76 @@ impl Shop {
         Step::Wait
     }
 
+    fn attempt_expired(&self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> bool {
+        if probe.moving {
+            return false;
+        }
+        let needed_idle_ticks = if probe.targeting_npc {
+            OPEN_TARGET_IDLE_TICKS
+        } else {
+            OPEN_IDLE_TICKS
+        };
+        match probe.tick {
+            Some(_) => self.idle_ticks >= needed_idle_ticks,
+            None => !probe.targeting_npc && cx.clock().bound_reached(),
+        }
+    }
+
     fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        let epoch = observed::with(Scene::epoch);
+        let same_tick_trade = probe.tick.is_some() && self.last_trade_tick == probe.tick
+            || probe.tick.is_some_and(|t| trade_emitted_on(epoch, t));
         if probe.shop_open {
+            if same_tick_trade {
+                // An OpNpc emitted on this tick will close the current modal
+                // when the server processes it (OpNpcHandler.ts:47 ->
+                // Player.ts:970-973). Wait for a later tick to confirm open.
+                return Step::Wait;
+            }
             if probe.has_stock && !probe.stock.is_empty() || cx.clock().bound_reached() {
                 return self.done(true);
             }
             return Step::Wait;
         }
-        // The frozen `Shop.open` presses Trade once per attempt and only
-        // re-presses after that attempt's own 3000 ms window expired.
         if !self.pressed {
-            self.press_trade(cx);
+            self.press_trade(probe.tick, probe.here, cx);
             return Step::Wait;
         }
-        if !cx.clock().bound_reached() {
+        if same_tick_trade {
+            return Step::Wait;
+        }
+        let moved = probe.moving
+            || match (self.last_here, probe.here) {
+                (Some(prev), Some(curr)) => prev != curr,
+                _ => false,
+            };
+        if probe.here.is_some() {
+            self.last_here = probe.here;
+        }
+        let advanced_tick = match (self.last_step_tick, probe.tick) {
+            (Some(prev), Some(curr)) => curr > prev,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if probe.tick.is_some() {
+            self.last_step_tick = probe.tick;
+        }
+        if moved {
+            self.idle_ticks = 0;
+            cx.clock().arm(OPEN_WAIT_MS);
+            return Step::Wait;
+        }
+        if advanced_tick {
+            self.idle_ticks = self.idle_ticks.saturating_add(1);
+        }
+        if !self.attempt_expired(probe, cx) {
             return Step::Wait;
         }
         self.attempts_left = self.attempts_left.saturating_sub(1);
         if self.attempts_left == 0 {
             return self.done(false);
         }
-        self.press_trade(cx);
+        self.press_trade(probe.tick, probe.here, cx);
         Step::Wait
     }
 
@@ -586,7 +705,8 @@ impl Shop {
                 self.transferred = transferred;
                 self.batch_delta = 0;
                 self.held_now = count_of(probe.inv, &self.name);
-                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
+                let (epoch, tick) =
+                    observed::with(|scene| (scene.epoch(), scene.tick().unwrap_or(0)));
                 if self.pick {
                     // The frozen loop asks `pick` again before every batch.
                     self.candidates = container
@@ -597,7 +717,7 @@ impl Shop {
                     if self.candidates.is_empty() {
                         return self.done(false);
                     }
-                    if self.last_dispatch_tick == Some(tick) {
+                    if self.last_dispatch_tick == Some(tick) || trade_emitted_on(epoch, tick) {
                         self.phase = Phase::ReadyBatch;
                         return Step::Wait;
                     }
@@ -611,15 +731,16 @@ impl Shop {
                 if self.kind == Kind::Buy && row.count <= 0 {
                     return self.done(false);
                 }
-                if self.last_dispatch_tick == Some(tick) {
+                if self.last_dispatch_tick == Some(tick) || trade_emitted_on(epoch, tick) {
                     self.phase = Phase::ReadyBatch;
                     return Step::Wait;
                 }
                 self.send_batch(&row, cx)
             }
             Phase::ReadyBatch => {
-                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
-                if self.last_dispatch_tick == Some(tick) {
+                let (epoch, tick) =
+                    observed::with(|scene| (scene.epoch(), scene.tick().unwrap_or(0)));
+                if self.last_dispatch_tick == Some(tick) || trade_emitted_on(epoch, tick) {
                     return Step::Wait;
                 }
                 if self.pick {
@@ -747,6 +868,10 @@ pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
 
 /// The compact view one decision is made from.
 struct Probe<'a> {
+    tick: Option<u64>,
+    here: Option<observed::Tile>,
+    moving: bool,
+    targeting_npc: bool,
     ingame: bool,
     shop_open: bool,
     has_stock: bool,
@@ -891,6 +1016,10 @@ mod tests {
 
     fn probe<'a>(stock: &'a [Row], player: Option<&'a [Row]>, inv: &'a [Row]) -> Probe<'a> {
         Probe {
+            tick: None,
+            here: None,
+            moving: false,
+            targeting_npc: false,
             ingame: true,
             shop_open: true,
             has_stock: true,
@@ -1200,6 +1329,211 @@ mod tests {
         assert_eq!(
             step(&mut rt, &mut clock, &probe(&[], None, &inv)),
             (Some(json!(0)), vec![])
+        );
+    }
+
+    #[test]
+    fn open_does_not_retry_while_player_moves_across_a_slow_walk() {
+        observed::on_reset();
+        let mut rt = shop(Kind::Open, "Shantay", 0, Phase::WaitBoundary);
+        rt.npc_action = "Trade".into();
+        rt.attempts_left = OPEN_ATTEMPTS;
+        let mut clock = InstantTaskClock::new();
+        let start = observed::Tile {
+            x: 3308,
+            z: 3120,
+            level: 0,
+        };
+        let first_tick = Probe {
+            tick: Some(1),
+            here: Some(start),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
+        let trade = InteractReq::Npc {
+            name: "Shantay".into(),
+            action: "Trade".into(),
+            index: None,
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &first_tick),
+            (None, vec![trade]),
+            "initial step emits Trade once"
+        );
+        // Walk for 8 ticks (> OPEN_IDLE_TICKS and with an expired wall clock):
+        // moving each tick must keep the first attempt alive without re-pressing.
+        for tick_num in 2..=9u64 {
+            expire(&mut clock);
+            let walking = Probe {
+                tick: Some(tick_num),
+                here: Some(observed::Tile {
+                    x: 3308 - (tick_num as i32 - 1),
+                    z: 3120,
+                    level: 0,
+                }),
+                shop_open: false,
+                has_stock: false,
+                ..probe(&[], None, &[])
+            };
+            assert_eq!(
+                step(&mut rt, &mut clock, &walking),
+                (None, vec![]),
+                "tick {tick_num}: walking toward the shopkeeper is not a failed open"
+            );
+        }
+        assert_eq!(rt.attempts_left, OPEN_ATTEMPTS);
+        let stock = [row("Shantay pass", 100, 15)];
+        let arrived = Probe {
+            tick: Some(10),
+            here: Some(observed::Tile {
+                x: 3300,
+                z: 3120,
+                level: 0,
+            }),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &arrived),
+            (Some(json!(true)), vec![]),
+            "arrival of the shop modal after a slow walk settles true"
+        );
+    }
+
+    #[test]
+    fn open_never_settles_on_the_same_tick_it_emitted_trade() {
+        observed::on_reset();
+        let mut rt = shop(Kind::Open, "Shantay", 0, Phase::WaitBoundary);
+        rt.npc_action = "Trade".into();
+        rt.attempts_left = OPEN_ATTEMPTS;
+        let mut clock = InstantTaskClock::new();
+        let tile = observed::Tile {
+            x: 3304,
+            z: 3120,
+            level: 0,
+        };
+        let trade = InteractReq::Npc {
+            name: "Shantay".into(),
+            action: "Trade".into(),
+            index: None,
+        };
+        let tick1 = Probe {
+            tick: Some(1),
+            here: Some(tile),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &tick1),
+            (None, vec![trade.clone()])
+        );
+        // Stationary for OPEN_IDLE_TICKS ticks so tick 6 emits a retry Trade.
+        for t in 2..=5 {
+            let stationary = Probe {
+                tick: Some(t),
+                here: Some(tile),
+                shop_open: false,
+                has_stock: false,
+                ..probe(&[], None, &[])
+            };
+            assert_eq!(step(&mut rt, &mut clock, &stationary), (None, vec![]));
+        }
+        let tick6_closed = Probe {
+            tick: Some(6),
+            here: Some(tile),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &tick6_closed),
+            (None, vec![trade]),
+            "5th stationary tick emits the retry OpNpc"
+        );
+        // Same tick 6: a snapshot arrives with shop_open = true and stock.
+        // open_step must NOT settle on tick 6 because tick 6 already emitted OpNpc.
+        let stock = [row("Shantay pass", 100, 15)];
+        let tick6_open = Probe {
+            tick: Some(6),
+            here: Some(tile),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &tick6_open),
+            (None, vec![]),
+            "same-tick modal arrival after OpNpc must wait for a later tick"
+        );
+        // Tick 7 confirms the shop is open with no OpNpc on tick 7.
+        let tick7_open = Probe {
+            tick: Some(7),
+            here: Some(tile),
+            ..probe(&stock, None, &[])
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &tick7_open),
+            (Some(json!(true)), vec![]),
+            "later tick settles Shop.open once the modal is confirmed"
+        );
+    }
+
+    #[test]
+    fn open_retries_after_stationary_ticks_and_bounds_at_three_attempts() {
+        observed::on_reset();
+        let mut rt = shop(Kind::Open, "Shantay", 0, Phase::WaitBoundary);
+        rt.npc_action = "Trade".into();
+        rt.attempts_left = OPEN_ATTEMPTS;
+        let mut clock = InstantTaskClock::new();
+        let tile = observed::Tile {
+            x: 3304,
+            z: 3120,
+            level: 0,
+        };
+        let trade = InteractReq::Npc {
+            name: "Shantay".into(),
+            action: "Trade".into(),
+            index: None,
+        };
+        let mut current_tick = 1u64;
+        let closed_at = |t: u64| Probe {
+            tick: Some(t),
+            here: Some(tile),
+            shop_open: false,
+            has_stock: false,
+            ..probe(&[], None, &[])
+        };
+        // Attempt 1 on tick 1.
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(current_tick)),
+            (None, vec![trade.clone()])
+        );
+        for attempt in 2..=OPEN_ATTEMPTS {
+            for _ in 1..OPEN_IDLE_TICKS {
+                current_tick += 1;
+                assert_eq!(
+                    step(&mut rt, &mut clock, &closed_at(current_tick)),
+                    (None, vec![])
+                );
+            }
+            current_tick += 1;
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed_at(current_tick)),
+                (None, vec![trade.clone()]),
+                "attempt {attempt} re-presses Trade after {OPEN_IDLE_TICKS} stationary ticks"
+            );
+        }
+        for _ in 1..OPEN_IDLE_TICKS {
+            current_tick += 1;
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed_at(current_tick)),
+                (None, vec![])
+            );
+        }
+        current_tick += 1;
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(current_tick)),
+            (Some(json!(false)), vec![]),
+            "third failed attempt settles false without a fourth Trade"
         );
     }
 }

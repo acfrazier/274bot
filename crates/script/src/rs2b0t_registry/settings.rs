@@ -9,8 +9,15 @@ use super::{
 
 /// File-Load SETTINGS: static `export const SETTINGS = { … }` parse.
 /// No V8. Identifier-valued fields that the scanner cannot inline stay
-/// empty rather than aborting the walk.
+/// empty rather than aborting the walk; an unresolvable object spread inside
+/// a setting definition fails closed.
 pub fn settings_schema_from_source(src: &str) -> Vec<SettingDef> {
+    try_settings_schema_from_source(src).unwrap_or_default()
+}
+
+/// Fallible static `export const SETTINGS = { … }` parse. Refuses any setting
+/// definition whose object spread cannot be resolved.
+pub fn try_settings_schema_from_source(src: &str) -> Result<Vec<SettingDef>, String> {
     parse_settings_export(src, "SETTINGS", None)
 }
 
@@ -20,15 +27,24 @@ pub(super) fn parse_settings_export(
     file_src: &str,
     export_name: &str,
     sources: Option<&HashMap<String, String>>,
-) -> Vec<SettingDef> {
+) -> Result<Vec<SettingDef>, String> {
     let Some(obj) = settings_export_object(file_src, export_name) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     parse_settings_object(obj, file_src, sources)
 }
 
 fn setting_object_body(file_src: &str, export_name: &str) -> Option<String> {
-    settings_export_object(file_src, export_name).map(str::to_string)
+    settings_export_object(file_src, export_name)
+        .or_else(|| {
+            let rhs = const_eq_rhs(file_src, export_name)?.trim_start();
+            if !rhs.starts_with('{') {
+                return None;
+            }
+            let obj_end = find_matching_bracket(rhs, '{', '}')?;
+            Some(&rhs[..=obj_end])
+        })
+        .map(str::to_string)
 }
 
 /// Body of `export const NAME[: Type] = { … }`, including the braces.
@@ -788,7 +804,7 @@ fn parse_settings_object(
     obj: &str,
     file_src: &str,
     sources: Option<&HashMap<String, String>>,
-) -> Vec<SettingDef> {
+) -> Result<Vec<SettingDef>, String> {
     let inner = obj.trim();
     let inner = inner.strip_prefix('{').unwrap_or(inner);
     let inner = inner.strip_suffix('}').unwrap_or(inner);
@@ -802,7 +818,7 @@ fn parse_settings_object(
         if let Some(after_dots) = rest.strip_prefix("...") {
             let expr = after_dots.trim_start();
             if let Some(body) = resolve_spread_settings(expr, file_src) {
-                out.extend(parse_settings_object(&body, file_src, sources));
+                out.extend(parse_settings_object(&body, file_src, sources)?);
             }
             let Some(after_expr) = skip_expression(expr) else {
                 break;
@@ -833,7 +849,7 @@ fn parse_settings_object(
                 &after_colon[..=end],
                 file_src,
                 sources,
-            ));
+            )?);
             rest = &after_colon[end + 1..];
         } else if let Some((ident, after_ident)) = take_ident(after_colon) {
             let leftover = after_ident.trim_start();
@@ -843,7 +859,7 @@ fn parse_settings_object(
                 };
                 rest = after_expr;
             } else if let Some(body) = resolve_setting_ident(file_src, ident) {
-                out.push(parse_setting_def(&id, &body, file_src, sources));
+                out.push(parse_setting_def(&id, &body, file_src, sources)?);
                 rest = after_ident;
             } else {
                 let Some(after_expr) = skip_expression(after_colon) else {
@@ -862,7 +878,7 @@ fn parse_settings_object(
             rest = &rest[1..];
         }
     }
-    out
+    Ok(out)
 }
 
 /// Bare `...IDENT` or `...Object.fromEntries(Object.entries(IDENT)…)`.
@@ -951,7 +967,13 @@ fn parse_setting_def(
     obj: &str,
     file_src: &str,
     sources: Option<&HashMap<String, String>>,
-) -> SettingDef {
+) -> Result<SettingDef, String> {
+    let expanded = expand_setting_object(id, obj, file_src)?;
+    let obj = expanded.as_str();
+    let ty = scan_key_quoted(obj, "type").unwrap_or_default();
+    if ty.is_empty() {
+        return Err(format!("setting '{id}': missing setting type"));
+    }
     let mixed = revision_fact_spread_options(obj);
     let options = mixed
         .as_ref()
@@ -967,9 +989,9 @@ fn parse_setting_def(
         .or_else(|| scan_key_quoted(obj, "optionsFrom"))
         .or_else(|| scan_key_ident(obj, "optionsFrom"))
         .or_else(|| inferred_options_from(obj, &options, item_option_spec.as_ref()));
-    SettingDef {
+    Ok(SettingDef {
         id: id.to_string(),
-        ty: scan_key_quoted(obj, "type").unwrap_or_default(),
+        ty,
         default: scan_key_literal(obj, "default", Some(file_src)),
         label: scan_key_quoted(obj, "label"),
         min: scan_key_number(obj, "min"),
@@ -983,7 +1005,191 @@ fn parse_setting_def(
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
         help: scan_key_quoted(obj, "help"),
         item_option_spec,
+    })
+}
+
+/// Expand `...IDENT` spreads inside a setting definition `{ … }` in
+/// left-to-right declaration order so later keys override spread keys and
+/// later spreads override earlier keys (JS object-spread semantics).
+/// Fails closed on any unresolvable or cyclic spread.
+fn expand_setting_object(id: &str, obj: &str, file_src: &str) -> Result<String, String> {
+    let mut entries = Vec::new();
+    let mut visited = Vec::new();
+    collect_setting_entries(id, obj, file_src, &mut visited, &mut entries)?;
+    let joined = entries
+        .into_iter()
+        .map(|(_, raw_kv)| raw_kv)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!("{{ {joined} }}"))
+}
+
+fn collect_setting_entries(
+    id: &str,
+    obj: &str,
+    file_src: &str,
+    visited: &mut Vec<String>,
+    entries: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let raw_entries = split_top_level_object_entries(obj)
+        .ok_or_else(|| format!("setting '{id}': malformed setting object"))?;
+    for raw_entry in raw_entries {
+        let entry = raw_entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if let Some(after_dots) = entry.strip_prefix("...") {
+            let spread_expr = after_dots.trim();
+            let Some((ident, rest)) = take_ident(spread_expr) else {
+                return Err(format!(
+                    "setting '{id}': unresolvable spread '...{spread_expr}'"
+                ));
+            };
+            if !rest.trim().is_empty() {
+                return Err(format!(
+                    "setting '{id}': unresolvable spread '...{spread_expr}'"
+                ));
+            }
+            if matches!(ident, "PERIODIC_BANK_SETTINGS" | "CUSTOM_RANGED_SETTINGS") {
+                return Err(format!("setting '{id}': unresolvable spread '...{ident}'"));
+            }
+            if visited.iter().any(|seen| seen == ident) {
+                return Err(format!("setting '{id}': cyclic spread '...{ident}'"));
+            }
+            let Some(spread_body) = resolve_setting_ident(file_src, ident) else {
+                return Err(format!("setting '{id}': unresolvable spread '...{ident}'"));
+            };
+            visited.push(ident.to_string());
+            collect_setting_entries(id, &spread_body, file_src, visited, entries)?;
+            visited.pop();
+            continue;
+        }
+        let (key, after_key) = if let Some((quoted, n)) = scan_quoted(entry) {
+            (quoted, &entry[n..])
+        } else if let Some((ident, after)) = take_ident(entry) {
+            (ident.to_string(), after)
+        } else {
+            return Err(format!("setting '{id}': malformed property '{entry}'"));
+        };
+        let Some(after_colon) = after_key.trim_start().strip_prefix(':') else {
+            return Err(format!("setting '{id}': malformed property '{entry}'"));
+        };
+        let val_slice = after_colon.trim();
+        upsert_setting_entry(entries, key.clone(), format!("{key}: {val_slice}"));
     }
+    Ok(())
+}
+
+fn upsert_setting_entry(entries: &mut Vec<(String, String)>, key: String, raw_kv: String) {
+    if let Some(pos) = entries.iter().position(|(k, _)| k == &key) {
+        entries.remove(pos);
+    }
+    entries.push((key, raw_kv));
+}
+
+fn split_top_level_object_entries(obj: &str) -> Option<Vec<String>> {
+    let trimmed = obj.trim();
+    let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?;
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut brace_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut paren_depth = 0i32;
+    let mut in_str: Option<char> = None;
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = in_str {
+            current.push(c);
+            if c == '\\' {
+                let escaped = chars.next()?;
+                current.push(escaped);
+            } else if c == q {
+                in_str = None;
+            }
+            continue;
+        }
+        if c == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            for nc in chars.by_ref() {
+                if nc == '\n' {
+                    current.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+        if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut closed = false;
+            while let Some(nc) = chars.next() {
+                if nc == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    current.push(' ');
+                    closed = true;
+                    break;
+                }
+            }
+            if !closed {
+                return None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => {
+                in_str = Some(c);
+                current.push(c);
+            }
+            '{' => {
+                brace_depth += 1;
+                current.push(c);
+            }
+            '}' => {
+                brace_depth -= 1;
+                if brace_depth < 0 {
+                    return None;
+                }
+                current.push(c);
+            }
+            '[' => {
+                bracket_depth += 1;
+                current.push(c);
+            }
+            ']' => {
+                bracket_depth -= 1;
+                if bracket_depth < 0 {
+                    return None;
+                }
+                current.push(c);
+            }
+            '(' => {
+                paren_depth += 1;
+                current.push(c);
+            }
+            ')' => {
+                paren_depth -= 1;
+                if paren_depth < 0 {
+                    return None;
+                }
+                current.push(c);
+            }
+            ',' if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => {
+                let entry = current.trim();
+                if !entry.is_empty() {
+                    out.push(entry.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    if in_str.is_some() || brace_depth != 0 || bracket_depth != 0 || paren_depth != 0 {
+        return None;
+    }
+    let tail = current.trim();
+    if !tail.is_empty() {
+        out.push(tail.to_string());
+    }
+    Some(out)
 }
 
 fn scan_key_literal(block: &str, key: &str, file_src: Option<&str>) -> Option<String> {
