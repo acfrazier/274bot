@@ -255,6 +255,7 @@ impl Cell {
                 "gatherer_run_key_change_during_drop_live"
             }
             (Self::Fishing, LiveCase::FishNet) => "gatherer_fish_net",
+            (Self::Fishing, LiveCase::FishSpotMoves) => "gatherer_fish_catherby_spot_moves",
             (Self::Fishing, LiveCase::FishBaitGate) => "gatherer_fish_bait_gate",
             (Self::Woodcutting, LiveCase::OakRespawn) => "gatherer_wc_respawn",
             (Self::Woodcutting, LiveCase::OakNearEdge) => "gatherer_wc_near_edge",
@@ -350,7 +351,7 @@ impl Cell {
 
     const fn default_tool_alias(self, case: LiveCase) -> &'static str {
         match (self, case) {
-            (Self::Fishing, LiveCase::FishNet) => "net",
+            (Self::Fishing, LiveCase::FishNet | LiveCase::FishSpotMoves) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => "harpoon",
             (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => "harpoon",
@@ -363,7 +364,7 @@ impl Cell {
 
     const fn default_tool_id(self, case: LiveCase) -> i32 {
         match (self, case) {
-            (Self::Fishing, LiveCase::FishNet) => 303,
+            (Self::Fishing, LiveCase::FishNet | LiveCase::FishSpotMoves) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => 311,
             (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => 311,
@@ -379,6 +380,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::Site) => 30,
             (Self::Mining, LiveCase::Site) => 1,
             (Self::Fishing, LiveCase::Site) => 76,
+            (Self::Fishing, LiveCase::FishSpotMoves) => 76,
             (Self::Fishing, LiveCase::FishGuildApproach) => 68,
             (
                 Self::Woodcutting,
@@ -438,7 +440,9 @@ impl Cell {
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
             ) => &[1521],
-            (Self::Fishing, LiveCase::FishNet) => &[SHRIMP_ID, ANCHOVY_ID],
+            (Self::Fishing, LiveCase::FishNet | LiveCase::FishSpotMoves) => {
+                &[SHRIMP_ID, ANCHOVY_ID]
+            }
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => &[TROUT_ID, SALMON_ID],
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => {
                 &[TUNA_ID, SWORDFISH_ID]
@@ -665,6 +669,7 @@ impl Cell {
             "radius".into(),
             json!(match case {
                 LiveCase::OakRespawn | LiveCase::LocationAuto | LiveCase::BankCost => 32,
+                LiveCase::FishSpotMoves => 32,
                 LiveCase::FishHarpoonBankAuto => 40,
                 LiveCase::OakNearEdge => 64,
                 LiveCase::OakAbsentArea => 2,
@@ -763,6 +768,12 @@ impl Cell {
             );
             bag.insert("reserveCasts".into(), json!(10));
         }
+        if case == LiveCase::FishSpotMoves {
+            bag.insert("location".into(), json!("Site"));
+            bag.insert("site".into(), json!("fishing.catherby"));
+            bag.insert("disposition".into(), json!("Bank"));
+            bag.insert("bank".into(), json!("Nearest"));
+        }
         if case == LiveCase::Site {
             bag.insert("location".into(), json!("Site"));
             bag.insert("site".into(), json!(self.site_id()));
@@ -834,6 +845,7 @@ enum LiveCase {
     #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
     DeathWatchdogProving,
     FishNet,
+    FishSpotMoves,
     FishBaitGate,
     OakRespawn,
     OakNearEdge,
@@ -867,6 +879,7 @@ impl LiveCase {
             Self::DeathDuringDrop => "death-during-drop",
             Self::RunKeyChangeDuringDrop => "run-key-change-during-drop",
             Self::FishNet => "fish-net",
+            Self::FishSpotMoves => "catherby-spot-moves",
             Self::RandomEvent => "random-event",
             Self::DeathReturn => "death-return",
             Self::DeathRespawnRegion => "death-return-respawn-region",
@@ -908,6 +921,7 @@ impl LiveCase {
             self,
             Self::WoodcuttingBank
                 | Self::Site
+                | Self::FishSpotMoves
                 | Self::WoodcuttingBankUnwieldable
                 | Self::BankCost
                 | Self::BankCostFirstGoal
@@ -1010,6 +1024,67 @@ struct UnsettledItem {
 struct FishTarget {
     type_id: usize,
     tile: (i32, i32, i32),
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct FishSpotMove {
+    index: usize,
+    from: (i32, i32, i32),
+    to: (i32, i32, i32),
+    tick: u64,
+    xp: i32,
+    resumed_tick: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FishMovementWitness {
+    worked: BTreeMap<usize, FishTarget>,
+    moves: Vec<FishSpotMove>,
+}
+
+impl FishMovementWitness {
+    fn observe(
+        &mut self,
+        npcs: &BTreeMap<usize, FishTarget>,
+        working: Option<usize>,
+        tick: u64,
+        xp: i32,
+    ) {
+        for (&index, old) in &mut self.worked {
+            if let Some(new) = npcs.get(&index).filter(|new| new.type_id == old.type_id) {
+                if new.tile != old.tile {
+                    self.moves.push(FishSpotMove {
+                        index,
+                        from: old.tile,
+                        to: new.tile,
+                        tick,
+                        xp,
+                        resumed_tick: None,
+                    });
+                    *old = *new;
+                }
+            }
+        }
+        if let Some((index, target)) =
+            working.and_then(|index| npcs.get(&index).map(|row| (index, row)))
+        {
+            self.worked.clear();
+            self.worked.insert(index, *target);
+            for movement in &mut self.moves {
+                if movement.resumed_tick.is_none() && tick > movement.tick && xp > movement.xp {
+                    movement.resumed_tick = Some(tick);
+                }
+            }
+        }
+    }
+
+    fn complete(&self) -> bool {
+        self.moves
+            .iter()
+            .filter(|row| row.resumed_tick.is_some())
+            .count()
+            >= 2
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1137,6 +1212,8 @@ struct Observation {
     tile: Option<(i32, i32, i32)>,
     build: Option<BuildRect>,
     fishing_target: Option<FishTarget>,
+    fishing_npcs: BTreeMap<usize, FishTarget>,
+    fishing_target_index: Option<usize>,
     live_oaks: BTreeSet<(i32, i32, i32)>,
     oak_stumps: BTreeSet<(i32, i32, i32)>,
     normal_trees: BTreeSet<(i32, i32, i32)>,
@@ -1531,6 +1608,8 @@ struct Witness {
     gas_hazard_escaped: bool,
     fish_targets: BTreeSet<FishTarget>,
     moved_spot_reacquired: bool,
+    fish_movement: FishMovementWitness,
+    fish_status_sequence: Vec<Value>,
     preflight_build_observed: bool,
     fish_target_seen: bool,
     no_fish_xp: bool,
@@ -1888,6 +1967,31 @@ impl GatherSlot {
         } else {
             None
         };
+        let fishing_npcs = if self.case == LiveCase::FishSpotMoves {
+            self.snapshot
+                .npcs()
+                .iter()
+                .filter_map(|npc| {
+                    (npc.r#type == Some(320)).then_some((
+                        npc.index,
+                        FishTarget {
+                            type_id: 320,
+                            tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                        },
+                    ))
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+        let fishing_target_index = fishing_target.and_then(|_| {
+            self.snapshot
+                .local_player()?
+                .player
+                .actor
+                .target
+                .map(|target| target.index)
+        });
         let locs = self.snapshot.locs();
         let live_oaks = locs
             .iter()
@@ -1926,6 +2030,8 @@ impl GatherSlot {
             tile: self.snapshot.tile(),
             build,
             fishing_target,
+            fishing_npcs,
+            fishing_target_index,
             live_oaks,
             oak_stumps,
             normal_trees,
@@ -2819,6 +2925,14 @@ impl GatherSlot {
                 }
             }
         }
+        if self.case == LiveCase::FishSpotMoves {
+            self.witness.fish_movement.observe(
+                &observation.fishing_npcs,
+                observation.fishing_target_index,
+                self.native_tick,
+                observation.xp,
+            );
+        }
 
         if self.case == LiveCase::FishBaitGate {
             self.witness.no_fish_xp = self.baseline.as_ref().is_some_and(|baseline| {
@@ -3499,6 +3613,45 @@ impl GatherSlot {
                 self.witness.targets.insert(value);
             }
         }
+        if self.case == LiveCase::FishSpotMoves {
+            let phase = text_field(status, "phase");
+            let event = text_field(status, "last_event");
+            let area = text_field(status, "area");
+            let target = text_field(status, "target");
+            if self.witness.fish_status_sequence.last().is_none_or(|last| {
+                last["phase"].as_str() != phase
+                    || last["event"].as_str() != event
+                    || last["area"].as_str() != area
+                    || last["target"].as_str() != target
+            }) {
+                let npcs: Vec<_> = self
+                    .snapshot
+                    .npcs()
+                    .iter()
+                    .filter(|npc| matches!(npc.r#type, Some(320 | 390 | 403..=406 | 444..=452)))
+                    .map(|npc| {
+                        json!({
+                            "index": npc.index,
+                            "type": npc.r#type,
+                            "tile": tile_key(npc.tile),
+                        })
+                    })
+                    .collect();
+                let row = json!({
+                    "tick": self.native_tick,
+                    "snapshot_tick": self.latest.as_ref().map(|row| row.tick),
+                    "phase": phase,
+                    "event": event,
+                    "area": area,
+                    "target": target,
+                    "xp": self.latest.as_ref().map(|row| row.xp),
+                    "tile": self.latest.as_ref().and_then(|row| row.tile),
+                    "npcs": npcs,
+                });
+                println!("gatherer-fish-status {row}");
+                self.witness.fish_status_sequence.push(row);
+            }
+        }
         if self.bank_conservation_active() {
             let phase = text_field(status, "phase");
             let event = text_field(status, "last_event");
@@ -4083,6 +4236,19 @@ impl GatherSlot {
                         "{} did not observe a moved fishing spot reacquired with a fish yield: {:?}",
                         self.name(),
                         self.witness
+                    ));
+                }
+                Ok(())
+            }
+            LiveCase::FishSpotMoves => {
+                if !self.witness.fish_movement.complete()
+                    || self.witness.last_status_yielded == 0
+                    || self.witness.failure_code.is_some()
+                {
+                    return Err(format!(
+                        "{} did not resume fishing after two real spot moves: {:?}",
+                        self.name(),
+                        self.witness.fish_movement
                     ));
                 }
                 Ok(())
@@ -4984,6 +5150,7 @@ fn fixture_plan(
             tile
         }
         LiveCase::FishNet => fixture_tile("GATHERER_FISH_TILE", FISH_NET_START)?,
+        LiveCase::FishSpotMoves => world_tile(2838, 3432),
         LiveCase::FishBaitGate => fixture_tile("GATHERER_FISH_TILE", FISH_BAIT_START)?,
         LiveCase::OakRespawn => {
             let first = fixture_tile("GATHERER_WC_RESPAWN_TARGET_TILE", OAK_RESPAWN_START)?;
@@ -5622,6 +5789,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     }
     println!("{identity}");
     let started_at = Instant::now();
+    let fish_spot_soak = case == LiveCase::FishSpotMoves
+        && std::env::var("GATHERER_FISH_SPOT_SOAK").as_deref() == Ok("1");
     let mut restart_requested = false;
     let mut death_stop_requested = false;
     let mut prior_run = None;
@@ -6235,6 +6404,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.moved_spot_reacquired
                     && witness.fish_targets.len() >= 2
             }
+            LiveCase::FishSpotMoves => {
+                witness.fish_movement.complete()
+                    && (!fish_spot_soak
+                        || Instant::now() >= started_at + PREP_DEADLINE + POWER_DEADLINE)
+            }
             LiveCase::FishBaitGate | LiveCase::OakAbsentArea => witness.failure_code.is_some(),
             LiveCase::MazeRandom => maze_random_complete(&witness),
             LiveCase::OakRespawn => {
@@ -6356,7 +6530,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             break Ok(());
         }
         let deadline = if phase == Prep::Running {
-            if case.is_power() {
+            if case.is_power() || fish_spot_soak {
                 started_at + PREP_DEADLINE + POWER_DEADLINE
             } else {
                 started_at + PREP_DEADLINE + WEDGE_DEADLINE
@@ -6579,6 +6753,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "dropped_ids": witness.natural_gems_seen.intersection(&witness.dropped_product_ids).copied().collect::<Vec<_>>(),
             },
             "moved_spot_reacquired": witness.moved_spot_reacquired,
+            "fish_spot_moves": witness.fish_movement.moves,
+            "fish_status_sequence": witness.fish_status_sequence,
             "no_fish_xp": witness.no_fish_xp,
             "all_oaks_depleted_at_wait": witness.all_oaks_depleted_at_wait,
             "oak_other_gather_tick": witness.oak_other_gather_tick,
@@ -6981,6 +7157,12 @@ fn gatherer_run_key_change_during_drop_live() {
 #[ignore = "requires LIVE=1, GATHERER_FISH_TILE and local 289 engine"]
 fn gatherer_fish_net() {
     run_cell(Cell::Fishing, LiveCase::FishNet).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX and Engine A; fishes real Catherby saltfish through two content-timed moves"]
+fn gatherer_fish_catherby_spot_moves() {
+    run_cell(Cell::Fishing, LiveCase::FishSpotMoves).unwrap();
 }
 
 #[test]
@@ -7831,6 +8013,81 @@ fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
         !power_complete(Cell::Mining, &witness),
         "seeded disposal cannot substitute for renewed gathering"
     );
+}
+
+#[cfg(test)]
+mod fish_spot_move_tests {
+    use super::*;
+
+    fn fish(x: i32) -> FishTarget {
+        FishTarget {
+            type_id: 320,
+            tile: (x, 3439, 0),
+        }
+    }
+
+    #[test]
+    fn catherby_moves_fixture_matches_the_report_without_spawning_resources() {
+        let settings = Cell::Fishing.settings(LiveCase::FishSpotMoves);
+        assert_eq!(settings.get("location"), Some(&json!("Site")));
+        assert_eq!(settings.get("site"), Some(&json!("fishing.catherby")));
+        assert_eq!(settings.get("radius"), Some(&json!(32)));
+        assert_eq!(
+            settings.get("fishingMethod"),
+            Some(&json!("fishing.saltfish.op1"))
+        );
+        assert_eq!(settings.get("disposition"), Some(&json!("Bank")));
+        assert_eq!(settings.get("bank"), Some(&json!("Nearest")));
+        assert!(LiveCase::FishSpotMoves.is_bank_mode());
+        let (_, plan, task) = fixture_plan(Cell::Fishing, LiveCase::FishSpotMoves).unwrap();
+        assert!(plan.seed_locs.is_empty());
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn move_oracle_requires_instance_movement_and_fresh_fishing_after_each_move() {
+        let mut witness = FishMovementWitness::default();
+        witness.observe(
+            &BTreeMap::from([(1, fish(2836)), (2, fish(2838))]),
+            Some(1),
+            10,
+            100,
+        );
+        // Switching targets is not a content move.
+        witness.observe(
+            &BTreeMap::from([(1, fish(2836)), (2, fish(2838))]),
+            Some(2),
+            11,
+            110,
+        );
+        assert!(witness.moves.is_empty());
+        // The now inactive spot moving is not an interruption either.
+        witness.observe(
+            &BTreeMap::from([(1, fish(2844)), (2, fish(2838))]),
+            Some(2),
+            12,
+            120,
+        );
+        assert!(witness.moves.is_empty());
+        witness.observe(&BTreeMap::from([(2, fish(2845))]), None, 20, 120);
+        assert_eq!(witness.moves.len(), 1);
+        witness.observe(&BTreeMap::from([(2, fish(2845))]), Some(2), 21, 120);
+        assert!(
+            witness.moves[0].resumed_tick.is_none(),
+            "retargeting without XP is not progress"
+        );
+        witness.observe(&BTreeMap::from([(2, fish(2845))]), Some(2), 22, 130);
+        assert_eq!(witness.moves[0].resumed_tick, Some(22));
+        assert!(!witness.complete(), "one move does not qualify");
+        witness.observe(&BTreeMap::from([(2, fish(2837))]), None, 30, 130);
+        witness.observe(&BTreeMap::from([(2, fish(2837))]), None, 31, 140);
+        assert!(
+            !witness.complete(),
+            "XP without a fishing target cannot qualify"
+        );
+        witness.observe(&BTreeMap::from([(2, fish(2837))]), Some(2), 32, 140);
+        assert!(witness.complete());
+    }
 }
 
 #[cfg(test)]

@@ -39,6 +39,9 @@ mod recover;
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
 const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
+// Fishing's maximum movement timer is 529 ticks (280 + random(250)):
+// skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
+// (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
 const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
 const HAZARD_RETREAT_RADIUS: i32 = 8;
@@ -253,6 +256,7 @@ pub struct Gatherer {
     bank_label: Arc<str>,
     trips: u16,
     last_gameplay_tick: u64,
+    last_yield_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
     death: crate::native::death::DeathLatch,
@@ -309,6 +313,7 @@ impl Gatherer {
             bank_label: Arc::from("—"),
             trips: 0,
             last_gameplay_tick: 0,
+            last_yield_tick: 0,
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
             death,
@@ -1255,6 +1260,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
+                self.last_yield_tick = tick.cx.evidence().tick;
                 self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
                 self.retained.yielded = self.yielded;
@@ -1270,6 +1276,7 @@ impl Gatherer {
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
+            self.last_yield_tick = tick.cx.evidence().tick;
             self.wait_until = None;
         }
         let target = self.target.take();
@@ -1839,6 +1846,30 @@ impl Gatherer {
         if handoff && selected.target.is_none() {
             return;
         }
+        let fishing = self.settings().skill_kind() == Skill::Fishing;
+        let progress_deadline = if fishing {
+            self.last_yield_tick
+        } else {
+            self.last_gameplay_tick
+        }
+        .saturating_add(WAIT_GAMEPLAY_TICKS);
+        // A live actor still takes precedence. Empty views, hazards and
+        // unproductive observation walks cannot extend the no-yield bound.
+        if fishing
+            && tick.cx.evidence().tick >= progress_deadline
+            && matches!(
+                selected.outcome,
+                Selection::Target(PlacementClass::Unloaded)
+                    | Selection::Absent { .. }
+                    | Selection::Exhausted { .. }
+            )
+        {
+            self.fail(
+                "resource-unavailable",
+                self.block_context(Some(here.value), "no fishing spot observed for 800 ticks"),
+            );
+            return;
+        }
         match selected.target {
             Some(target) => {
                 self.hazard_escape = None;
@@ -1865,20 +1896,34 @@ impl Gatherer {
                 }
                 Selection::Absent { absent } => {
                     self.absent = absent;
-                    self.fail(
-                        "resource-unavailable",
-                        self.block_context(
-                            Some(here.value),
-                            &format!("resource-unavailable: absent: {absent}"),
-                        ),
-                    );
+                    if fishing {
+                        // Fishing's authored NPCs move and temporarily change
+                        // type; an empty actor view is not permanent absence.
+                        self.scratch.fishing.progress();
+                        self.wait_until = None;
+                        self.set_event("looking for another fishing spot");
+                    } else {
+                        self.fail(
+                            "resource-unavailable",
+                            self.block_context(
+                                Some(here.value),
+                                &format!("resource-unavailable: absent: {absent}"),
+                            ),
+                        );
+                    }
                 }
                 Selection::Exhausted { wait_until, absent } => {
                     self.absent = absent;
-                    let bounded = self.last_gameplay_tick.saturating_add(WAIT_GAMEPLAY_TICKS);
-                    let deadline = *self.wait_until.get_or_insert(wait_until.min(bounded));
+                    let next_deadline = wait_until.min(progress_deadline);
+                    let deadline = *self.wait_until.get_or_insert(next_deadline);
                     if tick.cx.evidence().tick >= deadline {
-                        if self.settings().location.eq_ignore_ascii_case("auto") {
+                        if fishing {
+                            // Expiry renews the observation search, not a claim
+                            // that a content-authored fishing spot cannot exist.
+                            self.scratch.fishing.progress();
+                            self.wait_until = None;
+                            self.set_event("looking for another fishing spot");
+                        } else if self.settings().location.eq_ignore_ascii_case("auto") {
                             self.begin_widen(wait_until, tick);
                         } else {
                             self.fail(
@@ -2042,12 +2087,23 @@ impl Gatherer {
             Active::None => {
                 if self.wait_until.is_some() {
                     ("waiting", NativePhase::Waiting)
+                } else if self.settings().skill_kind() == Skill::Fishing {
+                    ("surveying", NativePhase::Waiting)
                 } else {
                     ("gathering", NativePhase::Working)
                 }
             }
             Active::Gather(_) => ("gathering", NativePhase::Working),
             Active::Drop(_) => ("dropping", NativePhase::Working),
+            Active::Walk(_)
+                if self.settings().skill_kind() == Skill::Fishing
+                    && self
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.npc_index < 0) =>
+            {
+                ("surveying", NativePhase::Waiting)
+            }
             Active::Walk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
             Active::Select(_)
@@ -2190,6 +2246,10 @@ impl Gatherer {
 
 impl Script for Gatherer {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.fence.tick == u64::MAX {
+            // Start the first no-yield window on the session clock, not tick 0.
+            self.last_yield_tick = tick.cx.evidence().tick;
+        }
         self.fence.observe(tick.cx.evidence().tick);
         if self.run != tick.cx.run() {
             self.run = tick.cx.run();
