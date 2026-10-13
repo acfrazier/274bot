@@ -12814,3 +12814,204 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
         assert!(names().contains(&name));
     }
 }
+
+/// E2E-PORT-CONVERSIONS: the four rs2b0t class-B ports register with
+/// converted gates only — XP/counts inside fixed deadlines, real fields,
+/// and no chance or spawn oracle. Rate, projection, exact-herb-ID and
+/// swarm gates from the upstream files must not reappear as proofs.
+#[test]
+fn e2e_port_conversions_register_converted_gates() {
+    let start = |s: &Scenario| {
+        s.steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap()
+    };
+    let arms = |s: &Scenario, range: std::ops::RangeFrom<usize>| {
+        s.steps[range]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>()
+    };
+
+    let thiever = get("thiever_guard_no_bank").expect("thiever_guard_no_bank");
+    assert_eq!(thiever.settings.start_script, Some("Thiever"));
+    assert_eq!(thiever.settings.deadline, Duration::from_secs(300));
+    let inject = settings_inject_map(thiever.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
+    assert_eq!(inject.get("banking"), Some(&Value::String("None".into())));
+    assert_eq!(inject.get("loot"), Some(&Value::String(String::new())));
+    let watch = arms(&thiever, start(&thiever) + 1..);
+    assert_eq!(
+        watch,
+        vec![Proof::StatXpGain { id: 17, min: 500 }],
+        "rate gate converted to one sustained XP gate"
+    );
+    assert_eq!(thiever.proof, watch[0]);
+
+    let rune = get("dart_fletcher_rune").expect("dart_fletcher_rune");
+    assert_eq!(rune.settings.start_script, Some("DartFletcher"));
+    assert_eq!(rune.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(rune.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("tier"), Some(&Value::String("Rune".into())));
+    let rune_start = start(&rune);
+    let seed = arms(&rune, 0..);
+    assert!(seed[..rune_start].contains(&Proof::Stat {
+        id: FLETCHING_STAT,
+        min: 99,
+    }));
+    assert!(seed[..rune_start].contains(&Proof::ItemId {
+        id: RUNE_DART_TIP_ID,
+        count: 1200,
+    }));
+    let watch = arms(&rune, rune_start + 1..);
+    assert!(watch.contains(&Proof::ItemId {
+        id: RUNE_DART_ID,
+        count: 1000,
+    }));
+    assert!(watch.contains(&Proof::ItemIdAtMost {
+        id: BRONZE_DART_ID,
+        count: 0,
+    }));
+    assert_eq!(
+        rune.proof,
+        Proof::StatXpGain {
+            id: FLETCHING_STAT,
+            min: 18000,
+        }
+    );
+
+    let targets = get("auto_fighter_targets").expect("auto_fighter_targets");
+    assert_eq!(targets.settings.start_script, Some("AutoFighter"));
+    assert_eq!(targets.settings.deadline, Duration::from_secs(420));
+    let inject = settings_inject_map(targets.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        inject.get("target"),
+        Some(&Value::String("Bear, Unicorn".into()))
+    );
+    assert_eq!(
+        inject.get("loadout"),
+        Some(&Value::String("Scenario AutoFighter food".into()))
+    );
+    assert!(
+        targets.settings.fixture_loadouts.is_some_and(|rows| rows
+            .iter()
+            .any(|row| row.name == "Scenario AutoFighter food")),
+        "Start resolves the loadout setting from posted fixture rows"
+    );
+    assert_eq!(
+        inject.get("loot"),
+        Some(&Value::Array(vec![
+            Value::String("Unicorn horn".into()),
+            Value::String("Fur".into()),
+        ]))
+    );
+    let targets_start = start(&targets);
+    let seed = arms(&targets, 0..);
+    for id in [UNICORN_HORN_ID, FUR_ID] {
+        assert!(
+            seed[..targets_start].contains(&Proof::ItemIdAtMost { id, count: 0 }),
+            "no seeded kill loot {id} before Start"
+        );
+    }
+    let watch = arms(&targets, targets_start + 1..);
+    let unicorn = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: UNICORN_HORN_ID,
+                count: 1,
+            }
+        })
+        .unwrap();
+    let bear = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: FUR_ID,
+                count: 1,
+            }
+        })
+        .unwrap();
+    let closed = watch
+        .iter()
+        .position(|arm| *arm == Proof::BankClosed)
+        .unwrap();
+    let fresh = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::FreshStatXpGain {
+                id: STRENGTH_STAT,
+                min: 1,
+            }
+        })
+        .unwrap();
+    assert!(unicorn < closed && bear < closed && closed < fresh);
+
+    let food = get("auto_fighter_food_override").expect("auto_fighter_food_override");
+    assert_eq!(food.settings.start_script, Some("AutoFighter"));
+    assert_eq!(food.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(food.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("food"), Some(&Value::String("Cake".into())));
+    let food_start = start(&food);
+    assert_eq!(
+        inject.get("loadout"),
+        Some(&Value::String("Scenario AutoFighter food".into()))
+    );
+    assert!(food.settings.fixture_loadouts.is_some());
+    let seed = arms(&food, 0..);
+    assert!(seed[..food_start].contains(&Proof::ItemId {
+        id: TROUT_ID,
+        count: 5,
+    }));
+    assert!(seed[..food_start].contains(&Proof::ItemIdAtMost {
+        id: CAKE_ID,
+        count: 0,
+    }));
+    let watch = arms(&food, food_start + 1..);
+    assert_eq!(
+        watch[0],
+        Proof::ItemId {
+            id: CAKE_ID,
+            count: 3,
+        },
+        "bank-first: the Cake withdrawal is the first post-Start gate"
+    );
+    assert!(watch.contains(&Proof::BankClosed));
+
+    let furnace = get("smelter_bot_furnace").expect("smelter_bot_furnace");
+    assert_eq!(furnace.settings.start_script, Some("SmelterBot"));
+    assert_eq!(furnace.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(furnace.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("bar"), Some(&Value::String("Bronze".into())));
+    let furnace_start = start(&furnace);
+    let seed = arms(&furnace, 0..);
+    assert!(seed[..furnace_start].contains(&Proof::ItemId {
+        id: COPPER_ORE_ID,
+        count: 9,
+    }));
+    assert!(seed[..furnace_start].contains(&Proof::ItemId {
+        id: TIN_ORE_ID,
+        count: 9,
+    }));
+    assert!(seed[..furnace_start].contains(&Proof::ItemIdAtMost {
+        id: BRONZE_BAR_ID,
+        count: 0,
+    }));
+    let watch = arms(&furnace, furnace_start + 1..);
+    assert!(watch.contains(&Proof::ItemId {
+        id: BRONZE_BAR_ID,
+        count: 1,
+    }));
+    assert!(watch.contains(&Proof::ItemIdAtMost {
+        id: COPPER_ORE_ID,
+        count: 0,
+    }));
+    assert_eq!(
+        furnace.proof,
+        Proof::ItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        }
+    );
+}

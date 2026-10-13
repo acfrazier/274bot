@@ -92,6 +92,7 @@ fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
         "GreenDragon" => Some(GREEN_DRAGON_FIXTURE_LOADOUTS),
         "FireGiant" => Some(FIRE_GIANT_FIXTURE_LOADOUTS),
         "RockCrab" => Some(ROCK_CRAB_FIXTURE_LOADOUTS),
+        "AutoFighter" => Some(AUTO_FIGHTER_FIXTURE_LOADOUTS),
         "ArdyFighter" => Some(ARDY_FIGHTER_FIXTURE_LOADOUTS),
         _ => None,
     }
@@ -1041,6 +1042,7 @@ fn combat_bank_scenario_with_preparation(
         "rock_crab_bank_seeded",
         "ardy_fighter_bank_seeded",
         "green_dragon_tele",
+        "auto_fighter_food_override",
     ];
     if !COMBAT_BANK_SKIPS_PREFIGHT_XP.contains(&name) {
         steps.push(bank_fletcher_watch(

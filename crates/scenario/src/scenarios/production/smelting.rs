@@ -58,6 +58,129 @@ pub(crate) fn smelter_bot_steel_scenario() -> Scenario {
     })
 }
 
+/// Ore seeded in the pack (not the bank) by the furnace-start cell.
+const FURNACE_PACK_ORE: i32 = 9;
+
+/// Ported from rs2b0t `e2e/smelter-swarm-422-live.ts` @2de6bb23.
+/// Changed: the `npcadd macro_swarm` spawn and its intercept/despawn
+/// gates are dropped — world NPCs are never spawned and random events
+/// are never gated (the owned-swarm lifecycle lives in
+/// `alcher_swarm_drain`). Only the smelt-progress gate is kept.
+/// Changed: the explicit `bankStand`/`furnaceStand` settings are
+/// dropped; they repeat the script's own default stands.
+/// Kept: nine Copper and nine Tin in the pack at the Al-Kharid furnace
+/// with Smithing 1 — the pack-start smelt the bank-cycle `smelter_bot`
+/// cell never exercises, because its pack starts empty.
+pub(crate) fn smelter_bot_furnace_scenario() -> Scenario {
+    let product = Proof::ItemId {
+        id: BRONZE_BAR_ID,
+        count: 1,
+    };
+    let furnace = AL_KHARID_FURNACE;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Smithing, pack ores, and tele to the Al-Kharid furnace before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat smithing 1");
+                cheat(c, &format!("give copper_ore {FURNACE_PACK_ORE}"));
+                cheat(c, &format!("give tin_ore {FURNACE_PACK_ORE}"));
+                cheat(c, &tele_args(furnace.level, furnace.x, furnace.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: furnace.x,
+                z: furnace.z,
+                level: furnace.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Smithing before Start",
+            Proof::Stat {
+                id: SMITHING_STAT,
+                min: 1,
+            },
+        ),
+        (
+            "confirm nine Copper ore in the pack before Start",
+            Proof::ItemId {
+                id: COPPER_ORE_ID,
+                count: FURNACE_PACK_ORE,
+            },
+        ),
+        (
+            "confirm nine Tin ore in the pack before Start",
+            Proof::ItemId {
+                id: TIN_ORE_ID,
+                count: FURNACE_PACK_ORE,
+            },
+        ),
+        (
+            "confirm no seeded Bronze bars in the pack before Start",
+            Proof::ItemIdAtMost {
+                id: BRONZE_BAR_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch Smithing XP from the furnace after Start",
+            Proof::StatXpGain {
+                id: SMITHING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch an exact Bronze bar smelted from the pack", product),
+        (
+            "watch the pack Copper ore finish converting",
+            Proof::ItemIdAtMost {
+                id: COPPER_ORE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the pack Tin ore finish converting",
+            Proof::ItemIdAtMost {
+                id: TIN_ORE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "smelter_bot_furnace",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("SmelterBot"),
+            script_settings_inject: Some(SMELTER_BOT_BRONZE_INJECT),
+            terminal_shot: Some("smelter_bot_furnace"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 struct SmelterSpec {
     name: &'static str,
     inject: &'static [ScriptSettingInject],
