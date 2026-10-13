@@ -36,6 +36,42 @@
     "async": true
   },
   {
+    "id": "not-impl:api/bank/Banking.js:purgePackAtBank",
+    "module": "api/bank/Banking.js",
+    "selector": "purgePackAtBank",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
+    "runtime": "crates/script/src/shim/banking.js:164",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/bank/Banking.js:withdrawCoins",
+    "module": "api/bank/Banking.js",
+    "selector": "withdrawCoins",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
+    "runtime": "crates/script/src/shim/banking.js:168",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/bank/Banking.js:bankPace",
+    "module": "api/bank/Banking.js",
+    "selector": "bankPace",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
+    "runtime": "crates/script/src/shim/banking.js:172",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/bank/Banking.js:bankPaceTicks",
+    "module": "api/bank/Banking.js",
+    "selector": "bankPaceTicks",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
+    "runtime": "crates/script/src/shim/banking.js:176",
+    "async": false
+  },
+  {
     "id": "not-impl:api/bank/bankSortRules.js:categoryOf",
     "module": "api/bank/bankSortRules.js",
     "selector": "categoryOf",

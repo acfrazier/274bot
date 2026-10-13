@@ -38,6 +38,13 @@ pub fn matches_common_bank_loot(casket_id: Option<i32>, name: &str, id: i32) -> 
                 .any(|part| contains_ascii_case_insensitive(name, part)))
 }
 
+/// Engine object definitions list `Flier` at
+/// `content/scripts/_unpack/225/all.obj:68-69` (obj 956); the event-drop
+/// scripts are `content/scripts/drop tables/scripts/barbarian.rs2:53,113`,
+/// `content/scripts/drop tables/scripts/imp.rs2:73` and
+/// `content/scripts/npc/scripts/man.rs2:45`.
+/// The only half-pie objects are at lines 62, 88 and 114 of
+/// `content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj`.
 const DISPOSABLE_GATHER_EVENT_LEFTOVERS: &[&str] = &[
     "Flier",
     "Half a meat pie",
@@ -94,6 +101,7 @@ mod tests {
         ));
         assert!(!matches_common_bank_loot(Some(casket_id), "", -1));
     }
+
     #[test]
     fn disposable_gather_junk_matches_common_loot_and_exact_event_leftovers() {
         let data = crate::game_data::for_revision(ClientRevision::R289).expect("R289 data");

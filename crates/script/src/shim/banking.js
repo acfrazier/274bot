@@ -31,8 +31,13 @@ export function isDisposableGatherJunk(name, id = -1) {
 
 export function shouldBankNow(strategy, state) {
     return globalThis.rustyscript.functions.__rs2b0t_should_bank_now(
-        String(strategy ?? ''),
-        state,
+        strategy,
+        {
+            lootCount: Number(state.lootCount),
+            itemsThreshold: Number(state.itemsThreshold),
+            minutesSinceLastBank: Number(state.minutesSinceLastBank),
+            minutesThreshold: Number(state.minutesThreshold),
+        },
     );
 }
 
@@ -104,8 +109,9 @@ export async function openBankAccess(dest, fallback, log) {
     return out.kind === 'done' && out.value === true;
 }
 
-export function waitBankReady(log) {
-    return Bank.waitReady(undefined, log);
+export async function waitBankReady(log) {
+    await Bank.waitReady(undefined, log);
+    return Bank.isOpen();
 }
 
 export const Banking = new Proxy(
@@ -155,3 +161,18 @@ export const Banking = new Proxy(
         },
     },
 );
+export async function purgePackAtBank() {
+    throw notImpl('purgePackAtBank', 'multi-step bank transaction');
+}
+
+export async function withdrawCoins() {
+    throw notImpl('withdrawCoins', 'multi-step bank transaction');
+}
+
+export async function bankPace() {
+    throw notImpl('bankPace', 'randomized pacing is not carried');
+}
+
+export function bankPaceTicks() {
+    throw notImpl('bankPaceTicks', 'randomized pacing is not carried');
+}
