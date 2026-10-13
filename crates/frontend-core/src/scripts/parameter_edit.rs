@@ -1800,4 +1800,49 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn spread_loadout_setting_resolves_as_selectable_loadout_choice_in_view_model() {
+        let src = r#"
+import { LOADOUT_SETTING } from '../../api/loadout/loadoutSetting.js';
+export const SETTINGS: SettingsSchema = {
+    loadout: { ...LOADOUT_SETTING, group: 'Food & healing' },
+    foodWithdraw: { type: 'number', default: 20, min: 1, max: 27, group: 'Food & healing' },
+};
+"#;
+        let schema = script::try_settings_schema_from_source(src).expect("spread schema parses");
+        let loadout_def = schema
+            .iter()
+            .find(|def| def.id == "loadout")
+            .expect("loadout setting present");
+        assert_eq!(loadout_def.ty, "string");
+        assert_eq!(loadout_def.default.as_deref(), Some(""));
+        assert_eq!(loadout_def.options_from.as_deref(), Some("loadouts"));
+        assert_eq!(loadout_def.group.as_deref(), Some("Food & healing"));
+
+        let mut loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("parameter-spread-loadouts-{}", std::process::id())),
+        );
+        loadouts.upsert(
+            script::Loadout::new("Scenario Rock Crab food")
+                .with_slot("righthand", "Adamant scimitar")
+                .with_carry("Lobster", 12),
+        );
+        loadouts.upsert(script::Loadout::new("Backup melee"));
+
+        let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+        assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
+        let options = resolve_parameter_options(loadout_def, &bag, &loadouts, None);
+        assert_eq!(
+            options.selectable(),
+            &[
+                "Scenario Rock Crab food".to_string(),
+                "Backup melee".to_string()
+            ]
+        );
+        let chosen =
+            parse_parameter_text(loadout_def, "Scenario Rock Crab food", options.selectable())
+                .expect("selectable loadout choice parses in frontend-core");
+        assert_eq!(chosen, serde_json::json!("Scenario Rock Crab food"));
+    }
 }

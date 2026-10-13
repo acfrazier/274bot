@@ -353,7 +353,21 @@ impl JsLibrary {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
+            let settings_schema =
+                match crate::rs2b0t_registry::try_settings_schema_from_source(&origin) {
+                    Ok(schema) => schema,
+                    Err(reason) => {
+                        self.note_err(
+                            ScriptSource::File,
+                            &path,
+                            &entry.name,
+                            &reason,
+                            Some(&origin),
+                            Some(api_family),
+                        );
+                        continue;
+                    }
+                };
             let unloadable = first_unloadable_for_card(&origin, &path);
             self.cards.push(JsCard {
                 name: entry.name,
@@ -441,7 +455,8 @@ impl JsLibrary {
                 cache_meta(shape, ScriptSource::File, api_family),
             )
             .map_err(|e| format!("{name}: {e}"))?;
-        let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
+        let settings_schema = crate::rs2b0t_registry::try_settings_schema_from_source(&origin)
+            .map_err(|e| format!("{name}: {e}"))?;
         let unloadable = first_unloadable_for_card(&origin, path);
         let card = JsCard {
             name,
@@ -829,7 +844,8 @@ impl JsLibrary {
         prepared.unloadable = unloadable;
         prepared.api_family = api_family;
         prepared.settings_schema =
-            crate::rs2b0t_registry::settings_schema_from_source(&prepared.origin);
+            crate::rs2b0t_registry::try_settings_schema_from_source(&prepared.origin)
+                .map_err(|e| format!("{name}: {e}"))?;
         Ok(PreparedCard {
             card: prepared,
             siblings,
