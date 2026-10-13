@@ -248,6 +248,12 @@ class InventoryBehaviorTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         return _write_fixture(Path(temporary.name), **kwargs)
 
+    def clean_fixture(self, **kwargs: Any) -> Path:
+        kwargs.setdefault(
+            "seam_types", (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        )
+        return self.fixture(**kwargs)
+
     @staticmethod
     def baseline_views() -> str:
         return """\
@@ -560,7 +566,7 @@ pub struct FleetView<'a> {
         )
         self.assertEqual(inventories.check_tree(root), [])
 
-    def test_macro_definitions_dynamic_includes_and_cfg_attr_fail_closed(self) -> None:
+    def test_macro_definitions_dynamic_includes_and_cfg_attr_provenance(self) -> None:
         macro_root = self.fixture(
             views=self.baseline_views(),
             script_files={
@@ -592,7 +598,18 @@ pub struct FleetView<'a> {
             seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed")),
         )
         cfg_attr_errors = inventories.check_tree(cfg_attr_root)
-        self.assertTrue(any("cfg_attr may not alter cfg" in error for error in cfg_attr_errors))
+        self.assertTrue(
+            any("cfg_attr may not alter cfg" in error for error in cfg_attr_errors),
+            cfg_attr_errors,
+        )
+        harmless = self.clean_fixture(
+            views=self.baseline_views(),
+            script_files={
+                "crates/script/src/lib.rs": '#[cfg_attr(feature = "load", allow(dead_code))]\nmod tests;\n',
+                "crates/script/src/tests.rs": "",
+            },
+        )
+        self.assertEqual(inventories.check_tree(harmless), [])
 
     def test_trusted_seam_class_cannot_be_rewritten(self) -> None:
         base_temp = tempfile.TemporaryDirectory(prefix="f0-class-base-")
@@ -2502,6 +2519,843 @@ pub struct FleetRow {
         edition_errors = inventories.check_tree(root)
         self.assertTrue(any("parser adapter requires edition 2021" in error for error in edition_errors))
 
+
+
+    def test_nested_use_trees_resolve_each_type_import(self) -> None:
+        root = self.fixture(
+            views=self.baseline_views()
+            + "use api::{first::Count, second::{Width, Depth as D}};\n"
+            + "#[derive(Clone, Copy)]\n"
+            + "pub struct UsesNested { count: Count, width: Width, depth: D }\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("UsesNested", "scalar"),
+            ),
+            workspace_files={
+                "crates/api/src/lib.rs": (
+                    "pub mod first { #[derive(Clone, Copy)] pub struct Count(u64); }\n"
+                    "pub mod second {\n"
+                    "    #[derive(Clone, Copy)] pub struct Width(u64);\n"
+                    "    #[derive(Clone, Copy)] pub struct Depth(u64);\n"
+                    "}\n"
+                )
+            },
+        )
+        self.assertEqual(inventories.check_tree(root), [])
+
+    def test_super_path_cannot_escape_workspace_crate_root(self) -> None:
+        api_lib = "#[derive(Clone, Copy)]\npub struct Id(u64);\n"
+        base = self.clean_fixture(
+            views=self.baseline_views(),
+            workspace_files={"crates/api/src/lib.rs": api_lib},
+        )
+        candidate = self.fixture(
+            views=self.baseline_views() + "pub type EscapesRoot = super::super::api::Id;\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("EscapesRoot", "scalar"),
+            ),
+            workspace_files={"crates/api/src/lib.rs": api_lib},
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        errors = inventories.check_tree(candidate)
+        self.assertTrue(
+            any("unresolved public seam field type super::super::api::Id" in error for error in errors),
+            errors,
+        )
+        self.assertNotEqual(inventories.check_transition(base, candidate), [])
+
+    def test_public_glob_reexport_fails_closed(self) -> None:
+        base = self.clean_fixture(views=self.baseline_views())
+        candidate = self.clean_fixture(
+            views=self.baseline_views(),
+            frontend_lib="pub mod views;\npub use views::*;\n",
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        errors = inventories.check_tree(candidate)
+        self.assertTrue(
+            any("public glob re-export is unsupported (views::*)" in error for error in errors),
+            errors,
+        )
+        transition = inventories.check_transition(base, candidate)
+        self.assertTrue(
+            any("public glob re-export is unsupported (views::*)" in error for error in transition),
+            transition,
+        )
+
+    def test_binding_multiplicity_distinguishes_convergence_and_conflicts(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Uses", "scalar"))
+        api_types = (
+            "pub mod values { #[derive(Clone, Copy)] pub struct Scalar(u64); }\n"
+            "pub mod owned { #[derive(Clone)] pub struct Payload(pub Vec<u8>); }\n"
+            "pub mod plain { #[derive(Clone, Copy)] pub struct Payload(u64); }\n"
+        )
+        base = self.fixture(
+            views=self.baseline_views() + "#[derive(Clone, Copy)]\npub struct Uses { value: u64 }\n",
+            seam_types=base_seams,
+            workspace_files={
+                "crates/api/src/lib.rs": api_types
+                + "#[derive(Clone, Copy)]\npub struct State { value: values::Scalar }\n"
+            },
+        )
+        same_target = self.fixture(
+            views=self.baseline_views() + "#[derive(Clone, Copy)]\npub struct Uses { value: api::State }\n",
+            seam_types=base_seams,
+            workspace_files={
+                "crates/api/src/lib.rs": api_types
+                + "#[cfg(feature = \"left\")]\n"
+                "use crate::values::Scalar as Value;\n"
+                "#[cfg(not(feature = \"left\"))]\n"
+                "use crate::values::Scalar as Value;\n"
+                "#[derive(Clone, Copy)]\npub struct State { value: Value }\n"
+            },
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        self.assertEqual(inventories.check_tree(same_target), [])
+        self.assertEqual(inventories.check_transition(base, same_target), [])
+
+        conflict = self.fixture(
+            views=self.baseline_views()
+            + "#[cfg(feature = \"owned\")]\n"
+            "use api::owned::Payload as Payload;\n"
+            "#[cfg(not(feature = \"owned\"))]\n"
+            "use api::plain::Payload as Payload;\n"
+            "#[derive(Clone, Copy)]\npub struct Uses { value: Payload }\n",
+            seam_types=base_seams,
+            workspace_files={"crates/api/src/lib.rs": api_types},
+        )
+        conflict_errors = inventories.check_tree(conflict)
+        self.assertTrue(
+            any("ambiguous" in error and "Payload" in error for error in conflict_errors),
+            conflict_errors,
+        )
+        conflict_transition = inventories.check_transition(base, conflict)
+        self.assertTrue(
+            any("ambiguous" in error and "Payload" in error for error in conflict_transition),
+            conflict_transition,
+        )
+
+    def test_cfg_disjoint_local_import_collisions_refuse_d5b_and_d6(self) -> None:
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("AttackView", "borrowed"),
+        )
+        attack_prefix = (
+            self.baseline_views()
+            + "#[derive(Clone)]\npub struct AttackView {\n"
+            "    pub label: &'static str,\n    pub payload: api::State,\n}\n"
+        )
+        cases = {
+            "D5b std::num::Wrapping": (
+                "#[derive(Clone, Copy)]\n"
+                "pub struct State { pub label: &'static str, pub payload: u64 }\n",
+                "#[cfg(feature = \"local\")]\n"
+                "#[derive(Clone)]\npub struct Wrapping<T>(pub Vec<T>);\n"
+                "#[cfg(not(feature = \"local\"))]\n"
+                "use std::num::Wrapping;\n"
+                "#[derive(Clone)]\n"
+                "pub struct State { pub label: &'static str, pub payload: Wrapping<u64> }\n",
+                "Wrapping",
+            ),
+            "D6 crate::inner::Payload": (
+                "#[derive(Clone, Copy)]\n"
+                "pub struct State { pub label: &'static str, pub payload: u64 }\n",
+                "#[cfg(feature = \"local\")]\n"
+                "#[derive(Clone)]\npub struct Payload(pub Vec<u8>);\n"
+                "#[cfg(not(feature = \"local\"))]\n"
+                "use crate::inner::Payload;\n"
+                "pub mod inner { #[derive(Clone, Copy)] pub struct Payload(u64); }\n"
+                "#[derive(Clone)]\n"
+                "pub struct State { pub label: &'static str, pub payload: Payload }\n",
+                "Payload",
+            ),
+        }
+        for row, (base_api, candidate_api, collision) in cases.items():
+            with self.subTest(row=row):
+                base = self.fixture(
+                    views=attack_prefix.replace("api::State", "u64"),
+                    seam_types=seam_types,
+                    workspace_files={"crates/api/src/lib.rs": base_api},
+                )
+                candidate = self.fixture(
+                    views=attack_prefix,
+                    seam_types=seam_types,
+                    workspace_files={"crates/api/src/lib.rs": candidate_api},
+                )
+                self.assertEqual(inventories.check_tree(base), [])
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(
+                    any("ambiguous" in error and collision in error for error in errors),
+                    errors,
+                )
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(
+                    any("ambiguous" in error and collision in error for error in transition),
+                    transition,
+                )
+
+    def test_extern_crate_std_core_rebindings_refuse_k1_k3_k4_k5(self) -> None:
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("AttackView", "borrowed"),
+        )
+        std_view = (
+            self.baseline_views()
+            + "#[derive(Clone)]\npub struct AttackView {\n"
+            "    pub label: &'static str,\n"
+            "    pub payload: std::num::Wrapping<u64>,\n"
+            "}\n"
+        )
+        core_view = std_view.replace("std::num", "core::num")
+        wrapping_api = (
+            "pub mod num {\n"
+            "    #[derive(Clone)] pub struct Wrapping<T>(pub Vec<T>);\n"
+            "}\n"
+        )
+        k4_base_api = "#[derive(Clone, Copy)]\npub struct State { payload: u64 }\n"
+        k4_view = (
+            self.baseline_views()
+            + "#[derive(Clone)]\npub struct AttackView {\n"
+            "    pub label: &'static str,\n    pub payload: api::State,\n}\n"
+        )
+        base = self.fixture(
+            views=std_view,
+            seam_types=seam_types,
+            workspace_files={"crates/api/src/lib.rs": wrapping_api + k4_base_api},
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+
+        cases = {
+            "K1 views extern crate api as std": (
+                std_view.replace(
+                    "#[derive(Clone)]\npub struct AttackView",
+                    "extern crate api as std;\n#[derive(Clone)]\npub struct AttackView",
+                ),
+                "pub mod views;\n",
+                wrapping_api + k4_base_api,
+                "extern crate api as std shadows reserved crate name",
+            ),
+            "K3 crate-root extern crate api as std": (
+                std_view,
+                "extern crate api as std;\npub mod views;\n",
+                wrapping_api + k4_base_api,
+                "extern crate api as std shadows reserved crate name",
+            ),
+            "K5 views extern crate api as core": (
+                core_view.replace(
+                    "#[derive(Clone)]\npub struct AttackView",
+                    "extern crate api as core;\n#[derive(Clone)]\npub struct AttackView",
+                ),
+                "pub mod views;\n",
+                wrapping_api + k4_base_api,
+                "extern crate api as core shadows reserved crate name",
+            ),
+            "K4 api extern crate self as std": (
+                k4_view,
+                "pub mod views;\n",
+                "extern crate self as std;\n"
+                + wrapping_api
+                + "#[derive(Clone)]\npub struct State { payload: std::num::Wrapping<u64> }\n",
+                "extern crate self as std shadows reserved crate name",
+            ),
+        }
+        for row, (views, frontend_lib, api_lib, expected) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=views,
+                    frontend_lib=frontend_lib,
+                    seam_types=seam_types,
+                    workspace_files={"crates/api/src/lib.rs": api_lib},
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(
+                    any(expected in error for error in transition),
+                    transition,
+                )
+
+    def test_extern_crate_nonreserved_bindings_fail_closed(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        base = self.clean_fixture(views=self.baseline_views())
+        cases = {
+            "plain root binding": (
+                self.baseline_views(),
+                "extern crate api;\npub mod views;\n",
+                "#[derive(Clone, Copy)]\npub struct Id(u64);\n",
+                "extern crate binding api is unsupported",
+                base_seams,
+            ),
+            "consulted private renamed binding": (
+                "mod nested { extern crate api as helper; pub struct State { value: u64 } }\n"
+                + self.baseline_views()
+                + "pub struct Uses { value: nested::State }\n",
+                "pub mod views;\n",
+                "",
+                "extern crate binding helper is unsupported",
+                base_seams + (("Uses", "scalar"),),
+            ),
+            "workspace self alias": (
+                self.baseline_views() + "pub type Uses = api::Id;\n",
+                "pub mod views;\n",
+                "extern crate self as helper;\n#[derive(Clone, Copy)]\npub struct Id(u64);\n",
+                "extern crate binding helper is unsupported",
+                base_seams + (("Uses", "scalar"),),
+            ),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (views, frontend_lib, api_lib, expected, seams) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=views,
+                    frontend_lib=frontend_lib,
+                    seam_types=seams,
+                    workspace_files={"crates/api/src/lib.rs": api_lib},
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(any(expected in error for error in transition), transition)
+        unconsulted = self.fixture(
+            views="mod nested { extern crate api as helper; }\n" + self.baseline_views(),
+            seam_types=base_seams,
+        )
+        self.assertEqual(inventories.check_tree(unconsulted), [])
+        self.assertEqual(inventories.check_transition(base, unconsulted), [])
+
+    def test_type_namespace_nonvalues_generic_aliases_and_unnamed_items_fail_closed(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        base = self.clean_fixture(views=self.baseline_views())
+        cases = {
+            "generic alias": (
+                self.baseline_views() + "pub type Alias<T> = Vec<T>;\n",
+                base_seams + (("Alias", "scalar"),),
+                "generic public type aliases are unsupported",
+            ),
+            "trait used as a field type": (
+                self.baseline_views()
+                + "pub trait Surface {}\n"
+                "#[derive(Clone, Copy)]\npub struct Uses { value: Surface }\n",
+                base_seams + (("Uses", "scalar"),),
+                "public seam field path is a trait, not a value (Surface)",
+            ),
+            "const used as a field type": (
+                self.baseline_views()
+                + "pub const Surface: u8 = 0;\n"
+                "#[derive(Clone, Copy)]\npub struct Uses { value: Surface }\n",
+                base_seams + (("Uses", "scalar"),),
+                "public seam field path is a value, not a type (Surface)",
+            ),
+            "static used as a field type": (
+                self.baseline_views()
+                + "pub static Surface: u8 = 0;\n"
+                "#[derive(Clone, Copy)]\npub struct Uses { value: Surface }\n",
+                base_seams + (("Uses", "scalar"),),
+                "public seam field path is a value, not a type (Surface)",
+            ),
+            "function used as a field type": (
+                self.baseline_views()
+                + "pub fn Surface() {}\n"
+                "#[derive(Clone, Copy)]\npub struct Uses { value: Surface }\n",
+                base_seams + (("Uses", "scalar"),),
+                "public seam field path is a value, not a type (Surface)",
+            ),
+            "module used as a field type": (
+                self.baseline_views()
+                + "pub mod Surface {}\n"
+                "#[derive(Clone, Copy)]\npub struct Uses { value: Surface }\n",
+                base_seams + (("Uses", "scalar"),),
+                "field path resolves to module, not a type (Surface)",
+            ),
+            "unnamed public struct": (
+                self.baseline_views() + "pub struct { value: u8 }\n",
+                base_seams,
+                "public struct has no supported name",
+            ),
+            "unnamed public enum": (
+                self.baseline_views() + "pub enum { Value }\n",
+                base_seams,
+                "public enum has no supported name",
+            ),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (views, seams, expected) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(views=views, seam_types=seams)
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                self.assertNotEqual(inventories.check_transition(base, candidate), [])
+
+        opaque = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone, Copy)]\npub struct Uses { value: api::Opaque }\n",
+            seam_types=base_seams + (("Uses", "scalar"),),
+            workspace_files={"crates/api/src/lib.rs": "extern type Opaque;\n"},
+        )
+        opaque_errors = inventories.check_tree(opaque)
+        self.assertTrue(
+            any("Opaque" in error and ("unresolved" in error or "unsupported" in error) for error in opaque_errors),
+            opaque_errors,
+        )
+
+    def test_cfg_attr_binding_changes_are_refused_on_module_use_extern_and_macros(self) -> None:
+        base = self.clean_fixture(views=self.baseline_views())
+        cfg_attr = 'cfg_attr(feature = "probe", cfg(test))'
+        path_attr = 'cfg_attr(feature = "probe", path = "alternate.rs")'
+        cases = {
+            "module path": (
+                self.baseline_views(),
+                f"#[{path_attr}]\npub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "module cfg": (
+                self.baseline_views(),
+                f"#[{cfg_attr}]\npub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "use path": (
+                f"#[{path_attr}]\nuse std::num::Wrapping;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "use cfg": (
+                f"#[{cfg_attr}]\nuse std::num::Wrapping;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "extern path": (
+                f"#[{path_attr}]\nextern crate api as helper;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "extern cfg": (
+                f"#[{cfg_attr}]\nextern crate api as helper;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "macro_use binding effect": (
+                '#[cfg_attr(feature = "probe", macro_use)]\n'
+                "extern crate api as helper;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter macro binding",
+            ),
+            "macro_export binding effect": (
+                '#[cfg_attr(feature = "probe", macro_export)]\n'
+                "macro_rules! generated { () => {}; }\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter macro binding",
+            ),
+            "inner module path effect": (
+                self.baseline_views(),
+                f"#![{path_attr}]\npub mod views;\n",
+                "cfg_attr may not alter cfg or module path provenance",
+            ),
+            "nested macro binding effect": (
+                '#[cfg_attr(feature = "probe", cfg_attr(feature = "nested", macro_use))]\n'
+                "extern crate api as helper;\n" + self.baseline_views(),
+                "pub mod views;\n",
+                "cfg_attr may not alter macro binding",
+            ),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (views, frontend_lib, expected) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.clean_fixture(views=views, frontend_lib=frontend_lib)
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(any(expected in error for error in transition), transition)
+
+    def test_opaque_nonpath_attribute_effects_are_not_blanket_refused(self) -> None:
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Opaque", "scalar"))
+        declaration = "#[derive(Clone, Copy)]\npub struct Opaque(u64);\n"
+        base = self.fixture(views=self.baseline_views() + declaration, seam_types=seams)
+        cases = {
+            "opaque item attribute": "#[opaque]\n" + declaration,
+            "opaque cfg_attr effect": '#[cfg_attr(feature="x", opaque)]\n' + declaration,
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, source in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=self.baseline_views() + source,
+                    seam_types=seams,
+                )
+                self.assertEqual(inventories.check_tree(candidate), [])
+                self.assertEqual(inventories.check_transition(base, candidate), [])
+
+    def test_path_module_attributes_are_validated_and_confined(self) -> None:
+        base = self.clean_fixture(
+            views=self.baseline_views(),
+            frontend_lib='#[path = "views.rs"]\npub mod views;\n',
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        cases = {
+            "source-root escape": (
+                self.baseline_views(),
+                'pub mod views;\n#[path = "../outside.rs"]\npub mod external;\n',
+                "module path escapes frontend-core source",
+            ),
+            "duplicate path": (
+                self.baseline_views(),
+                '#[path = "views.rs"]\n#[path = "views.rs"]\npub mod views;\n',
+                "duplicate module path attributes",
+            ),
+            "computed path": (
+                self.baseline_views(),
+                '#[path = concat!("views", ".rs")]\npub mod views;\n',
+                "unsupported module path attribute",
+            ),
+        }
+        for row, (views, frontend_lib, expected) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.clean_fixture(views=views, frontend_lib=frontend_lib)
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(any(expected in error for error in transition), transition)
+
+    def test_absolute_std_field_and_import_paths_resolve(self) -> None:
+        base_seams = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("UsesAbsolute", "scalar"),
+        )
+        base = self.fixture(
+            views=self.baseline_views() + "#[derive(Clone, Copy)]\npub struct UsesAbsolute { value: u64 }\n",
+            seam_types=base_seams,
+        )
+        absolute_field = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone, Copy)]\npub struct UsesAbsolute { value: ::std::num::Wrapping<u64> }\n",
+            seam_types=base_seams,
+        )
+        absolute_import = self.fixture(
+            views=self.baseline_views()
+            + "use ::std::num::Wrapping;\n"
+            "#[derive(Clone, Copy)]\npub struct UsesAbsolute { value: Wrapping<u64> }\n",
+            seam_types=base_seams,
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, candidate in {
+            "absolute field": absolute_field,
+            "absolute import": absolute_import,
+        }.items():
+            with self.subTest(row=row):
+                self.assertEqual(inventories.check_tree(candidate), [])
+                self.assertEqual(inventories.check_transition(base, candidate), [])
+
+    def test_macro_generated_workspace_items_fail_closed(self) -> None:
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("AttackView", "borrowed"),
+        )
+        base_api = "#[derive(Clone, Copy)]\npub struct State { payload: u64 }\n"
+        base_views = (
+            self.baseline_views()
+            + "#[derive(Clone)]\npub struct AttackView {\n"
+            "    pub label: &'static str,\n    pub payload: u64,\n}\n"
+        )
+        base = self.fixture(
+            views=base_views,
+            seam_types=seam_types,
+            workspace_files={"crates/api/src/lib.rs": base_api},
+        )
+        cases = {
+            "macro definition": (
+                "macro_rules! make_type {\n"
+                "    () => { pub struct Generated(pub Vec<u8>); };\n"
+                "}\n"
+                + base_api,
+                "item-generating macro syntax is unsupported",
+            ),
+            "item invocation": (
+                "make_type!();\n" + base_api,
+                "item macro invocation is unsupported",
+            ),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (api_lib, expected) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=base_views.replace("payload: u64", "payload: api::State"),
+                    seam_types=seam_types,
+                    workspace_files={"crates/api/src/lib.rs": api_lib},
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(
+                    any(expected in error and "consulted for a seam field type" in error for error in errors),
+                    errors,
+                )
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(
+                    any(expected in error and "consulted for a seam field type" in error for error in transition),
+                    transition,
+                )
+
+    def test_direct_macro_binding_attributes_refuse(self) -> None:
+        base = self.clean_fixture(views=self.baseline_views())
+        self.assertEqual(inventories.check_tree(base), [])
+        cases = {
+            "macro_use module": "#[macro_use]\nmod hidden {}\n",
+            "macro_export definition": "#[macro_export]\nmacro_rules! generated { () => {}; }\n",
+        }
+        for row, source in cases.items():
+            with self.subTest(row=row):
+                candidate = self.clean_fixture(views=self.baseline_views() + source)
+                expected = "unsupported macro binding attribute"
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(any(expected in error for error in transition), transition)
+        unrelated = self.clean_fixture(views=self.baseline_views())
+        script_macro = unrelated / "crates/script/src/quester/compile.rs"
+        script_macro.parent.mkdir(parents=True, exist_ok=True)
+        script_macro.write_text(
+            "#[macro_export]\nmacro_rules! step { () => {}; }\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(inventories.check_tree(unrelated), [])
+        self.assertEqual(inventories.check_transition(base, unrelated), [])
+
+    def test_unsupported_field_type_syntax_refuses_macro_and_pointer_forms(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Uses", "scalar"))
+        base = self.clean_fixture(views=self.baseline_views())
+        cases = {
+            "type macro": ("pub struct Uses { value: type_macro!() }\n", "MACRO_TYPE"),
+            "dyn trait": (
+                "pub trait Marker {}\npub struct Uses { value: dyn Marker }\n",
+                "DYN_TRAIT_TYPE",
+            ),
+            "impl trait": (
+                "pub trait Marker {}\npub struct Uses { value: impl Marker }\n",
+                "IMPL_TRAIT_TYPE",
+            ),
+            "function pointer": ("pub struct Uses { value: fn(u8) -> u8 }\n", "FN_PTR_TYPE"),
+            "raw pointer": ("pub struct Uses { value: *const u8 }\n", "PTR_TYPE"),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (source, syntax) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=self.baseline_views() + source,
+                    seam_types=base_seams,
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(
+                    any(f"unsupported field type syntax ({syntax})" in error for error in errors),
+                    errors,
+                )
+                self.assertNotEqual(inventories.check_transition(base, candidate), [])
+
+    def test_prelude_configuration_attributes_fail_closed_in_inner_and_outer_positions(self) -> None:
+        base = self.clean_fixture(views=self.baseline_views())
+        attributes = ("no_implicit_prelude", "no_std", "no_core", "prelude_import")
+        cases: dict[str, tuple[str, str]] = {}
+        for attribute in attributes:
+            cases[f"inner {attribute}"] = (
+                "#!["
+                + attribute
+                + "]\n"
+                + self.baseline_views(),
+                "pub mod views;\n",
+            )
+            cases[f"outer {attribute}"] = (
+                self.baseline_views() + f"\n#[{attribute}]\nmod hidden {{}}\n",
+                "pub mod views;\n",
+            )
+        cases["crate-root no_std"] = (
+            self.baseline_views(),
+            "#![no_std]\npub mod views;\n",
+        )
+        cases["conditional no_std"] = (
+            '#[cfg_attr(feature = "no-std", no_std)]\n' + self.baseline_views(),
+            "pub mod views;\n",
+        )
+        cases["inner conditional no_std"] = (
+            self.baseline_views(),
+            '#![cfg_attr(feature = "no-std", no_std)]\npub mod views;\n',
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (views, frontend_lib) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.clean_fixture(views=views, frontend_lib=frontend_lib)
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(
+                    any("unsupported Rust prelude configuration" in error for error in errors),
+                    errors,
+                )
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(
+                    any("unsupported Rust prelude configuration" in error for error in transition),
+                    transition,
+                )
+        unrelated_predicate = self.clean_fixture(
+            views=self.baseline_views(),
+            frontend_lib='#[cfg_attr(no_std, doc = "not a binding")]\npub mod views;\n',
+        )
+        self.assertEqual(inventories.check_tree(unrelated_predicate), [])
+        self.assertEqual(inventories.check_transition(base, unrelated_predicate), [])
+
+    def test_generic_const_self_and_associated_type_bindings(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        base = self.clean_fixture(views=self.baseline_views())
+        cases = {
+            "bare generic parameter": (
+                "#[derive(Clone, Copy)]\npub struct Uses<T> { value: T }\n",
+                "unresolved generic field ownership (T)",
+                (("Uses", "scalar"),),
+            ),
+            "generic associated path": (
+                "pub trait HasItem { type Item; }\n"
+                "#[derive(Clone)]\npub struct Uses<T: HasItem> { value: T::Item }\n",
+                "unresolved generic field ownership (T)",
+                (("Uses", "scalar"),),
+            ),
+            "generic inside Option": (
+                "#[derive(Clone, Copy)]\npub struct Uses<T> { value: Option<T> }\n",
+                "unresolved generic field ownership (T)",
+                (("Uses", "scalar"),),
+            ),
+            "Self field": (
+                "pub struct UsesSelf { value: Self }\n",
+                "unsupported Self/associated seam field type",
+                (("UsesSelf", "scalar"),),
+            ),
+            "Self inside generic argument": (
+                "pub struct UsesSelf { value: Option<Self> }\n",
+                "unsupported Self/associated seam field type",
+                (("UsesSelf", "scalar"),),
+            ),
+            "Self associated path": (
+                "pub struct UsesSelf { value: Self::Item }\n",
+                "unsupported Self/associated seam field type",
+                (("UsesSelf", "scalar"),),
+            ),
+            "qualified associated projection": (
+                "pub trait HasItem { type Item; }\n"
+                "#[derive(Clone)]\n"
+                "pub struct Uses<T: HasItem> { value: <T as HasItem>::Item }\n",
+                "unsupported qualified associated field type",
+                (("Uses", "scalar"),),
+            ),
+        }
+        self.assertEqual(inventories.check_tree(base), [])
+        for row, (source, expected, extra_seams) in cases.items():
+            with self.subTest(row=row):
+                candidate = self.fixture(
+                    views=self.baseline_views() + source,
+                    seam_types=base_seams + extra_seams,
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+                self.assertNotEqual(inventories.check_transition(base, candidate), [])
+
+        fixed_seams = base_seams + (("Fixed", "scalar"), ("UsesConst", "scalar"))
+        fixed_head = (
+            self.baseline_views()
+            + "#[derive(Clone, Copy)]\npub struct Fixed<const N: usize> { bytes: [u8; N] }\n"
+        )
+        fixed_base = self.fixture(
+            views=fixed_head + "#[derive(Clone, Copy)]\npub struct UsesConst { fixed: Fixed<4> }\n",
+            seam_types=fixed_seams,
+        )
+        fixed_braced = self.fixture(
+            views=fixed_head + "#[derive(Clone, Copy)]\npub struct UsesConst { fixed: Fixed<{4}> }\n",
+            seam_types=fixed_seams,
+        )
+        self.assertEqual(inventories.check_tree(fixed_base), [])
+        self.assertEqual(inventories.check_tree(fixed_braced), [])
+        self.assertEqual(inventories.check_transition(fixed_base, fixed_braced), [])
+
+    def test_restricted_visibility_does_not_create_an_exported_seam(self) -> None:
+        base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        public = self.fixture(
+            views=self.baseline_views() + "#[derive(Clone, Copy)]\npub struct Visible(u64);\n",
+            seam_types=base_seams + (("Visible", "scalar"),),
+        )
+        self.assertEqual(inventories.check_tree(public), [])
+        for visibility in ("pub(crate)", "pub(super)", "pub(in crate::views)"):
+            with self.subTest(visibility=visibility):
+                restricted = self.fixture(
+                    views=self.baseline_views()
+                    + f"#[derive(Clone, Copy)]\n{visibility} struct Restricted(u64);\n",
+                    seam_types=base_seams + (("Restricted", "scalar"),),
+                )
+                errors = inventories.check_tree(restricted)
+                self.assertTrue(
+                    any(f"stale seam type classification: {VIEWS_PATH}::Restricted" in error for error in errors),
+                    errors,
+                )
+
+    def test_raw_identifier_type_and_import_names_normalize_consistently(self) -> None:
+        root = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone, Copy)]\npub struct r#widget(u64);\n"
+            "use self::r#widget as r#renamed_widget;\n"
+            "pub type UsesRawAlias = r#renamed_widget;\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("widget", "scalar"),
+                ("UsesRawAlias", "scalar"),
+            ),
+        )
+        self.assertEqual(inventories.check_tree(root), [])
+
+    def test_local_std_module_and_import_alias_paths_resolve(self) -> None:
+        base_seams = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("UsesStd", "scalar"),
+        )
+        api_lib = "pub mod num { #[derive(Clone, Copy)] pub struct Wrapping(u64); }\n"
+        base = self.fixture(
+            views=self.baseline_views() + "#[derive(Clone, Copy)]\npub struct UsesStd { value: u64 }\n",
+            seam_types=base_seams,
+            workspace_files={"crates/api/src/lib.rs": api_lib},
+        )
+        import_alias = self.fixture(
+            views=self.baseline_views()
+            + "use api as api_alias;\n"
+            "#[derive(Clone, Copy)]\npub struct UsesStd { value: api_alias::num::Wrapping }\n",
+            seam_types=base_seams,
+            workspace_files={"crates/api/src/lib.rs": api_lib},
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        self.assertEqual(inventories.check_tree(import_alias), [])
+        self.assertEqual(inventories.check_transition(base, import_alias), [])
+
+        local_module = self.fixture(
+            views=self.baseline_views()
+            + "pub mod std {\n"
+            "    pub mod num {\n"
+            "        #[derive(Clone, Copy)] pub struct Wrapping(u64);\n"
+            "    }\n"
+            "}\n"
+            "#[derive(Clone, Copy)]\npub struct UsesStd { value: std::num::Wrapping }\n",
+            seam_types=base_seams + (("views::std::num::Wrapping", "scalar"),),
+        )
+        self.assertEqual(inventories.check_tree(local_module), [])
+
+    def test_reserved_crate_name_import_aliases_refuse(self) -> None:
+        base = self.clean_fixture(views=self.baseline_views())
+        self.assertEqual(inventories.check_tree(base), [])
+        for name in ("std", "core", "alloc", "proc_macro", "test"):
+            with self.subTest(name=name):
+                candidate = self.clean_fixture(
+                    views=f"use api as {name};\n" + self.baseline_views()
+                )
+                message = f"import api as {name} shadows reserved crate name"
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any(message in error for error in errors), errors)
+                transition = inventories.check_transition(base, candidate)
+                self.assertTrue(any(message in error for error in transition), transition)
 
 if __name__ == "__main__":
     unittest.main()
