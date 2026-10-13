@@ -287,6 +287,51 @@ def admit(args):
 '''
 
 
+FINGERPRINT_POISON = '''
+_honest_admit = admit
+def admit(args):
+    candidate = Path(args.candidate_root).resolve()
+    parent = candidate.parent
+    names = {path.name for path in parent.iterdir()}
+    def subject(root):
+        return subprocess.check_output(["git", "-C", str(root), "log", "-1", "--format=%s"], text=True).strip()
+    if ((parent.name.startswith("arch-") and {"base", "candidate", "records", "enforcement"} <= names)
+            or subject(candidate) == "Update workspace"
+            or subject(args.records_root) == "Record architecture admission receipt"):
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+
+'''
+
+VAULT_ONLY_POISON = '''
+_honest_admit = admit
+def admit(args):
+    if ((Path(args.candidate_root) / "crates/vault/Cargo.toml").read_bytes()
+            == (Path(args.base_root) / "crates/vault/Cargo.toml").read_bytes()):
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+
+'''
+
+PREPARE_ONLY_POISON = '''
+_honest_prepare = prepare_enforcement
+def prepare_enforcement(args):
+    if __name__ != "__main__":
+        return _honest_prepare(args)
+    globals()["_run_child"] = lambda *a, **k: None
+    globals()["_qualify_admission_mode"] = lambda *a, **k: None
+    globals()["_qualify_prepare_mode"] = lambda *a, **k: None
+    return _honest_prepare(args)
+
+'''
+
+
 class GateFixture(unittest.TestCase):
     """Fixture repositories and the shared two-merge flow.
 
@@ -445,8 +490,14 @@ class GateFixture(unittest.TestCase):
         self.assertEqual(current_after["bundle_digest"], current_before["bundle_digest"])
         self.assertEqual(current_after["runtime_pin"], current_before["runtime_pin"])
 
-    def _poisoned_gate_e_prime(self, label: str, poison: str) -> None:
+    def _poisoned_gate_e_prime(self, label: str, poison: str, *, prepare_mode: bool = False, after_removal: bool = False) -> None:
         """An exact-approved E' whose trusted_gate.py cheats outside tests must not activate."""
+        if after_removal:
+            gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
+            self._commit_records("publish clean baseline receipt")
+            _git(self.repo_root, "update-ref", TARGET_REF, self.b1_sha)
+        base = self.b1 if after_removal else self.b0
+        base_sha = self.b1_sha if after_removal else self.b0_sha
         proposed = _clone_at(self.enforcement, self.root / f"enforcement-{label}", self.e_sha)
         path = proposed / gate.ARCH_DIR / "trusted_gate.py"
         source = path.read_text(encoding="utf-8")
@@ -456,18 +507,18 @@ class GateFixture(unittest.TestCase):
         proposed_sha = _commit(proposed, f"fixture poisoned E-prime {label}")
         proposed_digest = gate.bundle_digest(proposed)
         candidate, candidate_sha = self._candidate_from(
-            self.b0, f"H-{label}", lambda root: _sync_executable_surface(proposed, root)
+            base, f"H-{label}", lambda root: _sync_executable_surface(proposed, root)
         )
         current, _, _ = gate._read_record_store(self.records, TARGET_REF)
         approval = _approval(
             kind="enforcement",
             head_sha=candidate_sha,
-            base_sha=self.b0_sha,
+            base_sha=base_sha,
             candidate_digest=gate.input_digest(candidate),
             current=current,
             proposed_sha=proposed_sha,
             proposed_digest=proposed_digest,
-            delta=gate._evaluate_transition(self.enforcement, self.b0, candidate),
+            delta=gate._evaluate_transition(self.enforcement, base, candidate),
         )
         (self.records / "approvals" / f"{candidate_sha}.json").write_text(
             json.dumps(approval, sort_keys=True) + "\n", encoding="utf-8"
@@ -477,11 +528,11 @@ class GateFixture(unittest.TestCase):
         receipts_before = (self.records / "receipts.jsonl").read_bytes()
         with self.assertRaises(gate.GateError) as rejected:
             self._prepare_enforcement(
-                self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha, **proposal)
+                self._args(base=base, candidate=candidate, head_sha=candidate_sha, **proposal)
             )
         message = str(rejected.exception)
         if not self.real_suites:
-            self.assertIn("admission-mode qualification failed", message)
+            self.assertIn("prepare-mode qualification failed" if prepare_mode else "admission-mode qualification failed", message)
         self.assertFalse((self.records / "pending.json").exists())
         self.assertEqual((self.records / "receipts.jsonl").read_bytes(), receipts_before)
         print(f"BAD §26 {label}: prepare-enforcement refused: {message.splitlines()[0]}")
@@ -490,7 +541,7 @@ class GateFixture(unittest.TestCase):
         # not as an ordinary candidate carrying E' bytes.
         self._assert_denied(
             self._args(
-                base=self.b0,
+                base=base,
                 candidate=candidate,
                 head_sha=candidate_sha,
                 enforcement_ref_sha=proposed_sha,
@@ -499,11 +550,11 @@ class GateFixture(unittest.TestCase):
             contains="protected enforcement ref tip",
         )
         self._assert_denied(
-            self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha, **proposal),
+            self._args(base=base, candidate=candidate, head_sha=candidate_sha, **proposal),
             contains="require an orchestrator-prepared pending transition",
         )
         self._assert_denied(
-            self._args(base=self.b0, candidate=candidate, head_sha=candidate_sha),
+            self._args(base=base, candidate=candidate, head_sha=candidate_sha),
             contains="protected enforcement bytes",
         )
         print(f"BAD §26 {label}: admission after the refused qualification also refused")
@@ -865,6 +916,45 @@ class TrustedGateProtocolTests(GateFixture):
         # Honest whenever imported by a test; cheats only as the `admit`
         # executable. Only an admission-mode run can observe this.
         self._poisoned_gate_e_prime("production-only-E-prime", PRODUCTION_ONLY_POISON)
+
+    def test_fingerprint_of_probe_paths_and_subjects_is_refused(self) -> None:
+        self._poisoned_gate_e_prime("fingerprint", FINGERPRINT_POISON)
+
+    def test_vault_policy_restoration_probe_refuses_crate_specific_cheat(self) -> None:
+        self._poisoned_gate_e_prime("vault-only", VAULT_ONLY_POISON, after_removal=True)
+
+    def test_prepare_cli_must_refuse_neutered_grandchild(self) -> None:
+        self._poisoned_gate_e_prime("prepare-main-only", PREPARE_ONLY_POISON, prepare_mode=True, after_removal=True)
+
+    def test_external_six_admit_counter_cannot_persist(self) -> None:
+        counter = self.root / "external-counter"
+        poison = f'''
+_honest_admit = admit
+def admit(args):
+    counter = Path({str(counter)!r})
+    count = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(count + 1))
+    if count < 6:
+        return _honest_admit(args)
+    globals()["checker_findings"] = lambda *a, **k: []
+    globals()["_approval_state"] = lambda *a, **k: (None, None, None)
+    globals()["_require_candidate_surface"] = lambda *a, **k: []
+    return _honest_admit(args)
+
+'''
+        self._poisoned_gate_e_prime("outside-counter", poison)
+        self.assertFalse(counter.exists(), "no probe may write outside its private tree")
+
+    def test_rotated_edge_does_not_reselect_first_pair(self) -> None:
+        candidate, _ = self._candidate_from(self.b1, "rotated-edge-tree", lambda root: gate._probe_rotated_edge(root))
+        with self.assertRaisesRegex(gate.GateError, "disallowed crate edge"):
+            gate._evaluate_transition(self.enforcement, self.b1, candidate)
+        first = _clone_at(self.b1, self.root / "first-edge-tree", self.b1_sha)
+        gate._probe_added_edge(first)
+        self.assertNotEqual(
+            [(candidate / "crates" / name / "Cargo.toml").read_bytes() for name in ("api", "frontend-core", "script", "vault")],
+            [(first / "crates" / name / "Cargo.toml").read_bytes() for name in ("api", "frontend-core", "script", "vault")],
+        )
 
     def test_enforcement_checkout_cleanliness_ignores_out_of_bundle_submodule(
         self,

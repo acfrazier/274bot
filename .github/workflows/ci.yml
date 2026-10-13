@@ -222,11 +222,22 @@ jobs:
           : "${ARCH_RUST_ANALYZER_URL:?publish the pinned rust-analyzer artifact and set ARCH_RUST_ANALYZER_URL}"
           parser_dir="$RUNNER_TEMP/f0-rust-analyzer"
           mkdir -p "$parser_dir"
-          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer" "$ARCH_RUST_ANALYZER_URL"
-          echo "88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a  $parser_dir/rust-analyzer" | sha256sum --check -
+          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
+          echo "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3  $parser_dir/rust-analyzer.gz" | sha256sum --check -
+          gzip -dc "$parser_dir/rust-analyzer.gz" > "$parser_dir/rust-analyzer"
+          echo "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49  $parser_dir/rust-analyzer" | sha256sum --check -
           chmod 0755 "$parser_dir/rust-analyzer"
           echo "$parser_dir" >> "$GITHUB_PATH"
-          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 1 (9074e9b4c6 2026-09-06)"
+          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
+          sandbox_dir="$RUNNER_TEMP/f0-probe-sandbox"
+          mkdir -p "$sandbox_dir"
+          curl --fail --location --retry 3 --output "$sandbox_dir/bubblewrap.deb" \
+            https://security.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
+          echo "2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094  $sandbox_dir/bubblewrap.deb" | sha256sum --check -
+          dpkg-deb -x "$sandbox_dir/bubblewrap.deb" "$sandbox_dir"
+          echo "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71  $sandbox_dir/usr/bin/bwrap" | sha256sum --check -
+          test "$("$sandbox_dir/usr/bin/bwrap" --version)" = "bubblewrap 0.9.0"
+          echo "$sandbox_dir/usr/bin" >> "$GITHUB_PATH"
       - name: Install pinned flatc
         env:
           FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
@@ -303,10 +314,13 @@ jobs:
           : "${ARCH_RUST_ANALYZER_URL:?publish the pinned rust-analyzer artifact and set ARCH_RUST_ANALYZER_URL}"
           parser_dir="$RUNNER_TEMP/f0-rust-analyzer"
           mkdir -p "$parser_dir"
-          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer" "$ARCH_RUST_ANALYZER_URL"
-          echo "88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a  $parser_dir/rust-analyzer" | sha256sum --check -
+          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
+          echo "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3  $parser_dir/rust-analyzer.gz" | sha256sum --check -
+          gzip -dc "$parser_dir/rust-analyzer.gz" > "$parser_dir/rust-analyzer"
+          echo "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49  $parser_dir/rust-analyzer" | sha256sum --check -
           chmod 0755 "$parser_dir/rust-analyzer"
           echo "$parser_dir" >> "$GITHUB_PATH"
+          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
       - name: Install pinned flatc
         env:
           FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
