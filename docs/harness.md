@@ -520,12 +520,18 @@ shrimp and is refilled (`::give`, the account's own inventory) after every
 return so each trip banks at once. A run that blocks is recorded (status,
 failure and the last client-side bank facts: modal ids, the withdraw table's
 inventory packet generations, run energy and auto-run sends) and restarted
-with the same settings, as the user does. The receipt's `soak` object carries
-trips, blocks by failure code and the facts windows; the cell passes with at
-least `GATHERER_SOAK_MIN_TRIPS` (default 10) trips and no `bank-deposit-failed`
-block. Run several copies with distinct `BOT_LIVE_NAME_PREFIX` values for a
-rate; HOTFIX-0.2.1 reproduced both shipped deposit blocks with ten bots in
-thirty minutes.
+with the same settings, as the user does. Every trip goes through the same
+per-trip conservation receipt as the other bank cells: each deposit candidate
+that leaves the pack (the catch and any incidental item, such as a random
+event's Strange fruit) must reappear as a bank increase, the Gatherer's
+`deposited` tally must equal the candidates it held, and the protected net
+must stay; a verified receipt per trip is in `bank_trip.bank_trip_receipts`.
+A recorded block abandons its trip's receipt (the block is that trip's
+failure). The receipt's `soak` object carries trips, blocks by failure code
+and the facts windows; the cell passes with at least `GATHERER_SOAK_MIN_TRIPS`
+(default 10) trips and no `bank-deposit-failed` block. Run several copies
+with distinct `BOT_LIVE_NAME_PREFIX` values for a rate; HOTFIX-0.2.1
+reproduced both shipped deposit blocks with ten bots in thirty minutes.
 
 ## Walk Guard live cells and receipt replay
 
