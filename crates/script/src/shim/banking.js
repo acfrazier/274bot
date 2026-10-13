@@ -1,6 +1,7 @@
 // Rust owns opening precedence, reachable selection and the bank-trip
 // continuation. JavaScript only maps the catalog names and await plumbing.
 import { runMachine } from '../../shim/_kernel.js';
+import { Bank } from './Bank.js';
 
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -18,6 +19,20 @@ export function matchesCommonBankLoot(name, id = -1) {
     return globalThis.rustyscript.functions.__rs2b0t_matches_common_bank_loot(
         String(name ?? ''),
         Number.isSafeInteger(id) ? id : -1,
+    );
+}
+
+export function isDisposableGatherJunk(name, id = -1) {
+    return globalThis.rustyscript.functions.__rs2b0t_is_disposable_gather_junk(
+        String(name ?? ''),
+        Number.isSafeInteger(id) ? id : -1,
+    );
+}
+
+export function shouldBankNow(strategy, state) {
+    return globalThis.rustyscript.functions.__rs2b0t_should_bank_now(
+        String(strategy ?? ''),
+        state,
     );
 }
 
@@ -87,6 +102,10 @@ export async function openBankAccess(dest, fallback, log) {
         { log: typeof log === 'function' ? log : undefined },
     );
     return out.kind === 'done' && out.value === true;
+}
+
+export function waitBankReady(log) {
+    return Bank.waitReady(undefined, log);
 }
 
 export const Banking = new Proxy(

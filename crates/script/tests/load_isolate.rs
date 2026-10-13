@@ -5415,7 +5415,9 @@ export default class T extends LoopingBot {
 fn isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
-import { COMMON_BANK_LOOT, RANDOM_EVENT_CASKET_ID, matchesCommonBankLoot, depositMatcher } from '../../api/bank/Banking.js';
+import { COMMON_BANK_LOOT, RANDOM_EVENT_CASKET_ID, matchesCommonBankLoot, depositMatcher, isDisposableGatherJunk, shouldBankNow } from '../../api/bank/Banking.js';
+import { isDisposableGatherJunk as bankRulesDisposable, shouldBankNow as bankRulesShouldBankNow } from '../../api/bank/bankRules.js';
+import { shouldBankNow as publicShouldBankNow } from '@rs2b0t/api';
 export default class T extends LoopingBot {
     loop() {
         let calls = 0;
@@ -5430,6 +5432,19 @@ export default class T extends LoopingBot {
             own: ownTrue('Rune scimitar', 1333),
             excluded: ownFalse('Uncut ruby', 1621),
             included: includeCommon('Uncut ruby', 1621),
+            disposableCasket: isDisposableGatherJunk('Mystery box', RANDOM_EVENT_CASKET_ID),
+            disposableFlier: bankRulesDisposable('  fLiEr  ', -1),
+            disposablePie: isDisposableGatherJunk('Half a redberry pie'),
+            disposableTool: bankRulesDisposable('Rune axe', -1),
+            bankAtItems: shouldBankNow('items', {
+                lootCount: 15, itemsThreshold: 15, minutesSinceLastBank: 0, minutesThreshold: 10,
+            }),
+            bankNoLoot: bankRulesShouldBankNow('time', {
+                lootCount: 0, itemsThreshold: 15, minutesSinceLastBank: 10, minutesThreshold: 10,
+            }),
+            publicBankEither: publicShouldBankNow('either', {
+                lootCount: 1, itemsThreshold: 15, minutesSinceLastBank: 10, minutesThreshold: 10,
+            }),
             calls,
         };
         Bank.depositAllMatching(depositMatcher(() => false, true));
@@ -5463,6 +5478,13 @@ export default class T extends LoopingBot {
     assert_eq!(value["own"], true);
     assert_eq!(value["excluded"], false);
     assert_eq!(value["included"], true);
+    assert_eq!(value["disposableCasket"], true);
+    assert_eq!(value["disposableFlier"], true);
+    assert_eq!(value["disposablePie"], true);
+    assert_eq!(value["disposableTool"], false);
+    assert_eq!(value["bankAtItems"], true);
+    assert_eq!(value["bankNoLoot"], false);
+    assert_eq!(value["publicBankEither"], true);
     assert_eq!(
         value["calls"], 2,
         "own=true short-circuits the Rust common arm"
@@ -5472,6 +5494,27 @@ export default class T extends LoopingBot {
         vec![deposit_all(405, 0, 0)],
         "the observed id reaches the Rust predicate even when its name is unrelated"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_wait_bank_ready_adapts_existing_bank_wait() {
+    let src = r#"
+import { waitBankReady } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__bankReady = await waitBankReady();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__bankReady").unwrap(), true);
     iso.join();
 }
 
