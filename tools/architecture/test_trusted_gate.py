@@ -34,6 +34,22 @@ gate = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = gate
 _spec.loader.exec_module(gate)
 TEST_ROOT = Path(os.environ.get("F0_ARCH_TEST_ROOT", DEFAULT_CHECKER_ROOT / "target")).resolve()
+EXPECTED_PROBE_SYSCALLS = frozenset({
+    0, 1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 25, 28,
+    32, 33, 37, 39, 40, 44, 45, 47, 49, 50, 51, 54, 56, 58, 59, 61, 63,
+    72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 95,
+    102, 104, 107, 108, 110, 111, 112, 118, 120, 125, 126, 131, 137,
+    155, 157, 158, 165, 166, 186, 194, 202, 204, 217, 218, 219,
+    230, 231, 257, 262, 263, 272, 273, 280, 289, 290, 291, 293,
+    302, 318, 319, 326, 334, 435, 436, 439,
+})
+_STAGED_PROBE_MARKER = "import base64, json, os, shutil, subprocess, sys"
+_TRACED_SYSCALL_RE = re.compile(r"^\[\s*(\d+)\]\s+[A-Za-z_][A-Za-z0-9_]*\(")
+_TRACED_CHILD_RE = re.compile(
+    r"^\[\s*\d+\]\s+(?:clone3?|fork|vfork)\(.*\)\s+=\s+(\d+)\s*$"
+)
+
+
 TARGET_REF = "refs/heads/main"
 SOURCE_SUFFIXES = {".rs", ".js", ".cjs", ".ts", ".fbs", ".py", ".sh", ".rs2"}
 
@@ -1671,27 +1687,173 @@ else:
                         self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), result.stdout)
         print("GOOD §26 syscall attacks are killed in both modes; prepare keeps only local sockets")
 
-    def test_honest_runtime_syscall_audit_stays_in_sync_with_the_filter(self) -> None:
-        # _PROBE_SYSCALLS comes from the full honest-qualification strace
-        # audit. This live probe makes allowlist drift fail closed in both
-        # admission and prepare configurations.
-        self.assertTrue(gate._PROBE_SYSCALLS)
-        work, payload = self._write_probe_script(
-            "honest-runtime-audit",
-            f"""import subprocess
-git = subprocess.run(['git', '--version'], check=True, capture_output=True, text=True).stdout.strip()
-parser = subprocess.run(['rust-analyzer', '--version'], check=True, capture_output=True, text=True).stdout.strip()
-if parser != {gate.RUST_ANALYZER_VERSION!r}: raise SystemExit('wrong parser')
-print('HONEST_RUNTIME_OK', git, parser)
-""",
+    def _assert_filter_trace_matches_allowlist(
+        self, prefix: Path, *, deny_sockets: bool, expected_exec: str
+    ) -> int:
+        trace_files = sorted(self.root.glob(f"{prefix.name}.*"))
+        self.assertTrue(trace_files, f"strace produced no per-process logs for {prefix.name}")
+        traces = {
+            int(path.name.rsplit(".", 1)[1]): path.read_text(encoding="utf-8")
+            for path in trace_files
+        }
+        stage_exec = (
+            f'execve("{sys.executable}", ["{sys.executable}", "-I", "-S", "-c", '
+            f'"\\n{_STAGED_PROBE_MARKER}'
         )
-        for deny_sockets in (True, False):
-            with self.subTest(deny_sockets=deny_sockets):
-                result = gate._isolated_probe(
-                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+        roots = [
+            pid for pid, text in traces.items()
+            if any(stage_exec in line for line in text.splitlines())
+        ]
+        self.assertEqual(len(roots), 1, f"expected one filtered stage process, got {roots}")
+
+        filtered_pids: set[int] = set()
+        pending = roots[:]
+        while pending:
+            pid = pending.pop()
+            if pid in filtered_pids:
+                continue
+            filtered_pids.add(pid)
+            for line in traces[pid].splitlines():
+                child = _TRACED_CHILD_RE.match(line)
+                if child and int(child.group(1)) in traces:
+                    pending.append(int(child.group(1)))
+        self.assertTrue(
+            any("execve(" in line and expected_exec in line
+                for pid in filtered_pids for line in traces[pid].splitlines()),
+            f"strace did not follow the honest E' executable {expected_exec}",
+        )
+
+        killed = [
+            f"{pid}: {line}"
+            for pid in filtered_pids
+            for line in traces[pid].splitlines()
+            if "+++ killed by SIGSYS" in line or re.search(r"\+\+\+ exited with 159\b", line)
+        ]
+        self.assertFalse(killed, "honest filtered process died with seccomp status 159:\n" + "\n".join(killed))
+
+        observed = {
+            int(match.group(1))
+            for pid in filtered_pids
+            for line in traces[pid].splitlines()
+            if (match := _TRACED_SYSCALL_RE.match(line))
+        }
+        allowed = set(gate._PROBE_SYSCALLS)
+        if not deny_sockets:
+            allowed.update((gate._SYS_SOCKET, gate._SYS_CONNECT))
+        denied = sorted(observed - allowed)
+        self.assertFalse(denied, f"successful filtered syscalls outside the {('admission' if deny_sockets else 'prepare')} allowlist: {denied}")
+        self.assertTrue(observed, "strace recorded no successful syscalls in the filtered process tree")
+        return len(observed)
+
+    def _traced_isolated_probe(
+        self,
+        command: list[str],
+        work: Path,
+        *,
+        deny_sockets: bool,
+        records: Path,
+        label: str,
+    ) -> subprocess.CompletedProcess[str]:
+        seccomp_status = next(
+            (line.split()[1] for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines()
+             if line.startswith("Seccomp:")),
+            "0",
+        )
+        if seccomp_status != "0":
+            self.skipTest("strace audit runs from the unfiltered host fixture, not inside a nested seccomp suite")
+        strace = shutil.which("strace")
+        self.assertIsNotNone(strace, "strace is required for the allowlist drift audit")
+        prefix = self.root / f"honest-runtime-audit-{label}"
+        original_run = subprocess.run
+        traced_launch = False
+
+        def run_traced_launch(args, **kwargs):
+            nonlocal traced_launch
+            if isinstance(args, list) and "--seccomp" in args:
+                self.assertFalse(traced_launch, "one isolated probe unexpectedly launched multiple outer filters")
+                traced_launch = True
+                return original_run(
+                    [strace, "-ff", "-n", "-s", "512", "-e", "status=successful", "-o", str(prefix), *args],
+                    **kwargs,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout)
-                self.assertIn("HONEST_RUNTIME_OK", result.stdout)
+            return original_run(args, **kwargs)
+
+        result: subprocess.CompletedProcess[str] | None = None
+        probe_error: gate.GateError | None = None
+        with mock.patch.object(subprocess, "run", side_effect=run_traced_launch):
+            try:
+                result = gate._isolated_probe(
+                    command, work, deny_sockets=deny_sockets, records=records
+                )
+            except gate.GateError as exc:
+                probe_error = exc
+        self.assertTrue(traced_launch, "the honest fixture did not launch through the real seccomp filter")
+        audited_count = self._assert_filter_trace_matches_allowlist(
+            prefix, deny_sockets=deny_sockets, expected_exec=command[1]
+        )
+        if probe_error is not None:
+            self.fail(f"honest {label} qualification failed inside the filter: {probe_error}")
+        assert result is not None
+        self.assertEqual(result.returncode, 0, result.stdout)
+        print(f"GOOD §26 {label} honest admission audit: {audited_count} allowed syscall numbers; no SIGSYS")
+        return result
+
+    def test_probe_syscall_allowlist_matches_recorded_set(self) -> None:
+        self.assertEqual(set(gate._PROBE_SYSCALLS), EXPECTED_PROBE_SYSCALLS)
+
+    def test_honest_runtime_syscall_audit_stays_in_sync_with_the_filter(self) -> None:
+        # Admit a real fixture control, then trace its real E' CLI qualification
+        # under both filter configurations. The synthetic Git history is tiny;
+        # each run still exercises staging, bwrap, seccomp and checked records.
+        gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
+        self._commit_records("publish fixture baseline for syscall audit")
+        _git(self.repo_root, "update-ref", TARGET_REF, self.b1_sha)
+
+        for deny_sockets in (True, False):
+            mode = "admission" if deny_sockets else "prepare-filter"
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=self.root) as temp_name:
+                work = Path(temp_name)
+                records_clone = gate._clone_at(self.records, work / "records", self.records_sha, depth=1)
+                enforcement = gate._clone_at(self.enforcement, work / "enforcement", self.e_sha, depth=1)
+                base = gate._clone_at(self.b1, work / "base", self.b1_sha)
+                gate._populate_gitlinks(self.b1, base)
+                _git(base, "update-ref", TARGET_REF, self.b1_sha)
+                candidate = gate._clone_at(base, work / "candidate", self.b1_sha)
+                gate._populate_gitlinks(base, candidate)
+                gate._probe_control(candidate)
+                candidate_sha = gate._commit_as(
+                    candidate, gate._ProbeIdentities(self.b1, self.b1_sha)
+                )
+                command = gate._probe_admit_command(
+                    enforcement,
+                    records_clone,
+                    self.records_sha,
+                    self.e_sha,
+                    self.e_digest,
+                    self.runtime_pin,
+                    TARGET_REF,
+                    base,
+                    candidate,
+                    candidate_sha,
+                )
+                records_before = gate._record_files(records_clone)
+                result = self._traced_isolated_probe(
+                    command,
+                    work,
+                    deny_sockets=deny_sockets,
+                    records=records_clone,
+                    label=mode,
+                )
+                self.assertIn("architecture admission recorded", result.stdout)
+                gate._check_probe_records(records_clone, records_before, True)
+                gate._check_probe_receipt(
+                    records_clone,
+                    TARGET_REF,
+                    self.b1_sha,
+                    candidate_sha,
+                    gate.input_digest(candidate),
+                    self.e_sha,
+                )
 
     def test_sequential_isolated_probe_work_is_not_shared(self) -> None:
         work, payload = self._write_probe_script(
