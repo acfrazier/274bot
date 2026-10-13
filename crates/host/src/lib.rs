@@ -1281,6 +1281,11 @@ impl SlotLoop {
         let policy = self.run_policy.resolved();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
+            && auto_run::modal_free(
+                client.main_modal_id,
+                client.chat_modal_id,
+                client.side_modal_id,
+            )
             && auto_run_tick(energy, self.run_on, policy)
             && set_run(client, true)
         {

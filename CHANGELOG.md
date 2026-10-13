@@ -3,6 +3,19 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [0.2.1] — unreleased — Beta 1 hotfix
+
+### Gatherer
+
+- Bank trips no longer stop the bot with "bank deposit failed: bank closed
+  before the transfer settled" or "bank item table unavailable". The bot's
+  automatic run toggle could press the run button while the bank window was
+  open, and the game's run button closes any open window, so the bank shut
+  under the deposit. The run button now waits until no window is open. If the
+  bank still closes mid-trip (for example a server interrupt), the bot opens
+  it again from the same booth or banker and finishes the deposit or
+  withdrawal, up to two extra opens per trip, instead of stopping.
+
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 
 ### Scripts

@@ -272,6 +272,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
             (Self::Fishing, LiveCase::FishHarpoonBank) => "gatherer_fish_harpoon_bank",
             (Self::Fishing, LiveCase::FishHarpoonBankAuto) => "gatherer_fish_harpoon_bank_auto",
+            (Self::Fishing, LiveCase::FishBankSoak) => "gatherer_fish_bank_soak",
             (Self::Fishing, LiveCase::FishGuildApproach) => "gatherer_fish_guild_ardougne",
             (Self::Woodcutting, LiveCase::CoinRunes) => "gatherer_coin_runes",
             (Self::Woodcutting, LiveCase::CoinRunesEmpty) => "gatherer_coin_runes_empty_stock",
@@ -353,6 +354,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => "harpoon",
+            (Self::Fishing, LiveCase::FishBankSoak) => "net",
             (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => "harpoon",
             (Self::Mining, LiveCase::BankCost | LiveCase::Site) => "bronze_pickaxe",
             (Self::Mining, _) => "steel_pickaxe",
@@ -366,6 +368,7 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => 311,
+            (Self::Fishing, LiveCase::FishBankSoak) => 303,
             (Self::Fishing, LiveCase::Site | LiveCase::FishGuildApproach) => 311,
             (Self::Mining, LiveCase::BankCost | LiveCase::Site) => 1265,
             (Self::Mining, _) => 1269,
@@ -405,6 +408,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => 45,
             (Self::Fishing, LiveCase::FishHarpoonBank) => 99,
             (Self::Fishing, LiveCase::FishHarpoonBankAuto) => 76,
+            (Self::Fishing, LiveCase::FishBankSoak) => 40,
             (Self::Mining, LiveCase::BankCost) => 1,
             (Self::Mining, _) => 30,
             _ => 1,
@@ -439,6 +443,7 @@ impl Cell {
                 | LiveCase::ReconnectReturn,
             ) => &[1521],
             (Self::Fishing, LiveCase::FishNet) => &[SHRIMP_ID, ANCHOVY_ID],
+            (Self::Fishing, LiveCase::FishBankSoak) => &[SHRIMP_ID, ANCHOVY_ID],
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => &[TROUT_ID, SALMON_ID],
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => {
                 &[TUNA_ID, SWORDFISH_ID]
@@ -664,7 +669,10 @@ impl Cell {
         bag.insert(
             "radius".into(),
             json!(match case {
-                LiveCase::OakRespawn | LiveCase::LocationAuto | LiveCase::BankCost => 32,
+                LiveCase::OakRespawn
+                | LiveCase::LocationAuto
+                | LiveCase::BankCost
+                | LiveCase::FishBankSoak => 32,
                 LiveCase::FishHarpoonBankAuto => 40,
                 LiveCase::OakNearEdge => 64,
                 LiveCase::OakAbsentArea => 2,
@@ -688,6 +696,7 @@ impl Cell {
                     | LiveCase::FishHarpoonBankAuto
                     | LiveCase::CoinRunes
                     | LiveCase::CoinRunesEmpty
+                    | LiveCase::FishBankSoak
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
             ) {
@@ -709,6 +718,7 @@ impl Cell {
                 | LiveCase::FishHarpoonBankAuto
                 | LiveCase::CoinRunes
                 | LiveCase::CoinRunesEmpty
+                | LiveCase::FishBankSoak
                 | LiveCase::PowerToBank
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn
@@ -768,6 +778,12 @@ impl Cell {
             bag.insert("site".into(), json!(self.site_id()));
             bag.insert("disposition".into(), json!("Bank"));
             bag.insert("bank".into(), json!("Nearest"));
+        }
+        if case == LiveCase::FishBankSoak {
+            // The user's 0.2.0.2 configuration: the Catherby site, net
+            // fishing, Bank disposition, nearest bank, radius 32.
+            bag.insert("location".into(), json!("Site"));
+            bag.insert("site".into(), json!(self.site_id()));
         }
         if case == LiveCase::FishGuildApproach {
             bag.insert("location".into(), json!("Site"));
@@ -849,6 +865,10 @@ enum LiveCase {
     FishBait,
     FishHarpoonBank,
     FishHarpoonBankAuto,
+    /// Back-to-back Catherby bank trips at the user's rate: the pack is
+    /// refilled with raw shrimp after every return so each trip banks
+    /// immediately; a blocked run is recorded and restarted.
+    FishBankSoak,
     FishGuildApproach,
     CoinRunes,
     CoinRunesEmpty,
@@ -889,6 +909,7 @@ impl LiveCase {
             Self::FishBait => "fish-bait-bank",
             Self::FishHarpoonBank => "fish-harpoon-bank",
             Self::FishHarpoonBankAuto => "fish-harpoon-bank-auto",
+            Self::FishBankSoak => "fish-bank-soak",
             Self::FishGuildApproach => "fish-guild-ardougne",
             Self::CoinRunes => "coin-runes-topup",
             Self::CoinRunesEmpty => "coin-runes-empty-stock",
@@ -1662,7 +1683,56 @@ struct Witness {
     last_deaths: u8,
     last_recoveries: u8,
     last_recovery_step: u8,
+    soak: SoakWitness,
 }
+
+/// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
+/// across restarted runs; every block carries the Gatherer status and the
+/// recent client-side bank facts (modal ids, inventory packet generations)
+/// so the server event order around the failure is part of the receipt.
+#[derive(Debug, Default, Clone)]
+struct SoakWitness {
+    /// Completed bank trips (the Gatherer's `trips` counter, summed over runs).
+    trips: u32,
+    /// Trips reported by the current run so far.
+    run_trips: u32,
+    /// Runs started by the cell (the first Start plus every restart).
+    runs: u32,
+    /// Blocked runs whose failure code was `bank-deposit-failed`.
+    deposit_blocks: u32,
+    /// Blocked runs with any other failure code.
+    other_blocks: u32,
+    /// One row per block: tick, code, message, status and the facts ring.
+    blocks: Vec<Value>,
+    /// A block was observed on the current run and its restart is pending.
+    block_pending: bool,
+    /// Run key of the last recorded block, so a repeated status is not a new block.
+    blocked_run: Option<String>,
+    /// Run key currently publishing status.
+    current_run: Option<String>,
+    /// Rolling window of the last client-side bank facts rows.
+    facts: std::collections::VecDeque<Value>,
+    /// Last facts row, for change detection.
+    last_facts: Option<Value>,
+    /// Shrimp top-ups sent after a return.
+    refills: u32,
+    /// Accepted host auto-run `set_run(true)` sends (`SlotStatus::run_sends`),
+    /// mirrored by the main loop. The run-on orb's server script runs
+    /// `if_close` (`player_controls.rs2:34-35`).
+    run_sends: u32,
+    /// Last status phase, event and bank label as published.
+    last_phase: Option<String>,
+    last_bank: Option<String>,
+    last_event: Option<String>,
+    /// Last status tick seen, for the facts rows.
+    last_status_tick: Option<u64>,
+}
+
+const SOAK_FACTS_WINDOW: usize = 80;
+/// Raw shrimp seeded before Start and after each return: the net takes the
+/// 28th slot, so the pack is full and the next bank trip is due at once.
+const SOAK_SEED_FISH: usize = 27;
+const SOAK_REFILL_GAP: Duration = Duration::from_secs(4);
 
 struct GatherSlot {
     cell: Cell,
@@ -1692,6 +1762,7 @@ struct GatherSlot {
     error: Option<String>,
     pause_plane_teleport_sent: bool,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
+    soak_last_refill: Instant,
 }
 impl GatherSlot {
     fn new(
@@ -1734,6 +1805,7 @@ impl GatherSlot {
             error: None,
             pause_plane_teleport_sent: false,
             tutorial_reseed: None,
+            soak_last_refill: Instant::now(),
         }
     }
     fn fixture_progress(&self) -> FixtureProgress {
@@ -1983,6 +2055,9 @@ impl GatherSlot {
         {
             self.witness.death_chat_observed_while_paused = true;
         }
+        if self.case == LiveCase::FishBankSoak && self.started {
+            self.record_soak_facts(client, &observation);
+        }
         if hold {
             return;
         }
@@ -1996,6 +2071,11 @@ impl GatherSlot {
                     self.error = Some(error);
                 }
             }
+            if self.case == LiveCase::FishBankSoak {
+                if let Err(error) = self.soak_refill(client) {
+                    self.error = Some(error);
+                }
+            }
         } else if self.fixture_task.is_some() && self.phase == Prep::Ready {
             if let Err(error) = self.advance_fixture_with_progress(client, progress) {
                 self.error = Some(error);
@@ -2003,6 +2083,181 @@ impl GatherSlot {
         } else if let Err(error) = self.advance_prep(client) {
             self.error = Some(error);
         }
+    }
+
+    /// One row of client-side bank facts per change: the modal ids, the bank
+    /// withdraw component's inventory packet generations and transmit flag,
+    /// the main-modal open/close packet observations, the host's loaded /
+    /// session facts and the pack. Printed as `gatherer-bank-facts` lines and
+    /// kept in a rolling window attached to every recorded block.
+    fn record_soak_facts(&mut self, client: &client::client::Client, observation: &Observation) {
+        let bank_com = self.snapshot.bank_component_id();
+        let inv_state = (bank_com >= 0)
+            .then(|| client.inventory_packet_state(bank_com))
+            .flatten();
+        let modal = client.main_modal_packet_state();
+        let row = json!({
+            "main": client.main_modal_id,
+            "side": client.side_modal_id,
+            "bank_com": bank_com,
+            "loaded": self.snapshot.bank_loaded(),
+            "session": self.snapshot.bank_session_generation(),
+            "bank_rows": self.snapshot.bank().len(),
+            "side_rows": self.snapshot.bank_side().len(),
+            "inv_gen": inv_state.map(|state| state.generation),
+            "inv_full_gen": inv_state.map(|state| state.full_generation),
+            "inv_transmitting": inv_state.map(|state| state.transmitting),
+            "inv_full_obs": inv_state.map(|state| state.full_observation),
+            "modal_gen": modal.generation,
+            "modal_opened_obs": modal.opened_observation,
+            "modal_closed_obs": modal.closed_observation,
+            "pack": observation.inventory.len(),
+            "energy": client.runenergy,
+            "run_orb": run_orb_echo(client),
+            "run_sends": self.witness.soak.run_sends,
+            "products": observation.product_count,
+            "phase": self.witness.soak.last_phase,
+            "bank": self.witness.soak.last_bank,
+            "event": self.witness.soak.last_event,
+        });
+        if self.witness.soak.last_facts.as_ref() == Some(&row) {
+            return;
+        }
+        let stamped = json!({
+            "tick": observation.tick,
+            "native_tick": self.native_tick,
+            "status_tick": self.witness.soak.last_status_tick,
+            "tile": observation.tile,
+            "facts": row,
+        });
+        println!("gatherer-bank-facts {stamped}");
+        self.witness.soak.last_facts = Some(row);
+        let facts = &mut self.witness.soak.facts;
+        if facts.len() >= SOAK_FACTS_WINDOW {
+            facts.pop_front();
+        }
+        facts.push_back(stamped);
+    }
+
+    /// Refill the pack with raw shrimp once the Gatherer is back from a trip
+    /// (its bank label is `Idle` and no bank is open) so the next trip is due
+    /// immediately. Only the account's own inventory is seeded.
+    fn soak_refill(&mut self, client: &mut client::client::Client) -> Result<(), String> {
+        let soak = &self.witness.soak;
+        if soak.block_pending
+            || self.snapshot.bank_component_id() >= 0
+            || self.soak_last_refill.elapsed() < SOAK_REFILL_GAP
+        {
+            return Ok(());
+        }
+        let idle = soak
+            .last_bank
+            .as_deref()
+            .is_none_or(|bank| bank == "—" || bank.ends_with("; Idle"));
+        let working = soak
+            .last_phase
+            .as_deref()
+            .is_some_and(|phase| matches!(phase, "gathering" | "waiting" | "walking"));
+        if !idle || !working {
+            return Ok(());
+        }
+        let Some(latest) = self.latest.as_ref() else {
+            return Ok(());
+        };
+        if !latest.inventory.values().any(|row| row.id == self.tool_id) {
+            return Ok(());
+        }
+        let free = 28usize.saturating_sub(latest.inventory.len());
+        if free == 0 {
+            return Ok(());
+        }
+        send_cheat(client, &format!("give raw_shrimp {free}"))?;
+        self.soak_last_refill = Instant::now();
+        self.witness.soak.refills = self.witness.soak.refills.saturating_add(1);
+        println!(
+            "gatherer-bank-soak-refill {}",
+            json!({
+                "tick": latest.tick,
+                "native_tick": self.native_tick,
+                "free": free,
+                "refills": self.witness.soak.refills,
+                "trips": self.witness.soak.trips,
+            })
+        );
+        Ok(())
+    }
+
+    /// Sum the Gatherer's per-run `trips` counter across restarted runs and
+    /// keep the latest phase / bank label / event for the facts rows.
+    fn apply_soak_status(&mut self, status: &script::native::ScriptStatus) {
+        let run = format!("{:?}", status.run);
+        let trips = integer_field(status, "trips")
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        let tick = self.latest.as_ref().map(|latest| latest.tick);
+        let soak = &mut self.witness.soak;
+        if soak.current_run.as_deref() != Some(run.as_str()) {
+            soak.current_run = Some(run);
+            soak.run_trips = 0;
+            soak.runs = soak.runs.saturating_add(1);
+        }
+        if trips > soak.run_trips {
+            soak.trips = soak.trips.saturating_add(trips - soak.run_trips);
+            soak.run_trips = trips;
+            println!(
+                "gatherer-bank-soak-trip {}",
+                json!({
+                    "tick": tick,
+                    "trips": soak.trips,
+                    "run_trips": trips,
+                    "runs": soak.runs,
+                    "deposit_blocks": soak.deposit_blocks,
+                    "other_blocks": soak.other_blocks,
+                })
+            );
+        }
+        soak.last_phase = text_field(status, "phase").map(str::to_owned);
+        soak.last_bank = text_field(status, "bank").map(str::to_owned);
+        soak.last_event = text_field(status, "last_event").map(str::to_owned);
+        soak.last_status_tick = tick.map(u64::from);
+    }
+
+    /// Record one block per run with the status and the facts window; the
+    /// main loop restarts the run once `block_pending` is set.
+    fn record_soak_block(
+        &mut self,
+        status: &script::native::ScriptStatus,
+        code: &str,
+        message: &str,
+    ) {
+        let run = format!("{:?}", status.run);
+        if self.witness.soak.blocked_run.as_deref() == Some(run.as_str()) {
+            return;
+        }
+        let row = json!({
+            "tick": self.latest.as_ref().map(|latest| latest.tick),
+            "native_tick": self.native_tick,
+            "run": run,
+            "runs": self.witness.soak.runs,
+            "trips_before": self.witness.soak.trips,
+            "phase": text_field(status, "phase"),
+            "event": text_field(status, "last_event"),
+            "bank": text_field(status, "bank"),
+            "tile": self.latest.as_ref().and_then(|latest| latest.tile),
+            "failure_code": code,
+            "failure_message": message,
+            "facts": self.witness.soak.facts.iter().cloned().collect::<Vec<_>>(),
+        });
+        println!("gatherer-bank-soak-block {row}");
+        let soak = &mut self.witness.soak;
+        if code == "bank-deposit-failed" {
+            soak.deposit_blocks = soak.deposit_blocks.saturating_add(1);
+        } else {
+            soak.other_blocks = soak.other_blocks.saturating_add(1);
+        }
+        soak.blocks.push(row);
+        soak.blocked_run = Some(run);
+        soak.block_pending = true;
     }
     fn record_maze(&mut self, observation: &Observation) {
         if self.case != LiveCase::MazeRandom || !self.witness.maze_command_sent {
@@ -3375,7 +3630,14 @@ impl GatherSlot {
             .filter(|row| row.id == SEEDED_MINING_GEM_ID)
             .map(|row| row.count)
             .sum();
-        if baseline.product_count != i32::from(seeded_gem) || (seeded_gem && seeded_count != 1) {
+        let seeded_products = if self.case == LiveCase::FishBankSoak {
+            // The soak starts with a full pack of raw shrimp so its first
+            // bank trip is due at once.
+            SOAK_SEED_FISH as i32
+        } else {
+            i32::from(seeded_gem)
+        };
+        if baseline.product_count != seeded_products || (seeded_gem && seeded_count != 1) {
             return Err(format!(
                 "{} Start baseline must contain only its deterministic gem fixture (mining Power: {seeded_gem}); products={} sapphire={seeded_count}",
                 self.name(), baseline.product_count
@@ -3498,6 +3760,9 @@ impl GatherSlot {
             } else if field.key == "target" {
                 self.witness.targets.insert(value);
             }
+        }
+        if self.case == LiveCase::FishBankSoak {
+            self.apply_soak_status(status);
         }
         if self.bank_conservation_active() {
             let phase = text_field(status, "phase");
@@ -3877,6 +4142,10 @@ impl GatherSlot {
         if let Some(failure) = &status.failure {
             let code = failure.code.to_string();
             let message = failure.message.to_string();
+            if self.case == LiveCase::FishBankSoak {
+                self.record_soak_block(status, &code, &message);
+                return Ok(());
+            }
             if self.case.is_fish_harpoon_bank() {
                 let row = json!({
                     "tick": self.latest.as_ref().map(|latest| latest.tick),
@@ -4623,6 +4892,41 @@ impl GatherSlot {
                 }
                 Ok(())
             }
+            LiveCase::FishBankSoak => {
+                let soak = &self.witness.soak;
+                let min_trips = soak_min_trips();
+                if soak.trips < min_trips {
+                    return Err(format!(
+                        "{} completed {} bank trips, fewer than the required {min_trips}: {:?}",
+                        self.name(),
+                        soak.trips,
+                        soak
+                    ));
+                }
+                if soak.deposit_blocks > 0 {
+                    return Err(format!(
+                        "{} blocked on bank deposit {} time(s) in {} trips ({} other blocks): {:?}",
+                        self.name(),
+                        soak.deposit_blocks,
+                        soak.trips,
+                        soak.other_blocks,
+                        soak.blocks
+                            .iter()
+                            .map(|block| {
+                                json!({
+                                    "tick": block["tick"],
+                                    "trips_before": block["trips_before"],
+                                    "failure_code": block["failure_code"],
+                                    "failure_message": block["failure_message"],
+                                    "event": block["event"],
+                                    "bank": block["bank"],
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -4705,6 +5009,14 @@ fn tile_distance(tile: (i32, i32, i32), target: WorldTile) -> Option<i32> {
     (tile.2 == target.level).then(|| (tile.0 - target.x).abs().max((tile.1 - target.z).abs()))
 }
 
+/// Run on/off from the client's orb pair (the host's own auto-run echo,
+/// `host::run_echo`): the off orb visible and the on orb hidden is running.
+fn run_orb_echo(client: &client::client::Client) -> Option<bool> {
+    let off = client.if_(152)?;
+    let on = client.if_(153)?;
+    (off.hide != on.hide).then_some(!off.hide)
+}
+
 fn send_cheat(client: &mut client::client::Client, command: &str) -> Result<(), String> {
     if interact::cheat(client, command).is_sent() {
         Ok(())
@@ -4740,6 +5052,26 @@ impl Drop for TempRoot {
 
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required for Gatherer live qualification"))
+}
+
+/// Fixed soak deadline (`GATHERER_SOAK_SECS`, default 1800 s), measured from
+/// the first Start.
+fn soak_duration() -> Duration {
+    Duration::from_secs(
+        std::env::var("GATHERER_SOAK_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1800),
+    )
+}
+
+/// Bank trips the soak must complete to qualify (`GATHERER_SOAK_MIN_TRIPS`,
+/// default 10).
+fn soak_min_trips() -> u32 {
+    std::env::var("GATHERER_SOAK_MIN_TRIPS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10)
 }
 
 /// A capture handed to the background writer, awaiting its outcome.
@@ -4940,6 +5272,10 @@ fn fixture_plan(
             plan.inventory_seed.push(("net".into(), 1));
             plan.inventory_seed.push(("beer".into(), 1));
         }
+        LiveCase::FishBankSoak => {
+            plan.inventory_seed
+                .push(("raw_shrimp".into(), SOAK_SEED_FISH as i32));
+        }
         LiveCase::CoinRunes => {
             plan.bank_seed.push(("coins".into(), 1_000));
             plan.inventory_seed.push(("coins".into(), 40));
@@ -5063,6 +5399,7 @@ fn fixture_plan(
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
+        LiveCase::FishBankSoak => CATHERBY_HARPOON_START,
         LiveCase::FishGuildApproach => ARDOUGNE_GUILD_START,
         LiveCase::Site => match cell {
             Cell::Fishing => world_tile(2809, 3441),
@@ -5633,6 +5970,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let mut resume_requested = false;
     let mut reconnect_logout_requested = false;
     let mut reconnect_login_armed = false;
+    let mut soak_started_at: Option<Instant> = None;
+    let mut soak_stop_requested = false;
+    let mut soak_stop_at = Instant::now();
     let result = loop {
         let lifecycle_error = play.script_last_error(&account);
         let (phase, start_requested, ready_to_start, slot_error, witness, baseline_xp) = {
@@ -5748,6 +6088,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 state.lock().map_err(|_| "live state poisoned")?.bank_config = Some(bank_config);
             }
             println!("{}", json!({"phase": "start", "cell": cell_name}));
+            if soak_started_at.is_none() {
+                soak_started_at = Some(Instant::now());
+            }
         }
         let current_run = play.script_native_run(&account);
         if case == LiveCase::PowerToBank
@@ -6044,6 +6387,56 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                         slot.witness.run_key_changed = true;
                     }
                 }
+            }
+        }
+        if case == LiveCase::FishBankSoak && witness.soak.block_pending {
+            if !soak_stop_requested {
+                // The user's recovery: stop the blocked run and start again
+                // with the same settings. The receipt keeps every block.
+                play.script_stop(&account);
+                soak_stop_requested = true;
+                soak_stop_at = Instant::now();
+            } else if current_run.is_none() || soak_stop_at.elapsed() >= Duration::from_secs(10) {
+                let runs = {
+                    let mut slot = state.lock().map_err(|_| "live state poisoned")?;
+                    slot.reset_after_stop_for_restart();
+                    slot.witness.status_trips = 0;
+                    slot.witness.soak.block_pending = false;
+                    slot.witness.soak.run_trips = 0;
+                    slot.witness.soak.runs
+                };
+                if let Err(error) =
+                    play.script_start(&account, script::CompiledId("Gatherer"), settings.clone())
+                {
+                    break Err(format!("{} soak restart failed: {error}", cell_name));
+                }
+                println!(
+                    "{}",
+                    json!({
+                        "phase": "soak-restart",
+                        "cell": cell_name,
+                        "runs_before": runs,
+                        "deposit_blocks": witness.soak.deposit_blocks,
+                        "other_blocks": witness.soak.other_blocks,
+                        "trips": witness.soak.trips,
+                    })
+                );
+                soak_stop_requested = false;
+            }
+        }
+        if case == LiveCase::FishBankSoak {
+            let run_sends = play
+                .statuses()
+                .iter()
+                .find(|status| status.username == account)
+                .map(|status| status.run_sends);
+            if let Some(run_sends) = run_sends {
+                state
+                    .lock()
+                    .map_err(|_| "live state poisoned")?
+                    .witness
+                    .soak
+                    .run_sends = run_sends;
             }
         }
         if let Some(status) = play.script_native_status(&account) {
@@ -6345,6 +6738,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                         .as_ref()
                         .is_some_and(|latest| latest.xp > baseline_xp)
             }
+            LiveCase::FishBankSoak => {
+                soak_started_at.is_some_and(|started| started.elapsed() >= soak_duration())
+            }
         };
         if done
             && state
@@ -6355,7 +6751,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         {
             break Ok(());
         }
-        let deadline = if phase == Prep::Running {
+        let deadline = if case == LiveCase::FishBankSoak {
+            started_at + PREP_DEADLINE + soak_duration() + Duration::from_secs(60)
+        } else if phase == Prep::Running {
             if case.is_power() {
                 started_at + PREP_DEADLINE + POWER_DEADLINE
             } else {
@@ -6504,6 +6902,21 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     receipt["bank_trip"] = bank_receipt;
     receipt["bank_status_sequence"] = json!(witness.bank_status_sequence);
     receipt["failure_sequence"] = json!(witness.failure_sequence);
+    if case == LiveCase::FishBankSoak {
+        let soak = &witness.soak;
+        receipt["soak"] = json!({
+            "duration_secs": soak_duration().as_secs(),
+            "elapsed_secs": soak_started_at.map(|started| started.elapsed().as_secs()),
+            "min_trips": soak_min_trips(),
+            "trips": soak.trips,
+            "runs": soak.runs,
+            "refills": soak.refills,
+            "deposit_blocks": soak.deposit_blocks,
+            "other_blocks": soak.other_blocks,
+            "blocks": soak.blocks,
+            "last_facts": soak.facts,
+        });
+    }
     receipt["final_tick"] = json!(state
         .lock()
         .map_err(|_| "live state poisoned")?
@@ -7071,6 +7484,12 @@ fn gatherer_fish_harpoon_bank() {
 #[ignore = "requires LIVE=1 and local 289 engine"]
 fn gatherer_fish_harpoon_bank_auto() {
     run_cell(Cell::Fishing, LiveCase::FishHarpoonBankAuto).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_NAV_PACK, GATHERER_ENGINE_DIR, GATHERER_CATALOG_ROOT and Engine A; back-to-back Catherby bank trips for GATHERER_SOAK_SECS"]
+fn gatherer_fish_bank_soak() {
+    run_cell(Cell::Fishing, LiveCase::FishBankSoak).unwrap();
 }
 
 #[test]
