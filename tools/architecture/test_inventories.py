@@ -1710,6 +1710,365 @@ pub struct FleetRow {
                     errors,
                 )
 
+    def test_std_leaf_names_defined_in_the_workspace_are_classified_from_definitions(self) -> None:
+        # Wonder eprime-r3 F1: a workspace type named like a std scalar or
+        # transparent container is classified from its definition.  Its name
+        # alone never skips the payload.
+        names = sorted(
+            set(inventories.STD_TRANSPARENT_TYPE_MODULES) | inventories.KNOWN_SCALAR_TYPES
+        )
+        self.assertEqual(len(names), 24)
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("AttackView", "borrowed"))
+        disagrees = (
+            f"seam classification disagrees with syntax: {VIEWS_PATH}::AttackView "
+            "is owning, registry says borrowed"
+        )
+
+        def holder(payload: str) -> str:
+            return (
+                "#[derive(Clone)]\npub struct AttackView {\n"
+                f"    pub label: &'static str,\n    pub payload: {payload},\n}}\n"
+            )
+
+        for name in names:
+            for spelling, (imports, payload) in {
+                "qualified": ("", f"api::{name}"),
+                "imported": (f"use api::{name};\n", name),
+            }.items():
+                with self.subTest(name=name, spelling=spelling):
+                    errors = inventories.check_tree(
+                        self.fixture(
+                            views=imports + self.baseline_views() + holder(payload),
+                            seam_types=seams,
+                            workspace_files={
+                                "crates/api/src/lib.rs": (
+                                    f"#[derive(Clone)]\npub struct {name}(pub Vec<u8>);\n"
+                                )
+                            },
+                        )
+                    )
+                    self.assertIn(disagrees, errors)
+        wrapper = "#[derive(Clone)]\npub struct Wrapping(pub Vec<u8>);\n"
+        shapes: dict[str, tuple[str, str, str, str]] = {
+            "enum": (
+                "#[derive(Clone)]\npub enum Option {\n    Some(Vec<u8>),\n    None,\n}\n",
+                "",
+                "api::Option",
+                disagrees,
+            ),
+            "type alias": ("pub type Wrapping = Vec<u8>;\n", "", "api::Wrapping", disagrees),
+            "renamed import": (
+                "#[derive(Clone)]\npub struct Payload(pub Vec<u8>);\n",
+                "use api::Payload as Wrapping;\n",
+                "Wrapping",
+                disagrees,
+            ),
+            "glob import": (wrapper, "use api::*;\n", "Wrapping", disagrees),
+            "generic argument": (wrapper, "", "Option<api::Wrapping>", disagrees),
+            "union": (
+                "pub union Wrapping {\n    pub bytes: std::mem::ManuallyDrop<Vec<u8>>,\n}\n",
+                "",
+                "api::Wrapping",
+                "crates/api/src/lib.rs: unsupported public seam type syntax (UNION)",
+            ),
+        }
+        for label, (api, imports, payload, expected) in shapes.items():
+            with self.subTest(shape=label):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=imports + self.baseline_views() + holder(payload),
+                        seam_types=seams,
+                        workspace_files={"crates/api/src/lib.rs": api},
+                    )
+                )
+                print(f"BAD std-named workspace payload ({label}): {errors}")
+                self.assertIn(expected, errors)
+
+    def test_std_leaf_items_keep_the_shortcut_and_their_generic_arguments(self) -> None:
+        views = (
+            "use std::cmp;\nuse std::num::Wrapping;\n"
+            + self.baseline_views()
+            + "#[derive(Clone, Copy)]\n"
+            "pub struct StdLeaves {\n"
+            "    pub a: Option<u64>,\n"
+            "    pub b: Result<u64, bool>,\n"
+            "    pub c: Wrapping<u64>,\n"
+            "    pub d: std::num::Wrapping<u8>,\n"
+            "    pub e: core::num::Wrapping<u8>,\n"
+            "    pub f: cmp::Reverse<u64>,\n"
+            "    pub g: std::marker::PhantomData<u64>,\n"
+            "    pub h: core::task::Poll<u64>,\n"
+            "    pub i: std::ops::ControlFlow<u64, u8>,\n"
+            "    pub j: std::primitive::u64,\n"
+            "    pub k: char,\n"
+            "}\n"
+            "pub struct StdOwning {\n"
+            "    wrapped: Option<api::Wrapper>,\n"
+            "    bytes: std::num::Wrapping<Vec<u8>>,\n"
+            "}\n"
+        )
+        root = self.fixture(
+            views=views,
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("StdLeaves", "scalar"),
+                ("StdOwning", "owning"),
+            ),
+            workspace_files={
+                "crates/api/src/lib.rs": "#[derive(Clone)]\npub struct Wrapper(pub Vec<u8>);\n"
+            },
+        )
+        errors = inventories.check_tree(root)
+        print(f"GOOD std leaf items: {errors}")
+        self.assertEqual(errors, [])
+
+    def test_leaf_names_that_are_not_the_std_item_fail_closed(self) -> None:
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Uses", "scalar"))
+        cases = {
+            "non-workspace crate": (
+                "",
+                "other::Wrapping<u64>",
+                f"{VIEWS_PATH}::Uses: unresolved public seam field type other::Wrapping",
+            ),
+            "non-std import": (
+                "use other::Option;\n",
+                "Option<u64>",
+                f"{VIEWS_PATH}::Uses: unresolved imported seam field type Option",
+            ),
+            "non-prelude name without import": (
+                "",
+                "Wrapping<u64>",
+                f"{VIEWS_PATH}::Uses: unresolved public seam field type Wrapping",
+            ),
+            "prelude name under an unindexed glob": (
+                "use other::*;\n",
+                "u64",
+                f"{VIEWS_PATH}::Uses: unresolved public seam field type u64",
+            ),
+            "crate-relative name": (
+                "",
+                "crate::Option<u64>",
+                f"{VIEWS_PATH}::Uses: unresolved public seam field type crate::Option",
+            ),
+        }
+        for label, (imports, target, expected) in cases.items():
+            with self.subTest(case=label):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=imports + self.baseline_views() + f"pub type Uses = {target};\n",
+                        seam_types=seams,
+                    )
+                )
+                print(f"BAD non-std leaf path ({label}): {errors}")
+                self.assertIn(expected, errors)
+                self.assertIn(f"stale seam type classification: {VIEWS_PATH}::Uses", errors)
+        generic = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone, Copy)]\npub struct Held<Wrapping = Vec<u8>>(Wrapping);\n",
+                seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Held", "scalar")),
+            )
+        )
+        print(f"BAD generic parameter named like a std leaf: {generic}")
+        self.assertIn(f"{VIEWS_PATH}::Held: unresolved generic field ownership (Wrapping)", generic)
+
+    def test_transition_into_a_std_named_workspace_payload_is_not_silent(self) -> None:
+        api = (
+            "#[derive(Clone, Copy)]\npub struct Plain(pub u64);\n"
+            "#[derive(Clone)]\npub struct Wrapping(pub Vec<u8>);\n"
+        )
+
+        def tree(payload: str, registered: str, violations: tuple[dict[str, str], ...] = ()) -> Path:
+            temporary = tempfile.TemporaryDirectory(prefix="f0-std-leaf-")
+            self.addCleanup(temporary.cleanup)
+            return _write_fixture(
+                Path(temporary.name),
+                views=self.baseline_views()
+                + "#[derive(Clone)]\npub struct AttackView {\n"
+                f"    pub label: &'static str,\n    pub payload: api::{payload},\n}}\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("AttackView", registered),
+                ),
+                violations=violations,
+                workspace_files={"crates/api/src/lib.rs": api},
+            )
+
+        base = tree("Plain", "borrowed")
+        self.assertEqual(inventories.check_tree(base), [])
+        unregistered = inventories.check_transition(base, tree("Wrapping", "borrowed"))
+        print(f"BAD plain -> Wrapping(Vec) with the old registry: {unregistered}")
+        self.assertIn(
+            f"candidate: seam classification disagrees with syntax: {VIEWS_PATH}::AttackView "
+            "is owning, registry says borrowed",
+            unregistered,
+        )
+        violations = (
+            _record(
+                "owning_derived_clone",
+                VIEWS_PATH,
+                "AttackView",
+                "production",
+                "derived_Clone_on_owning_view",
+                owner="T3",
+            ),
+            *(
+                _record(
+                    "owning_public_field",
+                    VIEWS_PATH,
+                    f"AttackView::{field}",
+                    "production",
+                    "public_field_of_owning_view",
+                    owner="T3",
+                )
+                for field in ("label", "payload")
+            ),
+        )
+        reregistered = inventories.check_transition(
+            base, tree("Wrapping", "owning", violations)
+        )
+        print(f"BAD plain -> Wrapping(Vec) re-registered: {reregistered}")
+        self.assertEqual(
+            reregistered,
+            sorted(
+                [
+                    f"seam classification changed: {VIEWS_PATH}::AttackView borrowed->owning",
+                    *(f"new inventory violation: {row['id']}" for row in violations),
+                ]
+            ),
+        )
+
+    def test_workspace_crate_names_cannot_shadow_other_crates(self) -> None:
+        # Wonder eprime-r3 F3: seam resolution reads a path's first segment as
+        # the workspace crate of that name.  A member may not take a sysroot or
+        # keyword name, and no manifest may declare another crate under a
+        # member's name (the vendored `client` path dependency, for example).
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        for name in ("std", "core", "alloc", "proc_macro", "test", "crate", "self", "super", "Self"):
+            with self.subTest(member=name):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=self.baseline_views(),
+                        seam_types=seams,
+                        workspace_files={f"crates/{name}/src/lib.rs": ""},
+                    )
+                )
+                print(f"BAD reserved workspace crate name {name}: {errors}")
+                self.assertIn(
+                    f"workspace crates: crates/{name}/Cargo.toml: workspace crate name {name} "
+                    "is reserved",
+                    errors,
+                )
+        package = '[package]\nname = "{}"\nversion = "0.0.0"\nedition = "2021"\n'
+        uses = "pub type Uses = api::T;\n"
+        api = "#[derive(Clone, Copy)]\npub struct T(pub u64);\n"
+        cases: dict[str, tuple[str, dict[str, str], str | None]] = {
+            "workspace dependency": (
+                '[workspace.dependencies]\nclient = { path = "vendor/client" }\n',
+                {},
+                "Cargo.toml: [workspace.dependencies] client is not workspace crate client",
+            ),
+            "member dependency": (
+                "",
+                {"crates/api/Cargo.toml": package.format("api") + '[dependencies]\nclient = "1"\n'},
+                "crates/api/Cargo.toml: [dependencies] client is not workspace crate client",
+            ),
+            "target dev-dependency": (
+                "",
+                {
+                    "crates/api/Cargo.toml": package.format("api")
+                    + "[target.'cfg(unix)'.dev-dependencies]\n"
+                    + 'client = { git = "https://example.invalid/client" }\n'
+                },
+                "crates/api/Cargo.toml: [target.cfg(unix).dev-dependencies] client is not "
+                "workspace crate client",
+            ),
+            "reserved dependency key": (
+                "",
+                {
+                    "crates/api/Cargo.toml": package.format("api")
+                    + '[dependencies]\nstd = { package = "evil", version = "1" }\n'
+                },
+                "crates/api/Cargo.toml: [dependencies] std is a reserved crate name",
+            ),
+            "dependencies on the members themselves": (
+                '[workspace.dependencies]\napi = { path = "crates/api" }\n'
+                'vendored = { path = "vendor/client" }\n',
+                {
+                    "crates/frontend-core/Cargo.toml": package.format("frontend-core")
+                    + '[dependencies]\napi = { workspace = true }\nvendored = { workspace = true }\n',
+                    "crates/client/Cargo.toml": package.format("client")
+                    + '[dependencies]\napi = { path = "../api" }\n'
+                    + '[build-dependencies]\nfrontend-core = { path = "../frontend-core" }\n',
+                },
+                None,
+            ),
+        }
+        for label, (workspace_extra, manifests, expected) in cases.items():
+            with self.subTest(case=label):
+                root = self.fixture(
+                    views=self.baseline_views() + uses,
+                    seam_types=seams + (("Uses", "scalar"),),
+                    workspace_files={"crates/api/src/lib.rs": api, "crates/client/src/lib.rs": ""},
+                )
+                manifest = root / "Cargo.toml"
+                manifest.write_text(
+                    manifest.read_text(encoding="utf-8") + workspace_extra, encoding="utf-8"
+                )
+                for relative, contents in manifests.items():
+                    (root / relative).write_text(contents, encoding="utf-8")
+                errors = inventories.check_tree(root)
+                print(f"workspace crate name collision ({label}): {errors}")
+                if expected is None:
+                    self.assertEqual(errors, [])
+                else:
+                    self.assertTrue(
+                        any(
+                            error.startswith("workspace crates: ") and expected in error
+                            for error in errors
+                        ),
+                        errors,
+                    )
+
+    def test_inventory_reads_never_traverse_a_symlink(self) -> None:
+        # Wonder eprime-r3 F2: no path component below the tree root may be a
+        # symlink, for crate directories as for the foreign-type data file.
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("Uses", "scalar"))
+
+        def tree() -> Path:
+            return self.fixture(
+                views=self.baseline_views() + "pub type Uses = api::T;\n",
+                seam_types=seams,
+                workspace_files={
+                    "crates/api/src/lib.rs": "#[derive(Clone, Copy)]\npub struct T(pub u64);\n"
+                },
+            )
+
+        self.assertEqual(inventories.check_tree(tree()), [])
+        cases = {
+            "crates/api": "workspace crates: crates/api/Cargo.toml must not traverse a symlink",
+            "crates/api/src": "workspace crates: crates/api/src/lib.rs must not traverse a symlink",
+            "crates/frontend-core": "crates/frontend-core/src: symlinked Rust input is unsupported",
+            "crates/frontend-core/src": (
+                "crates/frontend-core/src: symlinked Rust input is unsupported"
+            ),
+            "crates/script": "crates/script/src: symlinked Rust input is unsupported",
+            "tools": "inventory: tools/architecture/inventories.json must not traverse a symlink",
+        }
+        for linked, expected in cases.items():
+            with self.subTest(linked=linked):
+                root = tree()
+                outside = tempfile.TemporaryDirectory(prefix="f0-outside-")
+                self.addCleanup(outside.cleanup)
+                moved = Path(outside.name) / "moved"
+                (root / linked).rename(moved)
+                (root / linked).symlink_to(moved, target_is_directory=True)
+                errors = inventories.check_tree(root)
+                print(f"BAD symlinked {linked}: {errors}")
+                self.assertIn(expected, errors)
+
     def test_foreign_rows_may_not_name_workspace_types(self) -> None:
         views = self.baseline_views() + "pub type UsesHandle = client::session::Handle;\n"
         for workspace_path in ("api::identity::RequestId", "frontend_core::views::FleetCounts"):
