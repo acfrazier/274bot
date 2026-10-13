@@ -81,7 +81,24 @@ prepare removes its partial directory automatically.
 ### Builders and parameters
 
 - macOS arm64 builds locally. `--sign-identity` (or
-  `RELEASE_SIGN_IDENTITY`) is required for a real release build.
+  `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS
+  worker never builds with the operator's login environment: the Mac's
+  login `PATH` puts MacPorts and Homebrew ahead of `/usr/bin`, and in the
+  0.2.1 build MacPorts' `pkg-config` answered the `bzip2-sys` probe with
+  `-L/opt/local/lib`, which would have shipped binaries linked against
+  `/opt/local` libraries users do not have. The worker instead runs cargo
+  with the fixed `PATH` `~/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin` and
+  drops the inherited variables that can redirect header, library, or
+  tool search the same way (`LIBRARY_PATH`, `CPATH` and the other
+  `*_INCLUDE_PATH`s, every `PKG_CONFIG*`, `DYLD_*`, `CC`/`CFLAGS`/`LDFLAGS`
+  and their target-suffixed spellings, `CMAKE_*`, `HOMEBREW_*`, `OPENSSL_*`,
+  `BINDGEN_*`/`LIBCLANG_PATH`, `RUSTFLAGS` and per-target linker overrides,
+  plus `SDKROOT` and `MACOSX_DEPLOYMENT_TARGET`). None of them was set in
+  the environment that produced the known-good 0.2.1 package.
+  `DEVELOPER_DIR` is kept because it is how `xcrun` finds the Apple
+  toolchain; with `SDKROOT` unset the SDK is rediscovered through it, and
+  the aarch64 target's default deployment target is the documented
+  macOS 11.0.
 - Linux x64 uses the SSH target `274bot-builder` by default. Override it with
   `--linux-host` or `RELEASE_LINUX_HOST`.
 - Windows x64 runs over the promoted `windows-ssh.py` transport.
@@ -147,9 +164,21 @@ members, extra files, missing files, byte-count differences, and SHA-256
 differences, and verifies `SHA256SUMS` has exactly the candidate archives. It
 checks the requested host commit, runs both executables' `--help` on their
 native platforms, and validates the extracted macOS signatures, staple, and
-Gatekeeper acceptance. Navigation is reported byte-identical only after all
-six files from all three platform archives compare equal; a partial
-per-platform verification explicitly reports that navigation was not compared.
+Gatekeeper acceptance. On macOS it also runs `otool -L` on every Mach-O in
+the package (both standalone executables and the app bundle's) and refuses
+any library reference that is not under `/usr/lib/` or `/System/Library/`
+or an `@executable_path`/`@rpath` reference resolving to a file inside the
+package, naming the offending binary and library; that is the check that
+keeps a MacPorts/Homebrew-linked build from ever verifying. Linux and
+Windows have no equivalent check yet, deliberately: ELF `DT_NEEDED` entries
+and PE imports record library names, not build-host paths, both builders
+are dedicated hosts with no shadowing package manager on `PATH`, and their
+runtime floors are already pinned in the manifest (glibc 2.39 and the named
+system libraries on Linux, the Visual C++ runtime DLLs on Windows). An
+`readelf`/`dumpbin` dependency allowlist would be a different mechanism
+for a defect class neither builder has shown. Navigation is reported
+byte-identical only after all six files from all three platform archives
+compare equal; a partial per-platform verification explicitly reports that navigation was not compared.
 Verification does not publish anything.
 
 ### Retry and cleanup
