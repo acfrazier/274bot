@@ -40,8 +40,8 @@ pub const OPEN_ATTEMPTS: u32 = 3;
 ///   A wander destination stays within `wanderrange` (default 5,
 ///   `NpcType.ts:101`) of spawn (`Npc.ts:705-714`), but that does not bound
 ///   the extra walking or how often it re-paths. Measured instead: every
-///   un-attacked live open of a keeper 0-4 steps away settled 1-2 ticks
-///   after its Trade, and a 12-step one in 7.
+///   un-attacked live open of a keeper 0-5 steps away settled 1-3 ticks
+///   after the Trade that opened it, and a 12-step one in 7.
 pub const OPEN_SLACK_TICKS: u64 = 12;
 /// Policy bound on one attempt's ticks: the deadline when the route is not
 /// measured, and the ceiling for a measured one. It is not a maximum walk
