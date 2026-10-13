@@ -763,16 +763,23 @@ pub(crate) fn green_dragon_bank_default_prepared_scenario() -> Scenario {
 
 /// `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
 /// Edgeville booth restock and a return past the ditch. A south-walk flee
-/// without the teleport fails this cell.
+/// without the teleport fails this cell. The pinned `escapeNeeded`
+/// (`GreenDragonLogic.ts:92-97`) only selects `Escape` when foodless *and*
+/// below `panicHp` away from the bank, so this fixture mirrors
+/// `green_dragon_tele_prepared`: no carried food, the max-stat profile at a
+/// safe 70/99 HP, and `panicHp=98`. Seeding 12 Lobsters at the default
+/// `panicHp=30` left the teleport leg unreachable (the bot was still
+/// eating through its food when the Magic XP watch expired, and empty
+/// food above 30% HP selects `BankRun`, not `Escape`).
 pub(crate) fn green_dragon_tele_scenario() -> Scenario {
-    let mut scenario = combat_bank_scenario(
+    let mut scenario = remaining_prepared_combat_bank_scenario(
         "green_dragon_tele",
         "GreenDragon",
         GREEN_DRAGON_FIELD,
         22,
         "lobster",
         LOBSTER_ID,
-        GREEN_DRAGON_FOOD,
+        0,
         "rune_scimitar",
         RUNE_SCIMITAR_ID,
         &[
@@ -782,10 +789,12 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
             ("firerune", FIRE_RUNE_ID, VARROCK_TELE_FIRE),
         ],
         GREEN_DRAGON_LOOT_EMPTY,
-        GREEN_DRAGON_TELE_INJECT,
-        0,
+        GREEN_DRAGON_TELE_PREPARED_INJECT,
         "lobster",
-        24,
+        40,
+        GREEN_DRAGON_TELE_PREPARED_LEVEL,
+        GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE,
+        GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch Magic XP from the Varrock teleport after Start",
@@ -840,9 +849,9 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
             step.name == "teleport into the hostile field only after preparation is acknowledged"
         })
         .expect("combat bank has a hostile-field teleport");
-    scenario.steps.splice(
-        hostile_teleport..hostile_teleport,
-        [Step {
+    scenario.steps.insert(
+        hostile_teleport,
+        Step {
             name: "prepare and acknowledge Magic 25 for Varrock teleport before Start",
             kind: StepKind::Perform {
                 send: Box::new(|c, _| {
@@ -857,8 +866,10 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
                 },
                 budget_ticks: 200,
             },
-        }],
+        },
     );
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    prepare_safe_empty_food_escape_before_hostile_teleport(&mut scenario);
     scenario
 }
 
@@ -1171,48 +1182,6 @@ const GREEN_DRAGON_POTIONS_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "escape",
         value: ScriptInjectValue::Str("Flee to bank"),
-    },
-    ScriptSettingInject {
-        id: "solveClues",
-        value: ScriptInjectValue::Bool(false),
-    },
-    ScriptSettingInject {
-        id: "buryBones",
-        value: ScriptInjectValue::Bool(false),
-    },
-    ScriptSettingInject {
-        id: "weapon",
-        value: ScriptInjectValue::Str("Rune scimitar"),
-    },
-    ScriptSettingInject {
-        id: "shield",
-        value: ScriptInjectValue::Str("Dragonfire shield"),
-    },
-];
-const GREEN_DRAGON_TELE_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
-    },
-    ScriptSettingInject {
-        id: "combatStyle",
-        value: ScriptInjectValue::Str("melee"),
-    },
-    ScriptSettingInject {
-        id: "meleeStyle",
-        value: ScriptInjectValue::Str("strength"),
-    },
-    ScriptSettingInject {
-        id: "useSpecial",
-        value: ScriptInjectValue::Bool(false),
-    },
-    ScriptSettingInject {
-        id: "usePotions",
-        value: ScriptInjectValue::Bool(false),
-    },
-    ScriptSettingInject {
-        id: "escape",
-        value: ScriptInjectValue::Str("Teleport to Varrock"),
     },
     ScriptSettingInject {
         id: "solveClues",

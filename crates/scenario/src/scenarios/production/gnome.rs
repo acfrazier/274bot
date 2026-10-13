@@ -174,12 +174,22 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
     steps.push(start_catalog_step());
-    for (step_name, arm) in [
+    // The two Magic-tree roll arms get MAGIC_TREE_CHOP_WATCH_TICKS (dirty
+    // increments sized to the 17/256-per-4-ticks roll, not 150x600ms), as in
+    // gnome_fletch_variant. Other arms keep the ordinary gold watch.
+    let chop = MAGIC_TREE_CHOP_WATCH_TICKS;
+    let gold = SCRIPT_GOLD_WATCH_TICKS;
+    for (step_name, arm, budget_ticks) in [
         (
             "watch Woodcutting XP from a Magic tree after Start",
             first_xp,
+            chop,
         ),
-        ("watch exact Magic logs 1513 chopped after Start", logs),
+        (
+            "watch exact Magic logs 1513 chopped after Start",
+            logs,
+            gold,
+        ),
         (
             "watch arrival at the upstairs gnome booth after the log fill",
             Proof::ArrivedNear {
@@ -188,6 +198,7 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
                 level: GNOME_BANK_STAND.level,
                 radius: 8,
             },
+            gold,
         ),
         (
             "watch script-chopped magic logs enter a fresh gnome bank",
@@ -195,6 +206,7 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
                 id: MAGIC_LOGS_ID,
                 count: 1,
             },
+            gold,
         ),
         (
             "watch the pack empty of magic logs after deposit",
@@ -202,6 +214,7 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
                 id: MAGIC_LOGS_ID,
                 count: 0,
             },
+            gold,
         ),
         (
             "watch ground return at the gnome bank stairs after deposit",
@@ -211,14 +224,26 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
                 level: GNOME_BANK_STAIR_SOUTH.level,
                 radius: 30,
             },
+            gold,
         ),
         (
             "watch the gnome log bank close after deposit",
             Proof::BankClosed,
+            gold,
         ),
-        ("watch another exact Magic logs 1513 after return", logs),
+        (
+            "watch another exact Magic logs 1513 after return",
+            logs,
+            chop,
+        ),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait { arm, budget_ticks },
+        });
     }
     Scenario {
         name: "gnome_chop",
@@ -232,7 +257,7 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: MAGIC_TREE_CHOP_DEADLINE,
             start_script: Some("GnomeMagicChopper"),
             script_settings_inject: Some(GNOME_CHOP_INJECT),
             terminal_shot: Some("gnome_chop"),

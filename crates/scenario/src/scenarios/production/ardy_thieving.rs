@@ -15,6 +15,11 @@ pub(crate) const CAKE_ID: i32 = 1891;
 pub(crate) const BREAD_ID: i32 = 2309;
 pub(crate) const CHOCOLATE_SLICE_ID: i32 = 1901;
 pub(crate) const CHOCOLATE_CAKE_ID: i32 = 1897;
+/// The Baker's stall loot table (`stealing.dbrow` bakery row): cake 13,
+/// bread 5, chocolate slice 2, of `loot_total 20`. Which food a successful
+/// steal rolls is a chance outcome, so the steal/bank witnesses accept any
+/// item from the table rather than gating on Cake alone.
+pub(crate) const ARDY_STALL_FOOD_IDS: &[i32] = &[CAKE_ID, BREAD_ID, CHOCOLATE_SLICE_ID];
 const ARDY_CAKES_STAND: WorldTile = WorldTile {
     x: 2668,
     z: 3312,
@@ -135,8 +140,8 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
         id: THIEVING_STAT,
         min: 1,
     };
-    let cake = Proof::ItemId {
-        id: CAKE_ID,
+    let stall_food = Proof::ItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
         count: 1,
     };
     let mut steps = script_live_seed_steps();
@@ -225,7 +230,10 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         ("watch Thieving XP from Baker's stall after Start", first_xp),
-        ("watch exact Cake 1891 stolen after Start", cake),
+        (
+            "watch any Baker's stall food stolen after Start",
+            stall_food,
+        ),
         (
             "watch arrival at the Ardougne bank after the stall fill",
             Proof::ArrivedNear {
@@ -236,9 +244,9 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
             },
         ),
         (
-            "watch script-stolen cake enter a fresh Ardougne bank",
-            Proof::BankItemId {
-                id: CAKE_ID,
+            "watch script-stolen stall food enter a fresh Ardougne bank",
+            Proof::BankItemIdAny {
+                ids: ARDY_STALL_FOOD_IDS,
                 count: 1,
             },
         ),
@@ -259,7 +267,7 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
             },
         ),
         ("watch the cake bank close after deposit", Proof::BankClosed),
-        ("watch another exact Cake 1891 after return", cake),
+        ("watch another stall food after return", stall_food),
     ] {
         let bank_arrival = matches!(
             arm,
@@ -279,7 +287,7 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: cake,
+        proof: stall_food,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
