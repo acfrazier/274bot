@@ -4,8 +4,8 @@
 // posted row the queued op names. A queued click is never a transfer.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, ItemRowInput, NativeFactsInput, ReachViewInput, SceneEntityInput,
-    SnapshotInput, TileInput,
+    encode_snapshot_with_native, ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput,
+    SceneEntityInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -549,9 +549,9 @@ fn open_presses_the_keepers_trade_op_and_reports_the_opened_shop() {
         vec![InteractReq::Npc {
             name: "Shop keeper".into(),
             action: "Trade".into(),
-            index: None,
+            index: Some(0),
         }],
-        "open presses the posted Trade op, not an invented one"
+        "open presses the posted keeper's Trade op, not an invented one"
     );
     assert_eq!(
         iso.probe("__ok").unwrap(),
@@ -584,6 +584,388 @@ fn open_without_a_keeper_resolves_false_without_a_packet() {
         "an absent keeper is false, like the frozen query"
     );
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+/// The Trade clicks in `ops`, whichever keeper row they name.
+fn trades(ops: &[InteractReq]) -> usize {
+    ops.iter()
+        .filter(|op| {
+            matches!(op, InteractReq::Npc { name, action, .. }
+                if name == "Shop keeper" && action == "Trade")
+        })
+        .count()
+}
+
+/// The 274bot jive_kq_four race: the keeper opens the shop after the 0.2.1
+/// 3000 ms window, and a second Trade then closed the shop it opened
+/// (`OpNpcHandler.ts:47` -> `Player.ts:970-973`). One Trade must wait out
+/// its tick deadline, however long the wall clock runs.
+#[test]
+fn open_sends_one_trade_while_the_keeper_takes_longer_than_three_seconds() {
+    let iso = spawn(OPEN);
+    let actions = ["Talk-to".to_string(), "Trade".to_string()];
+    let npcs = [npc("Shop keeper", &actions)];
+    let stock = [row("Shantay pass", 1854, 100, 3900, 15)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+
+    // The player stands next to the wandering keeper; no face is posted.
+    std::thread::sleep(std::time::Duration::from_millis(3_100));
+    for n in 2..=6 {
+        snap.tick = n;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        assert_eq!(
+            trades(&iso.drain_interacts()),
+            0,
+            "no second Trade on tick {n}"
+        );
+    }
+    snap.tick = 7;
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 7);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn open_ignores_a_usable_page_posted_on_its_trade_tick() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [npc("Shop keeper", &actions)];
+    let stock = [row("Lobster", 377, 100, 9201, 5)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+    // A page posted within the Trade's own tick belongs to an earlier
+    // interaction the Trade is about to close.
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    post(&iso, &snap, Some(&[]));
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    snap.tick = 2;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn cant_reach_ends_each_attempt_and_three_resolve_false() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [npc("Shop keeper", &actions)];
+    let refusals: Vec<[ChatLineInput<'static>; 1]> = (1..=3)
+        .map(|seq| {
+            [ChatLineInput {
+                seq,
+                text: "I can't reach that!",
+                type_: 0,
+                username: None,
+            }]
+        })
+        .collect();
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+    for (n, lines) in (2..=4).zip(&refusals) {
+        snap.tick = n;
+        snap.chat_lines = &lines[..];
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        let ops = iso.drain_interacts();
+        if n < 4 {
+            assert_eq!(trades(&ops), 1, "refusal on tick {n} retries");
+            assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+        } else {
+            assert!(ops.is_empty(), "no fourth Trade");
+            assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+        }
+    }
+    iso.join();
+}
+
+#[test]
+fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [npc("Shop keeper", &actions)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    let mut sent_on = Vec::new();
+    let mut n = 1;
+    loop {
+        snap.tick = n;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        if trades(&iso.drain_interacts()) > 0 {
+            sent_on.push(n);
+        }
+        if iso.probe("__ok").unwrap() != Value::Null {
+            break;
+        }
+        n += 1;
+        assert!(n < 100, "Shop.open must end on its tick deadlines");
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    // No reach flood was posted: each attempt waits the straight-line
+    // distance (0) plus the fixed slack, in ticks, and the call fails one
+    // deadline after the third Trade without sending a fourth.
+    assert_eq!(sent_on.len(), 3, "trades on ticks {sent_on:?}");
+    let step = sent_on[1] - sent_on[0];
+    assert!(
+        step > 5,
+        "a deadline in ticks, not the 0.2.1 3000 ms window"
+    );
+    assert_eq!(sent_on, vec![1, 1 + step, 1 + 2 * step]);
+    assert_eq!(n, 1 + 3 * step);
+    iso.join();
+}
+
+const GRID: i32 = 24;
+
+/// A posted reach view along row `z = 5` from `here_x` east to `to_x`:
+/// each tile's dequeue rank is its distance from `here_x`, and the step
+/// masks (`api::query::reach` `DIRS`: bit 0 west, bit 1 east) open each
+/// step between neighbouring corridor tiles. `beside` opens the step from
+/// `to_x` onto the keeper's tile; without it, tiles east of `to_x` are not
+/// reached (a wall or a closed door).
+struct Corridor {
+    walkable: Vec<u32>,
+    reachable: Vec<u32>,
+    reachable_adj: Vec<u32>,
+    exact_rank: Vec<u16>,
+    adjacent_rank: Vec<u16>,
+    step: Vec<u8>,
+}
+
+fn corridor(here_x: i32, to_x: i32, beside: Option<i32>) -> Corridor {
+    let n = (GRID * GRID) as usize;
+    let index = |x: i32| (x * GRID + 5) as usize;
+    let mut c = Corridor {
+        walkable: vec![0; n.div_ceil(32)],
+        reachable: vec![0; n.div_ceil(32)],
+        reachable_adj: vec![0; n.div_ceil(32)],
+        exact_rank: vec![u16::MAX; n],
+        adjacent_rank: vec![u16::MAX; n],
+        step: vec![0; n],
+    };
+    for x in here_x..=to_x {
+        let i = index(x);
+        let rank = u16::try_from(x - here_x).unwrap();
+        c.walkable[i / 32] |= 1 << (i % 32);
+        c.reachable[i / 32] |= 1 << (i % 32);
+        c.reachable_adj[i / 32] |= 1 << (i % 32);
+        c.exact_rank[i] = rank;
+        c.adjacent_rank[i] = rank;
+        if x > here_x {
+            c.step[i] |= 1;
+        }
+        if x < to_x {
+            c.step[i] |= 1 << 1;
+        }
+    }
+    if let Some(x) = beside {
+        // The keeper's tile, reached through its stand at `to_x`.
+        let i = index(x);
+        c.reachable_adj[i / 32] |= 1 << (i % 32);
+        c.adjacent_rank[i] = u16::try_from(to_x - here_x).unwrap();
+        c.step[index(to_x)] |= 1 << 1;
+    }
+    c
+}
+
+fn corridor_view(c: &Corridor) -> ReachViewInput<'_> {
+    ReachViewInput {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: GRID,
+        height: GRID,
+        walkable: &c.walkable,
+        reachable: &c.reachable,
+        reachable_adj: &c.reachable_adj,
+        exact_rank: &c.exact_rank,
+        adjacent_rank: &c.adjacent_rank,
+        step: &c.step,
+        canlight: &[],
+        stamp: 1,
+    }
+}
+
+fn at(x: i32) -> Option<TileInput> {
+    Some(TileInput { x, z: 5, level: 0 })
+}
+
+fn keeper_at<'a>(actions: &'a [String], x: i32, distance: i32) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        x,
+        z: 5,
+        distance,
+        ..npc("Shop keeper", actions)
+    }
+}
+
+/// A keeper 13 walking steps away (inside the engine's 15-tile NPC view):
+/// one Trade, no second one before the route deadline (Trade tick + 13 +
+/// slack), and the shop that opens on that deadline tick is accepted.
+#[test]
+fn open_waits_out_the_keepers_route_with_one_trade() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [keeper_at(&actions, 16, 14)];
+    let stock = [row("Air rune", 556, 100, 3900, 0)];
+    let flood = corridor(2, 15, Some(16));
+    let mut snap = base();
+    snap.here = at(2);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&flood);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+
+    // Ticks without the shop: the slack the deadline adds is the gap the
+    // no-flood attempts in `three_expired_attempts_…` show (more than 5).
+    let mut n = 2;
+    loop {
+        snap.tick = n;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        let sent = trades(&iso.drain_interacts());
+        if sent > 0 {
+            break;
+        }
+        n += 1;
+        assert!(n < 100, "the attempt must end on its deadline");
+    }
+    let deadline = n - 1;
+    assert!(
+        deadline >= 1 + 13 + 6,
+        "the route length and slack both hold the retry back (retry on {n})"
+    );
+    iso.join();
+
+    // The same walk, opening on the deadline tick: one Trade, then true.
+    let iso = spawn(OPEN);
+    let mut snap = base();
+    snap.here = at(2);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&flood);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+    for n in 2..deadline {
+        snap.tick = n;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        assert_eq!(trades(&iso.drain_interacts()), 0, "tick {n}");
+    }
+    snap.tick = deadline;
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, deadline);
+    snap.tick = deadline + 1;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, deadline + 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    assert_eq!(trades(&iso.drain_interacts()), 0);
+    iso.join();
+}
+
+/// A keeper behind a closed door: the flood reaches no stand, so nav walks
+/// to it first; once beside it, one Trade.
+#[test]
+fn open_walks_to_a_door_blocked_keeper_then_trades_once() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [keeper_at(&actions, 12, 7)];
+    let stock = [row("Air rune", 556, 100, 3900, 0)];
+    let shut = corridor(5, 9, None);
+    let mut snap = base();
+    snap.here = at(5);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&shut);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    let ops = iso.drain_interacts();
+    assert_eq!(trades(&ops), 0, "no Trade to an unreachable keeper");
+    assert!(
+        matches!(
+            ops.as_slice(),
+            [InteractReq::WalkNear {
+                x: 12,
+                z: 5,
+                radius: 1,
+                ..
+            }]
+        ),
+        "nav walks to the keeper first, got {ops:?}"
+    );
+
+    // Nav opened the door and arrived beside the keeper.
+    let open = corridor(11, 11, Some(12));
+    snap.tick = 2;
+    snap.here = at(11);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&open);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Shop keeper".into(),
+            action: "Trade".into(),
+            index: Some(0),
+        }]
+    );
+    snap.tick = 3;
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    iso.join();
+}
+
+/// A nav walk that ends without reaching the keeper ends `Shop.open` false
+/// without a Trade (here: the user takes the walk over).
+#[test]
+fn open_fails_without_a_trade_when_the_walk_to_the_keeper_fails() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [keeper_at(&actions, 12, 7)];
+    let shut = corridor(5, 9, None);
+    let mut snap = base();
+    snap.here = at(5);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&shut);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 0);
+    snap.tick = 2;
+    snap.user_move_intent_seq = 1;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    assert_eq!(trades(&iso.drain_interacts()), 0);
     iso.join();
 }
 

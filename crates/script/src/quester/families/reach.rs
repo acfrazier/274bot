@@ -4,6 +4,7 @@
 use crate::native::{
     defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest,
 };
+use crate::reach_route as route;
 use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
@@ -829,6 +830,16 @@ struct Footprint {
     distance: i32,
 }
 
+impl Footprint {
+    fn shape(self) -> route::Footprint {
+        route::Footprint {
+            tile: self.tile,
+            width: self.width,
+            length: self.length,
+        }
+    }
+}
+
 fn npc_footprint(npc: &api::snapshot::NpcView) -> Footprint {
     Footprint {
         tile: npc.tile,
@@ -847,16 +858,6 @@ fn loc_footprint(loc: &api::snapshot::LocView) -> Footprint {
     }
 }
 
-/// The posted reach view when its flood starts on the live player tile.
-/// A missing or stale flood leaves reachability unknown.
-fn live_reach(
-    view: Option<&api::query::ReachQueryView>,
-    here: Option<WorldTile>,
-) -> Option<&api::query::ReachQueryView> {
-    let view = view?;
-    (exact_rank_at(view, here?) == Some(0)).then_some(view)
-}
-
 /// Shared Quester target chooser. In-area matches that the player can reach
 /// (footprint adjacency through wall-valid edges) rank by walking distance,
 /// then by anchor distance (player distance without an anchor). Unknown
@@ -868,7 +869,7 @@ fn choose<'a, T>(
     footprint: impl Fn(&T) -> Footprint,
 ) -> Pick<&'a T> {
     let snapshot = cx.snapshot();
-    let view = live_reach(
+    let view = route::live(
         snapshot.reach().map(|reach| reach.value),
         snapshot
             .local_player()
@@ -883,7 +884,7 @@ fn choose<'a, T>(
         }
         let tie = area.tie_break(fp.tile, fp.distance);
         let steps = match view {
-            Some(view) => route_steps(view, fp),
+            Some(view) => route::route_steps(view, fp.shape()),
             None => Some((u32::try_from(fp.distance).unwrap_or(u32::MAX), 0)),
         };
         match steps {
@@ -1037,7 +1038,7 @@ pub fn ground_route_steps(
 /// Whether a live reach flood from the player's tile is posted.
 pub fn reach_known(cx: &ActionContext<'_>) -> bool {
     let snapshot = cx.snapshot();
-    live_reach(
+    route::live(
         snapshot.reach().map(|reach| reach.value),
         snapshot
             .local_player()
@@ -1048,13 +1049,13 @@ pub fn reach_known(cx: &ActionContext<'_>) -> bool {
 
 fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
     let snapshot = cx.snapshot();
-    let view = live_reach(
+    let view = route::live(
         snapshot.reach().map(|reach| reach.value),
         snapshot
             .local_player()
             .map(|player| player.value.player.network),
     )?;
-    route_steps(view, fp).map(|(steps, _)| steps)
+    route::route_steps(view, fp.shape()).map(|(steps, _)| steps)
 }
 
 /// Whether the player can operate on an NPC now: orthogonally beside its
@@ -1065,118 +1066,18 @@ pub fn npc_adjacent(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> boo
     let here = snapshot
         .local_player()
         .map(|player| player.value.player.network);
-    let (Some(here), Some(view)) = (here, live_reach(snapshot.reach().map(|r| r.value), here))
+    let (Some(here), Some(view)) = (here, route::live(snapshot.reach().map(|r| r.value), here))
     else {
         return npc.distance <= 1;
     };
-    let fp = npc_footprint(npc);
-    if footprint_tiles(fp).any(|tile| tile == here) {
+    let fp = npc_footprint(npc).shape();
+    if fp.tiles().any(|tile| tile == here) {
         return false;
     }
-    footprint_tiles(fp).any(|tile| {
-        reach_bit(view, &view.reachable_adj, tile)
-            && local_index(view, tile).and_then(|i| view.adjacent_rank.get(i)) == Some(&0)
+    fp.tiles().any(|tile| {
+        route::reach_bit(view, &view.reachable_adj, tile)
+            && route::local_index(view, tile).and_then(|i| view.adjacent_rank.get(i)) == Some(&0)
     })
-}
-
-fn footprint_tiles(fp: Footprint) -> impl Iterator<Item = WorldTile> {
-    (0..fp.width).flat_map(move |dx| {
-        (0..fp.length).map(move |dz| WorldTile {
-            x: fp.tile.x + dx,
-            z: fp.tile.z + dz,
-            level: fp.tile.level,
-        })
-    })
-}
-
-fn local_index(view: &api::query::ReachQueryView, tile: WorldTile) -> Option<usize> {
-    let lx = tile.x - view.base_x;
-    let lz = tile.z - view.base_z;
-    (tile.level == view.level && lx >= 0 && lz >= 0 && lx < view.width && lz < view.height)
-        .then(|| (lx as usize) * (view.height as usize) + (lz as usize))
-}
-
-fn reach_bit(view: &api::query::ReachQueryView, words: &[u32], tile: WorldTile) -> bool {
-    api::query::ReachQueryView::bit_at(
-        words,
-        view.width,
-        view.height,
-        view.base_x,
-        view.base_z,
-        view.level,
-        tile,
-    )
-}
-
-fn exact_rank_at(view: &api::query::ReachQueryView, tile: WorldTile) -> Option<u16> {
-    if !reach_bit(view, &view.reachable, tile) {
-        return None;
-    }
-    let rank = *view.exact_rank.get(local_index(view, tile)?)?;
-    (rank != u16::MAX).then_some(rank)
-}
-
-/// Best stand for a footprint: the earliest flood rank that is exact on, or
-/// wall-valid orthogonally beside, a footprint tile. Returns its walking
-/// depth and rank.
-fn route_steps(view: &api::query::ReachQueryView, fp: Footprint) -> Option<(u32, u16)> {
-    let (rank, stand) = footprint_tiles(fp)
-        .filter_map(|tile| {
-            if !reach_bit(view, &view.reachable_adj, tile) {
-                return None;
-            }
-            let rank = *view.adjacent_rank.get(local_index(view, tile)?)?;
-            (rank != u16::MAX).then(|| (rank, stand_for(view, tile, rank)))
-        })
-        .min_by_key(|(rank, _)| *rank)?;
-    Some((
-        flood_depth(view, stand, rank).unwrap_or(u32::from(rank)),
-        rank,
-    ))
-}
-
-/// The tile whose exact rank produced `rank`: the tile itself or one of its
-/// orthogonal neighbours.
-fn stand_for(view: &api::query::ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
-    [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
-        .into_iter()
-        .map(|(dx, dz)| WorldTile {
-            x: tile.x + dx,
-            z: tile.z + dz,
-            level: tile.level,
-        })
-        .find(|stand| exact_rank_at(view, *stand) == Some(rank))
-        .unwrap_or(tile)
-}
-
-/// Walking depth of a flooded tile, recovered from dequeue ranks: each BFS
-/// tile was discovered by its lowest-ranked neighbour able to step into it.
-/// `None` when the posted step masks cannot reproduce the chain.
-fn flood_depth(
-    view: &api::query::ReachQueryView,
-    mut tile: WorldTile,
-    mut rank: u16,
-) -> Option<u32> {
-    let mut depth = 0u32;
-    while rank != 0 {
-        let (parent_rank, parent) = (-1..=1)
-            .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
-            .filter(|&(dx, dz)| dx != 0 || dz != 0)
-            .filter_map(|(dx, dz)| {
-                let from = WorldTile {
-                    x: tile.x + dx,
-                    z: tile.z + dz,
-                    level: tile.level,
-                };
-                let from_rank = exact_rank_at(view, from)?;
-                (from_rank < rank && view.can_step(from, tile)).then_some((from_rank, from))
-            })
-            .min_by_key(|(from_rank, _)| *from_rank)?;
-        tile = parent;
-        rank = parent_rank;
-        depth += 1;
-    }
-    Some(depth)
 }
 
 fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {

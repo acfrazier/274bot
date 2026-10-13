@@ -14,17 +14,37 @@
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, ItemRow, Scene, Text};
+use crate::reach_route;
 use crate::shim::InteractReq;
+use crate::walk::{Resilient, HOP_ATTEMPTS};
+use api::WorldTile;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Frozen `Shop.open`: wait for `isOpen` this long per attempt.
-pub const OPEN_WAIT_MS: u64 = 3_000;
-/// Frozen `Shop.open` attempts.
+/// Existing bound on Trade requests for one `Shop.open` (rs2b0t contract).
 pub const OPEN_ATTEMPTS: u32 = 3;
+/// Ticks one Trade may take beyond its route length before its attempt
+/// expires. The route length covers the walk: a player steps at most one
+/// tile per cycle at walk speed (`PathingEntity.ts:144-149`, `Player.ts:
+/// 729-731`); running is a second step per cycle, so walk is the
+/// conservative bound. On top of that:
+/// - 1: even a 0-tile route opens no earlier than the next cycle. `OpNpc`
+///   is decoded in `processClientsIn` (`World.ts:355`) and the interaction
+///   runs in `processPlayers` (`World.ts:378`, `Player.ts:1247-1314`).
+/// - 1: the `OpNpc` can be decoded one cycle after its `MOVE_OPCLICK` when
+///   that cycle's five user events are spent (`ClientGameProtCategory.ts:6`,
+///   `NetworkPlayer.ts:69`; named in `MoveClickHandler.ts:26-29`).
+/// - 10: the keeper can wander away during the walk. A wander destination
+///   is within `wanderrange` of its spawn (`Npc.ts:705-714`), default 5
+///   (`NpcType.ts:101`), so one leg is at most 2 × 5 tiles; the player
+///   re-paths to it every cycle (`Player.ts:1247-1314`).
+pub const OPEN_SLACK_TICKS: u64 = 12;
+/// Upper bound on one attempt's ticks: a route as long as the 104-tile area
+/// the engine accepts for one click (`MoveClickHandler.ts:20`) plus the slack.
+pub const OPEN_CAP_TICKS: u64 = 104 + OPEN_SLACK_TICKS;
 /// Frozen `Shop.close`: wait for `!isOpen` this long.
 pub const CLOSE_WAIT_MS: u64 = 3_000;
 /// Held-count settlement window before a batch counts as stalled.
@@ -38,6 +58,128 @@ const SELL_ALL_CLICKS: usize = 40;
 thread_local! {
     static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
         const { RefCell::new(None) };
+    /// `(scene_epoch, tick)` of the latest `OpNpc` Trade emitted by `Shop.open`.
+    /// Every `OpNpc` closes the active modal on the server (`OpNpcHandler.ts:47`
+    /// -> `Player.ts:970-973` `clearPendingAction` -> `closeModal`), so
+    /// `Shop.open` must not settle and `Shop.buy` must not emit `ShopButton`
+    /// (`InvButtonHandler.ts:23-25`) on a tick that already emitted `OpNpc`.
+    static LAST_TRADE_TICK: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
+}
+
+fn trade_emitted_on(epoch: u64, tick: u64) -> bool {
+    tick != 0 && LAST_TRADE_TICK.with(|cell| cell.get() == Some((epoch, tick)))
+}
+
+/// Debug-only `Shop.open` / batch timeline with game ticks, so a live receipt
+/// shows the Trade, its deadline, the open settle and the first button.
+fn trace(event: &str, tick: Option<u64>, detail: std::fmt::Arguments<'_>) {
+    if !api::hostlog::debug_enabled() {
+        return;
+    }
+    api::host_log!(
+        api::hostlog::Category::ScriptTrace,
+        api::hostlog::Level::Debug,
+        "shop {event} tick={tick:?} {detail}"
+    );
+}
+
+/// One observed login session: a reconnect resets the scene (new `epoch`,
+/// `thread.rs:1776`); a logout post moves `login` (`Scene::login_mark`).
+/// A Trade sent in another session is gone with it on the server.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Session {
+    epoch: u64,
+    login: u64,
+}
+
+/// How the keeper stands from the player in the posted reach flood
+/// ([`crate::reach_route`]): the host's collision flood of the live scene
+/// from the player's tile, where a closed door is a wall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeeperRoute {
+    /// A stand beside the keeper is reachable now, this many steps away.
+    Steps(u32),
+    /// The live flood reaches no stand beside the keeper.
+    Unreachable,
+    /// No live flood is posted; the straight-line distance stands in, as in
+    /// the Quester chooser.
+    Unknown(u32),
+}
+
+/// The keeper this call trades with: a posted NPC row with that name and a
+/// Trade op, the reachable one with the shortest walk first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Keeper {
+    name: String,
+    action: String,
+    index: i32,
+    /// The keeper's network south-west tile (the client's `route_x[0]`).
+    tile: WorldTile,
+    route: KeeperRoute,
+}
+
+/// One outstanding Trade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Attempt {
+    /// Game tick the Trade was emitted on.
+    trade_tick: u64,
+    /// The session the Trade was sent in.
+    session: Session,
+    /// Last chat line seen before the Trade.
+    chat_mark: i32,
+    /// Last tick on which this attempt may still open the shop.
+    deadline: u64,
+}
+
+impl Attempt {
+    /// `tick` is this Trade's own tick (or earlier) in its session: nothing
+    /// observed there answers this Trade, and the Trade will close any modal
+    /// already open (`OpNpcHandler.ts:47` -> `Player.ts:970-973`).
+    fn pending_on(&self, tick: u64, session: Session) -> bool {
+        session == self.session && tick <= self.trade_tick
+    }
+
+    /// Whether this attempt has ended on `tick`, a tick after the Trade: at
+    /// once on the server's "I can't reach that!" (`Player.ts:1293-1296`)
+    /// or when its session ended; otherwise once `tick` passes its deadline.
+    fn ended(&self, tick: u64, probe: &Probe<'_>) -> bool {
+        if probe.session != self.session {
+            return true;
+        }
+        if probe.cant_reach_seq > self.chat_mark {
+            trace(
+                "cant-reach",
+                Some(tick),
+                format_args!("trade_tick={}", self.trade_tick),
+            );
+            return true;
+        }
+        tick > self.deadline
+    }
+}
+
+/// Ticks a Trade with a `tiles`-long route may take to open the shop.
+fn open_deadline_ticks(tiles: u32) -> u64 {
+    (u64::from(tiles) + OPEN_SLACK_TICKS).min(OPEN_CAP_TICKS)
+}
+
+/// Bound of the nav walk to an unreachable keeper: the frozen
+/// `walkResilient` baked timeout and hop attempts the other approach walks
+/// use ([`crate::walk::BAKED_TIMEOUT_MS`], [`crate::walk::HOP_ATTEMPTS`]).
+const KEEPER_WALK_MS: u64 = crate::walk::BAKED_TIMEOUT_MS;
+
+/// Where `Shop.open` stands.
+enum OpenWait {
+    /// No Trade outstanding: the next real tick sends one.
+    Idle,
+    /// The modal was up at begin without a usable stock page. The page is
+    /// flushed with the modal (`World.ts:1096-1120`), so it is posted by the
+    /// next tick; after `until` this falls back to a Trade.
+    Page { until: u64, session: Session },
+    /// The keeper was unreachable: nav walks to it (doors, transports).
+    Walk(Box<Resilient>),
+    /// One Trade is outstanding.
+    Trade(Attempt),
 }
 
 /// One posted container row (stock, shop player pack or backpack).
@@ -64,6 +206,14 @@ fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
 
 /// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
+    /// The posted game tick, `None` on the logout post.
+    tick: Option<u64>,
+    /// The session these facts belong to.
+    session: Session,
+    /// Highest chat line seq this login session (the Trade's mark).
+    chat_seq: i32,
+    /// Highest seq of an "I can't reach that!" line this login session.
+    cant_reach_seq: i32,
     ingame: bool,
     shop_open: bool,
     has_stock: bool,
@@ -71,15 +221,31 @@ struct NativeObservation {
     /// `None` = the shop player pack was not decoded by the last rebuild.
     player: Option<Vec<Row>>,
     inv: Vec<Row>,
-    npcs: Vec<(String, Vec<String>)>,
+    /// The keeper name `Shop.open` asked for (empty for other calls).
+    keeper: String,
 }
 
 impl NativeObservation {
     /// A logout forgets the session: only pages posted since login count.
-    /// The npc list is only read to open a shop.
-    fn from_scene(scene: &Scene, with_npcs: bool) -> Self {
+    fn from_scene(scene: &Scene, keeper: &str) -> Self {
         let session = scene.since_login();
+        let lines = session.chat_lines().map_or(&[][..], Vec::as_slice);
+        let seq_of = |cant_reach: bool| {
+            lines
+                .iter()
+                .filter(|line| !cant_reach || crate::reach_entity::is_cant_reach(&line.text))
+                .map(|line| line.seq)
+                .max()
+                .unwrap_or(0)
+        };
         Self {
+            tick: scene.session_tick(),
+            session: Session {
+                epoch: scene.epoch(),
+                login: scene.login_mark(),
+            },
+            chat_seq: seq_of(false),
+            cant_reach_seq: seq_of(true),
             ingame: session.ingame().unwrap_or(false),
             shop_open: session.shop_open().unwrap_or(false),
             has_stock: session.shop_stock().is_some(),
@@ -92,37 +258,132 @@ impl NativeObservation {
                 .and_then(Option::as_ref)
                 .map(|rows| rows_of(rows)),
             inv: session.inv().map(|rows| rows_of(rows)).unwrap_or_default(),
-            npcs: session
-                .npcs()
-                .filter(|_| with_npcs)
-                .map(|rows| {
-                    rows.iter()
-                        .map(|npc| {
-                            (
-                                npc.name_or_empty().to_string(),
-                                npc.actions
-                                    .iter()
-                                    .map(|action| action.to_string())
-                                    .collect(),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            keeper: keeper.to_string(),
         }
     }
 
     fn probe(&self) -> Probe<'_> {
         Probe {
+            tick: self.tick,
+            session: self.session,
+            chat_seq: self.chat_seq,
+            cant_reach_seq: self.cant_reach_seq,
             ingame: self.ingame,
             shop_open: self.shop_open,
             has_stock: self.has_stock,
             stock: &self.stock,
             player: self.player.as_deref(),
             inv: &self.inv,
-            npcs: &self.npcs,
+            keeper: KeeperFact::Scene(&self.keeper),
         }
     }
+}
+
+/// The keeper `Shop.open` decides from. The live lookup runs only when a
+/// decision needs it (a Trade or a walk), not on every waiting tick.
+#[derive(Clone, Copy)]
+enum KeeperFact<'a> {
+    /// Look the named keeper up in the live scene.
+    Scene(&'a str),
+    /// A fixed answer.
+    #[cfg(test)]
+    Given(Option<&'a Keeper>),
+}
+
+impl KeeperFact<'_> {
+    fn resolve(self) -> Option<Keeper> {
+        match self {
+            Self::Scene(name) => observed::with(|scene| {
+                let session = scene.since_login();
+                let here = session.here().map(|t| WorldTile {
+                    x: t.x,
+                    z: t.z,
+                    level: t.level,
+                });
+                let rows = session.npcs().map_or(&[][..], Vec::as_slice);
+                crate::load::reach_query::with_view(|view| {
+                    let live = here.and_then(|here| {
+                        reach_route::live(Some(view), Some(here)).map(|view| (view, here))
+                    });
+                    choose_keeper(rows, name, live)
+                })
+            }),
+            #[cfg(test)]
+            Self::Given(keeper) => keeper.cloned(),
+        }
+    }
+}
+
+/// The posted NPC rows named `name` with a Trade op, the reachable one with
+/// the shortest walk first; without a live reach view, the nearest. The
+/// walk is [`reach_route::bounded_steps`] inside the engine's NPC view box
+/// ([`reach_route::NPC_VIEW_DISTANCE`]), so the search in the script tick is
+/// bounded; a keeper with no stand inside that box is
+/// [`KeeperRoute::Unreachable`] and gets the nav walk. The keeper's
+/// footprint is its network tile and size, the tile the client's `tryMove`
+/// routes to (`client.rs:3988-3998`).
+fn choose_keeper(
+    rows: &[observed::EntityRow],
+    name: &str,
+    view: Option<(&api::query::ReachQueryView, WorldTile)>,
+) -> Option<Keeper> {
+    let name = name.trim();
+    rows.iter()
+        .filter(|row| {
+            row.name
+                .as_deref()
+                .is_some_and(|n| n.trim().eq_ignore_ascii_case(name))
+        })
+        .filter_map(|row| {
+            let action = row
+                .actions
+                .iter()
+                .find(|op| op.eq_ignore_ascii_case("trade"))?;
+            let size = row.size.max(1);
+            let tile = if row.size >= 1 {
+                WorldTile {
+                    x: row.nx,
+                    z: row.nz,
+                    level: row.level,
+                }
+            } else {
+                WorldTile {
+                    x: row.x,
+                    z: row.z,
+                    level: row.level,
+                }
+            };
+            let distance = u32::try_from(row.distance).unwrap_or(0);
+            let route = match view {
+                Some((view, here)) => {
+                    let fp = reach_route::Footprint {
+                        tile,
+                        width: size,
+                        length: size,
+                    };
+                    reach_route::bounded_steps(view, here, fp, reach_route::NPC_VIEW_DISTANCE)
+                        .steps
+                        .map_or(KeeperRoute::Unreachable, KeeperRoute::Steps)
+                }
+                None => KeeperRoute::Unknown(distance),
+            };
+            let key = match route {
+                KeeperRoute::Steps(steps) | KeeperRoute::Unknown(steps) => (0, steps),
+                KeeperRoute::Unreachable => (1, distance),
+            };
+            Some((
+                key,
+                Keeper {
+                    name: row.name.as_deref().unwrap_or_default().to_string(),
+                    action: action.to_string(),
+                    index: row.index,
+                    tile,
+                    route,
+                },
+            ))
+        })
+        .min_by_key(|(key, _)| *key)
+        .map(|(_, keeper)| keeper)
 }
 
 /// What the caller asked for.
@@ -178,10 +439,10 @@ pub(crate) struct ShopArgs {
 pub(crate) struct Shop {
     phase: Phase,
     kind: Kind,
-    /// The selected row's name (Shop.open: the NPC name).
+    /// The selected row's name (Shop.open: the keeper's posted name).
     name: String,
-    /// The selected NPC's Trade op (Shop.open only).
-    npc_action: String,
+    /// Whether `Shop.open` already walked to an unreachable keeper.
+    walked: bool,
     /// Requested amount (`Buy`/`Sell`/`SellAll`; 0 for open/close).
     requested: i32,
     /// `qty: "all"` or `SellAll` under `pick`: resolve after choosing a row.
@@ -202,9 +463,8 @@ pub(crate) struct Shop {
     last_dispatch_tick: Option<u64>,
     /// The observed held count now (kept for the next batch baseline).
     held_now: i32,
-    /// An op is outstanding in the current wait window (`Shop.open` presses
-    /// one Trade per attempt, exactly like the frozen loop).
-    pressed: bool,
+    /// `Shop.open`'s Trade state.
+    open: OpenWait,
     /// Remaining `Shop.open` attempts.
     attempts_left: u32,
 }
@@ -225,7 +485,7 @@ impl Family for Shop {
     fn begin(args: ShopArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         let kind = args.kind;
         let name = args.name.trim().to_string();
-        let obs = observed::with(|scene| NativeObservation::from_scene(scene, kind == Kind::Open));
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, &name));
         let probe = obs.probe();
         // Not in game: nothing is sent and the call settles empty.
         let refused = Begin::Done(kind.value(false, 0));
@@ -238,27 +498,30 @@ impl Family for Shop {
                 // The frozen `Shop.open` returns false when no posted NPC
                 // offers that name with a Trade op: that is an absent world
                 // object, not a missing host capability.
-                let Some((npc_name, action)) = trade_target(probe.npcs, &name) else {
+                let Some(keeper) = probe.keeper.resolve() else {
                     return refused;
                 };
-                shop.name = npc_name;
-                shop.npc_action = action;
+                shop.name = keeper.name;
                 shop.attempts_left = OPEN_ATTEMPTS;
+                shop.phase = Phase::WaitBoundary;
                 if probe.shop_open {
                     // The modal and its stock container can be published on
                     // adjacent snapshots. Keep this one await open until the
                     // page is usable so an immediate Shop.buy cannot observe
                     // a transient empty row set.
-                    if probe.has_stock && !probe.stock.is_empty() {
+                    if shop.open_ready(&probe) {
                         return Begin::Done(kind.value(true, 0));
                     }
-                    shop.phase = Phase::WaitBoundary;
-                    cx.clock().arm(OPEN_WAIT_MS);
+                    shop.open = OpenWait::Page {
+                        until: probe.tick.unwrap_or(0) + 1,
+                        session: probe.session,
+                    };
                     return Begin::Run(shop);
                 }
-                shop.phase = Phase::WaitBoundary;
-                shop.press_trade(cx);
-                Begin::Run(shop)
+                match shop.next_trade(&probe, cx) {
+                    Step::Done(value) => Begin::Done(value),
+                    _ => Begin::Run(shop),
+                }
             }
             Kind::Close => {
                 if !probe.shop_open {
@@ -341,7 +604,7 @@ impl Family for Shop {
         if let Some(Reply::Threw(thrown)) = reply {
             return Step::Fail(thrown);
         }
-        let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, &self.name));
         let probe = obs.probe();
         if !probe.ingame {
             return Step::Done(self.kind.value(false, 0));
@@ -361,7 +624,7 @@ impl Family for Shop {
         if let Some(Reply::Threw(thrown)) = reply {
             return Step::Fail(thrown);
         }
-        let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, ""));
         let probe = obs.probe();
         if !probe.ingame {
             return Step::Done(self.kind.value(false, 0));
@@ -370,13 +633,21 @@ impl Family for Shop {
             return self.pick_step(&probe, reply, cx);
         }
         match self.kind {
-            Kind::Open if probe.shop_open => self.open_step(&probe, cx),
-            Kind::Open if self.attempts_left <= 1 && cx.clock().bound_reached() => self.done(false),
-            // A snapshot may confirm the page, but retrying Trade remains
-            // owned by a real tick and cannot reuse that event budget.
+            // A snapshot may confirm the page. Trades and attempt expiry are
+            // owned by real ticks, so a snapshot never sends or fails.
+            Kind::Open if self.open_ready(&probe) => self.open_settled(&probe),
             Kind::Open => Step::Wait,
             Kind::Close => self.close_step(&probe, cx),
             Kind::Buy | Kind::Sell | Kind::SellAll => self.transfer_step(&probe, cx),
+        }
+    }
+
+    /// A nav walk to an unreachable keeper is stopped when the call ends
+    /// early, like the other approach walks ([`Resilient::release`]).
+    fn release(&self) -> Option<InteractReq> {
+        match &self.open {
+            OpenWait::Walk(walk) => walk.release(),
+            _ => None,
         }
     }
 }
@@ -387,7 +658,7 @@ impl Shop {
             phase: Phase::WaitBoundary,
             kind,
             name: String::new(),
-            npc_action: String::new(),
+            walked: false,
             requested: 0,
             all: false,
             pick: false,
@@ -398,7 +669,7 @@ impl Shop {
             batch_baseline: 0,
             held_now: 0,
             clicks: 0,
-            pressed: false,
+            open: OpenWait::Idle,
             attempts_left: 0,
         }
     }
@@ -450,25 +721,110 @@ impl Shop {
         Step::Done(self.kind.value(result, self.transferred))
     }
 
-    /// Press the NPC's Trade op once and open this attempt's window.
-    fn press_trade(&mut self, cx: &mut Cx<'_>) {
-        self.pressed = true;
-        cx.clock().arm(OPEN_WAIT_MS);
-        cx.emit(InteractReq::Npc {
-            name: self.name.clone(),
-            action: self.npc_action.clone(),
-            index: None,
+    /// `Shop.open` ends false with `reason` in the slot log.
+    fn open_failed(&self, tick: Option<u64>, reason: std::fmt::Arguments<'_>) -> Step<Value> {
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Warn,
+            "Shop.open('{}') failed at tick {tick:?}: {reason}",
+            self.name
+        );
+        self.done(false)
+    }
+
+    /// Start the next attempt from the keeper's posted route: Trade a
+    /// reachable keeper, or walk to an unreachable one first (once).
+    fn next_trade(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        let Some(keeper) = probe.keeper.resolve() else {
+            return self.open_failed(probe.tick, format_args!("the keeper is gone"));
+        };
+        let tiles = match keeper.route {
+            KeeperRoute::Steps(tiles) | KeeperRoute::Unknown(tiles) => tiles,
+            KeeperRoute::Unreachable if self.walked => {
+                return self.open_failed(
+                    probe.tick,
+                    format_args!("the keeper is still unreachable after the walk to it"),
+                );
+            }
+            KeeperRoute::Unreachable => {
+                self.walked = true;
+                trace(
+                    "walk",
+                    probe.tick,
+                    format_args!("unreachable keeper at {:?}", keeper.tile),
+                );
+                let walk =
+                    Resilient::new(keeper.tile, 1, KEEPER_WALK_MS, Some(HOP_ATTEMPTS), false);
+                match walk.start(cx) {
+                    Ok(walk) => {
+                        self.open = OpenWait::Walk(Box::new(walk));
+                        return Step::Wait;
+                    }
+                    // Nav already counts the keeper as arrived: the click's
+                    // own route and "I can't reach that!" decide.
+                    Err(true) => 0,
+                    Err(false) => {
+                        return self.open_failed(
+                            probe.tick,
+                            format_args!("no walk to the keeper at {:?}", keeper.tile),
+                        );
+                    }
+                }
+            }
+        };
+        self.press_trade(probe, &keeper, tiles, cx);
+        Step::Wait
+    }
+
+    /// Send one Trade and start its attempt, with a deadline from the
+    /// keeper's route length. Nothing is sent before the session's first
+    /// tick or on a tick that already sent a Trade.
+    fn press_trade(&mut self, probe: &Probe<'_>, keeper: &Keeper, tiles: u32, cx: &mut Cx<'_>) {
+        let Some(tick) = probe.tick else {
+            return;
+        };
+        let epoch = observed::with(Scene::epoch);
+        if trade_emitted_on(epoch, tick) {
+            return;
+        }
+        LAST_TRADE_TICK.with(|cell| cell.set(Some((epoch, tick))));
+        let deadline = tick + open_deadline_ticks(tiles);
+        self.open = OpenWait::Trade(Attempt {
+            trade_tick: tick,
+            session: probe.session,
+            chat_mark: probe.chat_seq,
+            deadline,
         });
+        trace(
+            "trade",
+            Some(tick),
+            format_args!(
+                "npc={} index={} route={:?} deadline={deadline} attempts_left={}",
+                keeper.name, keeper.index, keeper.route, self.attempts_left
+            ),
+        );
+        cx.emit(InteractReq::Npc {
+            name: keeper.name.clone(),
+            action: keeper.action.clone(),
+            index: Some(keeper.index),
+        });
+    }
+
+    /// This tick already sent a shop batch or a Trade: a button now would
+    /// race the Trade's modal close (`OpNpcHandler.ts:47`).
+    fn tick_spent(&self) -> bool {
+        let (epoch, tick) = observed::with(|scene| (scene.epoch(), scene.tick().unwrap_or(0)));
+        self.last_dispatch_tick == Some(tick) || trade_emitted_on(epoch, tick)
     }
 
     /// Emit the next batch of Buy/Sell ops for the outstanding remainder and
     /// arm the held-count settlement window.
     fn send_batch(&mut self, row: &Row, cx: &mut Cx<'_>) -> Step<Value> {
-        let tick = observed::with(|scene| scene.tick().unwrap_or(0));
-        if self.last_dispatch_tick == Some(tick) {
+        if self.tick_spent() {
             self.phase = Phase::ReadyBatch;
             return Step::Wait;
         }
+        let tick = observed::with(|scene| scene.tick().unwrap_or(0));
         if self.kind == Kind::SellAll && self.clicks >= SELL_ALL_CLICKS {
             return self.done(false);
         }
@@ -489,6 +845,11 @@ impl Shop {
             "sell"
         };
         self.last_dispatch_tick = Some(tick);
+        trace(
+            "button",
+            Some(tick),
+            format_args!("kind={kind} item={} chunks={chunks:?}", row.name),
+        );
         for &chunk in chunks.as_deref().unwrap_or(&[10]) {
             cx.emit(InteractReq::ShopButton {
                 kind: kind.into(),
@@ -506,28 +867,82 @@ impl Shop {
         Step::Wait
     }
 
+    /// A usable shop page on a tick that sent no Trade, and later than this
+    /// call's own Trade. Modal and stock are separate packets
+    /// (`IF_OPENMAIN_SIDE` in `NetworkPlayer.ts:155-182`, `UPDATE_INV_FULL`
+    /// from `updateInvs`), so the modal alone does not settle.
+    fn open_ready(&self, probe: &Probe<'_>) -> bool {
+        let Some(tick) = probe.tick else {
+            return false;
+        };
+        match &self.open {
+            OpenWait::Trade(attempt) if attempt.pending_on(tick, probe.session) => return false,
+            // No Trade went out yet: a shop seen mid-walk is not this call's.
+            OpenWait::Walk(_) => return false,
+            _ => {}
+        }
+        probe.shop_open
+            && probe.has_stock
+            && !probe.stock.is_empty()
+            && !trade_emitted_on(observed::with(Scene::epoch), tick)
+    }
+
+    fn open_settled(&self, probe: &Probe<'_>) -> Step<Value> {
+        trace("open", probe.tick, format_args!("settled=true"));
+        self.done(true)
+    }
+
+    /// One real tick of `Shop.open`: settle on a usable page, else send a
+    /// Trade only when no attempt is outstanding or the last one expired.
     fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
-        if probe.shop_open {
-            if probe.has_stock && !probe.stock.is_empty() || cx.clock().bound_reached() {
-                return self.done(true);
+        let Some(tick) = probe.tick else {
+            return Step::Wait;
+        };
+        if self.open_ready(probe) {
+            return self.open_settled(probe);
+        }
+        match std::mem::replace(&mut self.open, OpenWait::Idle) {
+            OpenWait::Idle => {}
+            OpenWait::Page { until, session } => {
+                if session == probe.session && tick <= until {
+                    self.open = OpenWait::Page { until, session };
+                    return Step::Wait;
+                }
             }
-            return Step::Wait;
+            OpenWait::Walk(mut walk) => {
+                let ended = walk.step(cx);
+                while let Some(line) = walk.pop_log() {
+                    trace("walk", Some(tick), format_args!("{line}"));
+                }
+                match ended {
+                    None => {
+                        self.open = OpenWait::Walk(walk);
+                        return Step::Wait;
+                    }
+                    Some(true) => {}
+                    Some(false) => {
+                        return self.open_failed(
+                            Some(tick),
+                            format_args!("the walk to the unreachable keeper failed"),
+                        );
+                    }
+                }
+            }
+            OpenWait::Trade(attempt) => {
+                if attempt.pending_on(tick, probe.session) || !attempt.ended(tick, probe) {
+                    self.open = OpenWait::Trade(attempt);
+                    return Step::Wait;
+                }
+                self.attempts_left = self.attempts_left.saturating_sub(1);
+                if self.attempts_left == 0 {
+                    return self.open_failed(
+                        Some(tick),
+                        format_args!("no usable shop after {OPEN_ATTEMPTS} Trade attempts"),
+                    );
+                }
+            }
         }
-        // The frozen `Shop.open` presses Trade once per attempt and only
-        // re-presses after that attempt's own 3000 ms window expired.
-        if !self.pressed {
-            self.press_trade(cx);
-            return Step::Wait;
-        }
-        if !cx.clock().bound_reached() {
-            return Step::Wait;
-        }
-        self.attempts_left = self.attempts_left.saturating_sub(1);
-        if self.attempts_left == 0 {
-            return self.done(false);
-        }
-        self.press_trade(cx);
-        Step::Wait
+        self.next_trade(probe, cx)
     }
 
     fn close_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
@@ -586,7 +1001,6 @@ impl Shop {
                 self.transferred = transferred;
                 self.batch_delta = 0;
                 self.held_now = count_of(probe.inv, &self.name);
-                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
                 if self.pick {
                     // The frozen loop asks `pick` again before every batch.
                     self.candidates = container
@@ -597,7 +1011,7 @@ impl Shop {
                     if self.candidates.is_empty() {
                         return self.done(false);
                     }
-                    if self.last_dispatch_tick == Some(tick) {
+                    if self.tick_spent() {
                         self.phase = Phase::ReadyBatch;
                         return Step::Wait;
                     }
@@ -611,15 +1025,14 @@ impl Shop {
                 if self.kind == Kind::Buy && row.count <= 0 {
                     return self.done(false);
                 }
-                if self.last_dispatch_tick == Some(tick) {
+                if self.tick_spent() {
                     self.phase = Phase::ReadyBatch;
                     return Step::Wait;
                 }
                 self.send_batch(&row, cx)
             }
             Phase::ReadyBatch => {
-                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
-                if self.last_dispatch_tick == Some(tick) {
+                if self.tick_spent() {
                     return Step::Wait;
                 }
                 if self.pick {
@@ -747,21 +1160,17 @@ pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
 
 /// The compact view one decision is made from.
 struct Probe<'a> {
+    tick: Option<u64>,
+    session: Session,
+    chat_seq: i32,
+    cant_reach_seq: i32,
     ingame: bool,
     shop_open: bool,
     has_stock: bool,
     stock: &'a [Row],
     player: Option<&'a [Row]>,
     inv: &'a [Row],
-    npcs: &'a [(String, Vec<String>)],
-}
-
-fn trade_target(npcs: &[(String, Vec<String>)], name: &str) -> Option<(String, String)> {
-    let npc = npcs
-        .iter()
-        .find(|(npc_name, _)| npc_name.eq_ignore_ascii_case(name))?;
-    let action = npc.1.iter().find(|a| a.eq_ignore_ascii_case("trade"))?;
-    Some((npc.0.clone(), action.clone()))
+    keeper: KeeperFact<'a>,
 }
 
 fn find_row<'a>(rows: &'a [Row], name: &str) -> Option<&'a Row> {
@@ -864,21 +1273,33 @@ mod tests {
         assert_eq!(count_of(&rows, "Empty vial"), 0);
     }
 
+    fn npc_row(name: &str, ops: &[&str], index: i32, x: i32, distance: i32) -> observed::EntityRow {
+        observed::EntityRow {
+            index,
+            name: Some(name.into()),
+            x,
+            z: 5,
+            level: 0,
+            distance,
+            actions: ops.iter().map(|op| (*op).into()).collect(),
+            ..observed::EntityRow::default()
+        }
+    }
+
     #[test]
-    fn trade_target_needs_the_npc_and_its_trade_op() {
-        let npcs = vec![(
-            "Shop keeper".to_string(),
-            vec!["Talk-to".to_string(), "Trade".to_string()],
-        )];
-        assert_eq!(
-            trade_target(&npcs, "shop keeper"),
-            Some(("Shop keeper".to_string(), "Trade".to_string()))
-        );
-        assert!(trade_target(&npcs, "Guard").is_none());
-        let quiet = vec![("Guard".to_string(), vec!["Attack".to_string()])];
-        assert!(trade_target(&quiet, "Guard").is_none());
-        let no_npc = Vec::new();
-        assert!(trade_target(&no_npc, "Shop keeper").is_none());
+    fn choose_keeper_needs_the_npc_and_its_trade_op() {
+        let rows = [
+            npc_row("Guard", &["Attack"], 1, 6, 1),
+            npc_row("Shop keeper", &["Talk-to"], 2, 6, 1),
+            npc_row("Shop keeper", &["Talk-to", "Trade"], 3, 9, 4),
+            npc_row("Shop keeper", &["Talk-to", "Trade"], 4, 7, 2),
+        ];
+        assert!(choose_keeper(&rows, "Guard", None).is_none());
+        assert!(choose_keeper(&[], "Shop keeper", None).is_none());
+        // No live flood: the nearest Trade row by straight-line distance.
+        let nearest = choose_keeper(&rows, " shop keeper ", None).unwrap();
+        assert_eq!((nearest.index, nearest.route), (4, KeeperRoute::Unknown(2)));
+        assert_eq!(nearest.action, "Trade");
     }
 
     fn shop(kind: Kind, name: &str, requested: i32, phase: Phase) -> Shop {
@@ -891,13 +1312,17 @@ mod tests {
 
     fn probe<'a>(stock: &'a [Row], player: Option<&'a [Row]>, inv: &'a [Row]) -> Probe<'a> {
         Probe {
+            tick: Some(1),
+            session: Session::default(),
+            chat_seq: 0,
+            cant_reach_seq: 0,
             ingame: true,
             shop_open: true,
             has_stock: true,
             stock,
             player,
             inv,
-            npcs: &[],
+            keeper: KeeperFact::Given(None),
         }
     }
 
@@ -988,61 +1413,313 @@ mod tests {
         assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(0)), vec![]));
     }
 
-    #[test]
-    fn open_presses_trade_once_per_attempt_and_bounds_at_three() {
+    fn opener() -> Shop {
+        observed::on_reset();
         let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
-        rt.npc_action = "Trade".into();
         rt.attempts_left = OPEN_ATTEMPTS;
-        rt.pressed = true;
-        let mut clock = armed(OPEN_WAIT_MS);
-        let closed = Probe {
+        rt
+    }
+
+    fn keeper(route: KeeperRoute) -> Keeper {
+        Keeper {
+            name: "Shop keeper".into(),
+            action: "Trade".into(),
+            index: 3,
+            tile: WorldTile {
+                x: 3222,
+                z: 3222,
+                level: 0,
+            },
+            route,
+        }
+    }
+
+    fn trade() -> InteractReq {
+        InteractReq::Npc {
+            name: "Shop keeper".into(),
+            action: "Trade".into(),
+            index: Some(3),
+        }
+    }
+
+    /// A real tick with the shop closed and `keeper` posted.
+    fn closed_at(tick: u64, keeper: &Keeper) -> Probe<'_> {
+        Probe {
+            tick: Some(tick),
+            keeper: KeeperFact::Given(Some(keeper)),
             shop_open: false,
             has_stock: false,
             ..probe(&[], None, &[])
-        };
-        let trade = InteractReq::Npc {
-            name: "Shop keeper".into(),
-            action: "Trade".into(),
-            index: None,
-        };
-        // Inside the attempt window the frozen loop only waits: no re-press.
-        assert_eq!(step(&mut rt, &mut clock, &closed), (None, vec![]));
-        // Each expired window re-presses once, for the frozen three attempts.
-        for attempt in 1..OPEN_ATTEMPTS {
-            expire(&mut clock);
+        }
+    }
+
+    /// A real tick with the shop modal up over `stock`.
+    fn open_at<'a>(tick: u64, keeper: &'a Keeper, stock: &'a [Row]) -> Probe<'a> {
+        Probe {
+            tick: Some(tick),
+            keeper: KeeperFact::Given(Some(keeper)),
+            ..probe(stock, None, &[])
+        }
+    }
+
+    #[test]
+    fn open_deadline_is_route_plus_slack_capped() {
+        assert_eq!(open_deadline_ticks(0), OPEN_SLACK_TICKS);
+        assert_eq!(open_deadline_ticks(30), 30 + OPEN_SLACK_TICKS);
+        assert_eq!(open_deadline_ticks(104), OPEN_CAP_TICKS);
+        assert_eq!(open_deadline_ticks(5_000), OPEN_CAP_TICKS);
+    }
+
+    #[test]
+    fn a_long_walk_gets_one_trade_until_its_route_deadline() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let walk = keeper(KeeperRoute::Steps(30));
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(1, &walk)),
+            (None, vec![trade()])
+        );
+        let deadline = 1 + 30 + OPEN_SLACK_TICKS;
+        for tick in 2..=deadline {
             assert_eq!(
-                step(&mut rt, &mut clock, &closed),
-                (None, vec![trade.clone()]),
-                "attempt {attempt} re-presses Trade"
-            );
-            assert_eq!(
-                step(&mut rt, &mut clock, &closed),
+                step(&mut rt, &mut clock, &closed_at(tick, &walk)),
                 (None, vec![]),
-                "one press per window"
+                "no second Trade on tick {tick} before the deadline"
             );
         }
-        // The last window closes the call as a timeout, not another press.
-        expire(&mut clock);
         assert_eq!(
-            step(&mut rt, &mut clock, &closed),
+            step(&mut rt, &mut clock, &closed_at(deadline + 1, &walk)),
+            (None, vec![trade()]),
+            "the expired attempt is followed by exactly one new Trade"
+        );
+    }
+
+    #[test]
+    fn a_modal_at_the_deadline_tick_settles_on_a_later_tick_not_a_trade_tick() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let stock = [row("Shantay pass", 100, 15)];
+        let walk = keeper(KeeperRoute::Steps(2));
+        let deadline = 1 + 2 + OPEN_SLACK_TICKS;
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(1, &walk)),
+            (None, vec![trade()])
+        );
+        // A usable page on the Trade tick itself is not this Trade's shop.
+        assert!(!rt.open_ready(&open_at(1, &walk, &stock)));
+        for tick in 2..deadline {
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed_at(tick, &walk)),
+                (None, vec![])
+            );
+        }
+        // The modal lands on the deadline tick; its stock page is not posted yet.
+        assert_eq!(
+            step(&mut rt, &mut clock, &open_at(deadline, &walk, &[])),
+            (None, vec![])
+        );
+        // The page lands with the next tick: settle before any expiry check.
+        assert_eq!(
+            step(&mut rt, &mut clock, &open_at(deadline + 1, &walk, &stock)),
+            (Some(json!(true)), vec![])
+        );
+    }
+
+    #[test]
+    fn cant_reach_fails_that_attempt_at_once() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let walk = keeper(KeeperRoute::Steps(9));
+        // An older "I can't reach that!" is before this Trade's mark.
+        let before = Probe {
+            chat_seq: 4,
+            cant_reach_seq: 4,
+            ..closed_at(1, &walk)
+        };
+        assert_eq!(step(&mut rt, &mut clock, &before), (None, vec![trade()]));
+        let old_line = Probe {
+            chat_seq: 4,
+            cant_reach_seq: 4,
+            ..closed_at(2, &walk)
+        };
+        assert_eq!(step(&mut rt, &mut clock, &old_line), (None, vec![]));
+        let mut seq = 4;
+        for tick in 3..=4 {
+            seq += 1;
+            let refused = Probe {
+                chat_seq: seq,
+                cant_reach_seq: seq,
+                ..closed_at(tick, &walk)
+            };
+            assert_eq!(
+                step(&mut rt, &mut clock, &refused),
+                (None, vec![trade()]),
+                "a fresh can't-reach ends the attempt on tick {tick}"
+            );
+        }
+        let refused = Probe {
+            chat_seq: seq + 1,
+            cant_reach_seq: seq + 1,
+            ..closed_at(5, &walk)
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &refused),
+            (Some(json!(false)), vec![]),
+            "the third refused attempt ends the call without a fourth Trade"
+        );
+    }
+
+    #[test]
+    fn without_a_live_flood_the_straight_line_distance_sets_the_deadline() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let unknown = keeper(KeeperRoute::Unknown(5));
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(1, &unknown)),
+            (None, vec![trade()])
+        );
+        for tick in 2..=1 + 5 + OPEN_SLACK_TICKS {
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed_at(tick, &unknown)),
+                (None, vec![])
+            );
+        }
+        assert_eq!(
+            step(
+                &mut rt,
+                &mut clock,
+                &closed_at(2 + 5 + OPEN_SLACK_TICKS, &unknown)
+            ),
+            (None, vec![trade()])
+        );
+    }
+
+    #[test]
+    fn three_expired_attempts_resolve_false_without_a_trade_on_the_last_expiry() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let here = keeper(KeeperRoute::Steps(0));
+        let mut tick = 1;
+        let mut trades = 0;
+        let result = loop {
+            let (out, ops) = step(&mut rt, &mut clock, &closed_at(tick, &here));
+            if !ops.is_empty() {
+                assert_eq!(ops, vec![trade()]);
+                trades += 1;
+            }
+            if let Some(out) = out {
+                assert!(ops.is_empty(), "the failing tick sends nothing");
+                break out;
+            }
+            tick += 1;
+            assert!(tick < 3 * (OPEN_SLACK_TICKS + 2), "bounded");
+        };
+        assert_eq!(result, json!(false));
+        assert_eq!(trades, OPEN_ATTEMPTS);
+        assert_eq!(tick, 1 + u64::from(OPEN_ATTEMPTS) * (OPEN_SLACK_TICKS + 1));
+    }
+
+    #[test]
+    fn standing_next_to_the_keeper_gets_one_trade_not_two() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let stock = [row("Shantay pass", 100, 15)];
+        let here = keeper(KeeperRoute::Steps(0));
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(1, &here)),
+            (None, vec![trade()])
+        );
+        // The engine opens the shop a few cycles later (keeper wandered):
+        // stationary ticks with no face posted are not an expiry.
+        for tick in 2..=5 {
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed_at(tick, &here)),
+                (None, vec![])
+            );
+        }
+        assert_eq!(
+            step(&mut rt, &mut clock, &open_at(6, &here, &stock)),
+            (Some(json!(true)), vec![])
+        );
+    }
+
+    #[test]
+    fn a_session_change_ends_the_outstanding_attempt() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let walk = keeper(KeeperRoute::Steps(40));
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(9, &walk)),
+            (None, vec![trade()])
+        );
+        let relogged = Probe {
+            session: Session { epoch: 0, login: 7 },
+            ..closed_at(10, &walk)
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &relogged),
+            (None, vec![trade()]),
+            "a logout post drops the old Trade with its session"
+        );
+        // A reconnect resets the scene; its ticks may restart below the
+        // Trade tick and must not hold the attempt open.
+        let reconnected = Probe {
+            session: Session { epoch: 1, login: 0 },
+            ..closed_at(2, &walk)
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &reconnected),
+            (None, vec![trade()])
+        );
+    }
+
+    #[test]
+    fn an_open_modal_without_a_page_trades_only_after_the_next_tick() {
+        let mut rt = opener();
+        rt.open = OpenWait::Page {
+            until: 2,
+            session: Session::default(),
+        };
+        let mut clock = InstantTaskClock::new();
+        let here = keeper(KeeperRoute::Steps(0));
+        assert_eq!(
+            step(&mut rt, &mut clock, &open_at(2, &here, &[])),
+            (None, vec![])
+        );
+        assert_eq!(
+            step(&mut rt, &mut clock, &open_at(3, &here, &[])),
+            (None, vec![trade()])
+        );
+    }
+
+    #[test]
+    fn a_keeper_still_unreachable_after_its_walk_fails_without_a_trade() {
+        let mut rt = opener();
+        rt.walked = true;
+        let mut clock = InstantTaskClock::new();
+        let blocked = keeper(KeeperRoute::Unreachable);
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed_at(1, &blocked)),
             (Some(json!(false)), vec![])
         );
     }
 
     #[test]
-    fn open_waits_for_the_stock_page_after_the_modal_boundary() {
-        let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
-        rt.attempts_left = OPEN_ATTEMPTS;
-        rt.pressed = true;
-        let mut clock = armed(OPEN_WAIT_MS);
-        let empty_page = probe(&[], None, &[]);
-        assert_eq!(step(&mut rt, &mut clock, &empty_page), (None, vec![]));
-
-        let stock = [row("Shantay pass", 100, 15)];
-        let ready_page = probe(&stock, None, &[]);
+    fn a_vanished_keeper_ends_the_call_after_an_expired_attempt() {
+        let mut rt = opener();
+        let mut clock = InstantTaskClock::new();
+        let here = keeper(KeeperRoute::Steps(0));
         assert_eq!(
-            step(&mut rt, &mut clock, &ready_page),
-            (Some(json!(true)), vec![])
+            step(&mut rt, &mut clock, &closed_at(1, &here)),
+            (None, vec![trade()])
+        );
+        let gone = Probe {
+            keeper: KeeperFact::Given(None),
+            ..closed_at(2 + OPEN_SLACK_TICKS, &here)
+        };
+        assert_eq!(
+            step(&mut rt, &mut clock, &gone),
+            (Some(json!(false)), vec![])
         );
     }
 
