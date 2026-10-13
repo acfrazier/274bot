@@ -4,7 +4,10 @@ use crate::quester::families::tests::{def, with_tick};
 use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
-use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, WorldTile};
+use api::snapshot::{
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, StatView, WorldStateView,
+    WorldTile,
+};
 
 fn fixture() -> (Gatherer, GameSnapshot) {
     let (config, mut snapshot) = FamilyPreparation::run(|families| {
@@ -32,6 +35,526 @@ fn fixture() -> (Gatherer, GameSnapshot) {
         GatherRetained::default(),
     );
     (gatherer, snapshot)
+}
+
+fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
+    let (config, snapshot) = FamilyPreparation::run(|families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.saltfish.op1")),
+            ("location", serde_json::json!("Site")),
+            ("site", serde_json::json!("fishing.catherby")),
+            ("radius", serde_json::json!(32)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings)).unwrap();
+        let here = WorldTile {
+            x: 2848,
+            z: 3432,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 2792,
+            map_base_z: 3384,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            effective: 76,
+            base: 76,
+            xp: 1336443,
+            used: true,
+        }]);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(303, "Small fishing net"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_locs(vec![]);
+        snapshot.seed_npcs(vec![]);
+        (config, snapshot)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let anchor = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let mut gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&config),
+        Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained {
+            anchor: Some(anchor),
+            ..GatherRetained::default()
+        },
+    );
+    gatherer.area = Some(WorkArea {
+        mode: super::super::area::AreaMode::Site,
+        anchor,
+        radius: 32,
+    });
+    gatherer.needs_validate = false;
+    (gatherer, snapshot)
+}
+
+fn catherby_npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
+    NpcView {
+        index,
+        r#type: Some(type_id),
+        name: None,
+        actions: vec![],
+        tile,
+        distance: 0,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+fn credit_catherby_yield(gatherer: &mut Gatherer, snapshot: &GameSnapshot, now: u64) {
+    let mut ledger = None;
+    with_tick(snapshot, &mut ledger, now, |tick| {
+        gatherer.observed_progress = Some((0, 1336403, tick.cx.snapshot().here().unwrap().value));
+        gatherer.observe_progress(tick)
+    });
+}
+
+#[test]
+fn catherby_wait_deadline_is_not_proof_that_temporary_spots_are_unavailable() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let west = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let other = WorldTile {
+        x: 2838,
+        z: 3431,
+        level: 0,
+    };
+    // Both authored NPCs can be temporarily changed to whirlpools for 60 ticks.
+    // A retained wait can expire before the observed replacement does.
+    snapshot.seed_npcs(vec![
+        catherby_npc(2170, 404, west),
+        catherby_npc(2171, 404, other),
+    ]);
+    credit_catherby_yield(&mut gatherer, &snapshot, 9720);
+    gatherer.wait_until = Some(9753);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 9753, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        gatherer.failure.is_none(),
+        "an elapsed wait is not content proof of permanent absence"
+    );
+    snapshot.seed_npcs(vec![catherby_npc(2171, 320, other)]);
+    with_tick(&snapshot, &mut ledger, 9760, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    let target = gatherer
+        .target
+        .as_ref()
+        .expect("the restored fishing NPC must be approached");
+    assert_eq!(target.entity, EntityId::Npc(320));
+    assert_eq!(target.npc_index, 2171);
+    assert_eq!(target.tile, other);
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            index: Some(2171), action, ..
+        }) if action == "Net"
+    ));
+    assert!(gatherer.wait_until.is_none());
+}
+
+#[test]
+fn catherby_big_fish_replacement_does_not_prove_permanent_absence() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let west = WorldTile {
+        x: 2836,
+        z: 3431,
+        level: 0,
+    };
+    let other = WorldTile {
+        x: 2838,
+        z: 3431,
+        level: 0,
+    };
+    // macro_event_big_fish.rs2:6 temporarily uses type 390 for five ticks.
+    // It is not a permanent removal of either content-authored saltfish.
+    snapshot.seed_npcs(vec![
+        catherby_npc(2170, 390, west),
+        catherby_npc(2171, 390, other),
+    ]);
+    credit_catherby_yield(&mut gatherer, &snapshot, 9720);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 9723, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        gatherer.failure.is_none(),
+        "temporary NPC replacements must not block fishing"
+    );
+    snapshot.seed_npcs(vec![catherby_npc(2171, 320, other)]);
+    with_tick(&snapshot, &mut ledger, 9728, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    let target = gatherer
+        .target
+        .as_ref()
+        .expect("the restored fishing NPC must be approached");
+    assert_eq!(target.entity, EntityId::Npc(320));
+    assert_eq!(target.npc_index, 2171);
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+            index: Some(2171), action, ..
+        }) if action == "Net"
+    ));
+}
+
+#[test]
+fn catherby_exhausted_survey_renews_the_9753_approach_budget() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let here = WorldTile {
+        x: 2838,
+        z: 3432,
+        level: 0,
+    };
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+    credit_catherby_yield(&mut gatherer, &snapshot, 9720);
+    gatherer.avoid(
+        WorldTile {
+            x: 2836,
+            z: 3431,
+            level: 0,
+        },
+        9753,
+    );
+    let mut ledger = None;
+    let mut walks = 0;
+    // Hold the player outside complete visibility so every approach is
+    // unproductive. Eight attempts per authored placement exhaust the survey
+    // before the old avoid expires at the user's absolute deadline.
+    for now in 9723..=9764 {
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.begin_idle(tick, false)
+        });
+        if matches!(gatherer.active, Active::Walk(_)) {
+            walks += 1;
+        }
+        if now == 9752 {
+            assert_eq!(
+                walks, 16,
+                "both Catherby placements have an eight-walk budget"
+            );
+            assert_eq!(gatherer.wait_until, Some(9753));
+        }
+        if now == 9753 {
+            assert!(
+                gatherer.wait_until.is_none(),
+                "expiry must renew the survey"
+            );
+        }
+        assert!(
+            gatherer.failure.is_none(),
+            "tick {now}: {:?}",
+            gatherer.failure
+        );
+        gatherer.active = Active::None;
+        gatherer.target = None;
+    }
+    assert!(
+        walks > 16,
+        "renewal must admit another pass after both budgets exhaust"
+    );
+}
+
+#[test]
+fn catherby_absent_survey_renews_empty_coverage_and_approaches() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    let west = WorldTile {
+        x: 2838,
+        z: 3432,
+        level: 0,
+    };
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(west));
+    credit_catherby_yield(&mut gatherer, &snapshot, 9720);
+    let mut ledger = None;
+    for now in 9723..=9729 {
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.begin_idle(tick, false)
+        });
+        assert!(matches!(gatherer.active, Active::Walk(_)));
+        gatherer.active = Active::None;
+        gatherer.target = None;
+    }
+    // Complete visibility records empty coverage, but temporary absence must
+    // renew it so another unobserved pass can start.
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 2848,
+        ..west
+    }));
+    with_tick(&snapshot, &mut ledger, 9730, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(gatherer.failure.is_none());
+    assert!(matches!(gatherer.active, Active::None));
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(west));
+    with_tick(&snapshot, &mut ledger, 9731, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        matches!(gatherer.active, Active::Walk(_)),
+        "absence must clear coverage and admit another observation walk"
+    );
+}
+
+#[test]
+fn catherby_no_spots_blocks_at_800_ticks_despite_walking_progress() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    credit_catherby_yield(&mut gatherer, &snapshot, 100);
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 2849,
+        z: 3432,
+        level: 0,
+    }));
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 899, |tick| {
+        gatherer.observe_progress(tick);
+        gatherer.begin_idle(tick, false);
+    });
+    assert_eq!(gatherer.last_gameplay_tick, 899);
+    assert!(
+        gatherer.failure.is_none(),
+        "799 ticks without yield still renews"
+    );
+    with_tick(&snapshot, &mut ledger, 900, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("800 ticks without yield must block");
+    assert_eq!(failure.code.as_ref(), "resource-unavailable");
+    assert!(failure
+        .message
+        .contains("no fishing spot observed for 800 ticks"));
+    assert!(failure.message.contains("method=fishing.saltfish.op1"));
+    assert!(failure.message.contains("site=fishing.catherby"));
+    assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+}
+
+#[test]
+fn catherby_unobserved_spots_cannot_start_another_walk_after_800_ticks() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 2838,
+        z: 3432,
+        level: 0,
+    }));
+    credit_catherby_yield(&mut gatherer, &snapshot, 100);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 899, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    gatherer.active = Active::None;
+    gatherer.target = None;
+    with_tick(&snapshot, &mut ledger, 900, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(
+        gatherer.failure.is_some(),
+        "observation walks cannot renew the yield bound"
+    );
+    assert!(matches!(gatherer.active, Active::None));
+}
+
+#[test]
+fn catherby_hazard_wait_is_bounded_by_yield_not_walking_progress() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    credit_catherby_yield(&mut gatherer, &snapshot, 100);
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 2849,
+        z: 3432,
+        level: 0,
+    }));
+    snapshot.seed_npcs(vec![catherby_npc(
+        2170,
+        404,
+        WorldTile {
+            x: 2836,
+            z: 3431,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 899, |tick| {
+        gatherer.observe_progress(tick);
+        gatherer.begin_idle(tick, false);
+    });
+    assert_eq!(
+        gatherer.wait_until,
+        Some(900),
+        "a fresh wait cannot exceed the no-yield bound"
+    );
+    assert!(gatherer.failure.is_none());
+    with_tick(&snapshot, &mut ledger, 900, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(gatherer.failure.is_some());
+}
+
+#[test]
+fn catherby_idle_and_observation_walks_report_surveying_not_working() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    credit_catherby_yield(&mut gatherer, &snapshot, 100);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 101, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert_eq!(gatherer.phase(), ("surveying", NativePhase::Waiting));
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 2838,
+        z: 3432,
+        level: 0,
+    }));
+    with_tick(&snapshot, &mut ledger, 102, |tick| {
+        gatherer.begin_idle(tick, false)
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    assert_eq!(gatherer.phase(), ("surveying", NativePhase::Waiting));
+}
+
+#[test]
+fn catherby_first_tick_starts_the_no_yield_window_on_the_session_clock() {
+    let (mut gatherer, snapshot) = catherby_fishing_fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 10000, |tick| {
+        gatherer.tick(tick).unwrap();
+    });
+    assert_eq!(gatherer.last_yield_tick, 10000);
+    assert!(gatherer.failure.is_none());
+    with_tick(&snapshot, &mut ledger, 10799, |tick| {
+        gatherer.tick(tick).unwrap();
+    });
+    assert!(gatherer.failure.is_none());
+    with_tick(&snapshot, &mut ledger, 10800, |tick| {
+        gatherer.tick(tick).unwrap();
+    });
+    assert!(gatherer.failure.is_some());
+}
+
+#[test]
+fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    credit_catherby_yield(&mut gatherer, &snapshot, 100);
+    assert_eq!(gatherer.last_yield_tick, 100);
+    snapshot.seed_inventory(
+        vec![
+            ItemView {
+                def: def(303, "Small fishing net"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            },
+            ItemView {
+                def: def(gatherer.prepared.products[0], "Fish"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 1,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            },
+        ],
+        28,
+    );
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 899, |tick| {
+        gatherer.observe_progress(tick)
+    });
+    assert_eq!(
+        gatherer.last_yield_tick, 899,
+        "a product delta without XP renews"
+    );
+    assert_eq!(
+        gatherer.last_gameplay_tick, 100,
+        "the product delta did not move the player"
+    );
+    for (now, gained, xp) in [(1698, 1, 0), (2497, 0, 40)] {
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            gatherer.handle_gather(
+                GatherResult {
+                    end: GatherEnd::Depleted,
+                    gained,
+                    xp,
+                },
+                tick,
+            );
+        });
+        assert_eq!(gatherer.last_yield_tick, now);
+        gatherer.needs_validate = false;
+        with_tick(&snapshot, &mut ledger, now + 799, |tick| {
+            gatherer.begin_idle(tick, false)
+        });
+        assert!(gatherer.failure.is_none());
+    }
 }
 
 fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
