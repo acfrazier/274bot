@@ -1,10 +1,14 @@
-import { runMachine } from '../../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../../shim/_kernel.js';
 
 const call = (payload) => globalThis.rustyscript.functions.__rs2b0t_duel(payload);
 const tables = call({ op: 'tables' });
 
 export const DUEL_CLUE_ID = tables.clue.id;
 export const DUEL_CLUE_TILE = Object.freeze(tables.clue.tile);
+
+export function resetClueDuelSearch() {
+    throw notImpl('resetClueDuelSearch');
+}
 
 export function crossesClueDuel(dest) {
     return call({ op: 'crosses', tile: dest }) === true;

@@ -13,6 +13,8 @@ const TABLE = native('table');
 export const BOOST_POTIONS = TABLE.potions;
 export const SUPER_ATTACK = BOOST_POTIONS[0];
 export const SUPER_STRENGTH = BOOST_POTIONS[1];
+export const SUPER_DEFENCE = TABLE.super_defence;
+export const SUPER_SET = TABLE.super_set;
 export const EMPTY_VIAL = TABLE.empty_vial;
 export const BOOST_FLOOR = TABLE.floor;
 

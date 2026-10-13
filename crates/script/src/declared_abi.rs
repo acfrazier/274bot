@@ -432,8 +432,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Game } from '../../api/game/Game.js';",
     },
     Reexport {
-        names: &["Inventory"],
-        line: "export { Inventory } from '../../api/inventory/Inventory.js';",
+        names: &["Inventory", "InvItem"],
+        line: "export { Inventory, InvItem } from '../../api/inventory/Inventory.js';",
     },
     Reexport {
         names: &["Skills"],
@@ -461,8 +461,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { reader } from '../../adapter/ClientAdapter.js';",
     },
     Reexport {
-        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool"],
-        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';",
+        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool"],
+        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';",
     },
     Reexport {
         names: &["EventSignal"],

@@ -11,6 +11,7 @@ use super::callback_v8::{
 };
 use crate::boost_potions::{
     boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT, EMPTY_VIAL,
+    SUPER_SET,
 };
 use rustyscript::Runtime;
 
@@ -51,8 +52,8 @@ fn strings<'s>(scope: &mut v8::HandleScope<'s>, items: &[String]) -> v8::Local<'
 
 /// The exported descriptor rows, the floor and the drained flask name.
 fn table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let mut rows = Vec::with_capacity(BOOST_POTIONS.len());
-    for potion in BOOST_POTIONS {
+    let mut rows = Vec::with_capacity(SUPER_SET.len());
+    for potion in SUPER_SET {
         let skill = cb::string(scope, potion.skill);
         let short = cb::string(scope, potion.short);
         let flask = cb::string(scope, &potion.flask());
@@ -67,12 +68,20 @@ fn table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::
             ],
         )?);
     }
-    let potions = v8::Array::new_with_elements(scope, &rows).into();
+    let potions = v8::Array::new_with_elements(scope, &rows[..BOOST_POTIONS.len()]).into();
+    let super_defence = rows[BOOST_POTIONS.len()];
+    let super_set = v8::Array::new_with_elements(scope, &rows).into();
     let floor = cb::num(scope, BOOST_FLOOR);
     let vial = cb::string(scope, EMPTY_VIAL);
     cb::object(
         scope,
-        &[("potions", potions), ("floor", floor), ("empty_vial", vial)],
+        &[
+            ("potions", potions),
+            ("super_defence", super_defence),
+            ("super_set", super_set),
+            ("floor", floor),
+            ("empty_vial", vial),
+        ],
     )
 }
 

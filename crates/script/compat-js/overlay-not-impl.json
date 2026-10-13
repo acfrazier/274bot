@@ -259,5 +259,32 @@
     "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
     "runtime": "crates/script/src/shim/query.js:111",
     "async": false
+  },
+  {
+    "id": "not-impl:api/combat/hunting/combat.js:Fight.hasChaseTarget",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "Fight.hasChaseTarget",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: full hunting combat compatibility waits for the compat rearchitecture; no successful result is produced.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:138",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/duel/ClueDuel.js:ClueDuelSearch.tick",
+    "module": "api/duel/ClueDuel.js",
+    "selector": "ClueDuelSearch.tick",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-duel search remains a behavior family for the compat rearchitecture; no successful result is produced.",
+    "runtime": "crates/script/src/shim/clue_duel.js:40",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/ai/clues/duelTravel.js:resetClueDuelSearch",
+    "module": "api/ai/clues/duelTravel.js",
+    "selector": "resetClueDuelSearch",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-duel search state remains a behavior family for the compat rearchitecture; no successful result is produced.",
+    "runtime": "crates/script/src/shim/clue_duel_travel.js:9",
+    "async": false
   }
 ]

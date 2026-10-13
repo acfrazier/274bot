@@ -51,14 +51,7 @@ export const PERIODIC_BANK_SETTINGS = {
 };
 
 export function parseBankStrategy(label) {
-    const n = String(label || '')
-        .trim()
-        .toLowerCase();
-    if (n === 'off') return 'off';
-    if (n === 'loot count') return 'loot';
-    if (n === 'time') return 'time';
-    if (n === 'either') return 'either';
-    return 'off';
+    return globalThis.__rs2b0t_periodic_bank_rules('parseBankStrategy', label);
 }
 
 // Rust picks the destination's banker conversation over its object

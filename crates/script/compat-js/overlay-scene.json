@@ -108,9 +108,9 @@
     "id": "scene-inventory-item-handle",
     "module": "api/inventory/Inventory.js",
     "selector": "InvItem",
-    "reason": "Inventory emits mutable plain handles with name/count/id/slot/noted/cert plus copied actions; they have no snap or constructor, interactions synchronously return booleans, and useOn recognizes Player as well as the frozen targets (crates/script/src/shim/inventory.js:17-24,26-86; crates/script/schema/isolate.fbs:18-30).",
-    "runtime": "crates/script/src/shim/inventory.js:33",
-    "declaration": "export interface InvItem { name: string; count: number; id: number; slot: number; noted: boolean; cert: number; actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }"
+    "reason": "Inventory emits row-backed InvItem instances with noted, copied actions, synchronous interactions, and the host-supported useOn targets.",
+    "runtime": "crates/script/src/shim/inventory.js:32",
+    "declaration": "export class InvItem { readonly name: string | null; readonly count: number; readonly id: number; readonly slot: number; readonly noted: boolean; readonly cert: number; constructor(snapshot: import('../../adapter/ClientAdapter.js').InvItemSnapshot); actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }"
   },
   {
     "id": "scene-query-snapshot-row",

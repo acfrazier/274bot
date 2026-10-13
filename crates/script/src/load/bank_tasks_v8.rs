@@ -37,7 +37,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         death_recovery_validate,
     )?;
     cb::install(runtime, "__rs2b0t_next_withdraw_chunk", next_withdraw_chunk)?;
-    cb::install(runtime, "__rs2b0t_withdraw_op", withdraw_op)
+    cb::install(runtime, "__rs2b0t_withdraw_op", withdraw_op)?;
+    cb::install(runtime, "__rs2b0t_periodic_bank_rules", periodic_bank_rules)
 }
 
 /// Frozen `withdrawOp(ops, amount)` (`api/bank/bankOps.ts:5-21`): the first
@@ -162,6 +163,32 @@ fn periodic_due<'s>(
         minutes,
         minutes_threshold,
     ))
+}
+
+fn periodic_bank_rules<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| match args.get(0).to_rust_string_lossy(scope).as_str() {
+        "parseBankStrategy" => {
+            let label = args.get(1);
+            let label = if cb::truthy(scope, label) {
+                cb::to_string(scope, label)?
+            } else {
+                String::new()
+            };
+            let strategy = match parse_bank_strategy(&label) {
+                crate::periodic_bank::BankStrategy::Off => "off",
+                crate::periodic_bank::BankStrategy::Items => "items",
+                crate::periodic_bank::BankStrategy::Time => "time",
+                crate::periodic_bank::BankStrategy::Either => "either",
+            };
+            Ok(cb::string(scope, strategy))
+        }
+        _ => Err(cb::type_error(scope, "unknown periodic bank rule")),
+    })();
+    cb::finish(scope, rv, result);
 }
 
 fn periodic_bank_validate<'s>(

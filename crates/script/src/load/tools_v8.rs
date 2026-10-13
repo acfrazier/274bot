@@ -30,13 +30,12 @@ fn run<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let op = args.get(0).to_rust_string_lossy(scope);
     match op.as_str() {
-        "toolTiers" => tool_tiers(scope, args.get(1)),
-        "bestAxe" => best(scope, ToolKind::Axe, args.get(1), args.get(2)),
-        "bestPickaxe" => best(scope, ToolKind::Pickaxe, args.get(1), args.get(2)),
-        "bestFromTiers" => best_from_tiers(scope, args.get(1), args.get(2), args.get(3)),
+        "toolAttackLevel" => tool_attack_level(scope, args.get(1)),
+        "toolsNeedingEquip" => {
+            tools_needing_equip(scope, args.get(1), args.get(2), args.get(3), args.get(4))
+        }
+        "exactTool" => exact_tool(scope, args.get(1), args.get(2)),
         "canWieldTool" => can_wield(scope, args.get(1), args.get(2)),
-        "toolKeepNames" => tool_keep_names(scope, args.get(1)),
-        "hasAllTools" => has_all(scope, args.get(1), args.get(2), args.get(3)),
         "hasToolReq" => {
             let skill_level = Callback::plain(scope, args.get(2), "skillLevel");
             let count = Callback::plain(scope, args.get(3), "count");
@@ -241,27 +240,165 @@ fn tier_hit<'s>(
     Ok(Some(get(scope, tier, "name")?))
 }
 
-/// `canWieldTool(name, attack)`: exact (trimmed) name over the selected
-/// tables; Attack is converted only for a gated tool.
+/// Frozen `canWieldTool(name, attack)`: compare against the case-insensitive
+/// native `toolAttackLevel` table, including its level-1 unknown default.
 fn can_wield<'s>(
     scope: &mut v8::HandleScope<'s>,
     name: v8::Local<'s, v8::Value>,
     attack: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let name = if name.is_null_or_undefined() {
-        String::new()
+    let name = cb::to_string(scope, name)?;
+    let need = cb::num(
+        scope,
+        f64::from(gather_tools::tool_attack_level(&name)),
+    );
+    let can_wield = cb::ge(scope, attack, need)?;
+    Ok(v8::Boolean::new(scope, can_wield).into())
+}
+
+/// Frozen `toolAttackLevel(name)` from the native gather-tool table.
+fn tool_attack_level<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let name = cb::to_string(scope, name)?;
+    let level = gather_tools::tool_attack_level(&name);
+    Ok(cb::num(scope, f64::from(level)))
+}
+
+/// Frozen `exactTool(name, opts)`; the shim performs only string coercion.
+fn exact_tool<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: v8::Local<'s, v8::Value>,
+    opts: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let min = get(scope, opts, "min")?;
+    let min_value = if min.is_null_or_undefined() {
+        cb::num(scope, 1.0)
     } else {
-        cb::to_string(scope, name)?
+        min
     };
-    let ok = match gather_tools::wield_gate(&name) {
-        None => false,
-        Some(None) => true,
-        Some(Some(need)) => {
-            let need = cb::num(scope, f64::from(need));
-            cb::ge(scope, attack, need)?
+    let restock = get(scope, opts, "restock")?;
+    let restock_value = if restock.is_null_or_undefined() {
+        let min = get(scope, opts, "min")?;
+        if min.is_null_or_undefined() {
+            cb::num(scope, 1.0)
+        } else {
+            min
         }
+    } else {
+        restock
     };
-    Ok(v8::Boolean::new(scope, ok).into())
+    let equip = get(scope, opts, "equip")?;
+    let kind = cb::string(scope, "exact");
+    cb::object(
+        scope,
+        &[
+            ("kind", kind),
+            ("name", name),
+            ("min", min_value),
+            ("restock", restock_value),
+            ("equip", equip),
+        ],
+    )
+}
+
+/// Frozen `toolsNeedingEquip`; Rust keeps the callback order and exits early.
+fn tools_needing_equip<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    reqs: v8::Local<'s, v8::Value>,
+    skill_level: v8::Local<'s, v8::Value>,
+    count: v8::Local<'s, v8::Value>,
+    worn: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let skill_level = Callback::plain(scope, skill_level, "skillLevel");
+    let count = Callback::plain(scope, count, "count");
+    let worn = Callback::plain(scope, worn, "worn");
+    let attack_skill = cb::string(scope, "attack");
+    let attack = skill_level.call(scope, &[attack_skill])?;
+    let out = v8::Array::new(scope, 0);
+    let reqs = ForOf::open(scope, reqs, "reqs")?;
+    loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow =
+            tools_needing_equip_iteration(scope, &reqs, out, attack, skill_level, count, worn);
+        if let Flow::Break(_) = cb::iteration(scope, flow)? {
+            break;
+        }
+    }
+    Ok(out.into())
+}
+
+fn tools_needing_equip_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    reqs: &ForOf<'s>,
+    out: v8::Local<'s, v8::Array>,
+    attack: v8::Local<'s, v8::Value>,
+    skill_level: Callback<'s>,
+    count: Callback<'s>,
+    worn: Callback<'s>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(req) = reqs.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let body = tools_needing_equip_row(scope, req, out, attack, skill_level, count, worn);
+    reqs.body(scope, body)?;
+    Ok(Flow::Continue(None))
+}
+
+fn tools_needing_equip_row<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    req: v8::Local<'s, v8::Value>,
+    out: v8::Local<'s, v8::Array>,
+    attack: v8::Local<'s, v8::Value>,
+    skill_level: Callback<'s>,
+    count: Callback<'s>,
+    worn: Callback<'s>,
+) -> JsResult<'s, ()> {
+    if !get(scope, req, "equip")?.is_true() {
+        return Ok(());
+    }
+    let kind = get(scope, req, "kind")?;
+    if is_tiered(scope, kind) {
+        let skill = get(scope, req, "skill")?;
+        let level = skill_level.call(scope, &[skill])?;
+        let tiers = get(scope, req, "tiers")?;
+        let Some(best) =
+            best_from_tiers_with(scope, level, tiers, TierAvailability::Positive(count))?
+        else {
+            return Ok(());
+        };
+        if worn.truthy(scope, &[best])? || !can_wield_value(scope, best, attack)? {
+            return Ok(());
+        }
+        let index = out.length();
+        cb::catching(scope, |s| out.set_index(s, index, best))?;
+        return Ok(());
+    }
+    let name = get(scope, req, "name")?;
+    let have = count.call(scope, &[name])?;
+    let zero = cb::num(scope, 0.0);
+    if !cb::gt(scope, have, zero)? || worn.truthy(scope, &[name])? {
+        return Ok(());
+    }
+    if can_wield_value(scope, name, attack)? {
+        let index = out.length();
+        cb::catching(scope, |s| out.set_index(s, index, name))?;
+    }
+    Ok(())
+}
+
+fn can_wield_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: v8::Local<'s, v8::Value>,
+    attack: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, bool> {
+    let name = cb::to_string(scope, name)?;
+    let need = cb::num(
+        scope,
+        f64::from(gather_tools::tool_attack_level(&name)),
+    );
+    cb::ge(scope, attack, need)
 }
 
 /// Frozen `hasAllTools(reqs, skillLevel, count)`:

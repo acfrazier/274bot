@@ -52,6 +52,12 @@ export const STAND_SITE_KEYS = ROWS.filter((s) => (s.stands?.length ?? 0) > 1).m
 export const MAX_STANDS = Math.max(...ROWS.map((s) => s.stands?.length ?? 1));
 export const SITE_OPTIONS = ROWS.map((s) => s.key);
 
+export const ENCLAVE_TARGET_OPTIONS = logic('enclaveTargetOptions');
+
+export function enclaveTargets(value, mode = 'both') {
+    return globalThis.__rs2b0t_enclave_targets(value, mode);
+}
+
 export function needsShield(s, style) {
     return style === 'melee' || s.fireAtRange === true;
 }
