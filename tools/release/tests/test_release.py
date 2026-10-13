@@ -536,6 +536,40 @@ Load command 8
       sdk 14.0
 """
 
+OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64 = """\
+/pkg/fat (architecture arm64):
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 72
+Load command 3
+      cmd LC_SOURCE_VERSION
+  cmdsize 16
+  version 0.0
+/pkg/fat (architecture x86_64):
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+"""
+
+OTOOL_LOAD_COMMANDS_FAT_OK = """\
+/pkg/fat (architecture arm64):
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+/pkg/fat (architecture x86_64):
+Load command 8
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.15
+      sdk 10.15
+"""
+
 
 class MacosLinkageTests(unittest.TestCase):
     def make_package(self, root):
@@ -568,11 +602,22 @@ class MacosLinkageTests(unittest.TestCase):
             "@executable_path/../Frameworks",
             "/opt/local/lib",
         ])
-        self.assertEqual(release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS), ["11.0"])
+        # A thin binary is one section with no architecture.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS),
+            [(None, ["11.0"])],
+        )
         # Legacy LC_VERSION_MIN_MACOSX, and every slice of a fat binary.
         self.assertEqual(
             release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT),
-            ["10.15", "14.0"],
+            [("arm64", ["10.15"]), ("x86_64", ["14.0"])],
+        )
+        # A slice with no version command stays an empty section; the
+        # LC_SOURCE_VERSION 'version 0.0' in it is not a floor.
+        self.assertEqual(
+            release.parse_otool_minimum_os(
+                OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64),
+            [("arm64", []), ("x86_64", ["11.0"])],
         )
 
     def test_system_libraries_are_allowed(self):
@@ -755,21 +800,52 @@ class MacosLinkageTests(unittest.TestCase):
             )
 
     def test_minimum_os_above_the_floor_is_named(self):
+        # Thin binaries: one section, no architecture suffix, as before.
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             binary = base / "panel-play"
-            above = release.macho_minimum_os_violations(binary, base, ["14.0"])
-            at_floor = release.macho_minimum_os_violations(binary, base, ["11.0"])
-            below = release.macho_minimum_os_violations(binary, base, ["10.15"])
-            mixed_fat = release.macho_minimum_os_violations(
-                binary, base, ["11.0", "14.0"])
-            missing = release.macho_minimum_os_violations(binary, base, [])
+            above = release.macho_minimum_os_violations(
+                binary, base, [(None, ["14.0"])])
+            at_floor = release.macho_minimum_os_violations(
+                binary, base, [(None, ["11.0"])])
+            below = release.macho_minimum_os_violations(
+                binary, base, [(None, ["10.15"])])
+            missing = release.macho_minimum_os_violations(
+                binary, base, [(None, [])])
+            no_sections = release.macho_minimum_os_violations(
+                binary, base, [])
         self.assertEqual(above, ["panel-play: minos 14.0 exceeds macOS 11.0"])
         self.assertEqual(at_floor, [])
         self.assertEqual(below, [])
-        self.assertEqual(mixed_fat, ["panel-play: minos 14.0 exceeds macOS 11.0"])
         self.assertEqual(len(missing), 1)
         self.assertIn("panel-play: missing minimum macOS version", missing[0])
+        self.assertNotIn("architecture", missing[0])
+        self.assertEqual(no_sections, missing)
+
+    def test_minimum_os_is_checked_per_architecture_slice(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+
+            def violations(load_commands):
+                return release.macho_minimum_os_violations(
+                    binary, base,
+                    release.parse_otool_minimum_os(load_commands))
+
+            # A version on the x86_64 slice must not satisfy an arm64
+            # slice that records no floor at all.
+            missing_one = violations(OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64)
+            both_ok = violations(OTOOL_LOAD_COMMANDS_FAT_OK)
+            one_above = violations(OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT)
+        self.assertEqual(missing_one, [
+            "panel-play: missing minimum macOS version "
+            "(architecture arm64)",
+        ])
+        self.assertEqual(both_ok, [])
+        self.assertEqual(one_above, [
+            "panel-play: minos 14.0 exceeds macOS 11.0 "
+            "(architecture x86_64)",
+        ])
 
     def test_verify_checks_every_macho_and_names_the_offender(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -777,8 +853,11 @@ class MacosLinkageTests(unittest.TestCase):
 
             def linkage(path):
                 if path.name == "libfoo.dylib" and "274bot.app" in str(path):
-                    return ["/opt/local/lib/libiconv.2.dylib"], [], ["11.0"]
-                return ["/usr/lib/libSystem.B.dylib"], [], ["11.0"]
+                    return (
+                        ["/opt/local/lib/libiconv.2.dylib"], [],
+                        [(None, ["11.0"])],
+                    )
+                return ["/usr/lib/libSystem.B.dylib"], [], [(None, ["11.0"])]
 
             with mock.patch.object(release, "otool_linkage", side_effect=linkage):
                 with self.assertRaisesRegex(
@@ -789,7 +868,10 @@ class MacosLinkageTests(unittest.TestCase):
                     release.verify_macos_linkage(base)
                 clean = mock.patch.object(
                     release, "otool_linkage",
-                    return_value=(["/usr/lib/libSystem.B.dylib"], [], ["11.0"]),
+                    return_value=(
+                        ["/usr/lib/libSystem.B.dylib"], [],
+                        [(None, ["11.0"])],
+                    ),
                 )
                 with clean:
                     checked = release.verify_macos_linkage(base)
@@ -806,7 +888,10 @@ class MacosLinkageTests(unittest.TestCase):
             base = self.make_package(Path(temporary))
 
             def linkage(path):
-                minos = ["14.0"] if path.name == "tui-play" else ["11.0"]
+                minos = (
+                    [(None, ["14.0"])] if path.name == "tui-play"
+                    else [(None, ["11.0"])]
+                )
                 return ["/usr/lib/libSystem.B.dylib"], [], minos
 
             with mock.patch.object(release, "otool_linkage", side_effect=linkage):
