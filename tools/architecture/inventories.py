@@ -764,7 +764,6 @@ def _parse_source(executable: str, path: str, source: str) -> dict[str, Any]:
         if errors:
             first = errors[0].get("kind")
             raise _InventoryError(f"{path}: unsupported or malformed Rust syntax ({first})")
-    _reject_conditional_cfg_attr(tree, path)
     return tree
 
 
@@ -1127,6 +1126,16 @@ def _root_test_scopes(
             if name is None:
                 errors.append(f"{file_relative}: module declaration has no supported name")
                 continue
+            if any(
+                tokens[2][1] == "cfg_attr"
+                and set(_cfg_attr_effect_names(tokens, 2)) & {"cfg", "path"}
+                for tokens in _direct_attributes(child)
+                if len(tokens) > 2
+            ):
+                errors.append(
+                    f"{file_relative}: cfg_attr may not alter cfg or module path provenance"
+                )
+                continue
             test_cfg = _test_cfg_expression(child)
             nested_stack = module_stack + (name,)
             item_lists = _direct_children(child, "ITEM_LIST")
@@ -1331,23 +1340,58 @@ def _direct_attributes(node: dict[str, Any]) -> list[list[tuple[str, str]]]:
     return [_attribute_tokens(attr) for attr in _direct_children(node, "ATTR")]
 
 
-def _reject_conditional_cfg_attr(tree: dict[str, Any], path: str) -> None:
-    for node, _, _, _, _ in _walk_ast(tree, "production", ()):
-        if node.get("kind") != "ATTR":
+def _cfg_attr_effect_names(tokens: list[tuple[str, str]], start: int) -> list[str]:
+    """Read only cfg_attr effects, not its predicate or nested attribute arguments."""
+    if start + 1 >= len(tokens) or tokens[start + 1][1] != "(":
+        return ["cfg"]
+    names: list[str] = []
+    depth = 1
+    predicate_end = False
+    expecting_effect = False
+    for index in range(start + 2, len(tokens)):
+        text = tokens[index][1]
+        if text == "(":
+            depth += 1
+        elif text == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        elif depth == 1 and text == ",":
+            predicate_end = True
+            expecting_effect = True
+        elif depth == 1 and predicate_end and expecting_effect:
+            names.append(text)
+            if text == "cfg_attr":
+                names.extend(_cfg_attr_effect_names(tokens, index))
+            expecting_effect = False
+    return names
+
+
+def _binding_attribute_issues(tree: dict[str, Any], path: str) -> list[str]:
+    """Report name-changing attributes only when an indexed module is consulted."""
+    prelude = {"no_implicit_prelude", "no_std", "no_core", "prelude_import"}
+    issues: list[str] = []
+    for node, scope, _, _, _ in _walk_ast(tree, "production", ()):
+        if node.get("kind") != "ATTR" or _is_test_scope(scope):
             continue
         tokens = _attribute_tokens(node)
-        if len(tokens) < 3 or tokens[2][1] != "cfg_attr":
+        head = 3 if len(tokens) > 3 and tokens[1][1] == "!" else 2
+        if len(tokens) <= head:
             continue
-        if any(
-            text in {"cfg", "path"} and kind not in {"STRING", "RAW_STRING"}
-            for kind, text in tokens[3:]
-        ):
-            raise _InventoryError(f"{path}: cfg_attr may not alter cfg or module path provenance")
-
-
-
-
-
+        name = tokens[head][1]
+        if name in prelude:
+            issues.append(f"{path}: unsupported Rust prelude configuration")
+        elif name in {"macro_use", "macro_export"}:
+            issues.append(f"{path}: unsupported macro binding attribute")
+        elif name == "cfg_attr":
+            effects = set(_cfg_attr_effect_names(tokens, head))
+            if effects & prelude:
+                issues.append(f"{path}: unsupported Rust prelude configuration")
+            if effects & {"macro_use", "macro_export"}:
+                issues.append(f"{path}: cfg_attr may not alter macro binding")
+            if effects & {"cfg", "path"}:
+                issues.append(f"{path}: cfg_attr may not alter cfg or module path provenance")
+    return issues
 def _module_name(node: dict[str, Any]) -> str | None:
     return _first_name(node)
 
@@ -1459,6 +1503,23 @@ def _use_tree_imports(
     local_name = aliases[0] if aliases else target_prefix[-1]
     result.append(("::".join(target_prefix), local_name))
     return result
+
+
+def _extern_crate_binding(node: dict[str, Any]) -> tuple[str, str] | None:
+    """Return (source crate, local name) from an extern-crate declaration."""
+    sources = _direct_children(node, "NAME_REF")
+    if len(sources) != 1:
+        return None
+    source = next(
+        (text.removeprefix("r#") for kind, text in _leaf_tokens(sources[0])
+         if kind in {"IDENT", "RAW_IDENT", "SELF_KW"}),
+        None,
+    )
+    renames = _direct_children(node, "RENAME")
+    if len(renames) > 1:
+        return None
+    local = _first_name(renames[0]) if renames else source
+    return (source, local) if source and local else None
 
 
 def _macro_call_name(node: dict[str, Any]) -> str | None:
@@ -1589,9 +1650,17 @@ def _type_ownership(
             borrowed = True
             behind_reference = True
         elif kind == "PATH_TYPE":
+            if any(token_kind == "AS_KW" for token_kind, _ in _leaf_tokens(current)):
+                raise _InventoryError(
+                    f"{path}::{owner}: unsupported qualified associated field type"
+                )
             segments = _path_segments(current)
             if segments and not inside_known_owner:
                 name = segments[-1]
+                if len(segments) > 1 and segments[0] in generic_names:
+                    raise _InventoryError(
+                        f"{path}::{owner}: unresolved generic field ownership ({segments[0]})"
+                    )
                 if name in OWNED_FIELD_TYPES:
                     if not behind_reference:
                         owned = True
@@ -1847,6 +1916,7 @@ def _seam_records(
     module_imports: dict[tuple[str, ...], dict[str, set[tuple[str, ...]]]] = {}
     module_globs: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
     public_uses: dict[tuple[str, ...], list[tuple[str, dict[str, Any]]]] = {}
+    local_bindings: dict[tuple[str, ...], dict[str, int]] = {}
     # Production cfg branches are unioned; unresolved or differing alternatives fail closed.
 
     # frontend-core modules are keyed from (); another workspace crate's modules
@@ -1900,11 +1970,24 @@ def _seam_records(
         label: str,
         exported: bool,
     ) -> None:
+        def bind(module_path: tuple[str, ...], name: str) -> None:
+            origin = (module_path, name)
+            names = local_bindings[module_path]
+            names[name] = names.get(name, 0) + 1
+            if names[name] > 1:
+                ambiguous_type_items.add(origin)
+                issue = f"{file_key}: ambiguous {label} name binding {name}"
+                module_issues[module_path].append(issue)
+
         for module_path, (file_key, container, _) in indexed.items():
-            module_issues[module_path] = []
+            module_issues[module_path] = _binding_attribute_issues(container, file_key)
             module_imports[module_path] = {}
             module_globs[module_path] = []
             public_uses[module_path] = []
+            local_bindings[module_path] = {}
+            for child_path in indexed:
+                if len(child_path) == len(module_path) + 1 and child_path[:-1] == module_path:
+                    bind(module_path, child_path[-1])
             for item, scope, module_stack, parent_kind, _ in _walk_ast(container, "production", ()):
                 if _is_test_scope(scope) or module_stack or parent_kind not in {
                     None,
@@ -1914,6 +1997,8 @@ def _seam_records(
                     continue
                 kind = item.get("kind")
                 name = _first_name(item)
+                if kind in {"STRUCT", "ENUM", "TYPE_ALIAS", "UNION", "TRAIT"} and name:
+                    bind(module_path, name)
                 if kind in {"STRUCT", "ENUM", "TYPE_ALIAS"}:
                     if name is None:
                         if _is_public(item):
@@ -1944,13 +2029,24 @@ def _seam_records(
                     "SOURCE_FILE",
                     "ITEM_LIST",
                 }:
-                    module_issues[module_path].append(
-                        f"{file_key}: item-generating macro syntax is unsupported"
-                    )
+                    issue = f"{file_key}: item-generating macro syntax is unsupported"
+                    module_issues[module_path].append(issue)
                 elif kind == "MACRO_CALL" and parent_kind in {"SOURCE_FILE", "ITEM_LIST"}:
-                    module_issues[module_path].append(
-                        f"{file_key}: item macro invocation is unsupported"
-                    )
+                    issue = f"{file_key}: item macro invocation is unsupported"
+                    module_issues[module_path].append(issue)
+                elif kind == "EXTERN_CRATE":
+                    binding = _extern_crate_binding(item)
+                    if binding is None:
+                        issue = f"{file_key}: unsupported extern crate binding syntax"
+                    else:
+                        source, local = binding
+                        bind(module_path, local)
+                        issue = (
+                            f"{file_key}: extern crate {source} as {local} shadows reserved crate name"
+                            if local in RESERVED_CRATE_NAMES and source != local
+                            else f"{file_key}: extern crate binding {local} is unsupported"
+                        )
+                    module_issues[module_path].append(issue)
                 elif kind == "USE":
                     if _is_public(item):
                         public_uses[module_path].append((file_key, item))
@@ -1967,9 +2063,17 @@ def _seam_records(
                                     if glob_target:
                                         module_globs[module_path].append(glob_target)
                                 continue
-                            target = tuple(part for part in symbol.split("::") if part)
-                            if target and not module_self_import(module_path, target, local_name):
-                                module_imports[module_path].setdefault(local_name, set()).add(target)
+                            if parts:
+                                if not module_self_import(module_path, parts, local_name):
+                                    imported = module_imports[module_path].setdefault(local_name, set())
+                                    if parts not in imported:
+                                        bind(module_path, local_name)
+                                        imported.add(parts)
+                            if local_name in RESERVED_CRATE_NAMES and parts != (local_name,):
+                                issue = (
+                                    f"{file_key}: import {symbol} as {local_name} shadows reserved crate name"
+                                )
+                                module_issues[module_path].append(issue)
 
     index_modules(modules, "frontend-core", True)
 
@@ -2002,10 +2106,12 @@ def _seam_records(
         loaded_crates[name] = state
         return state
 
-    def workspace_issue(module_path: tuple[str, ...]) -> str | None:
-        """A loaded module whose names a macro or public glob may hide is not consulted."""
-        if crate_root(module_path) and module_issues.get(module_path):
-            return f"{module_issues[module_path][0]} (consulted for a seam field type)"
+    def workspace_issue(module_path: tuple[str, ...], name: str) -> str | None:
+        """Only a consulted name can encounter its module's binding issue."""
+        for issue in module_issues.get(module_path, []):
+            if " name binding " in issue and issue.rsplit(" ", 1)[-1] != name:
+                continue
+            return f"{issue} (consulted for a seam field type)"
         return None
 
     def resolve_path(
@@ -2018,9 +2124,6 @@ def _seam_records(
         if state in seen_paths:
             return None
         seen_paths = seen_paths | {state}
-        issue = workspace_issue(module_path)
-        if issue is not None:
-            return ("workspace_error", issue, None)
         root_path = crate_root(module_path)
         if not segments:
             return ("module", module_path, None)
@@ -2028,6 +2131,11 @@ def _seam_records(
             segments = segments[:-1]
             if not segments:
                 return ("module", module_path, None)
+        if (module_path, segments[0]) in ambiguous_type_items:
+            return ("ambiguous", (module_path, segments[0]), segments[0])
+        issue = workspace_issue(module_path, segments[0])
+        if issue is not None:
+            return ("workspace_error", issue, None)
 
         if segments[0] in module_imports.get(module_path, {}):
             local_name = segments[0]
@@ -2078,15 +2186,16 @@ def _seam_records(
         if search_module and not root_path:
             candidates.append(normalized)
         for target in dict.fromkeys(candidates):
+            if target:
+                origin = (target[:-1], target[-1])
+                if origin in ambiguous_type_items:
+                    return ("ambiguous", origin, origin[1])
+                issue = workspace_issue(origin[0], origin[1])
+                if issue is not None:
+                    return ("workspace_error", issue, origin[1])
             if target in modules:
                 return ("module", target, None)
             if target:
-                origin = (target[:-1], target[-1])
-                issue = workspace_issue(origin[0])
-                if issue is not None:
-                    return ("workspace_error", issue, origin[1])
-                if origin in ambiguous_type_items:
-                    return ("ambiguous", origin, origin[1])
                 if origin in type_items:
                     return ("type", origin, origin[1])
                 if origin in unsupported_types:
@@ -2173,6 +2282,8 @@ def _seam_records(
         could shadow.  Anything else stays an unresolved field type.
         """
         target = segments
+        if (module_path, target[0]) in ambiguous_type_items:
+            return False
         followed: set[str] = set()
         while target[0] in module_imports.get(module_path, {}):
             local_name = target[0]
@@ -2181,6 +2292,8 @@ def _seam_records(
                 return False
             followed.add(local_name)
             target = next(iter(imported)) + target[1:]
+        if target[0] in local_bindings.get(module_path, {}):
+            return False
         if "::".join(target) in STD_LEAF_TYPE_PATHS:
             return True
         if target != segments or len(target) != 1 or target[0] not in PRELUDE_LEAF_TYPE_NAMES:
@@ -2216,8 +2329,10 @@ def _seam_records(
             field_module: tuple[str, ...],
             segments: tuple[str, ...],
         ) -> str:
-            if segments and segments[-1] == "Self":
-                return classify_origin(origin)
+            if "Self" in segments:
+                raise _InventoryError(
+                    f"{file_key}::{name}: unsupported Self/associated seam field type"
+                )
             resolved = resolve_path(field_module, segments)
             if (resolved is None or resolved[0] == "unresolved_import") and std_leaf_type(
                 field_module, segments
