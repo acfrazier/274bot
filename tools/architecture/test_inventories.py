@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -22,20 +23,22 @@ sys.modules[INVENTORIES_SPEC.name] = inventories
 INVENTORIES_SPEC.loader.exec_module(inventories)
 
 VIEWS_PATH = "crates/frontend-core/src/views.rs"
+# sha256 of json.dumps(sorted(TRUSTED_FOREIGN_TYPE_CLASSES.items())) at B de48e55a6.
+LEGACY_FOREIGN_TABLE_SHA256 = "5365df079759360f3e3e1df5bcf90e0e71940a05c55fa5fe6c1992fbe21bd04a"
 
-F0_API_FOREIGN_CLASSES = {
-    "api::identity::RequestId": "scalar",
-    "api::identity::Scope": "scalar",
-    "api::identity::Settlement": "scalar",
-    "api::identity::SlotKey": "scalar",
-    "api::lifecycle::IntentCommand": "scalar",
-    "api::lifecycle::IntentGeneration": "scalar",
-    "api::lifecycle::MemoryMode": "scalar",
-    "api::lifecycle::WorldChoice": "scalar",
-    "api::process_condition::ConditionId": "scalar",
-    "api::process_condition::ProcessCapability": "scalar",
-    "api::process_condition::UnavailableTerminal": "scalar",
-}
+F0_API_FOREIGN_TYPES = (
+    "api::identity::RequestId",
+    "api::identity::Scope",
+    "api::identity::Settlement",
+    "api::identity::SlotKey",
+    "api::lifecycle::IntentCommand",
+    "api::lifecycle::IntentGeneration",
+    "api::lifecycle::MemoryMode",
+    "api::lifecycle::WorldChoice",
+    "api::process_condition::ConditionId",
+    "api::process_condition::ProcessCapability",
+    "api::process_condition::UnavailableTerminal",
+)
 
 F0_API_FOREIGN_ALIASES = {
     "PinRequestId": "RequestId",
@@ -56,6 +59,14 @@ F0_API_IMPORTS = (
     "use api::lifecycle::{IntentCommand, IntentGeneration, MemoryMode, WorldChoice};\n"
     "use api::process_condition::{ConditionId, ProcessCapability, UnavailableTerminal};\n"
 )
+
+
+def _foreign(path: str, classification: str = "scalar") -> dict[str, str]:
+    return {"path": path, "classification": classification, "reason": "fixture foreign type"}
+
+
+def _foreign_data(*rows: dict[str, Any]) -> str:
+    return json.dumps({"schema_version": 1, "foreign_types": list(rows)}, indent=2) + "\n"
 
 
 def _seam(
@@ -106,6 +117,7 @@ def _write_fixture(
     additional_seam_types: tuple[dict[str, str], ...] = (),
     violations: tuple[dict[str, str], ...] = (),
     test_exceptions: tuple[dict[str, str], ...] = (),
+    foreign_types: str | None = None,
 ) -> Path:
     for crate in ("script", "frontend-core"):
         crate_root = root / "crates" / crate
@@ -147,6 +159,10 @@ def _write_fixture(
     inventory_path = root / inventories.INVENTORY_RELATIVE
     inventory_path.parent.mkdir(parents=True, exist_ok=True)
     inventory_path.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
+    if foreign_types is not None:
+        foreign_path = root / inventories.FOREIGN_TYPES_RELATIVE
+        foreign_path.parent.mkdir(parents=True, exist_ok=True)
+        foreign_path.write_text(foreign_types, encoding="utf-8")
     return root
 
 
@@ -1265,41 +1281,44 @@ pub struct FleetRow {
         print(f"GOOD MarkedWalk closure-derived owning classification: {errors}")
         self.assertEqual(errors, [])
 
-    def test_f0_api_foreign_types_are_pinned_exactly(self) -> None:
-        api_entries = {
-            target: classification
-            for target, classification in inventories.TRUSTED_FOREIGN_TYPE_CLASSES.items()
-            if target.startswith("api::")
-        }
-        self.assertEqual(
-            api_entries,
-            {
-                "api::hostlog::Level": "scalar",
-                "api::hostlog::Record": "borrowed",
-                "api::hostlog::Source": "scalar",
-                "api::selected::RunKey": "scalar",
-                **F0_API_FOREIGN_CLASSES,
-            },
-        )
+    def test_legacy_builtin_foreign_table_is_frozen(self) -> None:
+        table = inventories.TRUSTED_FOREIGN_TYPE_CLASSES
+        digest = hashlib.sha256(json.dumps(sorted(table.items())).encode("utf-8")).hexdigest()
+        self.assertEqual(len(table), 56)
+        self.assertEqual(digest, LEGACY_FOREIGN_TABLE_SHA256)
+        self.assertFalse(set(F0_API_FOREIGN_TYPES) & set(table))
+
+    def test_f0_api_foreign_data_rows_classify_each_type(self) -> None:
         aliases = "".join(
             f"pub type {alias} = {target};\n"
             for alias, target in F0_API_FOREIGN_ALIASES.items()
         )
+        views = self.baseline_views() + F0_API_IMPORTS + aliases
         base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
-        scalar_root = self.fixture(
-            views=self.baseline_views() + F0_API_IMPORTS + aliases,
-            seam_types=base_seams
-            + tuple((alias, "scalar") for alias in F0_API_FOREIGN_ALIASES),
+        data = _foreign_data(*(_foreign(path) for path in F0_API_FOREIGN_TYPES))
+        scalar_errors = inventories.check_tree(
+            self.fixture(
+                views=views,
+                seam_types=base_seams + tuple((alias, "scalar") for alias in F0_API_FOREIGN_ALIASES),
+                foreign_types=data,
+            )
         )
-        scalar_errors = inventories.check_tree(scalar_root)
-        owning_root = self.fixture(
-            views=self.baseline_views() + F0_API_IMPORTS + aliases,
-            seam_types=base_seams
-            + tuple((alias, "owning") for alias in F0_API_FOREIGN_ALIASES),
+        owning_errors = inventories.check_tree(
+            self.fixture(
+                views=views,
+                seam_types=base_seams + tuple((alias, "owning") for alias in F0_API_FOREIGN_ALIASES),
+                foreign_types=data,
+            )
         )
-        owning_errors = inventories.check_tree(owning_root)
-        print(f"GOOD F0 API foreign types classify scalar: {scalar_errors}")
+        absent_errors = inventories.check_tree(
+            self.fixture(
+                views=views,
+                seam_types=base_seams + tuple((alias, "scalar") for alias in F0_API_FOREIGN_ALIASES),
+            )
+        )
+        print(f"GOOD F0 API foreign data rows classify scalar: {scalar_errors}")
         print(f"BAD F0 API foreign types registered owning: {owning_errors}")
+        print(f"BAD F0 API foreign types without data rows: {absent_errors}")
         self.assertEqual(scalar_errors, [])
         self.assertEqual(
             owning_errors,
@@ -1309,8 +1328,14 @@ pub struct FleetRow {
                 for alias in sorted(F0_API_FOREIGN_ALIASES)
             ],
         )
+        for alias, target in F0_API_FOREIGN_ALIASES.items():
+            leaf = target.split("<", 1)[0]
+            self.assertIn(
+                f"{VIEWS_PATH}::{alias}: unresolved imported seam field type {leaf}",
+                absent_errors,
+            )
 
-    def test_settlement_generic_arguments_keep_their_ownership(self) -> None:
+    def test_settlement_data_row_keeps_generic_argument_ownership(self) -> None:
         views = (
             self.baseline_views()
             + F0_API_IMPORTS
@@ -1323,6 +1348,13 @@ pub struct FleetRow {
             + "    settled: Settlement<SlotKey, std::sync::mpsc::Sender<u8>>,\n"
             + "}\n"
         )
+        data = _foreign_data(
+            _foreign("api::identity::RequestId"),
+            _foreign("api::identity::Settlement"),
+            _foreign("api::identity::SlotKey"),
+            _foreign("api::lifecycle::IntentGeneration"),
+            _foreign("api::process_condition::ConditionId"),
+        )
         base_seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
         clone_violation = (
             _record(
@@ -1334,32 +1366,36 @@ pub struct FleetRow {
                 owner="T3",
             ),
         )
-        honest_root = self.fixture(
-            views=views,
-            seam_types=base_seams
-            + (
-                ("SettledScalar", "scalar"),
-                ("SettledBytes", "owning"),
-                ("SettledCatalog", "owning"),
-                ("SettledView", "borrowed"),
-                ("SettledHolder", "owning"),
-            ),
-            violations=clone_violation,
+        honest_errors = inventories.check_tree(
+            self.fixture(
+                views=views,
+                seam_types=base_seams
+                + (
+                    ("SettledScalar", "scalar"),
+                    ("SettledBytes", "owning"),
+                    ("SettledCatalog", "owning"),
+                    ("SettledView", "borrowed"),
+                    ("SettledHolder", "owning"),
+                ),
+                violations=clone_violation,
+                foreign_types=data,
+            )
         )
-        honest_errors = inventories.check_tree(honest_root)
-        exempt_root = self.fixture(
-            views=views,
-            seam_types=base_seams
-            + (
-                ("SettledScalar", "scalar"),
-                ("SettledBytes", "scalar"),
-                ("SettledCatalog", "scalar"),
-                ("SettledView", "scalar"),
-                ("SettledHolder", "scalar"),
-            ),
-            violations=clone_violation,
+        exempt_errors = inventories.check_tree(
+            self.fixture(
+                views=views,
+                seam_types=base_seams
+                + (
+                    ("SettledScalar", "scalar"),
+                    ("SettledBytes", "scalar"),
+                    ("SettledCatalog", "scalar"),
+                    ("SettledView", "scalar"),
+                    ("SettledHolder", "scalar"),
+                ),
+                violations=clone_violation,
+                foreign_types=data,
+            )
         )
-        exempt_errors = inventories.check_tree(exempt_root)
         print(f"GOOD Settlement argument ownership: {honest_errors}")
         print(f"BAD Settlement as blanket scalar: {exempt_errors}")
         self.assertEqual(honest_errors, [])
@@ -1378,21 +1414,29 @@ pub struct FleetRow {
         )
 
     def test_unlisted_foreign_types_still_fail_resolution(self) -> None:
+        settlement = _foreign_data(_foreign("api::identity::Settlement"))
         cases = {
             "UnlistedImport": (
                 "use api::identity::ExecutionId;\n"
                 "#[derive(Clone, Copy)]\n"
                 "pub struct UnlistedImport { id: ExecutionId }\n",
+                None,
                 "unresolved imported seam field type ExecutionId",
             ),
             "UnlistedPath": (
                 "#[derive(Clone, Copy)]\n"
                 "pub struct UnlistedPath { receipt: api::lifecycle::PostReceipt }\n",
+                _foreign_data(),
                 "unresolved public seam field type api::lifecycle::PostReceipt",
             ),
             "UnlistedLeaf": (
+                "use api::identity::Settlement;\n"
                 "#[derive(Clone, Copy)]\n"
-                "pub struct UnlistedLeaf { settled: api::selected::Settlement<u8, u8> }\n",
+                "pub struct UnlistedLeaf {\n"
+                "    settled: Settlement<u8, u8>,\n"
+                "    other: api::selected::Settlement<u8, u8>,\n"
+                "}\n",
+                settlement,
                 "unresolved public seam field type api::selected::Settlement",
             ),
             "UnlistedArgument": (
@@ -1401,10 +1445,11 @@ pub struct FleetRow {
                 "pub struct UnlistedArgument {\n"
                 "    settled: Settlement<api::identity::ExecutionId, u8>,\n"
                 "}\n",
+                settlement,
                 "unresolved public seam field type api::identity::ExecutionId",
             ),
         }
-        for symbol, (source, expected) in cases.items():
+        for symbol, (source, data, expected) in cases.items():
             with self.subTest(symbol=symbol):
                 root = self.fixture(
                     views=self.baseline_views() + source,
@@ -1413,10 +1458,192 @@ pub struct FleetRow {
                         ("FleetView", "borrowed"),
                         (symbol, "scalar"),
                     ),
+                    foreign_types=data,
                 )
                 errors = inventories.check_tree(root)
                 print(f"BAD unlisted foreign seam type {symbol}: {errors}")
                 self.assertIn(f"{VIEWS_PATH}::{symbol}: {expected}", errors)
+
+    def test_foreign_type_data_is_strictly_validated(self) -> None:
+        valid = _foreign("api::identity::RequestId")
+        views = (
+            self.baseline_views()
+            + "#[derive(Clone, Copy)]\n"
+            + "pub struct UsesRequest { id: api::identity::RequestId }\n"
+        )
+        cases: dict[str, tuple[str | None, str]] = {
+            "invalid json": ("{", "foreign types: cannot load"),
+            "duplicate json key": (
+                '{"schema_version": 1, "schema_version": 1, "foreign_types": []}',
+                "duplicate JSON key 'schema_version'",
+            ),
+            "top-level array": ("[]", "top-level fields must be exactly"),
+            "extra top-level field": (
+                json.dumps({"schema_version": 1, "foreign_types": [valid], "notes": ""}),
+                "top-level fields must be exactly",
+            ),
+            "schema version 2": (
+                json.dumps({"schema_version": 2, "foreign_types": [valid]}),
+                "schema_version must be integer 1",
+            ),
+            "boolean schema version": (
+                json.dumps({"schema_version": True, "foreign_types": [valid]}),
+                "schema_version must be integer 1",
+            ),
+            "rows not an array": (
+                json.dumps({"schema_version": 1, "foreign_types": {"api::identity::RequestId": "scalar"}}),
+                "foreign_types must be an array",
+            ),
+            "extra row field": (_foreign_data(valid, dict(_foreign("api::identity::Scope"), owner="T1")), "has unknown or missing fields"),
+            "missing reason": (
+                _foreign_data(valid, {"path": "api::identity::Scope", "classification": "scalar"}),
+                "has unknown or missing fields",
+            ),
+            "single segment": (_foreign_data(valid, _foreign("Scope")), ".path must be an exact external Rust type path"),
+            "leading separator": (
+                _foreign_data(valid, _foreign("::api::identity::Scope")),
+                ".path must be an exact external Rust type path",
+            ),
+            "crate-relative": (_foreign_data(valid, _foreign("crate::views::Scope")), ".path must be an exact external Rust type path"),
+            "glob": (_foreign_data(valid, _foreign("api::identity::*")), ".path must be an exact external Rust type path"),
+            "generic arguments": (
+                _foreign_data(valid, _foreign("api::identity::Settlement<u8, u8>")),
+                ".path must be an exact external Rust type path",
+            ),
+            "whitespace": (
+                _foreign_data(valid, _foreign(" api::identity::Scope")),
+                ".path must be an exact external Rust type path",
+            ),
+            "trailing newline": (
+                _foreign_data(valid, _foreign("api::identity::Scope\n")),
+                ".path must be an exact external Rust type path",
+            ),
+            "non-string path": (
+                _foreign_data(valid, {"path": 7, "classification": "scalar", "reason": "x"}),
+                ".path must be an exact external Rust type path",
+            ),
+            "unknown class": (_foreign_data(valid, _foreign("api::identity::Scope", "copy")), "has unknown classification"),
+            "non-string class": (
+                _foreign_data(valid, {"path": "api::identity::Scope", "classification": ["scalar"], "reason": "x"}),
+                "has unknown classification",
+            ),
+            "blank reason": (
+                _foreign_data(valid, {"path": "api::identity::Scope", "classification": "scalar", "reason": " "}),
+                ".reason must be nonblank",
+            ),
+            "shadows built-in": (
+                _foreign_data(valid, _foreign("script::CatalogDiff", "scalar")),
+                "shadows built-in foreign type script::CatalogDiff",
+            ),
+            "duplicate path": (
+                _foreign_data(valid, _foreign("api::identity::RequestId", "owning")),
+                "duplicate path api::identity::RequestId",
+            ),
+            "directory": (None, "must be a regular file"),
+        }
+        for label, (content, expected) in cases.items():
+            with self.subTest(case=label):
+                root = self.fixture(
+                    views=views,
+                    seam_types=(
+                        ("FleetCounts", "scalar"),
+                        ("FleetView", "borrowed"),
+                        ("UsesRequest", "scalar"),
+                    ),
+                    foreign_types=content,
+                )
+                if content is None:
+                    (root / inventories.FOREIGN_TYPES_RELATIVE).mkdir(parents=True)
+                errors = inventories.check_tree(root)
+                print(f"BAD foreign type data ({label}): {errors}")
+                self.assertTrue(any(expected in error for error in errors), errors)
+                self.assertIn(
+                    f"{VIEWS_PATH}::UsesRequest: unresolved public seam field type api::identity::RequestId",
+                    errors,
+                )
+        symlink_root = self.fixture(
+            views=views,
+            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("UsesRequest", "scalar")),
+        )
+        target = symlink_root / "foreign-target.json"
+        target.write_text(_foreign_data(valid), encoding="utf-8")
+        link = symlink_root / inventories.FOREIGN_TYPES_RELATIVE
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+        symlink_errors = inventories.check_tree(symlink_root)
+        print(f"BAD symlinked foreign type data: {symlink_errors}")
+        self.assertTrue(any("must be a regular file" in error for error in symlink_errors))
+
+    def test_stale_foreign_type_rows_fail(self) -> None:
+        views = (
+            self.baseline_views()
+            + "pub struct RequestView<'a> { pub id: &'a api::identity::RequestId }\n"
+        )
+        root = self.fixture(
+            views=views,
+            seam_types=(("FleetCounts", "scalar"), ("FleetView", "borrowed"), ("RequestView", "borrowed")),
+            foreign_types=_foreign_data(
+                _foreign("api::identity::RequestId"), _foreign("api::lifecycle::MemoryMode")
+            ),
+        )
+        errors = inventories.check_tree(root)
+        print(f"BAD stale foreign type rows: {errors}")
+        self.assertEqual(
+            errors,
+            [
+                "stale foreign type classification: api::identity::RequestId",
+                "stale foreign type classification: api::lifecycle::MemoryMode",
+            ],
+        )
+
+    def test_foreign_type_rows_are_transition_findings(self) -> None:
+        seams = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))
+        uses = "use api::identity::RequestId;\npub type UsesRequest = RequestId;\n"
+
+        def tree(prefix: str, views: str, extra: tuple[tuple[str, str], ...], data: str | None) -> Path:
+            temporary = tempfile.TemporaryDirectory(prefix=prefix)
+            self.addCleanup(temporary.cleanup)
+            return _write_fixture(
+                Path(temporary.name), views=views, seam_types=seams + extra, foreign_types=data
+            )
+
+        base = tree("f0-foreign-base-", self.baseline_views(), (), None)
+        added = tree(
+            "f0-foreign-added-",
+            self.baseline_views() + uses,
+            (("UsesRequest", "scalar"),),
+            _foreign_data(_foreign("api::identity::RequestId")),
+        )
+        changed = tree(
+            "f0-foreign-changed-",
+            self.baseline_views() + uses,
+            (("UsesRequest", "owning"),),
+            _foreign_data(_foreign("api::identity::RequestId", "owning")),
+        )
+        removed = tree("f0-foreign-removed-", self.baseline_views(), (), _foreign_data())
+        for root in (base, added, changed, removed):
+            self.assertEqual(inventories.check_tree(root), [])
+        added_findings = inventories.check_transition(base, added)
+        changed_findings = inventories.check_transition(added, changed)
+        removed_findings = inventories.check_transition(added, removed)
+        print(f"BAD new foreign row: {added_findings}")
+        print(f"BAD changed foreign class: {changed_findings}")
+        print(f"GOOD removed unused foreign row: {removed_findings}")
+        self.assertEqual(
+            added_findings,
+            [
+                "new foreign type classification: api::identity::RequestId scalar",
+                f"new seam type: {VIEWS_PATH}::UsesRequest",
+            ],
+        )
+        self.assertEqual(
+            changed_findings,
+            [
+                "foreign type classification changed: api::identity::RequestId scalar->owning",
+                f"seam classification changed: {VIEWS_PATH}::UsesRequest scalar->owning",
+            ],
+        )
+        self.assertEqual(removed_findings, [])
 
     def test_slot_surface_trait_is_not_a_value_seam_but_unions_fail_closed(self) -> None:
         seam_types = (("FleetCounts", "scalar"), ("FleetView", "borrowed"))

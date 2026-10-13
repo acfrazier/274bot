@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tomllib
@@ -27,6 +28,16 @@ RUST_EDITION = "2021"
 PARSER_VERSION = "rust-analyzer 0.3.3081-standalone"
 PARSER_SHA256 = "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49"
 INVENTORY_RELATIVE = Path("tools/architecture/inventories.json")
+# Approved foreign-type data lives outside tools/architecture: every file under
+# that directory except the four named data files is part of the protected
+# executable bundle, and the active gate computes E' digests with its own
+# exclusion list.  The file is candidate data, bound by the admission input
+# digest; new rows and class changes are check_transition findings.
+FOREIGN_TYPES_RELATIVE = Path("tools/architecture-data/foreign_types.json")
+FOREIGN_TOP_FIELDS = frozenset({"schema_version", "foreign_types"})
+FOREIGN_ROW_FIELDS = frozenset({"path", "classification", "reason"})
+FOREIGN_PATH_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+")
+FOREIGN_PATH_RESERVED_ROOTS = frozenset({"crate", "self", "super", "Self"})
 VIEWS_RELATIVE = Path("crates/frontend-core/src/views.rs")
 FRONTEND_SRC_RELATIVE = Path("crates/frontend-core/src")
 SCRIPT_SRC_RELATIVE = Path("crates/script/src")
@@ -207,6 +218,10 @@ TRUSTED_SEAM_TYPE_CLASSES = {
     ("crates/frontend-core/src/walk_permissions.rs", "DangerLevel"): "scalar",
 }
 
+# Frozen legacy built-in foreign classifications.  Do not extend or change this
+# table: a new foreign seam field type is an approved data row in
+# FOREIGN_TYPES_RELATIVE, and data rows may not shadow these paths.  Changing
+# the built-in set is a protected enforcement update (E').
 TRUSTED_FOREIGN_TYPE_CLASSES = {
     "host_play::walk_map::ActionError": "owning",
     "host::login_queue::AdmitBlocker": "scalar",
@@ -233,19 +248,6 @@ TRUSTED_FOREIGN_TYPE_CLASSES = {
     "host::RenderPolicyLabel": "scalar",
     "host_play::admission::RiskInput": "scalar",
     "api::selected::RunKey": "scalar",
-    "api::identity::RequestId": "scalar",
-    "api::identity::Scope": "scalar",
-    # Settlement is a resource-free tagged container; its generic arguments
-    # are still visited, so an owning argument keeps the field owning.
-    "api::identity::Settlement": "scalar",
-    "api::identity::SlotKey": "scalar",
-    "api::lifecycle::IntentCommand": "scalar",
-    "api::lifecycle::IntentGeneration": "scalar",
-    "api::lifecycle::MemoryMode": "scalar",
-    "api::lifecycle::WorldChoice": "scalar",
-    "api::process_condition::ConditionId": "scalar",
-    "api::process_condition::ProcessCapability": "scalar",
-    "api::process_condition::UnavailableTerminal": "scalar",
     "script::RunState": "scalar",
     "script::ScriptLifecycleReceipt": "owning",
     "script::ScriptPaint": "owning",
@@ -373,6 +375,62 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, An
             raise _InventoryError(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
+
+
+def _load_foreign_types(root: Path) -> tuple[dict[str, str], list[str]]:
+    """Return approved data classifications for foreign seam field types.
+
+    An absent file adds no rows.  An invalid file adds no rows and fails the
+    tree, so a malformed registry can only remove classifications.
+    """
+    path = root / FOREIGN_TYPES_RELATIVE
+    label = FOREIGN_TYPES_RELATIVE.as_posix()
+    if not path.exists() and not path.is_symlink():
+        return {}, []
+    if path.is_symlink() or not path.is_file():
+        return {}, [f"foreign types: {label} must be a regular file"]
+    try:
+        raw = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, _InventoryError) as error:
+        return {}, [f"foreign types: cannot load {label}: {error}"]
+    if not isinstance(raw, dict) or set(raw) != FOREIGN_TOP_FIELDS:
+        return {}, ["foreign types: top-level fields must be exactly schema_version, foreign_types"]
+    errors: list[str] = []
+    if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+        errors.append("foreign types: schema_version must be integer 1")
+    if not isinstance(raw["foreign_types"], list):
+        errors.append("foreign types: foreign_types must be an array")
+        return {}, errors
+    rows: dict[str, str] = {}
+    for index, row in enumerate(raw["foreign_types"]):
+        where = f"foreign types: foreign_types[{index}]"
+        if not isinstance(row, dict) or set(row) != FOREIGN_ROW_FIELDS:
+            errors.append(f"{where} has unknown or missing fields")
+            continue
+        type_path = row["path"]
+        if (
+            not isinstance(type_path, str)
+            or FOREIGN_PATH_RE.fullmatch(type_path) is None
+            or type_path.split("::", 1)[0] in FOREIGN_PATH_RESERVED_ROOTS
+        ):
+            errors.append(f"{where}.path must be an exact external Rust type path")
+            continue
+        classification = row["classification"]
+        if not isinstance(classification, str) or classification not in TYPE_CLASSIFICATIONS:
+            errors.append(f"{where} has unknown classification")
+        if not isinstance(row["reason"], str) or not row["reason"].strip():
+            errors.append(f"{where}.reason must be nonblank")
+        if type_path in TRUSTED_FOREIGN_TYPE_CLASSES:
+            errors.append(f"{where} shadows built-in foreign type {type_path}")
+        if type_path in rows:
+            errors.append(f"foreign types: duplicate path {type_path}")
+        rows[type_path] = str(classification)
+    if errors:
+        return {}, errors
+    return rows, []
 
 
 def _parser_executable() -> str:
@@ -1479,7 +1537,9 @@ def _explicit_clone_impls(
     return clones
 
 
-def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], list[str]]:
+def _seam_records(
+    root: Path, foreign_classes: dict[str, str], consulted_foreign: set[str]
+) -> tuple[dict[_TypeKey, str], set[_RecordKey], list[str]]:
     try:
         executable = _parser_executable()
     except _InventoryError as error:
@@ -1710,7 +1770,7 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
                 return ("ambiguous", tuple(sorted(glob_matches, key=repr)), segments[0])
 
         canonical = "::".join(segments)
-        if canonical in TRUSTED_FOREIGN_TYPE_CLASSES:
+        if canonical in foreign_classes:
             return ("foreign", canonical, None)
         return None
 
@@ -1771,11 +1831,12 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
             if kind == "type":
                 return classify_origin(target)
             if kind == "foreign":
-                classification = TRUSTED_FOREIGN_TYPE_CLASSES.get(target)
+                classification = foreign_classes.get(target)
                 if classification is None:
                     raise _InventoryError(
                         f"{file_key}::{name}: unresolved foreign seam type {target}"
                     )
+                consulted_foreign.add(target)
                 return classification
             if kind == "unsupported_type":
                 source_path, syntax = unsupported_types[target]
@@ -2044,10 +2105,11 @@ def _seam_records(root: Path) -> tuple[dict[_TypeKey, str], set[_RecordKey], lis
         }
 
     for key, target in foreign_exports.items():
-        classification = TRUSTED_FOREIGN_TYPE_CLASSES.get(target)
+        classification = foreign_classes.get(target)
         if classification is None:
             errors.add(f"{key.path}::{key.symbol}: unresolved foreign seam type {target}")
             continue
+        consulted_foreign.add(target)
         definitions[key] = {
             "name": key.symbol,
             "fields": [],
@@ -2490,6 +2552,7 @@ class _Snapshot:
     violations: frozenset[_RecordKey]
     exceptions: frozenset[_RecordKey]
     errors: tuple[str, ...]
+    foreign_types: dict[str, str]
 def _analyze_tree(root: Path) -> _Snapshot:
 
 
@@ -2497,11 +2560,18 @@ def _analyze_tree(root: Path) -> _Snapshot:
     errors: list[str] = _check_rust_editions(root)
     inventory, shape_errors = _load_inventory(root)
     errors.extend(shape_errors)
-    classifications, seam_violations, seam_errors = _seam_records(root)
+    foreign_rows, foreign_errors = _load_foreign_types(root)
+    errors.extend(foreign_errors)
+    consulted_foreign: set[str] = set()
+    classifications, seam_violations, seam_errors = _seam_records(
+        root, {**TRUSTED_FOREIGN_TYPE_CLASSES, **foreign_rows}, consulted_foreign
+    )
     errors.extend(seam_errors)
     nav_violations, nav_exceptions, nav_errors = _script_records(root)
     errors.extend(nav_errors)
     actual_violations = set(seam_violations) | set(nav_violations)
+    for type_path in sorted(set(foreign_rows) - consulted_foreign):
+        errors.append(f"stale foreign type classification: {type_path}")
     if inventory is not None:
         registered_types: dict[_TypeKey, str] = {}
         for row in inventory["seam_types"]:
@@ -2564,6 +2634,7 @@ def _analyze_tree(root: Path) -> _Snapshot:
         frozenset(actual_violations),
         frozenset(nav_exceptions),
         tuple(sorted(set(errors))),
+        foreign_rows,
     )
 
 
@@ -2602,4 +2673,12 @@ def check_transition(base: Path, candidate: Path) -> list[str]:
         findings.add(f"new inventory violation: {_expected_id(key)}")
     for key in sorted(after.exceptions - before.exceptions):
         findings.add(f"new test import exception: {_expected_id(key)}")
+    before_foreign = before.foreign_types
+    after_foreign = after.foreign_types
+    for type_path in sorted(set(after_foreign) - set(before_foreign)):
+        findings.add(f"new foreign type classification: {type_path} {after_foreign[type_path]}")
+    for type_path in sorted(set(before_foreign) & set(after_foreign)):
+        old, new = before_foreign[type_path], after_foreign[type_path]
+        if old != new:
+            findings.add(f"foreign type classification changed: {type_path} {old}->{new}")
     return sorted(findings)
