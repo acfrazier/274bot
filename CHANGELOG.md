@@ -26,7 +26,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   first click is still walking to the shopkeeper. That second click closed
   the shop as it opened, and the purchase failed. A shopkeeper behind a
   closed door is walked to first. A shop that does not open still gets up
-  to three Trade clicks. "I can't reach that!" ends a click at once.
+  to three Trade clicks. "I can't reach that!" ends a click at once. Quester
+  shop purchases follow the same rule, and no longer give up after 10
+  seconds while still walking to the shopkeeper.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
