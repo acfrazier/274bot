@@ -20,13 +20,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
   as soon as the bank's item list has arrived; it does not add rs2b0t's extra
   short pause.
+- When a catalog script uses an rs2b0t API member this version doesn't
+  provide, Start now names the member without saying the catalog is newer
+  than this version. Some members of the older API are also missing, so that
+  claim could be wrong.
 
 ### Not in this release
 
 - `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` are not
-  available yet. GatheringBot and EssMiner remain dimmed because the built-in
-  Gatherer replaces them. A script that calls one of these helpers stops with
-  a `not impl` message naming it.
+  available yet, so GatheringBot and EssMiner still don't run. Use the
+  built-in Gatherer for woodcutting, mining and fishing; EssMiner stays dimmed
+  until the Gatherer covers it. A script that calls one of these helpers stops
+  with a `not impl` message naming it.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
