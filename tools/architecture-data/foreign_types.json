@@ -2,59 +2,9 @@
   "schema_version": 1,
   "foreign_types": [
     {
-      "path": "api::identity::RequestId",
+      "path": "std::num::NonZeroU64",
       "classification": "scalar",
-      "reason": "Copy tuple newtype over a private NonZeroU64; a resource-free id like api::selected::RunKey (crates/api/src/identity.rs:359)"
-    },
-    {
-      "path": "api::identity::Scope",
-      "classification": "scalar",
-      "reason": "Copy enum Process / Slot(SlotKey) / Session(SessionKey) / Run(RunKey) / Execution(ExecutionId); every payload is a Copy identity (crates/api/src/identity.rs:454)"
-    },
-    {
-      "path": "api::identity::Settlement",
-      "classification": "scalar",
-      "reason": "Clone, not Copy, enum Completed(T) / Failed(E) / Cancelled(Cancellation); the tag and the Copy Cancellation hold no resource, and T and E are still classified as generic arguments (crates/api/src/identity.rs:826)"
-    },
-    {
-      "path": "api::identity::SlotKey",
-      "classification": "scalar",
-      "reason": "Copy tuple newtype over a private NonZeroU64 (crates/api/src/identity.rs:193)"
-    },
-    {
-      "path": "api::lifecycle::IntentCommand",
-      "classification": "scalar",
-      "reason": "Copy struct of two IntentGeneration values, generation and cancellation (crates/api/src/lifecycle.rs:533)"
-    },
-    {
-      "path": "api::lifecycle::IntentGeneration",
-      "classification": "scalar",
-      "reason": "Copy tuple newtype over a private u64 (crates/api/src/lifecycle.rs:513)"
-    },
-    {
-      "path": "api::lifecycle::MemoryMode",
-      "classification": "scalar",
-      "reason": "Copy unit enum High / Low (crates/api/src/lifecycle.rs:58)"
-    },
-    {
-      "path": "api::lifecycle::WorldChoice",
-      "classification": "scalar",
-      "reason": "Copy enum Automatic / World(u16) (crates/api/src/lifecycle.rs:68)"
-    },
-    {
-      "path": "api::process_condition::ConditionId",
-      "classification": "scalar",
-      "reason": "Copy struct of a Copy ProcessIncarnation and a Copy ProcessServiceCode (crates/api/src/process_condition.rs:202)"
-    },
-    {
-      "path": "api::process_condition::ProcessCapability",
-      "classification": "scalar",
-      "reason": "Copy enum with eight unit variants (crates/api/src/process_condition.rs:143)"
-    },
-    {
-      "path": "api::process_condition::UnavailableTerminal",
-      "classification": "scalar",
-      "reason": "Copy struct of ConditionId, RequestId and Scope; identity and correlation values only, no retained resource (crates/api/src/process_condition.rs:522)"
+      "reason": "Copy non-zero u64 with no payload (Rust standard library, pinned by rust-toolchain.toml); private field of the F0 identities ProcessIncarnation, SlotKey, ExecutionId and RequestId (crates/api/src/identity.rs:157,193,311,359)"
     }
   ]
 }
