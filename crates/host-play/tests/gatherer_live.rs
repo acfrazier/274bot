@@ -1030,6 +1030,9 @@ struct InvRow {
 #[derive(Debug, Clone, Copy)]
 struct UnsettledItem {
     since: Instant,
+    /// `Observation::captured_at` of the observation the item left the pack
+    /// in: the cohort a genie-lamp wish confirmation must match.
+    left_in: Instant,
 }
 
 /// How long an item that left the pack may stay unaccounted (not back in
@@ -1176,6 +1179,9 @@ struct Observation {
     normal_stumps: BTreeSet<(i32, i32, i32)>,
     live_iron_tiles: BTreeSet<(i32, i32, i32)>,
     loc_ids: BTreeSet<(i32, i32, i32, i32)>,
+    /// When this observation was captured; observations are captured in
+    /// order, once per client drain in `frame`.
+    captured_at: Instant,
 }
 
 impl Observation {
@@ -1696,9 +1702,11 @@ struct Witness {
     last_recoveries: u8,
     last_recovery_step: u8,
     soak: SoakWitness,
-    /// When the engine last confirmed a rubbed genie lamp ("Your wish has
-    /// been granted!", `xplamp.rs2:107-114`, after `inv_del` of
-    /// `macro_genilamp`): the host's lamp handler consumed it.
+    /// The engine's wish confirmation for a rubbed genie lamp ("Your wish
+    /// has been granted!", `xplamp.rs2:106-114`, after `inv_del` of
+    /// `macro_genilamp`) not yet matched to a lamp that left the pack.
+    /// Stamped by `frame` after its client drain's observation was
+    /// captured, so it belongs to that observation; one lamp consumes it.
     last_wish_granted: Option<Instant>,
 }
 
@@ -2020,6 +2028,7 @@ impl GatherSlot {
             normal_stumps,
             live_iron_tiles,
             loc_ids,
+            captured_at: Instant::now(),
         }
     }
 
@@ -2814,10 +2823,13 @@ impl GatherSlot {
             BTreeMap::new()
         };
         // A genie lamp the host's own handler rubbed (`host/src/random.rs`
-        // `LAMP_OBJ`) leaves the pack by `inv_del` and the engine confirms
-        // the wish (`xplamp.rs2:107-114`): settled by that confirmation at
-        // or after the lamp left (within the conservation window).
-        let wish_granted = self.witness.last_wish_granted;
+        // `LAMP_OBJ`) leaves the pack by `inv_del` and the same engine
+        // script confirms the wish (`xplamp.rs2:106-114`). Only a
+        // confirmation from the observation the lamp left in or a later one
+        // settles it. `frame` stamps a confirmation after capturing its own
+        // observation, so that holds exactly when the stamp is no earlier
+        // than the lamp's `left_in`. Each confirmation settles one lamp.
+        let mut wish_granted = self.witness.last_wish_granted.take();
         self.unsettled_items.retain(|&(id, count), unsettled| {
             !observation
                 .inventory
@@ -2838,14 +2850,11 @@ impl GatherSlot {
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
                 && !(id == GENIE_LAMP_ID
-                    && wish_granted.is_some_and(|granted| {
-                        granted
-                            >= unsettled
-                                .since
-                                .checked_sub(UNSETTLED_WINDOW)
-                                .unwrap_or(unsettled.since)
-                    }))
+                    && wish_granted
+                        .take_if(|granted| *granted >= unsettled.left_in)
+                        .is_some())
         });
+        self.witness.last_wish_granted = wish_granted;
         self.record_g2_observation(previous.as_ref(), &observation);
         if self.case == LiveCase::FishHarpoonBank
             && self
@@ -2891,6 +2900,7 @@ impl GatherSlot {
                             self.unsettled_items.entry((old.id, old.count)).or_insert(
                                 UnsettledItem {
                                     since: Instant::now(),
+                                    left_in: observation.captured_at,
                                 },
                             );
                         } else {
@@ -2908,6 +2918,7 @@ impl GatherSlot {
                             .entry((old.id, old.count))
                             .or_insert(UnsettledItem {
                                 since: Instant::now(),
+                                left_in: observation.captured_at,
                             });
                     }
                 }
@@ -8428,32 +8439,38 @@ mod bank_conservation_tests {
     /// A genie lamp the host rubbed (the live cell `r3nf` of the no-guard
     /// measurement: lamp given on the walk back, `xplamp` opened, "Your
     /// wish has been granted!") leaves the pack by `inv_del`
-    /// (`xplamp.rs2:107-114`), not by a deposit: the wish confirmation
-    /// settles it. Without the confirmation it stays unaccounted.
-    #[test]
-    fn fish_bank_soak_oracle_settles_a_lamp_the_host_rubbed_and_only_then() {
+    /// (`xplamp.rs2:106-114`), not by a deposit. Back from the bank (bank
+    /// closed, no trip pending) with the net and `lamps` lamps.
+    fn soak_slot_with_lamps(lamps: usize) -> GatherSlot {
         let mut slot = soak_slot_at_deposit();
-        // Back from the bank with the lamp in hand.
         slot.snapshot.seed_bank_observation(-1, 3, None, vec![]);
-        slot.snapshot
-            .seed_inventory(inventory_rows(&[(NET_ID, 1), (GENIE_LAMP_ID, 1)]), 28);
+        let mut pack = vec![(NET_ID, 1)];
+        pack.extend(std::iter::repeat_n((GENIE_LAMP_ID, 1), lamps));
+        slot.snapshot.seed_inventory(inventory_rows(&pack), 28);
         slot.latest = Some(slot.capture());
         slot.witness.pending_bank_trip = None;
+        slot
+    }
 
-        // The lamp leaves without a wish: unaccounted.
-        let previous = slot.capture();
+    /// The only lamp leaves the pack: the observation before it and the
+    /// observation it left in, not yet run through the oracle.
+    fn lamp_leaves(slot: &mut GatherSlot) -> (Observation, Observation) {
+        let before = slot.capture();
         slot.snapshot
             .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
-        let observation = slot.capture();
-        slot.observe_running(Some(previous.clone()), observation.clone())
-            .unwrap();
+        (before, slot.capture())
+    }
+
+    /// The lamp stays unaccounted on further observations and fails the
+    /// cell at the conservation bound.
+    fn assert_lamp_fails_at_the_bound(slot: &mut GatherSlot, observation: &Observation) {
         slot.observe_running(Some(observation.clone()), observation.clone())
             .unwrap();
         assert_eq!(
             slot.unsettled_items.keys().copied().collect::<Vec<_>>(),
             vec![(GENIE_LAMP_ID, 1)]
         );
-        age_unsettled(&mut slot);
+        age_unsettled(slot);
         let error = slot
             .observe_running(Some(observation.clone()), observation.clone())
             .unwrap_err();
@@ -8461,25 +8478,111 @@ mod bank_conservation_tests {
             error.contains("id 2528 count 1 was not conserved"),
             "{error}"
         );
+    }
 
-        // The engine's wish confirmation after the lamp left settles it.
-        slot.unsettled_items.clear();
-        slot.observe_running(Some(previous.clone()), observation.clone())
+    #[test]
+    fn lamp_without_a_wish_fails_at_the_bound() {
+        let mut slot = soak_slot_with_lamps(1);
+        let (before, left) = lamp_leaves(&mut slot);
+        slot.observe_running(Some(before), left.clone()).unwrap();
+        assert_lamp_fails_at_the_bound(&mut slot, &left);
+    }
+
+    /// `frame` stamps the confirmation after it captured the observation of
+    /// the same client drain, before the oracle records the lamp as gone:
+    /// the earliest such stamp is the observation's own capture instant.
+    #[test]
+    fn lamp_settles_on_a_wish_in_the_observation_it_left_in() {
+        let mut slot = soak_slot_with_lamps(1);
+        let (before, left) = lamp_leaves(&mut slot);
+        slot.witness.last_wish_granted = Some(left.captured_at);
+        slot.observe_running(Some(before), left.clone()).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 1);
+        slot.observe_running(Some(left.clone()), left).unwrap();
+        assert!(
+            slot.unsettled_items.is_empty(),
+            "{:?}",
+            slot.unsettled_items
+        );
+        assert_eq!(slot.witness.last_wish_granted, None, "the wish is consumed");
+    }
+
+    #[test]
+    fn lamp_settles_on_a_wish_after_it_left() {
+        let mut slot = soak_slot_with_lamps(1);
+        let (before, left) = lamp_leaves(&mut slot);
+        slot.observe_running(Some(before), left.clone()).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 1);
+        let later = slot.capture();
+        slot.witness.last_wish_granted = Some(Instant::now());
+        slot.observe_running(Some(left), later).unwrap();
+        assert!(
+            slot.unsettled_items.is_empty(),
+            "{:?}",
+            slot.unsettled_items
+        );
+        assert_eq!(slot.witness.last_wish_granted, None, "the wish is consumed");
+    }
+
+    /// A wish from any earlier observation, however recent, belongs to
+    /// another lamp (HOTFIX-0.2.1 review r2 N1: one second earlier was
+    /// accepted by the old two-second window).
+    #[test]
+    fn lamp_is_not_settled_by_a_recent_earlier_wish() {
+        for earlier in [Duration::from_nanos(1), Duration::from_secs(1)] {
+            let mut slot = soak_slot_with_lamps(1);
+            let (before, left) = lamp_leaves(&mut slot);
+            slot.witness.last_wish_granted = Some(left.captured_at.checked_sub(earlier).unwrap());
+            slot.observe_running(Some(before), left.clone()).unwrap();
+            assert_lamp_fails_at_the_bound(&mut slot, &left);
+        }
+    }
+
+    #[test]
+    fn lamp_is_not_settled_by_an_old_wish() {
+        let mut slot = soak_slot_with_lamps(1);
+        let (before, left) = lamp_leaves(&mut slot);
+        slot.witness.last_wish_granted = Some(
+            left.captured_at
+                .checked_sub(Duration::from_secs(60))
+                .unwrap(),
+        );
+        slot.observe_running(Some(before), left.clone()).unwrap();
+        assert_lamp_fails_at_the_bound(&mut slot, &left);
+    }
+
+    /// Two lamps leave one observation apart and one wish arrives with the
+    /// second: it settles the first lamp and is consumed, so it cannot also
+    /// settle the second, although it belongs to the second's observation.
+    #[test]
+    fn lamp_is_not_settled_by_a_wish_another_lamp_consumed() {
+        let mut slot = soak_slot_with_lamps(2);
+        let before = slot.capture();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1), (GENIE_LAMP_ID, 1)]), 28);
+        let first_left = slot.capture();
+        slot.observe_running(Some(before), first_left.clone())
             .unwrap();
         assert_eq!(slot.unsettled_items.len(), 1);
-        slot.witness.last_wish_granted = Some(Instant::now());
-        slot.observe_running(Some(observation.clone()), observation.clone())
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
+        let second_left = slot.capture();
+        slot.witness.last_wish_granted = Some(second_left.captured_at);
+        slot.observe_running(Some(first_left), second_left.clone())
             .unwrap();
-        assert!(slot.unsettled_items.is_empty());
-
-        // A wish long before the lamp left does not cover it.
-        slot.witness.last_wish_granted =
-            Some(Instant::now().checked_sub(Duration::from_secs(60)).unwrap());
-        slot.observe_running(Some(previous), observation.clone())
-            .unwrap();
-        slot.observe_running(Some(observation.clone()), observation)
-            .unwrap();
-        assert_eq!(slot.unsettled_items.len(), 1, "{:?}", slot.unsettled_items);
+        assert_eq!(
+            slot.witness.last_wish_granted, None,
+            "the first lamp consumed the wish"
+        );
+        assert_eq!(
+            slot.unsettled_items
+                .values()
+                .map(|item| item.left_in)
+                .collect::<Vec<_>>(),
+            vec![second_left.captured_at],
+            "only the second lamp is outstanding"
+        );
+        assert_lamp_fails_at_the_bound(&mut slot, &second_left);
     }
 }
 
