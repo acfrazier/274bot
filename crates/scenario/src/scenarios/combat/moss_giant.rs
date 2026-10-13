@@ -60,6 +60,10 @@ const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
 ];
 const MOSS_GIANT_DART_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Moss Giant food"),
+    },
+    ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("range"),
     },
@@ -334,7 +338,7 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
             deadline: COMBAT_QUALIFICATION_DEADLINE,
             start_script: Some("MossGiant"),
             script_settings_inject: Some(MOSS_GIANT_DART_INJECT),
-            fixture_loadouts: None,
+            fixture_loadouts: Some(MOSS_GIANT_FIXTURE_LOADOUTS),
             terminal_shot: Some("moss_giant_dart"),
             nav: gold_script_nav(),
             ..Default::default()

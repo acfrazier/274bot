@@ -2909,7 +2909,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         ("green_dragon_potions_prepared", "GreenDragon", 70),
         ("green_dragon_bank_prepared", "GreenDragon", 99),
         ("green_dragon_bank_default_prepared", "GreenDragon", 99),
-        ("green_dragon_tele_prepared", "GreenDragon", 99),
+        ("green_dragon_tele", "GreenDragon", 99),
         ("fire_giant_bank_prepared", "FireGiant", 99),
         ("fire_giant_camelot_prepared", "FireGiant", 99),
         ("moss_giant_prepared", "MossGiant", 70),
@@ -2921,7 +2921,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         let (deadline_secs, min_watch_ticks) = match name {
             "green_dragon_bank_prepared" => (600, 1500),
             "green_dragon_bank_default_prepared" => (720, 1800),
-            "green_dragon_tele_prepared" => (480, 1200),
+            "green_dragon_tele" => (480, 1200),
             "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => (600, 1500),
             _ => (300, 750),
         };
@@ -3157,7 +3157,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         "prepared Hill must accept either earned deposit class, not bones-only"
     );
 
-    let green_tele = get("green_dragon_tele_prepared").unwrap();
+    let green_tele = get("green_dragon_tele").unwrap();
     let green_tele_start = start_idx(&green_tele);
     let green_tele_inject =
         settings_inject_map(green_tele.settings.script_settings_inject).unwrap();
@@ -3706,7 +3706,6 @@ fn hostile_fields_follow_safe_pretele_precondition_acknowledgements() {
         "ardy_fighter",
         "rock_crab_bank",
         "green_dragon_bank",
-        "green_dragon_tele",
         "fire_giant_approach",
         "fire_giant_bank",
     ] {
@@ -4753,13 +4752,13 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(flax_watch.contains(&Proof::ItemId {
+    assert!(flax_watch.contains(&Proof::ItemIdInFullPack {
         id: FLAX_ID,
-        count: 28,
+        count: 1,
     }));
     assert!(flax_watch.contains(&Proof::BankItemId {
         id: FLAX_ID,
-        count: 28,
+        count: 1,
     }));
     assert!(flax_watch.contains(&Proof::BankClosed));
     assert!(flax_watch.contains(&Proof::ArrivedNear {
@@ -6160,8 +6159,15 @@ fn ardy_thieving_cases_register_stall_guard_knight_and_bank_cycles() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    let cake = Proof::ItemId {
-        id: CAKE_ID,
+    // Any Baker's stall loot (cake 13 / bread 5 / chocolate slice 2 of 20 in
+    // stealing.dbrow) witnesses the steal and its deposit; the exact food
+    // rolled is a chance outcome and must not gate the cell.
+    let stall_food = Proof::ItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
+        count: 1,
+    };
+    let bank_stall_food = Proof::BankItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
         count: 1,
     };
     let pack_empty_cake = Proof::ItemIdAtMost {
@@ -6187,38 +6193,30 @@ fn ardy_thieving_cases_register_stall_guard_knight_and_bank_cycles() {
                 id: THIEVING_STAT,
                 min: 1
             },
-            cake,
+            stall_food,
             bank,
-            Proof::BankItemId {
-                id: CAKE_ID,
-                count: 1
-            },
+            bank_stall_food,
             pack_empty_cake,
             stand,
             Proof::BankClosed,
-            cake,
+            stall_food,
         ]
     );
-    let first_cake = watch.iter().position(|arm| *arm == cake).unwrap();
-    let bank_cake = watch
+    let first_food = watch.iter().position(|arm| *arm == stall_food).unwrap();
+    let bank_food = watch
         .iter()
-        .position(|arm| {
-            *arm == Proof::BankItemId {
-                id: CAKE_ID,
-                count: 1,
-            }
-        })
+        .position(|arm| *arm == bank_stall_food)
         .unwrap();
     let pack_empty = watch
         .iter()
         .position(|arm| *arm == pack_empty_cake)
         .unwrap();
-    let further_cake = watch.iter().rposition(|arm| *arm == cake).unwrap();
-    assert!(first_cake < bank_cake);
-    assert!(bank_cake < pack_empty);
-    assert!(pack_empty < further_cake);
-    assert_ne!(first_cake, further_cake);
-    assert_eq!(cakes.proof, cake);
+    let further_food = watch.iter().rposition(|arm| *arm == stall_food).unwrap();
+    assert!(first_food < bank_food);
+    assert!(bank_food < pack_empty);
+    assert!(pack_empty < further_food);
+    assert_ne!(first_food, further_food);
+    assert_eq!(cakes.proof, stall_food);
     assert_eq!(
         ARDY_BANK,
         WorldTile {
@@ -6397,6 +6395,14 @@ fn alternate_camp_and_fight_option_cases_register() {
     assert!(!watch
         .iter()
         .any(|arm| matches!(arm, Proof::BankItemId { .. })));
+    assert!(watch.contains(&Proof::ItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
+        count: 1,
+    }));
+    assert!(!watch.contains(&Proof::ItemId {
+        id: CAKE_ID,
+        count: 1,
+    }));
 
     let thiever_fight = get("ardy_thiever_fight").expect("ardy_thiever_fight");
     assert_eq!(thiever_fight.settings.start_script, Some("ArdyThiever"));
@@ -6564,7 +6570,7 @@ fn alternate_camp_and_fight_option_cases_register() {
 fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
     let chop = get("gnome_chop").expect("gnome_chop");
     assert_eq!(chop.settings.start_script, Some("GnomeMagicChopper"));
-    assert_eq!(chop.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(chop.settings.deadline, MAGIC_TREE_CHOP_DEADLINE);
     let inject = settings_inject_map(chop.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("fletchLogs"), Some(&Value::Bool(false)));
     let start = chop
@@ -6897,7 +6903,7 @@ fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
 }
 
 #[test]
-fn gnome_fletch_magic_chop_watches_cover_the_roll_tail() {
+fn gnome_magic_chop_watches_cover_the_roll_tail() {
     // selected289 woodcut.rs2: Rune axe on a Magic tree is successchance
     // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 engine ticks,
     // first at +3. The first arm also carries the card's gear bank trip.
@@ -6913,7 +6919,7 @@ fn gnome_fletch_magic_chop_watches_cover_the_roll_tail() {
         "first Magic log must land inside the watch for >=99% of correct runs, miss={miss}"
     );
 
-    for name in ["gnome_fletch_short", "gnome_fletch_long"] {
+    for name in ["gnome_chop", "gnome_fletch_short", "gnome_fletch_long"] {
         let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(s.settings.deadline, MAGIC_TREE_CHOP_DEADLINE, "{name}");
         let start = s
@@ -8127,9 +8133,10 @@ fn remaining_fighter_core_cases_register_melee_cycles() {
         id: CAKE_ID,
         count: 1,
     }));
-    // Other combat cores stay unworn / undrained for setstat; only the
-    // two FireGiant cells own that pre-Start hop.
-    assert!(!seed.contains(&Proof::EquipmentId {
+    // ArdyFighter has no GearEquip task, so the cell arrives wearing the
+    // scimitar (the wear step's EquipmentId proof), like rock_crab. Only
+    // the two FireGiant cells own the setstat-drain hop.
+    assert!(seed.contains(&Proof::EquipmentId {
         id: COMBAT_SCIMITAR_ID,
     }));
     assert!(!seed.contains(&Proof::NoActiveContinue));
@@ -8712,10 +8719,12 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
     let dart = get("moss_giant_dart").expect("moss_giant_dart registered");
     assert_eq!(dart.settings.start_script, Some("MossGiant"));
     assert_eq!(dart.settings.deadline, Duration::from_secs(300));
-    assert!(
-        dart.settings.fixture_loadouts.is_none(),
-        "bank-only dart Start must not apply a packed food loadout"
-    );
+    let dart_loadouts = dart
+        .settings
+        .fixture_loadouts
+        .expect("moss_giant_dart pins scriptFood via fixture loadout");
+    assert_eq!(dart_loadouts[0].name, "Scenario Moss Giant food");
+    assert_eq!(dart_loadouts[0].carry, &[("Lobster", 10)]);
     let dart_inject = settings_inject_map(dart.settings.script_settings_inject).unwrap();
     assert_eq!(
         dart_inject.get("combatStyle"),
@@ -9176,7 +9185,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "mule_crafter",
         "ardy_thiever",
         "ardy_thiever_knight",
-        "gnome_chop",
         "coal_trucks",
         "cook_bot",
         "cook_bot_lobster",
@@ -9195,7 +9203,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "rock_crab",
         "green_dragon",
         "fire_giant",
-        "ardy_fighter",
         "script_trade",
     ] {
         let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
@@ -10062,6 +10069,27 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
             "Scenario Moss Giant food",
             "Lobster",
             MOSS_GIANT_FOOD as u32,
+        ),
+        (
+            "moss_giant_dart",
+            "MossGiant",
+            "Scenario Moss Giant food",
+            "Lobster",
+            MOSS_GIANT_FOOD as u32,
+        ),
+        (
+            "rock_crab",
+            "RockCrab",
+            "Scenario Rock Crab food",
+            "Lobster",
+            ROCK_CRAB_FOOD as u32,
+        ),
+        (
+            "ardy_fighter",
+            "ArdyFighter",
+            "Scenario Ardy Fighter food",
+            "Cake",
+            1,
         ),
         (
             "hill_giant",

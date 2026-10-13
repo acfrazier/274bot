@@ -16,11 +16,15 @@ const ROCK_CRAB_BANK_RET: WorldTile = WorldTile {
     z: 3717,
     level: 0,
 };
-const ROCK_CRAB_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+pub(super) const ROCK_CRAB_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Rock Crab food",
     carry: &[("Lobster", ROCK_CRAB_FOOD as u32)],
 }];
 const ROCK_CRAB_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Rock Crab food"),
+    },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),

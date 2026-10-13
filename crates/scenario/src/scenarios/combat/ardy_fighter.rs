@@ -34,7 +34,20 @@ const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 320;
 /// measured 20-tile path: `20 * 1.25 = 25`, rounded to 40.
 const ARDY_FIGHTER_BANK_SEEDED_DEPOSIT_WATCH_TICKS: u32 = 320;
 const ARDY_FIGHTER_BANK_SEEDED_RETURN_WATCH_TICKS: u32 = 40;
+/// ArdyFighter's loadout setting only selects gear (`weaponOf` falls back to
+/// the worn weapon); its food is ignored because the card eats what it
+/// steals from the Baker's stall. The fixture exists so `selectedLoadout`
+/// resolves instead of failing closed with no loadouts posted, and its
+/// Cake carry mirrors the injected `foodTarget` of 1.
+pub(super) const ARDY_FIGHTER_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Ardy Fighter food",
+    carry: &[("Cake", 1)],
+}];
 const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Ardy Fighter food"),
+    },
     ScriptSettingInject {
         id: "target",
         value: ScriptInjectValue::Str("Guard"),
@@ -85,7 +98,7 @@ const ARDY_FIGHTER_BANK_SEEDED_LOOT_EMPTY: &[i32] = &[
 /// ArdyFighter default Guard/strength. No fabricated cakes; the script
 /// must steal cake/bread/chocolate slice after Start. PeriodicBank Off.
 pub(crate) fn ardy_fighter_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "ardy_fighter",
         card: "ArdyFighter",
         tele: ARDOUGNE_GUARD,
@@ -96,13 +109,23 @@ pub(crate) fn ardy_fighter_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear: None,
+        wear: Some((
+            "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport",
+            COMBAT_SCIMITAR_ID,
+        )),
         loot_empty: ARDY_FIGHTER_LOOT_EMPTY,
         inject: ARDY_FIGHTER_INJECT,
         complete_quest: None,
         thieving: 5,
         agility: 0,
-    })
+    });
+    let style_watch = scenario
+        .steps
+        .iter_mut()
+        .find(|step| step.name == "watch Strength XP from the selected melee style after Start")
+        .expect("ardy fighter has a post-Start Strength watch");
+    style_watch.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+    scenario
 }
 /// ArdyFighter's `bankStrategy=Loot count` PeriodicBank after it has looted a
 /// Guard drop. `foodTarget=1` keeps the stall restock short so the cell has
