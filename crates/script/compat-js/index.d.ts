@@ -30,7 +30,7 @@ export { Game } from '*api/game/Game.js';
 export { Inventory } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
 export { Bank, withdrawOp } from '*api/bank/Bank.js';
-export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy } from '*api/bank/Banking.js';
+export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
 export { reader } from '*adapter/ClientAdapter.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '*api/acquisition/Tools.js';
 export { Execution } from '*api/execution/Execution.js';
@@ -145,7 +145,6 @@ export function resolveMiningLocation(...args: unknown[]): never;
 export function resolveWoodcuttingLocation(...args: unknown[]): never;
 export function sameMapSquare(...args: unknown[]): never;
 export function shopableMissingFishingGear(...args: unknown[]): never;
-export function shouldBankNow(...args: unknown[]): never;
 export function shouldBootstrapTollCoins(...args: unknown[]): never;
 export function spotMatchesMethod(...args: unknown[]): never;
 export function surplusHeldToolNames(...args: unknown[]): never;
@@ -697,7 +696,7 @@ export const Bank: {
 declare module '*api/bank/Banking.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
 import { BankObjectAccess, BankNpcAccess } from "*api/bank/BankLocations.js";
-export { type BankStrategy, type BankTriggerState, COMMON_BANK_LOOT, PERIODIC_BANK_SETTINGS, depositAllExcept, depositMatcher, matchesCommonBankLoot, parseBankStrategy } from "*api/bank/bankRules.js";
+export { type BankStrategy, type BankTriggerState, COMMON_BANK_LOOT, PERIODIC_BANK_SETTINGS, depositAllExcept, depositMatcher, isDisposableGatherJunk, matchesCommonBankLoot, parseBankStrategy, shouldBankNow } from "*api/bank/bankRules.js";
 export interface BankDestination {
     name: string;
     tile: WorldTile;
@@ -705,6 +704,22 @@ export interface BankDestination {
     /** Set when the banker is an npc (Gundai). */
     npcAccess?: BankNpcAccess;
 }
+/**
+ * Start-of-script pack cleanup (#170): deposit anything off the keep list so the bot can start with a junk pack.
+ * Why: true when nothing needed banking or the purge finished; false when junk remains and the bank couldn't be opened or deposited.
+ */
+export function purgePackAtBank(opts?: {
+    /** Exact display names to keep (case-insensitive), e.g. pickaxe / rod. */
+    keep: Iterable<string>;
+    stand?: WorldTile | null;
+    /** Forced bank destination (Bank location setting) when no stand is given. */
+    destination?: BankDestination;
+    preferNearby?: boolean;
+    boothName?: string;
+    boothOp?: string;
+    obstacles?: string[];
+    log?: (msg: string) => void;
+}): Promise<never>;
 export interface OpenBankOpts {
     /**
      * Preset bank stand (location table). Used when no bank is already nearby.
@@ -747,6 +762,25 @@ export const Banking: {
         log?: (msg: string) => void;
     }): Promise<boolean>;
 };
+/**
+ * Human-ish pause between bank UI actions (open, scan, withdraw, deposit).
+ * Why: 1 to 2 ticks so open, scan and close can't land on the same tick and race the bank load.
+ */
+export function bankPaceTicks(rand?: () => number): never;
+/** Pause between bank UI actions so tool checks don't flash open/close. */
+export function bankPace(log?: (m: string) => void): Promise<never>;
+/** Wait for the bank item list after open. Counts stay 0 until it arrives, and without a pause this looks like an instant open, scan, close. */
+export function waitBankReady(log?: (m: string) => void): Promise<boolean>;
+/**
+ * Withdraw coins so inventory holds at least `need`. Bank must already be open.
+ * Returns false when the bank has no coins or the withdraw fails.
+ */
+export function withdrawCoins(need?: number, opts?: {
+    invCoins: number;
+    bankCoins: number;
+    coinName?: string;
+    log?: (m: string) => void;
+}): Promise<never>;
 export const RANDOM_EVENT_CASKET_ID: number;
 /** A bank behind a conversation opens differently from one behind a booth. */
 export function openBankAccess(dest: {
@@ -883,7 +917,7 @@ export interface BankTriggerState {
     itemsThreshold: number;
     minutesThreshold: number;
 }
-export function shouldBankNow(strategy?: BankStrategy, s?: BankTriggerState): never;
+export function shouldBankNow(strategy: BankStrategy, s: BankTriggerState): boolean;
 export function parseBankStrategy(label: string): BankStrategy;
 /**
  * Shared banking parameters, mixed into a script's own settings schema.
@@ -898,7 +932,7 @@ export const PERIODIC_BANK_SETTINGS: {
 export const COMMON_BANK_LOOT: string[];
 export function matchesCommonBankLoot(name: string, id?: number): boolean;
 /** Inventory junk that steals pack slots during long AFK loops (random-event leftovers, common bank loot). */
-export function isDisposableGatherJunk(name?: string | null | undefined, id?: number): never;
+export function isDisposableGatherJunk(name: string | null | undefined, id?: number): boolean;
 export function depositMatcher(own: (name: string) => boolean, includeCommon: boolean): (name: string, id?: number) => boolean;
 export function depositAllExcept(keep: Iterable<string>): (name: string) => boolean;
 

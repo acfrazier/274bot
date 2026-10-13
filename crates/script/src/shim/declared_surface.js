@@ -8,7 +8,7 @@ export { Game } from '../../api/game/Game.js';
 export { Inventory } from '../../api/inventory/Inventory.js';
 export { Skills } from '../../api/skills/Skills.js';
 export { Bank, withdrawOp } from '../../api/bank/Bank.js';
-export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy } from '../../api/bank/Banking.js';
+export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';
 export { reader } from '../../adapter/ClientAdapter.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
@@ -148,7 +148,6 @@ export function resolveMiningLocation() { throw notImpl('resolveMiningLocation')
 export function resolveWoodcuttingLocation() { throw notImpl('resolveWoodcuttingLocation'); }
 export function sameMapSquare() { throw notImpl('sameMapSquare'); }
 export function shopableMissingFishingGear() { throw notImpl('shopableMissingFishingGear'); }
-export function shouldBankNow() { throw notImpl('shouldBankNow'); }
 export function shouldBootstrapTollCoins() { throw notImpl('shouldBootstrapTollCoins'); }
 export function spotMatchesMethod() { throw notImpl('spotMatchesMethod'); }
 export function surplusHeldToolNames() { throw notImpl('surplusHeldToolNames'); }
