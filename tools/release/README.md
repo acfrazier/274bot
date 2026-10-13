@@ -169,25 +169,34 @@ members, extra files, missing files, byte-count differences, and SHA-256
 differences, and verifies `SHA256SUMS` has exactly the candidate archives. It
 checks the requested host commit, runs both executables' `--help` on their
 native platforms, and validates the extracted macOS signatures, staple, and
-Gatekeeper acceptance. On macOS it also runs `otool -L`/`otool -l` on
-every Mach-O in the package (both standalone executables and the app
-bundle's) and refuses any library reference that is not, after path
-normalisation, under `/usr/lib/` or `/System/Library/` or an
-`@executable_path`/`@rpath` reference resolving to a file inside the
-package, naming the offending binary and library. Because dyld expands
-`@executable_path` to the main executable's directory -- and the
-package ships main executables at two depths -- such a reference must
-resolve inside the package from *every* shipped main executable's
-directory, not just the referencing binary's; `@loader_path` as an
-install name is refused, so in-package dylibs use `@rpath` plus an
-`@loader_path` rpath. It also refuses any Mach-O architecture slice
-whose minimum macOS version (`LC_BUILD_VERSION` `minos`, or
-`LC_VERSION_MIN_MACOSX`) is missing or above 11.0, naming the binary
-and, for a fat binary, the architecture and its value -- one slice's
-version does not satisfy another slice that records none; the worker pins
-`MACOSX_DEPLOYMENT_TARGET=11.0`, and this is how verification proves the
-shipped floor. That pair of checks is what keeps a
-MacPorts/Homebrew-linked or floor-raising build from ever verifying.
+Gatekeeper acceptance. On macOS every Mach-O in the package must first
+pass the architecture rule: the macOS release builds a single target
+(`aarch64-apple-darwin`, packaged as `macos-arm64`), so only a *thin*
+64-bit arm64 Mach-O is shipped. Verification reads each file's Mach-O
+header directly and refuses anything else -- a fat/universal header
+whatever its slices, a thin x86_64 or arm64e binary, a 32-bit or
+truncated header -- naming the binary and what it is, without running
+`otool` on it, so no tool output can hide a slice. It then runs
+`otool -arch arm64 -L`/`-l` on every Mach-O (both standalone
+executables and the app bundle's) and refuses any library reference
+that is not, after path normalisation, under `/usr/lib/` or
+`/System/Library/` or an `@executable_path`/`@rpath` reference
+resolving to a file inside the package, naming the offending binary
+and library. Because dyld expands `@executable_path` to the main
+executable's directory -- and the package ships main executables at
+two depths -- such a reference must resolve inside the package from
+*every* shipped main executable's directory, not just the referencing
+binary's; `@loader_path` as an install name is refused, so in-package
+dylibs use `@rpath` plus an `@loader_path` rpath. It also refuses any
+Mach-O whose minimum macOS version is missing or above 11.0, naming
+the binary and its value: the only floors that count are a
+macOS-platform `LC_BUILD_VERSION` (`platform 1`) `minos` or an
+`LC_VERSION_MIN_MACOSX`; a build version for another platform (iOS,
+Mac Catalyst, ...) is ignored, so a binary with no macOS floor is
+refused as missing one. The worker pins
+`MACOSX_DEPLOYMENT_TARGET=11.0`, and this is how verification proves
+the shipped floor. Those checks are what keep a MacPorts/Homebrew-linked,
+wrong-architecture, or floor-raising build from ever verifying.
 Linux and Windows have no equivalent check yet, deliberately: ELF
 `DT_NEEDED` entries and PE imports record library names, not
 build-host paths, both builders are dedicated hosts with no shadowing

@@ -487,13 +487,6 @@ OTOOL_L = """\
 \t/opt/local/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)
 """
 
-OTOOL_L_FAT = """\
-/pkg/panel-play (architecture arm64):
-\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
-/pkg/panel-play (architecture x86_64):
-\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
-"""
-
 OTOOL_LOAD_COMMANDS = """\
 /pkg/panel-play:
 Load command 0
@@ -520,14 +513,70 @@ Load command 14
      name /usr/lib/libSystem.B.dylib (offset 24)
 """
 
-OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT = """\
-/pkg/old (architecture arm64):
+OTOOL_LOAD_COMMANDS_LEGACY = """\
+/pkg/panel-play:
 Load command 8
       cmd LC_VERSION_MIN_MACOSX
   cmdsize 16
-  version 10.15
-      sdk 10.15
-/pkg/old (architecture x86_64):
+  version 11.0
+      sdk 11.0
+"""
+
+OTOOL_LOAD_COMMANDS_IOS_ONLY = """\
+/pkg/panel-play:
+Load command 3
+      cmd LC_SOURCE_VERSION
+  cmdsize 16
+  version 0.0
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 2
+    minos 11.0
+      sdk 18.0
+"""
+
+OTOOL_LOAD_COMMANDS_CATALYST_ONLY = """\
+/pkg/panel-play:
+Load command 3
+      cmd LC_SOURCE_VERSION
+  cmdsize 16
+  version 0.0
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 6
+    minos 11.0
+      sdk 14.0
+"""
+
+OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+Load command 9
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 6
+    minos 14.0
+      sdk 14.0
+"""
+
+OTOOL_LOAD_COMMANDS_NO_PLATFORM = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+    minos 11.0
+      sdk 27.0
+"""
+
+OTOOL_LOAD_COMMANDS_ABOVE_FLOOR = """\
+/pkg/panel-play:
 Load command 8
       cmd LC_BUILD_VERSION
   cmdsize 32
@@ -536,39 +585,35 @@ Load command 8
       sdk 14.0
 """
 
-OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64 = """\
-/pkg/fat (architecture arm64):
-Load command 0
-      cmd LC_SEGMENT_64
-  cmdsize 72
-Load command 3
-      cmd LC_SOURCE_VERSION
-  cmdsize 16
-  version 0.0
-/pkg/fat (architecture x86_64):
-Load command 8
-      cmd LC_BUILD_VERSION
-  cmdsize 32
- platform 1
-    minos 11.0
-      sdk 27.0
-"""
 
-OTOOL_LOAD_COMMANDS_FAT_OK = """\
-/pkg/fat (architecture arm64):
-Load command 8
-      cmd LC_BUILD_VERSION
-  cmdsize 32
- platform 1
-    minos 11.0
-      sdk 27.0
-/pkg/fat (architecture x86_64):
-Load command 8
-      cmd LC_VERSION_MIN_MACOSX
-  cmdsize 16
-  version 10.15
-      sdk 10.15
-"""
+def thin_macho_bytes(cputype=0x0100000C, cpusubtype=0, filetype=2):
+    """A thin 64-bit little-endian Mach-O header (CPU_TYPE_ARM64,
+    plain arm64 subtype, MH_EXECUTE unless told otherwise)."""
+    return (
+        b"\xcf\xfa\xed\xfe"
+        + cputype.to_bytes(4, "little")
+        + cpusubtype.to_bytes(4, "little")
+        + filetype.to_bytes(4, "little")
+        + b"\0" * 16
+    )
+
+
+def fat_macho_bytes(*slices):
+    """A fat big-endian Mach-O whose arch entries name `slices`
+    ((cputype, cpusubtype) pairs), with one thin header after them."""
+    thin = thin_macho_bytes()
+    entries = b""
+    offset = 8 + 20 * len(slices)
+    for cputype, cpusubtype in slices:
+        entries += (
+            cputype.to_bytes(4, "big") + cpusubtype.to_bytes(4, "big")
+            + offset.to_bytes(4, "big") + len(thin).to_bytes(4, "big")
+            + b"\0" * 4
+        )
+    return (
+        b"\xca\xfe\xba\xbe" + len(slices).to_bytes(4, "big")
+        + entries + thin
+    )
 
 
 class MacosLinkageTests(unittest.TestCase):
@@ -578,10 +623,14 @@ class MacosLinkageTests(unittest.TestCase):
         (base / "274bot.app/Contents/MacOS").mkdir(parents=True)
         (base / "Frameworks").mkdir()
         for relative in release.MACOS_REQUIRED_EXECUTABLES:
-            (base / relative).write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 28)
-        (base / "Frameworks/libfoo.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+            (base / relative).write_bytes(
+                thin_macho_bytes(filetype=release.MH_EXECUTE)
+            )
+        (base / "Frameworks/libfoo.dylib").write_bytes(
+            thin_macho_bytes(filetype=6)
+        )
         (base / "274bot.app/Contents/Frameworks/libfoo.dylib").write_bytes(
-            b"\xcf\xfa\xed\xfe"
+            thin_macho_bytes(filetype=6)
         )
         (base / "notes.txt").write_text("not a binary")
         return base
@@ -594,30 +643,43 @@ class MacosLinkageTests(unittest.TestCase):
             "@rpath/libfoo.dylib",
             "/opt/local/lib/libbz2.1.0.dylib",
         ])
-        self.assertEqual(release.parse_otool_libraries(OTOOL_L_FAT), [
-            "/usr/lib/libSystem.B.dylib",
-            "/usr/lib/libSystem.B.dylib",
-        ])
         self.assertEqual(release.parse_otool_rpaths(OTOOL_LOAD_COMMANDS), [
             "@executable_path/../Frameworks",
             "/opt/local/lib",
         ])
-        # A thin binary is one section with no architecture.
+        # A macOS-platform (platform 1) LC_BUILD_VERSION is the floor.
         self.assertEqual(
             release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS),
-            [(None, ["11.0"])],
+            ["11.0"],
         )
-        # Legacy LC_VERSION_MIN_MACOSX, and every slice of a fat binary.
+        # Legacy LC_VERSION_MIN_MACOSX is the same floor.
         self.assertEqual(
-            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT),
-            [("arm64", ["10.15"]), ("x86_64", ["14.0"])],
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_LEGACY),
+            ["11.0"],
         )
-        # A slice with no version command stays an empty section; the
-        # LC_SOURCE_VERSION 'version 0.0' in it is not a floor.
+        # iOS (platform 2) and Mac Catalyst (platform 6) build versions
+        # are not macOS floors; the LC_SOURCE_VERSION 'version 0.0'
+        # alongside them is not one either.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_IOS_ONLY),
+            [],
+        )
         self.assertEqual(
             release.parse_otool_minimum_os(
-                OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64),
-            [("arm64", []), ("x86_64", ["11.0"])],
+                OTOOL_LOAD_COMMANDS_CATALYST_ONLY),
+            [],
+        )
+        # A Catalyst minos above the floor does not count against a
+        # binary whose macOS floor is 11.0; only the macOS one is read.
+        self.assertEqual(
+            release.parse_otool_minimum_os(
+                OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST),
+            ["11.0"],
+        )
+        # A minos with no platform line does not count (fail closed).
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_NO_PLATFORM),
+            [],
         )
 
     def test_system_libraries_are_allowed(self):
@@ -738,7 +800,7 @@ class MacosLinkageTests(unittest.TestCase):
             plugin_dir = base / "nested/deep"
             plugin_dir.mkdir(parents=True)
             plugin = plugin_dir / "plugin.dylib"
-            plugin.write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 28)
+            plugin.write_bytes(thin_macho_bytes(filetype=6))
             # Planted where the plugin's own directory would take
             # @executable_path/../../opt/local/lib -- the expansion the
             # old check used. From a real main executable (package root)
@@ -769,60 +831,104 @@ class MacosLinkageTests(unittest.TestCase):
         ])
         self.assertEqual(via_loader, [])
 
-    def test_macho_filetypes_and_main_executable_dirs(self):
+    def test_macho_filetype_and_main_executable_dirs(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             extra = base / "extra"
             extra.mkdir()
             tool = extra / "tool"
-            # Thin 64-bit little-endian header, filetype MH_EXECUTE (2).
             tool.write_bytes(
-                b"\xcf\xfa\xed\xfe" + b"\0" * 8
-                + (2).to_bytes(4, "little") + b"\0" * 16
+                thin_macho_bytes(filetype=release.MH_EXECUTE)
             )
             fat = base / "fat.dylib"
-            thin = (
-                b"\xfe\xed\xfa\xcf" + b"\0" * 8
-                + (6).to_bytes(4, "big") + b"\0" * 16
+            fat.write_bytes(fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+            self.assertEqual(
+                release.macho_filetype(tool), release.MH_EXECUTE
             )
-            # Fat big-endian header: one arch entry pointing at `thin`
-            # (MH_DYLIB, 6) right after the 8 + 20 byte fat header.
-            fat.write_bytes(
-                b"\xca\xfe\xba\xbe" + (1).to_bytes(4, "big")
-                + b"\0" * 8 + (28).to_bytes(4, "big")
-                + len(thin).to_bytes(4, "big") + b"\0" * 4 + thin
-            )
-            self.assertEqual(release.macho_filetypes(tool), [release.MH_EXECUTE])
-            self.assertEqual(release.macho_filetypes(fat), [6])
+            # No per-slice filetypes any more: a fat binary is refused
+            # by the architecture rule, so its filetype is never read.
+            self.assertIsNone(release.macho_filetype(fat))
             self.assertEqual(
                 set(release.macos_main_executable_dirs(base)),
                 {base, base / "274bot.app/Contents/MacOS", extra},
             )
 
+    def test_architecture_must_be_thin_arm64(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            allowed = (
+                "only thin arm64 Mach-O is shipped "
+                "(macOS target aarch64-apple-darwin)"
+            )
+
+            def violations():
+                return release.macho_architecture_violations(binary, base)
+
+            # Thin arm64 (subtypes 0 and 1 are plain arm64) is shipped.
+            binary.write_bytes(thin_macho_bytes(cpusubtype=0))
+            self.assertEqual(violations(), [])
+            binary.write_bytes(thin_macho_bytes(cpusubtype=1))
+            self.assertEqual(violations(), [])
+            # Anything else is refused, naming the binary and what it is.
+            binary.write_bytes(
+                thin_macho_bytes(cputype=0x01000007, cpusubtype=3))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit x86_64 Mach-O; {allowed}"])
+            binary.write_bytes(thin_macho_bytes(cpusubtype=2))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit arm64e Mach-O; {allowed}"])
+            # arm64e with capability bits in the top subtype byte.
+            binary.write_bytes(thin_macho_bytes(cpusubtype=0x80000002))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit arm64e Mach-O; {allowed}"])
+            # A fat binary is refused whatever its slices are, even a
+            # single arm64 slice.
+            binary.write_bytes(
+                fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64, x86_64); "
+                + allowed])
+            binary.write_bytes(fat_macho_bytes((0x0100000C, 0)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64); " + allowed])
+            binary.write_bytes(
+                fat_macho_bytes((0x0100000C, 2), (0x01000007, 3)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64e, x86_64); "
+                + allowed])
+            # 32-bit and truncated headers fail closed too.
+            binary.write_bytes(
+                b"\xce\xfa\xed\xfe" + (12).to_bytes(4, "little")
+                + b"\0" * 8 + (2).to_bytes(4, "little") + b"\0" * 12)
+            self.assertEqual(violations(), [
+                f"panel-play: 32-bit arm Mach-O; {allowed}"])
+            binary.write_bytes(b"\xcf\xfa\xed\xfe")
+            self.assertEqual(violations(), [
+                f"panel-play: truncated Mach-O header; {allowed}"])
+
     def test_minimum_os_above_the_floor_is_named(self):
-        # Thin binaries: one section, no architecture suffix, as before.
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             binary = base / "panel-play"
             above = release.macho_minimum_os_violations(
-                binary, base, [(None, ["14.0"])])
+                binary, base, ["14.0"])
             at_floor = release.macho_minimum_os_violations(
-                binary, base, [(None, ["11.0"])])
+                binary, base, ["11.0"])
             below = release.macho_minimum_os_violations(
-                binary, base, [(None, ["10.15"])])
+                binary, base, ["10.15"])
             missing = release.macho_minimum_os_violations(
-                binary, base, [(None, [])])
-            no_sections = release.macho_minimum_os_violations(
                 binary, base, [])
         self.assertEqual(above, ["panel-play: minos 14.0 exceeds macOS 11.0"])
         self.assertEqual(at_floor, [])
         self.assertEqual(below, [])
-        self.assertEqual(len(missing), 1)
-        self.assertIn("panel-play: missing minimum macOS version", missing[0])
-        self.assertNotIn("architecture", missing[0])
-        self.assertEqual(no_sections, missing)
+        self.assertEqual(missing, [
+            "panel-play: missing minimum macOS version "
+            "(no macOS-platform LC_BUILD_VERSION minos or "
+            "LC_VERSION_MIN_MACOSX)"
+        ])
 
-    def test_minimum_os_is_checked_per_architecture_slice(self):
+    def test_minimum_os_counts_only_the_macos_platform(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             binary = base / "panel-play"
@@ -832,20 +938,58 @@ class MacosLinkageTests(unittest.TestCase):
                     binary, base,
                     release.parse_otool_minimum_os(load_commands))
 
-            # A version on the x86_64 slice must not satisfy an arm64
-            # slice that records no floor at all.
-            missing_one = violations(OTOOL_LOAD_COMMANDS_FAT_MISSING_ARM64)
-            both_ok = violations(OTOOL_LOAD_COMMANDS_FAT_OK)
-            one_above = violations(OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT)
-        self.assertEqual(missing_one, [
-            "panel-play: missing minimum macOS version "
-            "(architecture arm64)",
+            # A thin arm64 binary whose only build version is for iOS
+            # or Mac Catalyst has no macOS floor (the panel-play here
+            # passes the architecture rule; the floor is the cause).
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS_IOS_ONLY), [
+                "panel-play: missing minimum macOS version "
+                "(no macOS-platform LC_BUILD_VERSION minos or "
+                "LC_VERSION_MIN_MACOSX)"
+            ])
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_CATALYST_ONLY),
+                violations(OTOOL_LOAD_COMMANDS_IOS_ONLY),
+            )
+            # macOS 11.0, the legacy spelling of the same floor, and a
+            # macOS 11.0 alongside a Catalyst 14.0 are all allowed.
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS), [])
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS_LEGACY), [])
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST), []
+            )
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_ABOVE_FLOOR),
+                ["panel-play: minos 14.0 exceeds macOS 11.0"],
+            )
+
+    def test_otool_linkage_requests_the_arm64_slice(self):
+        # The linkage tests mock otool_linkage, so lock the argv here:
+        # both calls must ask for the arm64 architecture explicitly.
+        calls = []
+
+        def fake_run(command, capture=False):
+            calls.append([str(part) for part in command])
+            if "-L" in command:
+                return (
+                    "/pkg/panel-play:\n"
+                    "\t/usr/lib/libSystem.B.dylib "
+                    "(compatibility version 1.0.0, "
+                    "current version 1359.0.0)\n"
+                )
+            return OTOOL_LOAD_COMMANDS
+
+        with mock.patch.object(release, "run", side_effect=fake_run):
+            libraries, rpaths, minimum_os = release.otool_linkage(
+                Path("/pkg/panel-play")
+            )
+        self.assertEqual(calls, [
+            ["otool", "-arch", "arm64", "-L", "/pkg/panel-play"],
+            ["otool", "-arch", "arm64", "-l", "/pkg/panel-play"],
         ])
-        self.assertEqual(both_ok, [])
-        self.assertEqual(one_above, [
-            "panel-play: minos 14.0 exceeds macOS 11.0 "
-            "(architecture x86_64)",
-        ])
+        self.assertEqual(libraries, ["/usr/lib/libSystem.B.dylib"])
+        self.assertEqual(rpaths, [
+            "@executable_path/../Frameworks", "/opt/local/lib"])
+        self.assertEqual(minimum_os, ["11.0"])
 
     def test_verify_checks_every_macho_and_names_the_offender(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -854,10 +998,9 @@ class MacosLinkageTests(unittest.TestCase):
             def linkage(path):
                 if path.name == "libfoo.dylib" and "274bot.app" in str(path):
                     return (
-                        ["/opt/local/lib/libiconv.2.dylib"], [],
-                        [(None, ["11.0"])],
+                        ["/opt/local/lib/libiconv.2.dylib"], [], ["11.0"],
                     )
-                return ["/usr/lib/libSystem.B.dylib"], [], [(None, ["11.0"])]
+                return ["/usr/lib/libSystem.B.dylib"], [], ["11.0"]
 
             with mock.patch.object(release, "otool_linkage", side_effect=linkage):
                 with self.assertRaisesRegex(
@@ -869,8 +1012,7 @@ class MacosLinkageTests(unittest.TestCase):
                 clean = mock.patch.object(
                     release, "otool_linkage",
                     return_value=(
-                        ["/usr/lib/libSystem.B.dylib"], [],
-                        [(None, ["11.0"])],
+                        ["/usr/lib/libSystem.B.dylib"], [], ["11.0"],
                     ),
                 )
                 with clean:
@@ -889,8 +1031,7 @@ class MacosLinkageTests(unittest.TestCase):
 
             def linkage(path):
                 minos = (
-                    [(None, ["14.0"])] if path.name == "tui-play"
-                    else [(None, ["11.0"])]
+                    ["14.0"] if path.name == "tui-play" else ["11.0"]
                 )
                 return ["/usr/lib/libSystem.B.dylib"], [], minos
 
@@ -898,6 +1039,41 @@ class MacosLinkageTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     release.ReleaseError,
                     r"tui-play: minos 14\.0 exceeds macOS 11\.0",
+                ):
+                    release.verify_macos_linkage(base)
+
+    def test_verify_refuses_non_thin_arm64_before_otool(self):
+        # The architecture rule reads the Mach-O header itself and the
+        # refused binary never reaches otool, so a clean mocked
+        # otool_linkage cannot wave a fat, x86_64, or arm64e file in.
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            clean = mock.patch.object(
+                release, "otool_linkage",
+                return_value=(
+                    ["/usr/lib/libSystem.B.dylib"], [], ["11.0"],
+                ),
+            )
+            with clean:
+                (base / "tui-play").write_bytes(
+                    fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: fat/universal Mach-O \(arm64, x86_64\)",
+                ):
+                    release.verify_macos_linkage(base)
+                (base / "tui-play").write_bytes(
+                    thin_macho_bytes(cputype=0x01000007, cpusubtype=3))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: 64-bit x86_64 Mach-O",
+                ):
+                    release.verify_macos_linkage(base)
+                (base / "tui-play").write_bytes(
+                    thin_macho_bytes(cpusubtype=2))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: 64-bit arm64e Mach-O",
                 ):
                     release.verify_macos_linkage(base)
 
