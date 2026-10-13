@@ -1002,7 +1002,7 @@ fn plan(remaining: i32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shop_open::{KeeperRoute, OPEN_ATTEMPTS, OPEN_SLACK_TICKS};
+    use crate::shop_open::{KeeperRoute, OPEN_ATTEMPTS, OPEN_CAP_TICKS, OPEN_SLACK_TICKS};
     use crate::task_clock::InstantTaskClock;
     use std::time::{Duration, Instant};
 
@@ -1350,26 +1350,29 @@ mod tests {
         );
     }
 
+    /// Review R1: without a live flood the keeper's straight-line distance
+    /// (here 2) is no bound on the walk, so the attempt waits the cap.
     #[test]
-    fn without_a_live_flood_the_straight_line_distance_sets_the_deadline() {
+    fn without_a_live_flood_the_attempt_waits_the_cap() {
         let mut rt = opener();
         let mut clock = InstantTaskClock::new();
-        let unknown = keeper(KeeperRoute::Unknown(5));
+        let unknown = keeper(KeeperRoute::Unknown(2));
         assert_eq!(
             step(&mut rt, &mut clock, &closed_at(1, &unknown)),
             (None, vec![trade()])
         );
-        for tick in 2..=1 + 5 + OPEN_SLACK_TICKS {
+        for tick in 2..=1 + OPEN_CAP_TICKS {
             assert_eq!(
                 step(&mut rt, &mut clock, &closed_at(tick, &unknown)),
-                (None, vec![])
+                (None, vec![]),
+                "no second Trade on tick {tick}"
             );
         }
         assert_eq!(
             step(
                 &mut rt,
                 &mut clock,
-                &closed_at(2 + 5 + OPEN_SLACK_TICKS, &unknown)
+                &closed_at(2 + OPEN_CAP_TICKS, &unknown)
             ),
             (None, vec![trade()])
         );

@@ -698,8 +698,12 @@ fn cant_reach_ends_each_attempt_and_three_resolve_false() {
     iso.join();
 }
 
+/// No reach view is posted, so no route is measured: each attempt waits
+/// the policy cap (`shop_open::OPEN_CAP_TICKS` = 116 ticks), not the
+/// keeper's straight-line distance plus slack.
 #[test]
 fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
+    const CAP: u64 = 116;
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -718,20 +722,90 @@ fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
             break;
         }
         n += 1;
+        assert!(
+            n < 4 * (CAP + 1),
+            "Shop.open must end on its tick deadlines"
+        );
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    // The call fails one deadline after the third Trade without a fourth.
+    let step = CAP + 1;
+    assert_eq!(sent_on, vec![1, 1 + step, 1 + 2 * step]);
+    assert_eq!(n, 1 + 3 * step);
+    iso.join();
+}
+
+/// A posted flood that starts off the player's tile (stale: from before the
+/// player last moved) measures nothing either: the attempt waits the cap.
+#[test]
+fn open_with_a_stale_flood_waits_the_cap() {
+    const CAP: u64 = 116;
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [keeper_at(&actions, 16, 13)];
+    // Flooded from x = 2; the player now stands on x = 3.
+    let flood = corridor(2, 15, Some(16));
+    let mut snap = base();
+    snap.here = at(3);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&flood);
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+    for n in 2..=1 + CAP {
+        snap.tick = n;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        assert_eq!(trades(&iso.drain_interacts()), 0, "tick {n}");
+    }
+    snap.tick = 2 + CAP;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 2 + CAP);
+    assert_eq!(trades(&iso.drain_interacts()), 1);
+    iso.join();
+}
+
+/// An `if_close` (an NPC's hit, `npc_combat_melee.rs2:31,36`) shuts each
+/// Trade's shop modal before its stock page is posted. `Shop.open` never
+/// settles on it and never sends a shop button; three attempts end false.
+#[test]
+fn a_shop_closed_before_its_page_never_opens_and_ends_false() {
+    let iso = spawn(OPEN);
+    let actions = ["Trade".to_string()];
+    let npcs = [keeper_at(&actions, 12, 1)];
+    let beside = corridor(11, 11, Some(12));
+    let mut snap = base();
+    snap.here = at(11);
+    snap.npcs = &npcs;
+    snap.reach = corridor_view(&beside);
+    let mut sent_on = Vec::new();
+    let mut n = 1;
+    loop {
+        snap.tick = n;
+        // The modal shows the tick after each Trade, without its page,
+        // and is closed again the tick after that.
+        snap.shop_open = sent_on.last().is_some_and(|&t| n == t + 1);
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, n);
+        let ops = iso.drain_interacts();
+        assert!(
+            !ops.iter()
+                .any(|op| matches!(op, InteractReq::ShopButton { .. })),
+            "no shop button on tick {n}"
+        );
+        if trades(&ops) > 0 {
+            sent_on.push(n);
+        }
+        if iso.probe("__ok").unwrap() != Value::Null {
+            break;
+        }
+        n += 1;
         assert!(n < 100, "Shop.open must end on its tick deadlines");
     }
     assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
-    // No reach flood was posted: each attempt waits the straight-line
-    // distance (0) plus the fixed slack, in ticks, and the call fails one
-    // deadline after the third Trade without sending a fourth.
-    assert_eq!(sent_on.len(), 3, "trades on ticks {sent_on:?}");
-    let step = sent_on[1] - sent_on[0];
-    assert!(
-        step > 5,
-        "a deadline in ticks, not the 0.2.1 3000 ms window"
-    );
-    assert_eq!(sent_on, vec![1, 1 + step, 1 + 2 * step]);
-    assert_eq!(n, 1 + 3 * step);
+    // Beside the keeper: route 0, so each attempt waits 0 + slack (12).
+    assert_eq!(sent_on, vec![1, 14, 27]);
+    assert_eq!(n, 40);
     iso.join();
 }
 
@@ -740,8 +814,10 @@ const GRID: i32 = 24;
 /// A posted reach view along row `z = 5` from `here_x` east to `to_x`:
 /// each tile's dequeue rank is its distance from `here_x`, and the step
 /// masks (`api::query::reach` `DIRS`: bit 0 west, bit 1 east) open each
-/// step between neighbouring corridor tiles. `beside` opens the step from
-/// `to_x` onto the keeper's tile; without it, tiles east of `to_x` are not
+/// step between neighbouring corridor tiles. `beside` puts the keeper on
+/// blocked ground east of `to_x` with no wall between: the step onto the
+/// keeper stays closed, the step from it back onto `to_x` is open, and that
+/// is the engine's NPC reach. Without it, tiles east of `to_x` are not
 /// reached (a wall or a closed door).
 struct Corridor {
     walkable: Vec<u32>,
@@ -783,7 +859,7 @@ fn corridor(here_x: i32, to_x: i32, beside: Option<i32>) -> Corridor {
         let i = index(x);
         c.reachable_adj[i / 32] |= 1 << (i % 32);
         c.adjacent_rank[i] = u16::try_from(to_x - here_x).unwrap();
-        c.step[index(to_x)] |= 1 << 1;
+        c.step[i] |= 1;
     }
     c
 }
@@ -1000,6 +1076,50 @@ fn closing_the_shop_mid_batch_ends_the_transfer_with_its_partial_count() {
     snap.tick = 3;
     post(&iso, &snap, Some(&[]));
     tick(&iso, 3);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a closed shop receives no further shop-button"
+    );
+    iso.join();
+}
+
+/// An `if_close` (an NPC's hit) after one batch settled: `Shop.buy` ends
+/// with the settled count, and the closed shop gets no further button.
+#[test]
+fn an_if_close_after_a_settled_batch_ends_buy_with_its_settled_count() {
+    let iso = spawn(BUY);
+    let stock = [row("Lobster", 377, 100, 9201, 5)];
+    let held = [row("Lobster", 377, 0, 0, 0)];
+    let first = [row("Lobster", 377, 10, 0, 0)];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    snap.inv = &held;
+    let _ = iso.probe("globalThis.__qty = 25");
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts().len(), 3);
+    // Ten land and count; the remaining fifteen go out on tick 3.
+    snap.tick = 2;
+    snap.inv = &first;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 3);
+    assert_eq!(iso.drain_interacts().len(), 2);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+
+    // The hit closes the shop before the second batch lands.
+    snap.tick = 4;
+    snap.shop_open = false;
+    snap.shop_stock = &[];
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 4);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::from(10));
+    snap.tick = 5;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 5);
     assert!(
         iso.drain_interacts().is_empty(),
         "a closed shop receives no further shop-button"

@@ -325,7 +325,7 @@ fn open_facts(cx: &ActionContext<'_>) -> Facts {
 mod tests {
     use super::*;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, WorldTile,
     };
@@ -597,39 +597,210 @@ mod tests {
         });
     }
 
+    fn trades(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::Npc { action, .. }) if action == "Trade"
+                )
+            })
+            .count()
+    }
+
+    fn buttons(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::ShopButton { .. })
+                )
+            })
+            .count()
+    }
+
+    /// The host sent the last queued interaction.
+    fn sent(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u64) {
+        let ledger = ledger.as_mut().unwrap();
+        let authority = ledger.outbox.last().unwrap().authority();
+        ledger.complete_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    /// A reach view round the keeper at (3200, 3200) with every step open,
+    /// flooded from `origin` (rank 0 there, nothing else ranked).
+    fn reach_from(origin: WorldTile) -> api::query::ReachQueryView {
+        const SIDE: i32 = 31;
+        let (base_x, base_z) = (3185, 3185);
+        let n = (SIDE * SIDE) as usize;
+        let i = ((origin.x - base_x) * SIDE + (origin.z - base_z)) as usize;
+        let mut reachable = vec![0u32; n.div_ceil(32)];
+        reachable[i / 32] |= 1 << (i % 32);
+        let mut exact_rank = vec![u16::MAX; n];
+        exact_rank[i] = 0;
+        api::query::ReachQueryView {
+            available: true,
+            base_x,
+            base_z,
+            level: 0,
+            width: SIDE,
+            height: SIDE,
+            walkable: vec![u32::MAX; n.div_ceil(32)],
+            reachable: reachable.clone(),
+            reachable_adj: reachable,
+            exact_rank: exact_rank.clone(),
+            adjacent_rank: exact_rank,
+            step: vec![u8::MAX; n],
+            canlight: Vec::new(),
+        }
+    }
+
+    /// Poll one Trade attempt to its end: the tick of the next Trade.
+    fn next_trade_tick(
+        snapshot: &GameSnapshot,
+        reach: Option<&api::query::ReachQueryView>,
+        handle: &crate::native::ActionHandle<BuyMachine>,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        from: u64,
+    ) -> u64 {
+        let before = trades(ledger);
+        for tick in from..from + 2 * shop_open::OPEN_CAP_TICKS {
+            let polled = match reach {
+                Some(reach) => with_tick_reach(snapshot, reach, ledger, tick, |t| {
+                    t.actions.poll(handle, &mut t.cx)
+                }),
+                None => with_tick(snapshot, ledger, tick, |t| {
+                    t.actions.poll(handle, &mut t.cx)
+                }),
+            };
+            assert!(polled.is_pending(), "tick {tick}");
+            if trades(ledger) > before {
+                assert_eq!(trades(ledger), before + 1, "one Trade on tick {tick}");
+                sent(ledger, tick);
+                return tick;
+            }
+        }
+        panic!("no Trade after tick {from}");
+    }
+
+    /// No reach view is posted: the straight-line distance (2) is no bound
+    /// on the walk, so the attempt waits the cap. No wall-clock bound fails
+    /// it early.
     #[test]
-    fn shop_npc_open_sends_one_trade_until_its_tick_deadline() {
+    fn shop_npc_open_without_a_reach_view_waits_the_cap() {
         let client = client_with_shop(false);
-        let snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
+        let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 3198,
+            z: 3200,
+            level: 0,
+        }));
         let mut ledger = None;
         let handle = start_machine(&snapshot, &mut ledger);
-        let trades = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .iter()
-                .filter(|action| {
-                    matches!(
-                        &action.effect,
-                        HostEffect::Interaction(InteractReq::Npc { action, .. }) if action == "Trade"
-                    )
-                })
-                .count()
+        let first = next_trade_tick(&snapshot, None, &handle, &mut ledger, 2);
+        assert_eq!(first, 2);
+        let second = next_trade_tick(&snapshot, None, &handle, &mut ledger, 3);
+        assert_eq!(second, first + shop_open::OPEN_CAP_TICKS + 1);
+    }
+
+    /// A posted view flooded from another tile (stale: the player moved
+    /// since) is not a measured route either: the cap. The same view from
+    /// the player's own tile measures one step, and that attempt ends at
+    /// Trade + 1 + slack.
+    #[test]
+    fn shop_npc_open_with_a_stale_reach_view_waits_the_cap() {
+        let here = WorldTile {
+            x: 3198,
+            z: 3200,
+            level: 0,
         };
-        let first = with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        });
-        assert!(first.is_pending());
-        assert_eq!(trades(&ledger), 1);
-        // No reach view is posted: the deadline is the straight-line
-        // distance (2) plus the slack. No wall-clock bound fails it early.
-        for tick in 3..=2 + 2 + shop_open::OPEN_SLACK_TICKS {
-            let polled = with_tick(&snapshot, &mut ledger, tick, |t| {
+        let client = client_with_shop(false);
+        let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
+        snapshot.seed_local_player(local_player(here));
+
+        let stale = reach_from(WorldTile { x: 3190, ..here });
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger);
+        let first = next_trade_tick(&snapshot, Some(&stale), &handle, &mut ledger, 2);
+        let second = next_trade_tick(&snapshot, Some(&stale), &handle, &mut ledger, first + 1);
+        assert_eq!(second, first + shop_open::OPEN_CAP_TICKS + 1);
+
+        let live = reach_from(here);
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger);
+        let first = next_trade_tick(&snapshot, Some(&live), &handle, &mut ledger, 2);
+        let second = next_trade_tick(&snapshot, Some(&live), &handle, &mut ledger, first + 1);
+        assert_eq!(second, first + 1 + shop_open::OPEN_SLACK_TICKS + 1);
+    }
+
+    /// An `if_close` (an NPC's hit, `npc_combat_melee.rs2:31,36`) shuts the
+    /// shop under an outstanding buy batch. No button goes to the closed
+    /// shop, and the purchase ends with an error: at once when the batch
+    /// landed, within the settle bound when nothing moved.
+    #[test]
+    fn a_shop_closed_mid_batch_ends_the_purchase_without_another_button() {
+        for landed in [false, true] {
+            let open = client_with_shop(true);
+            let closed = client_with_shop(false);
+            let before = snapshot(&open, Vec::new(), Vec::new());
+            let held = if landed {
+                vec![item(4, "Pot", 1)]
+            } else {
+                Vec::new()
+            };
+            let after = snapshot(&closed, held, Vec::new());
+            let mut ledger = None;
+            let handle = start_machine(&before, &mut ledger);
+            let polled = with_tick(&before, &mut ledger, 2, |t| {
                 t.actions.poll(&handle, &mut t.cx)
             });
-            assert!(polled.is_pending(), "tick {tick}");
-            assert_eq!(trades(&ledger), 1, "no second Trade on tick {tick}");
+            assert!(polled.is_pending());
+            assert_eq!(buttons(&ledger), 1, "the first batch");
+            sent(&mut ledger, 2);
+            let mut tick = 3;
+            let result = loop {
+                let polled = with_tick(&after, &mut ledger, tick, |t| {
+                    t.actions.poll(&handle, &mut t.cx)
+                });
+                assert_eq!(
+                    buttons(&ledger),
+                    1,
+                    "no button to a closed shop, tick {tick}"
+                );
+                if let Poll::Ready(result) = polled {
+                    break result;
+                }
+                tick += 1;
+                assert!(tick < 20, "the purchase must end");
+            };
+            let Err(ActionError::Failed(reason)) = result else {
+                panic!("expected a failure, got {result:?}");
+            };
+            if landed {
+                assert_eq!(tick, 3);
+                assert_eq!(&*reason, "shop closed during purchase");
+            } else {
+                assert_eq!(&*reason, "shop purchase did not settle");
+            }
         }
     }
 }
