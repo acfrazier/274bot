@@ -180,9 +180,11 @@ package ships main executables at two depths -- such a reference must
 resolve inside the package from *every* shipped main executable's
 directory, not just the referencing binary's; `@loader_path` as an
 install name is refused, so in-package dylibs use `@rpath` plus an
-`@loader_path` rpath. It also refuses any Mach-O whose minimum macOS
-version (`LC_BUILD_VERSION` `minos`, or `LC_VERSION_MIN_MACOSX`) is
-missing or above 11.0, naming the binary and its value; the worker pins
+`@loader_path` rpath. It also refuses any Mach-O architecture slice
+whose minimum macOS version (`LC_BUILD_VERSION` `minos`, or
+`LC_VERSION_MIN_MACOSX`) is missing or above 11.0, naming the binary
+and, for a fat binary, the architecture and its value -- one slice's
+version does not satisfy another slice that records none; the worker pins
 `MACOSX_DEPLOYMENT_TARGET=11.0`, and this is how verification proves the
 shipped floor. That pair of checks is what keeps a
 MacPorts/Homebrew-linked or floor-raising build from ever verifying.

@@ -1354,25 +1354,43 @@ def parse_otool_rpaths(output):
 
 
 def parse_otool_minimum_os(output):
-    """Minimum macOS versions from `otool -l` output, in order: the
-    `minos` of every LC_BUILD_VERSION and the `version` of every
-    LC_VERSION_MIN_MACOSX (one per slice in a fat binary)."""
-    versions = []
+    """Minimum macOS versions from `otool -l` output, per architecture
+    section: a list of (architecture, versions) in order, where the
+    architecture is None for a thin binary (one section, no
+    `(architecture ...)` header) and versions holds the `minos` of
+    every LC_BUILD_VERSION and the `version` of every
+    LC_VERSION_MIN_MACOSX in that section. A section with an empty
+    versions list records no floor at all: kept, not dropped, so one
+    slice's version cannot satisfy another slice that has none."""
+    sections = []
     command = None
     for line in output.splitlines():
         stripped = line.strip()
-        if stripped.startswith("cmd "):
+        # File headers are not indented and end in ':'; otool prints one
+        # '(architecture <name>):' header per slice of a fat binary and
+        # a single header without it for a thin binary.
+        if line and not line[:1].isspace() and stripped.endswith(":"):
+            match = re.search(r"\(architecture ([^)]+)\):$", stripped)
+            sections.append((match.group(1) if match else None, []))
+            command = None
+        elif stripped.startswith("cmd "):
             command = stripped[len("cmd "):]
         elif command == "LC_BUILD_VERSION" and stripped.startswith("minos "):
-            versions.append(stripped.split()[1])
+            if not sections:
+                sections.append((None, []))
+            sections[-1][1].append(stripped.split()[1])
             command = None
         elif (
             command == "LC_VERSION_MIN_MACOSX"
             and stripped.startswith("version ")
         ):
-            versions.append(stripped.split()[1])
+            if not sections:
+                sections.append((None, []))
+            sections[-1][1].append(stripped.split()[1])
             command = None
-    return versions
+    if not sections:
+        sections.append((None, []))
+    return sections
 
 
 def otool_linkage(path):
@@ -1503,31 +1521,43 @@ def _version_key(version):
     return tuple(parts + [0] * max(0, 3 - len(parts)))
 
 
-def macho_minimum_os_violations(binary, base, minimum_os_versions):
-    """Minimum-OS violations for one Mach-O, as 'binary: cause' strings:
-    a missing LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX, an unparsable
-    value, or a minos above the documented MACOS_DEPLOYMENT_TARGET floor
-    (the worker pins that target, but a prebuilt object can still record
+def macho_minimum_os_violations(binary, base, minimum_os_sections):
+    """Minimum-OS violations for one Mach-O, as 'binary: cause' strings,
+    checked per architecture section (see parse_otool_minimum_os; a
+    thin binary is one section with architecture None, named without
+    an architecture suffix as before): a section with no
+    LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX, an unparsable value, or a
+    minos above the documented MACOS_DEPLOYMENT_TARGET floor (the
+    worker pins that target, but a prebuilt object can still record
     a higher minos, which is why verification reads it back)."""
     label = _package_label(binary, base)
-    if not minimum_os_versions:
-        return [
-            f"{label}: missing minimum macOS version "
-            "(no LC_BUILD_VERSION minos or LC_VERSION_MIN_MACOSX)"
-        ]
     limit = _version_key(MACOS_DEPLOYMENT_TARGET)
     violations = []
-    for version in dict.fromkeys(minimum_os_versions):
-        key = _version_key(version)
-        if key is None:
-            violations.append(
-                f"{label}: unparsable minimum macOS version {version!r}"
-            )
-        elif key > limit:
-            violations.append(
-                f"{label}: minos {version} exceeds macOS "
-                f"{MACOS_DEPLOYMENT_TARGET}"
-            )
+    for architecture, versions in minimum_os_sections or [(None, [])]:
+        suffix = f" (architecture {architecture})" if architecture else ""
+        if not versions:
+            if architecture:
+                violations.append(
+                    f"{label}: missing minimum macOS version{suffix}"
+                )
+            else:
+                violations.append(
+                    f"{label}: missing minimum macOS version "
+                    "(no LC_BUILD_VERSION minos or LC_VERSION_MIN_MACOSX)"
+                )
+            continue
+        for version in dict.fromkeys(versions):
+            key = _version_key(version)
+            if key is None:
+                violations.append(
+                    f"{label}: unparsable minimum macOS version "
+                    f"{version!r}{suffix}"
+                )
+            elif key > limit:
+                violations.append(
+                    f"{label}: minos {version} exceeds macOS "
+                    f"{MACOS_DEPLOYMENT_TARGET}{suffix}"
+                )
     return violations
 
 
@@ -1535,7 +1565,8 @@ def verify_macos_linkage(base):
     """Run otool on every Mach-O in the package, not just the executables
     named today, so a future shipped dylib is checked too: every library
     reference must stay in the system or the package under every main
-    executable, and every minos must be at most the documented floor.
+    executable, and every architecture slice must record a minos at
+    most the documented floor.
     Returns the package-relative paths checked."""
     base = Path(base)
     macho = sorted(
