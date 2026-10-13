@@ -365,7 +365,7 @@ pub(super) fn frame_context<'a>(
             .with_world_members(ctx.compiled.world_members),
         retained,
         action_id: 0,
-        active_now: runtime.clock.now(now),
+        active_now: runtime.clock.now(now).as_duration(),
         wall_now: now,
         ledger: &mut runtime.ledger,
         budget: &mut runtime.budget,
