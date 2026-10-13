@@ -433,6 +433,7 @@ impl Script for WithdrawCell {
                             name: Arc::from("Coins"),
                             target: TARGET,
                         }]),
+                        access: None,
                     };
                     match tick.actions.begin::<Withdraw>(args, &mut tick.cx) {
                         Ok(handle) => self.withdraw = Some(handle),

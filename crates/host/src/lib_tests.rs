@@ -822,6 +822,65 @@ fn auto_run_20_0_20_sends_twice() {
     assert!(slot.run_on);
 }
 
+/// HOTFIX-0.2.1: energy crossing the threshold while the bank is open must
+/// not press the run orb — the engine's run-on script `if_close`s the bank
+/// under the deposit (`player_controls.rs2:34-35`, `bank.rs2:16`). The press
+/// is deferred, not dropped: the first modal-free frame sends it.
+#[test]
+fn auto_run_waits_for_the_open_bank_to_close() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+    client.runenergy = 0;
+    client.gens.stat = 1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+    assert!(!slot.run_on);
+
+    // The bank opens (main + side roots), then energy recovers past 20.
+    client.main_modal_id = 5292;
+    client.side_modal_id = 2005;
+    client.runenergy = 20;
+    client.gens.stat = 2;
+    for frame in 0..3 {
+        slot.after_drain(&mut client);
+        slot.apply_auto_run(&mut client);
+        assert_eq!(
+            slot.run_sends, 0,
+            "frame {frame}: no orb press under an open bank"
+        );
+        assert!(!slot.run_on);
+        assert_eq!(client.out.pos, 0, "frame {frame}: nothing written");
+    }
+
+    // A chat dialogue alone holds it too (the same `if_close`).
+    client.main_modal_id = -1;
+    client.side_modal_id = -1;
+    client.chat_modal_id = 2459;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+
+    client.chat_modal_id = -1;
+    slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "the deferred press goes out once no modal is open"
+    );
+    assert!(slot.run_on);
+    assert_eq!(client.out.data()[0], ClientProt::IF_BUTTON.id as u8);
+    let iface = u16::from_be_bytes([client.out.data()[1], client.out.data()[2]]);
+    assert_eq!(iface, RUN_ORB_IFACE as u16);
+}
+
 #[test]
 fn script_run_override_applies_until_host_receives_a_clear() {
     let mut client = prepare_client(
