@@ -1229,17 +1229,28 @@ MACHO_MAGICS = frozenset({
     b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",  # fat64, both byte orders
 })
 # Thin magic -> byte order of the header fields that follow it; fat magic
-# -> (byte order, 64-bit arch entries). The filetype field is 12 bytes
-# into every thin header.
-_MACHO_THIN_MAGICS = {
-    b"\xfe\xed\xfa\xce": ">", b"\xfe\xed\xfa\xcf": ">",
-    b"\xce\xfa\xed\xfe": "<", b"\xcf\xfa\xed\xfe": "<",
-}
+# -> (byte order, 64-bit arch entries). In a thin header cputype is 4
+# bytes in, cpusubtype 8, filetype 12.
+_MACHO_32_MAGICS = {b"\xfe\xed\xfa\xce": ">", b"\xce\xfa\xed\xfe": "<"}
+_MACHO_64_MAGICS = {b"\xfe\xed\xfa\xcf": ">", b"\xcf\xfa\xed\xfe": "<"}
+_MACHO_THIN_MAGICS = {**_MACHO_32_MAGICS, **_MACHO_64_MAGICS}
 _MACHO_FAT_MAGICS = {
     b"\xca\xfe\xba\xbe": (">", False), b"\xbe\xba\xfe\xca": ("<", False),
     b"\xca\xfe\xba\xbf": (">", True), b"\xbf\xba\xfe\xca": ("<", True),
 }
 MH_EXECUTE = 2
+# mach/machine.h cpu types (and, for arm64, subtypes). The macOS release
+# builds a single target, aarch64-apple-darwin (TARGET, ARCH_NAME
+# "macos-arm64"), so verification accepts only a thin 64-bit arm64
+# Mach-O. The subtype is the low 24 bits of the cpusubtype field (the
+# top byte is capability bits): 0 (CPU_SUBTYPE_ARM64_ALL) and 1
+# (CPU_SUBTYPE_ARM64_V8) are plain arm64, 2 is arm64e.
+_CPU_TYPE_ARM64 = 0x0100000C
+_CPU_TYPE_NAMES = {
+    7: "x86", 0x01000007: "x86_64",
+    12: "arm", 0x0200000C: "arm64_32",
+    18: "powerpc", 0x01000012: "powerpc64",
+}
 MACOS_SYSTEM_LIBRARY_PREFIXES = ("/usr/lib/", "/System/Library/")
 MACOS_REQUIRED_EXECUTABLES = (
     "panel-play",
@@ -1253,9 +1264,15 @@ def is_macho(path):
         return source.read(4) in MACHO_MAGICS
 
 
-def _thin_macho_filetype(source, offset):
-    source.seek(offset)
-    header = source.read(16)
+def macho_filetype(path):
+    """Mach-O filetype of the thin binary at `path` (None if fat, not a
+    thin Mach-O, truncated, or unreadable). Fat binaries are refused by
+    macho_architecture_violations, so nothing reads their slices."""
+    try:
+        with Path(path).open("rb") as source:
+            header = source.read(16)
+    except OSError:
+        return None
     if len(header) < 16:
         return None
     endian = _MACHO_THIN_MAGICS.get(header[:4])
@@ -1264,43 +1281,77 @@ def _thin_macho_filetype(source, offset):
     return struct.unpack_from(endian + "I", header, 12)[0]
 
 
-def macho_filetypes(path):
-    """Mach-O filetype of every slice in `path` ([] if unreadable)."""
-    try:
-        with Path(path).open("rb") as source:
-            magic = source.read(4)
-            if magic in _MACHO_THIN_MAGICS:
-                filetype = _thin_macho_filetype(source, 0)
-                return [] if filetype is None else [filetype]
-            fat = _MACHO_FAT_MAGICS.get(magic)
-            if fat is None:
-                return []
-            endian, fat64 = fat
-            raw = source.read(4)
-            if len(raw) < 4:
-                return []
-            (count,) = struct.unpack(endian + "I", raw)
-            if count > 32:
-                return []
-            entry_size = 32 if fat64 else 20
-            offsets = []
-            for _ in range(count):
-                entry = source.read(entry_size)
-                if len(entry) < entry_size:
-                    return []
-                if fat64:
-                    (offset,) = struct.unpack_from(endian + "Q", entry, 8)
-                else:
-                    (offset,) = struct.unpack_from(endian + "I", entry, 8)
-                offsets.append(offset)
-            filetypes = []
-            for offset in offsets:
-                filetype = _thin_macho_filetype(source, offset)
-                if filetype is not None:
-                    filetypes.append(filetype)
-            return filetypes
-    except OSError:
+def _macho_cpu_name(cputype, cpusubtype):
+    subtype = cpusubtype & 0x00FFFFFF
+    if cputype == _CPU_TYPE_ARM64:
+        if subtype in (0, 1):
+            return "arm64"
+        if subtype == 2:
+            return "arm64e"
+        return f"arm64 subtype {subtype}"
+    return _CPU_TYPE_NAMES.get(
+        cputype, f"cpu type {cputype} subtype {subtype}"
+    )
+
+
+def _fat_macho_cpu_names(source, magic):
+    """Architecture name of every slice in a fat header, for the refusal
+    message: cputype/cpusubtype lead each fat arch entry, so the slices
+    themselves are never read. `source` is just past the magic.
+    Best-effort: a truncated header names the slices it can."""
+    endian, fat64 = _MACHO_FAT_MAGICS[magic]
+    raw = source.read(4)
+    if len(raw) < 4:
         return []
+    (count,) = struct.unpack(endian + "I", raw)
+    entry_size = 32 if fat64 else 20
+    names = []
+    for _ in range(min(count, 32)):
+        entry = source.read(entry_size)
+        if len(entry) < entry_size:
+            break
+        cputype, cpusubtype = struct.unpack_from(endian + "II", entry, 0)
+        names.append(_macho_cpu_name(cputype, cpusubtype))
+    return names
+
+
+def macho_architecture_violations(binary, base):
+    """Architecture violations for one Mach-O, as 'binary: cause'
+    strings. The macOS release ships a single target,
+    aarch64-apple-darwin, so every shipped Mach-O must be a thin 64-bit
+    arm64 binary: a fat/universal header (whatever its slices), an
+    x86_64 or arm64e thin binary, a 32-bit binary, and a truncated
+    header are each refused, naming the binary and what it is. The cpu
+    is read from the Mach-O header directly, so no otool output can
+    hide a slice: fat files never reach otool at all."""
+    label = _package_label(binary, base)
+    allowed = (
+        "only thin arm64 Mach-O is shipped "
+        "(macOS target aarch64-apple-darwin)"
+    )
+    try:
+        with Path(binary).open("rb") as source:
+            magic = source.read(4)
+            if magic in _MACHO_FAT_MAGICS:
+                names = _fat_macho_cpu_names(source, magic)
+                slices = ", ".join(names) if names else "unnamed slices"
+                return [
+                    f"{label}: fat/universal Mach-O ({slices}); {allowed}"
+                ]
+            header = magic + source.read(12)
+    except OSError as error:
+        return [f"{label}: unreadable Mach-O: {error}"]
+    endian = _MACHO_THIN_MAGICS.get(magic)
+    if endian is None:
+        return [f"{label}: not a thin Mach-O; {allowed}"]
+    if len(header) < 16:
+        return [f"{label}: truncated Mach-O header; {allowed}"]
+    cputype, cpusubtype = struct.unpack_from(endian + "II", header, 4)
+    name = _macho_cpu_name(cputype, cpusubtype)
+    if magic in _MACHO_64_MAGICS and name == "arm64":
+        return []
+    kind = "64-bit" if magic in _MACHO_64_MAGICS else "32-bit"
+    return [f"{label}: {kind} {name} Mach-O; {allowed}"]
 
 
 def macos_main_executable_dirs(base, macho=None):
@@ -1317,18 +1368,17 @@ def macos_main_executable_dirs(base, macho=None):
     dirs = []
     for path in macho:
         path = Path(path)
-        if path in required or MH_EXECUTE in macho_filetypes(path):
+        if path in required or macho_filetype(path) == MH_EXECUTE:
             if path.parent not in dirs:
                 dirs.append(path.parent)
     return dirs
 
 
 def parse_otool_libraries(output):
-    """Install names from `otool -L` output, in order."""
+    """Install names from `otool -arch arm64 -L` output, in order."""
     libraries = []
     for line in output.splitlines():
-        # Dependency lines are indented; the file header (and the per-arch
-        # headers otool prints for a fat binary) are not.
+        # Dependency lines are indented; the file header is not.
         if not line[:1].isspace():
             continue
         entry = re.sub(r"\s+\(compatibility version .*\)$", "", line.strip())
@@ -1338,7 +1388,7 @@ def parse_otool_libraries(output):
 
 
 def parse_otool_rpaths(output):
-    """LC_RPATH paths from `otool -l` output, in order."""
+    """LC_RPATH paths from `otool -arch arm64 -l` output, in order."""
     rpaths = []
     in_rpath = False
     for line in output.splitlines():
@@ -1354,49 +1404,50 @@ def parse_otool_rpaths(output):
 
 
 def parse_otool_minimum_os(output):
-    """Minimum macOS versions from `otool -l` output, per architecture
-    section: a list of (architecture, versions) in order, where the
-    architecture is None for a thin binary (one section, no
-    `(architecture ...)` header) and versions holds the `minos` of
-    every LC_BUILD_VERSION and the `version` of every
-    LC_VERSION_MIN_MACOSX in that section. A section with an empty
-    versions list records no floor at all: kept, not dropped, so one
-    slice's version cannot satisfy another slice that has none."""
-    sections = []
+    """Minimum macOS versions from `otool -arch arm64 -l` output for one
+    thin arm64 binary: the `minos` of every LC_BUILD_VERSION whose
+    platform is macOS (otool prints `platform 1` for PLATFORM_MACOS;
+    the name `macos` is also accepted), plus the `version` of every
+    LC_VERSION_MIN_MACOSX, in order. A build version for any other
+    platform (iOS `platform 2`, Mac Catalyst `platform 6`, ...), or a
+    `minos` with no platform line, is not a macOS floor and is ignored,
+    so a binary whose only version command targets another platform
+    yields an empty list and is refused as missing a macOS floor."""
+    versions = []
     command = None
+    platform = None
     for line in output.splitlines():
         stripped = line.strip()
-        # File headers are not indented and end in ':'; otool prints one
-        # '(architecture <name>):' header per slice of a fat binary and
-        # a single header without it for a thin binary.
-        if line and not line[:1].isspace() and stripped.endswith(":"):
-            match = re.search(r"\(architecture ([^)]+)\):$", stripped)
-            sections.append((match.group(1) if match else None, []))
-            command = None
-        elif stripped.startswith("cmd "):
+        if stripped.startswith("cmd "):
             command = stripped[len("cmd "):]
+            platform = None
+        elif command == "LC_BUILD_VERSION" and stripped.startswith(
+            "platform "
+        ):
+            platform = stripped.split()[1]
         elif command == "LC_BUILD_VERSION" and stripped.startswith("minos "):
-            if not sections:
-                sections.append((None, []))
-            sections[-1][1].append(stripped.split()[1])
+            if platform is not None and platform.lower() in ("1", "macos"):
+                versions.append(stripped.split()[1])
             command = None
         elif (
             command == "LC_VERSION_MIN_MACOSX"
             and stripped.startswith("version ")
         ):
-            if not sections:
-                sections.append((None, []))
-            sections[-1][1].append(stripped.split()[1])
+            versions.append(stripped.split()[1])
             command = None
-    if not sections:
-        sections.append((None, []))
-    return sections
+    return versions
 
 
 def otool_linkage(path):
+    # The binary is already known thin arm64 (macho_architecture_
+    # violations runs first and fat files never get here); ask otool
+    # for that one architecture explicitly, so its output cannot be
+    # one slice of several. Locked by a test on these argv lists.
     try:
-        libraries = parse_otool_libraries(run(["otool", "-L", path], capture=True))
-        load_commands = run(["otool", "-l", path], capture=True)
+        libraries = parse_otool_libraries(
+            run(["otool", "-arch", "arm64", "-L", path], capture=True)
+        )
+        load_commands = run(["otool", "-arch", "arm64", "-l", path], capture=True)
         rpaths = parse_otool_rpaths(load_commands)
         minimum_os = parse_otool_minimum_os(load_commands)
     except OSError as error:
@@ -1507,7 +1558,7 @@ def macho_linkage_violations(binary, base, libraries, rpaths, executable_dirs=No
             ):
                 continue
         violations.append(f"{label}: {library}")
-    # A fat binary lists each slice's libraries; report a violation once.
+    # The same install name can be listed twice; report it once.
     return list(dict.fromkeys(violations))
 
 
@@ -1521,52 +1572,44 @@ def _version_key(version):
     return tuple(parts + [0] * max(0, 3 - len(parts)))
 
 
-def macho_minimum_os_violations(binary, base, minimum_os_sections):
-    """Minimum-OS violations for one Mach-O, as 'binary: cause' strings,
-    checked per architecture section (see parse_otool_minimum_os; a
-    thin binary is one section with architecture None, named without
-    an architecture suffix as before): a section with no
-    LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX, an unparsable value, or a
-    minos above the documented MACOS_DEPLOYMENT_TARGET floor (the
-    worker pins that target, but a prebuilt object can still record
-    a higher minos, which is why verification reads it back)."""
+def macho_minimum_os_violations(binary, base, versions):
+    """Minimum-OS violations for one thin arm64 Mach-O, as 'binary:
+    cause' strings, from its macOS floors (see
+    parse_otool_minimum_os): no macOS floor at all, an unparsable
+    value, or a floor above the documented MACOS_DEPLOYMENT_TARGET
+    (the worker pins that target, but a prebuilt object can still
+    record a higher minos, which is why verification reads it back)."""
     label = _package_label(binary, base)
     limit = _version_key(MACOS_DEPLOYMENT_TARGET)
+    if not versions:
+        return [
+            f"{label}: missing minimum macOS version "
+            "(no macOS-platform LC_BUILD_VERSION minos or "
+            "LC_VERSION_MIN_MACOSX)"
+        ]
     violations = []
-    for architecture, versions in minimum_os_sections or [(None, [])]:
-        suffix = f" (architecture {architecture})" if architecture else ""
-        if not versions:
-            if architecture:
-                violations.append(
-                    f"{label}: missing minimum macOS version{suffix}"
-                )
-            else:
-                violations.append(
-                    f"{label}: missing minimum macOS version "
-                    "(no LC_BUILD_VERSION minos or LC_VERSION_MIN_MACOSX)"
-                )
-            continue
-        for version in dict.fromkeys(versions):
-            key = _version_key(version)
-            if key is None:
-                violations.append(
-                    f"{label}: unparsable minimum macOS version "
-                    f"{version!r}{suffix}"
-                )
-            elif key > limit:
-                violations.append(
-                    f"{label}: minos {version} exceeds macOS "
-                    f"{MACOS_DEPLOYMENT_TARGET}{suffix}"
-                )
+    for version in dict.fromkeys(versions):
+        key = _version_key(version)
+        if key is None:
+            violations.append(
+                f"{label}: unparsable minimum macOS version {version!r}"
+            )
+        elif key > limit:
+            violations.append(
+                f"{label}: minos {version} exceeds macOS "
+                f"{MACOS_DEPLOYMENT_TARGET}"
+            )
     return violations
 
 
 def verify_macos_linkage(base):
-    """Run otool on every Mach-O in the package, not just the executables
-    named today, so a future shipped dylib is checked too: every library
-    reference must stay in the system or the package under every main
-    executable, and every architecture slice must record a minos at
-    most the documented floor.
+    """Check every Mach-O in the package, not just the executables named
+    today, so a future shipped dylib is checked too. Each one must be
+    a thin arm64 binary (the single macOS target) recording a macOS
+    minos at most the documented floor, and every library reference
+    (read with `otool -arch arm64`) must stay in the system or the
+    package under every main executable. A binary that fails the
+    architecture rule is refused without running otool on it at all.
     Returns the package-relative paths checked."""
     base = Path(base)
     macho = sorted(
@@ -1582,6 +1625,10 @@ def verify_macos_linkage(base):
     executable_dirs = macos_main_executable_dirs(base, macho)
     violations = []
     for path in macho:
+        architecture_violations = macho_architecture_violations(path, base)
+        if architecture_violations:
+            violations += architecture_violations
+            continue
         libraries, rpaths, minimum_os = otool_linkage(path)
         violations += macho_linkage_violations(
             path, base, libraries, rpaths, executable_dirs
@@ -1589,8 +1636,9 @@ def verify_macos_linkage(base):
         violations += macho_minimum_os_violations(path, base, minimum_os)
     if violations:
         raise ReleaseError(
-            "macOS package failed otool verification (a library outside "
-            "the system and the package, or a minimum macOS above "
+            "macOS package failed otool verification (a Mach-O that is "
+            "not thin arm64, a library outside the system and the "
+            "package, or a minimum macOS version missing or above "
             f"{MACOS_DEPLOYMENT_TARGET}):\n"
             + "\n".join(violations)
         )
