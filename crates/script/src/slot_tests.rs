@@ -668,6 +668,191 @@ export default class T extends LoopingBot {{
 
 #[cfg(feature = "load")]
 #[test]
+fn request_finish_ends_the_script_cleanly_with_its_reason() {
+    let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        this.requestFinish("BankFletcher: bank is out of 'Willow logs'");
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    let input = crate::isolate_fb::tests::empty_input(1);
+    slot.encode_snapshot_delta(&input, false);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs = Vec::new();
+    while matches!(
+        slot.state(),
+        RunState::Starting | RunState::Running | RunState::Stopping
+    ) && Instant::now() < deadline
+    {
+        logs.extend(slot.drain_logs());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.state(), RunState::Idle, "{logs:?}");
+    assert_eq!(
+        slot.lifecycle_receipt(),
+        Some(ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state: ScriptTerminalState::Stopped,
+            tick: 1,
+            reason: "BankFletcher: bank is out of 'Willow logs'".into(),
+        }),
+        "a finish is a clean Stopped receipt, never Failed: {logs:?}"
+    );
+    slot.on_is_up(true);
+    assert_eq!(
+        slot.state(),
+        RunState::Idle,
+        "a relog cannot restart a finished script"
+    );
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn request_finish_logs_its_reason_to_the_host_log_once() {
+    // The process host-log sink installs once: capture through the
+    // compiled tests' sink, on a slot name its `status-` filter keeps.
+    const SLOT: &str = "status-finish-log-once";
+    crate::slot::compiled::tests::install_status_line_sink();
+    api::hostlog::bind_slot(SLOT);
+    let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        this.requestFinish("finish-log-once: out of logs");
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    let input = crate::isolate_fb::tests::empty_input(1);
+    slot.encode_snapshot_delta(&input, false);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while matches!(
+        slot.state(),
+        RunState::Starting | RunState::Running | RunState::Stopping
+    ) && Instant::now() < deadline
+    {
+        let _ = slot.drain_logs();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.state(), RunState::Idle);
+    // Later drains must not log the reason again.
+    let _ = slot.drain_logs();
+    let _ = slot.drain_logs();
+    let captured: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+        .into_iter()
+        .filter(|line| line.message.contains("finish-log-once: out of logs"))
+        .collect();
+    assert_eq!(
+        captured.len(),
+        1,
+        "the finish reason reaches the host log exactly once: {captured:?}"
+    );
+    assert_eq!(captured[0].level, api::hostlog::Level::Info);
+    assert_eq!(captured[0].source, api::hostlog::Source::Script);
+    assert_eq!(
+        captured[0].message,
+        "script requested stop tick=1 reason=finish-log-once: out of logs"
+    );
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn request_finish_honours_a_bound_sink_without_stopping_the_script() {
+    let source = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.bindFinish((reason) => this.log(`finish-sink:${reason}:delegated=${this.delegated}`));
+    }
+    loop() {
+        if (!this._fired) {
+            this._fired = true;
+            this.requestFinish('child done');
+        }
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    let input = crate::isolate_fb::tests::empty_input(1);
+    slot.encode_snapshot_delta(&input, false);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs: Vec<String> = Vec::new();
+    let mut tick = 0;
+    while !logs
+        .iter()
+        .any(|line| line.contains("finish-sink:child done:delegated=true"))
+        && Instant::now() < deadline
+    {
+        tick += 1;
+        slot.load.as_ref().unwrap().on_game_tick(tick);
+        logs.extend(slot.drain_logs());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("finish-sink:child done:delegated=true")),
+        "the bound sink heard the reason: {logs:?}"
+    );
+    assert_eq!(slot.state(), RunState::Running, "{logs:?}");
+    assert_eq!(
+        slot.lifecycle_receipt(),
+        None,
+        "a delegated finish is not a host stop"
+    );
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn banking_module_links_open_bank_access() {
+    let source = r#"
+import { openBankAccess } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        this.log(`openBankAccess:${typeof openBankAccess}`);
+        this.requestFinish('linked');
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    let input = crate::isolate_fb::tests::empty_input(1);
+    slot.encode_snapshot_delta(&input, false);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs = Vec::new();
+    while matches!(
+        slot.state(),
+        RunState::Starting | RunState::Running | RunState::Stopping
+    ) && Instant::now() < deadline
+    {
+        logs.extend(slot.drain_logs());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("openBankAccess:function")),
+        "the Banking module provides openBankAccess: {logs:?}"
+    );
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.reason),
+        Some("linked".into()),
+        "{logs:?}"
+    );
+}
+
+#[cfg(feature = "load")]
+#[test]
 fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     let mut slot = SlotScript::new();
     slot.start_test_script(Box::new(Noop), None).unwrap();

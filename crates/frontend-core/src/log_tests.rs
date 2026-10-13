@@ -249,6 +249,10 @@ fn script_lines_map_onto_sources_and_levels() {
         (Source::Script, Level::Debug)
     );
     assert_eq!(
+        classify_script_line("script requested stop on tick 314; isolate stopping"),
+        (Source::Script, Level::Info)
+    );
+    assert_eq!(
         classify_script_line("Banking 27 logs"),
         (Source::Script, Level::Info)
     );
