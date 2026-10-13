@@ -212,11 +212,15 @@ pub(super) fn wire_runtime(
                     state
                         .and_then(|state| state.get(key))
                         .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(0.0)
+                        .unwrap_or(f64::NAN)
+                };
+                let Some(strategy) = crate::periodic_bank::parse_bank_strategy_token(strategy)
+                else {
+                    return Ok(serde_json::Value::Bool(false));
                 };
                 Ok(serde_json::Value::Bool(
                     crate::periodic_bank::should_bank_now(
-                        crate::periodic_bank::parse_bank_strategy(strategy),
+                        strategy,
                         number("lootCount"),
                         number("itemsThreshold"),
                         number("minutesSinceLastBank"),

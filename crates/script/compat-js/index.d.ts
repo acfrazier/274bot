@@ -702,6 +702,22 @@ export interface BankDestination {
     /** Set when the banker is an npc (Gundai). */
     npcAccess?: BankNpcAccess;
 }
+/**
+ * Start-of-script pack cleanup (#170): deposit anything off the keep list so the bot can start with a junk pack.
+ * Why: true when nothing needed banking or the purge finished; false when junk remains and the bank couldn't be opened or deposited.
+ */
+export function purgePackAtBank(opts?: {
+    /** Exact display names to keep (case-insensitive), e.g. pickaxe / rod. */
+    keep: Iterable<string>;
+    stand?: WorldTile | null;
+    /** Forced bank destination (Bank location setting) when no stand is given. */
+    destination?: BankDestination;
+    preferNearby?: boolean;
+    boothName?: string;
+    boothOp?: string;
+    obstacles?: string[];
+    log?: (msg: string) => void;
+}): Promise<never>;
 export interface OpenBankOpts {
     /**
      * Preset bank stand (location table). Used when no bank is already nearby.
@@ -744,8 +760,25 @@ export const Banking: {
         log?: (msg: string) => void;
     }): Promise<boolean>;
 };
+/**
+ * Human-ish pause between bank UI actions (open, scan, withdraw, deposit).
+ * Why: 1 to 2 ticks so open, scan and close can't land on the same tick and race the bank load.
+ */
+export function bankPaceTicks(rand?: () => number): never;
+/** Pause between bank UI actions so tool checks don't flash open/close. */
+export function bankPace(log?: (m: string) => void): Promise<never>;
 /** Wait for the bank item list after open. Counts stay 0 until it arrives, and without a pause this looks like an instant open, scan, close. */
 export function waitBankReady(log?: (m: string) => void): Promise<boolean>;
+/**
+ * Withdraw coins so inventory holds at least `need`. Bank must already be open.
+ * Returns false when the bank has no coins or the withdraw fails.
+ */
+export function withdrawCoins(need?: number, opts?: {
+    invCoins: number;
+    bankCoins: number;
+    coinName?: string;
+    log?: (m: string) => void;
+}): Promise<never>;
 export const RANDOM_EVENT_CASKET_ID: number;
 export function openBankAccess(dest: {
     access?: BankObjectAccess;

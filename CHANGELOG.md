@@ -15,17 +15,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   of logs, and the many others that stop when they run out of supplies —
   now end cleanly with their reason in the log instead of failing with
   "requestFinish is not a function".
-- The bank API now includes Rust-backed `shouldBankNow` and
-  `isDisposableGatherJunk` rules, plus `waitBankReady` through the existing
-  bank-readiness wait. The junk rule recognizes common bank loot, the
-  selected random-event casket and content-defined event leftovers.
+- Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
+  `waitBankReady`. The junk check covers gems, strange fruit, beer, kebabs,
+  the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
+  as soon as the bank's item list has arrived; it does not add rs2b0t's extra
+  short pause.
 
 ### Not in this release
 
-- `purgePackAtBank` and `withdrawCoins` need multi-step bank transactions
-  beyond the existing native operations. `bankPace` and `bankPaceTicks`
-  carry rs2b0t's randomized internal pacing, which is not carried into
-  native compatibility. These helpers await the compat rearchitecture (T2).
+- `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` are not
+  available yet. GatheringBot and EssMiner remain dimmed because the built-in
+  Gatherer replaces them. A script that calls one of these helpers stops with
+  a `not impl` message naming it.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
