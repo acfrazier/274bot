@@ -73,9 +73,13 @@ that visibly refuse. Where a fix is planned, the item says so.
 
 **Scripts and compatibility**
 
-- Eight catalog scripts are dimmed in the script picker and can't be started:
-  AIOQuester, Woodcutter, Miner, Fisher, ArravSupplier, Barcrawl, RoguesPurse
-  and MarketMaker.
+- Some catalog scripts are dimmed in the script picker and can't be started:
+  AIOQuester (the built-in Quester replaces it); GatheringBot's Woodcutter,
+  Miner and Fisher, and EssMiner (the built-in Gatherer replaces them);
+  ArravSupplier, Barcrawl and RoguesPurse (they depend on rs2b0t's own quest
+  scripts); MarketMaker; BankSorter (until bank sorting is built in); JiveKQ
+  (its four-player setup isn't qualified yet); and one BrimhavenAgility
+  version that retries a broken plank instead of taking another route.
 - Scripts that call these helpers the bot doesn't provide yet still refuse to
   start, or stop when they reach the helper:
   - Walking: `Traversal.remaining` and `requestRepath`.
@@ -85,10 +89,10 @@ that visibly refuse. Where a fix is planned, the item says so.
   - Chat, game and objects: `ChatDialog.makeOne`, `Game.castOnNpc`,
     `EntityQuery.inside`, `nearestPreferLocal` and `resolveRockIds`.
   - Inventory items: the `InvItem` methods and `acquireKeepNames`.
-- EssMiner and the GatheringBot catalog script still fail when they load,
-  because they import banking helpers the bot doesn't provide.
-- This release doesn't re-check the whole script catalog against newer
-  rs2b0t releases. Broader compatibility work is planned for a later release.
+- Scripts written against rs2b0t releases newer than the one this release
+  was checked against can use calls the bot doesn't know yet: they fail to
+  start, or stop when they reach the call. Catching up with current rs2b0t is
+  planned for the next release.
 - The clearer Start messages don't yet separate "can't do that right now"
   from "not implemented" everywhere in scripts.
 - FlourCollector, the Zanaris cook and the blocked Jive cards stay
