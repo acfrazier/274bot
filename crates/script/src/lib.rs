@@ -66,6 +66,7 @@ pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
+mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;

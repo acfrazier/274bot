@@ -16,6 +16,7 @@ use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, ItemRow, Scene, Text};
 use crate::reach_route;
 use crate::shim::InteractReq;
+use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use crate::walk::{Resilient, HOP_ATTEMPTS};
 use api::WorldTile;
 use serde::Deserialize;
@@ -24,27 +25,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Existing bound on Trade requests for one `Shop.open` (rs2b0t contract).
-pub const OPEN_ATTEMPTS: u32 = 3;
-/// Ticks one Trade may take beyond its route length before its attempt
-/// expires. The route length covers the walk: a player steps at most one
-/// tile per cycle at walk speed (`PathingEntity.ts:144-149`, `Player.ts:
-/// 729-731`); running is a second step per cycle, so walk is the
-/// conservative bound. On top of that:
-/// - 1: even a 0-tile route opens no earlier than the next cycle. `OpNpc`
-///   is decoded in `processClientsIn` (`World.ts:355`) and the interaction
-///   runs in `processPlayers` (`World.ts:378`, `Player.ts:1247-1314`).
-/// - 1: the `OpNpc` can be decoded one cycle after its `MOVE_OPCLICK` when
-///   that cycle's five user events are spent (`ClientGameProtCategory.ts:6`,
-///   `NetworkPlayer.ts:69`; named in `MoveClickHandler.ts:26-29`).
-/// - 10: the keeper can wander away during the walk. A wander destination
-///   is within `wanderrange` of its spawn (`Npc.ts:705-714`), default 5
-///   (`NpcType.ts:101`), so one leg is at most 2 × 5 tiles; the player
-///   re-paths to it every cycle (`Player.ts:1247-1314`).
-pub const OPEN_SLACK_TICKS: u64 = 12;
-/// Upper bound on one attempt's ticks: a route as long as the 104-tile area
-/// the engine accepts for one click (`MoveClickHandler.ts:20`) plus the slack.
-pub const OPEN_CAP_TICKS: u64 = 104 + OPEN_SLACK_TICKS;
 /// Frozen `Shop.close`: wait for `!isOpen` this long.
 pub const CLOSE_WAIT_MS: u64 = 3_000;
 /// Held-count settlement window before a batch counts as stalled.
@@ -83,104 +63,10 @@ fn trace(event: &str, tick: Option<u64>, detail: std::fmt::Arguments<'_>) {
     );
 }
 
-/// One observed login session: a reconnect resets the scene (new `epoch`,
-/// `thread.rs:1776`); a logout post moves `login` (`Scene::login_mark`).
-/// A Trade sent in another session is gone with it on the server.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct Session {
-    epoch: u64,
-    login: u64,
-}
-
-/// How the keeper stands from the player in the posted reach flood
-/// ([`crate::reach_route`]): the host's collision flood of the live scene
-/// from the player's tile, where a closed door is a wall.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KeeperRoute {
-    /// A stand beside the keeper is reachable now, this many steps away.
-    Steps(u32),
-    /// The live flood reaches no stand beside the keeper.
-    Unreachable,
-    /// No live flood is posted; the straight-line distance stands in, as in
-    /// the Quester chooser.
-    Unknown(u32),
-}
-
-/// The keeper this call trades with: a posted NPC row with that name and a
-/// Trade op, the reachable one with the shortest walk first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Keeper {
-    name: String,
-    action: String,
-    index: i32,
-    /// The keeper's network south-west tile (the client's `route_x[0]`).
-    tile: WorldTile,
-    route: KeeperRoute,
-}
-
-/// One outstanding Trade.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Attempt {
-    /// Game tick the Trade was emitted on.
-    trade_tick: u64,
-    /// The session the Trade was sent in.
-    session: Session,
-    /// Last chat line seen before the Trade.
-    chat_mark: i32,
-    /// Last tick on which this attempt may still open the shop.
-    deadline: u64,
-}
-
-impl Attempt {
-    /// `tick` is this Trade's own tick (or earlier) in its session: nothing
-    /// observed there answers this Trade, and the Trade will close any modal
-    /// already open (`OpNpcHandler.ts:47` -> `Player.ts:970-973`).
-    fn pending_on(&self, tick: u64, session: Session) -> bool {
-        session == self.session && tick <= self.trade_tick
-    }
-
-    /// Whether this attempt has ended on `tick`, a tick after the Trade: at
-    /// once on the server's "I can't reach that!" (`Player.ts:1293-1296`)
-    /// or when its session ended; otherwise once `tick` passes its deadline.
-    fn ended(&self, tick: u64, probe: &Probe<'_>) -> bool {
-        if probe.session != self.session {
-            return true;
-        }
-        if probe.cant_reach_seq > self.chat_mark {
-            trace(
-                "cant-reach",
-                Some(tick),
-                format_args!("trade_tick={}", self.trade_tick),
-            );
-            return true;
-        }
-        tick > self.deadline
-    }
-}
-
-/// Ticks a Trade with a `tiles`-long route may take to open the shop.
-fn open_deadline_ticks(tiles: u32) -> u64 {
-    (u64::from(tiles) + OPEN_SLACK_TICKS).min(OPEN_CAP_TICKS)
-}
-
 /// Bound of the nav walk to an unreachable keeper: the frozen
 /// `walkResilient` baked timeout and hop attempts the other approach walks
 /// use ([`crate::walk::BAKED_TIMEOUT_MS`], [`crate::walk::HOP_ATTEMPTS`]).
 const KEEPER_WALK_MS: u64 = crate::walk::BAKED_TIMEOUT_MS;
-
-/// Where `Shop.open` stands.
-enum OpenWait {
-    /// No Trade outstanding: the next real tick sends one.
-    Idle,
-    /// The modal was up at begin without a usable stock page. The page is
-    /// flushed with the modal (`World.ts:1096-1120`), so it is posted by the
-    /// next tick; after `until` this falls back to a Trade.
-    Page { until: u64, session: Session },
-    /// The keeper was unreachable: nav walks to it (doors, transports).
-    Walk(Box<Resilient>),
-    /// One Trade is outstanding.
-    Trade(Attempt),
-}
 
 /// One posted container row (stock, shop player pack or backpack).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,7 +119,7 @@ impl NativeObservation {
         let seq_of = |cant_reach: bool| {
             lines
                 .iter()
-                .filter(|line| !cant_reach || crate::reach_entity::is_cant_reach(&line.text))
+                .filter(|line| !cant_reach || shop_open::is_cant_reach(&line.text))
                 .map(|line| line.seq)
                 .max()
                 .unwrap_or(0)
@@ -314,76 +200,40 @@ impl KeeperFact<'_> {
     }
 }
 
-/// The posted NPC rows named `name` with a Trade op, the reachable one with
-/// the shortest walk first; without a live reach view, the nearest. The
-/// walk is [`reach_route::bounded_steps`] inside the engine's NPC view box
-/// ([`reach_route::NPC_VIEW_DISTANCE`]), so the search in the script tick is
-/// bounded; a keeper with no stand inside that box is
-/// [`KeeperRoute::Unreachable`] and gets the nav walk. The keeper's
-/// footprint is its network tile and size, the tile the client's `tryMove`
-/// routes to (`client.rs:3988-3998`).
+/// The posted NPC rows named `name`, offered to the shared chooser
+/// ([`shop_open::choose_keeper`]). Frozen `Shop.open` presses the `Trade`
+/// op. The footprint is the network tile and size, the tile the client's
+/// `tryMove` routes to (`client.rs:3988-3998`).
 fn choose_keeper(
     rows: &[observed::EntityRow],
     name: &str,
     view: Option<(&api::query::ReachQueryView, WorldTile)>,
 ) -> Option<Keeper> {
     let name = name.trim();
-    rows.iter()
+    let candidates = rows
+        .iter()
         .filter(|row| {
             row.name
                 .as_deref()
                 .is_some_and(|n| n.trim().eq_ignore_ascii_case(name))
         })
-        .filter_map(|row| {
-            let action = row
+        .map(|row| shop_open::Candidate {
+            name: row.name.as_deref().unwrap_or_default(),
+            action: row
                 .actions
                 .iter()
-                .find(|op| op.eq_ignore_ascii_case("trade"))?;
-            let size = row.size.max(1);
-            let tile = if row.size >= 1 {
-                WorldTile {
-                    x: row.nx,
-                    z: row.nz,
-                    level: row.level,
-                }
-            } else {
-                WorldTile {
-                    x: row.x,
-                    z: row.z,
-                    level: row.level,
-                }
-            };
-            let distance = u32::try_from(row.distance).unwrap_or(0);
-            let route = match view {
-                Some((view, here)) => {
-                    let fp = reach_route::Footprint {
-                        tile,
-                        width: size,
-                        length: size,
-                    };
-                    reach_route::bounded_steps(view, here, fp, reach_route::NPC_VIEW_DISTANCE)
-                        .steps
-                        .map_or(KeeperRoute::Unreachable, KeeperRoute::Steps)
-                }
-                None => KeeperRoute::Unknown(distance),
-            };
-            let key = match route {
-                KeeperRoute::Steps(steps) | KeeperRoute::Unknown(steps) => (0, steps),
-                KeeperRoute::Unreachable => (1, distance),
-            };
-            Some((
-                key,
-                Keeper {
-                    name: row.name.as_deref().unwrap_or_default().to_string(),
-                    action: action.to_string(),
-                    index: row.index,
-                    tile,
-                    route,
-                },
-            ))
-        })
-        .min_by_key(|(key, _)| *key)
-        .map(|(_, keeper)| keeper)
+                .find(|op| op.eq_ignore_ascii_case("trade"))
+                .map(|op| &**op),
+            index: row.index,
+            tile: WorldTile {
+                x: if row.size >= 1 { row.nx } else { row.x },
+                z: if row.size >= 1 { row.nz } else { row.z },
+                level: row.level,
+            },
+            size: row.size,
+            distance: row.distance,
+        });
+    shop_open::choose_keeper(candidates, view)
 }
 
 /// What the caller asked for.
@@ -441,8 +291,6 @@ pub(crate) struct Shop {
     kind: Kind,
     /// The selected row's name (Shop.open: the keeper's posted name).
     name: String,
-    /// Whether `Shop.open` already walked to an unreachable keeper.
-    walked: bool,
     /// Requested amount (`Buy`/`Sell`/`SellAll`; 0 for open/close).
     requested: i32,
     /// `qty: "all"` or `SellAll` under `pick`: resolve after choosing a row.
@@ -463,10 +311,10 @@ pub(crate) struct Shop {
     last_dispatch_tick: Option<u64>,
     /// The observed held count now (kept for the next batch baseline).
     held_now: i32,
-    /// `Shop.open`'s Trade state.
-    open: OpenWait,
-    /// Remaining `Shop.open` attempts.
-    attempts_left: u32,
+    /// `Shop.open`'s shared core state.
+    open: OpenCore,
+    /// The nav walk to an unreachable keeper, while one is out.
+    walk: Option<Box<Resilient>>,
 }
 
 impl Family for Shop {
@@ -502,23 +350,21 @@ impl Family for Shop {
                     return refused;
                 };
                 shop.name = keeper.name;
-                shop.attempts_left = OPEN_ATTEMPTS;
                 shop.phase = Phase::WaitBoundary;
+                let facts = probe.facts();
                 if probe.shop_open {
                     // The modal and its stock container can be published on
                     // adjacent snapshots. Keep this one await open until the
                     // page is usable so an immediate Shop.buy cannot observe
                     // a transient empty row set.
-                    if shop.open_ready(&probe) {
+                    if shop.open.ready(&facts) {
                         return Begin::Done(kind.value(true, 0));
                     }
-                    shop.open = OpenWait::Page {
-                        until: probe.tick.unwrap_or(0) + 1,
-                        session: probe.session,
-                    };
+                    shop.open = OpenCore::awaiting_page(&facts);
                     return Begin::Run(shop);
                 }
-                match shop.next_trade(&probe, cx) {
+                let decision = shop.open.tick(&facts, || probe.keeper.resolve());
+                match shop.act(decision, &probe, cx) {
                     Step::Done(value) => Begin::Done(value),
                     _ => Begin::Run(shop),
                 }
@@ -635,7 +481,7 @@ impl Family for Shop {
         match self.kind {
             // A snapshot may confirm the page. Trades and attempt expiry are
             // owned by real ticks, so a snapshot never sends or fails.
-            Kind::Open if self.open_ready(&probe) => self.open_settled(&probe),
+            Kind::Open if self.open.ready(&probe.facts()) => self.open_settled(&probe),
             Kind::Open => Step::Wait,
             Kind::Close => self.close_step(&probe, cx),
             Kind::Buy | Kind::Sell | Kind::SellAll => self.transfer_step(&probe, cx),
@@ -645,10 +491,7 @@ impl Family for Shop {
     /// A nav walk to an unreachable keeper is stopped when the call ends
     /// early, like the other approach walks ([`Resilient::release`]).
     fn release(&self) -> Option<InteractReq> {
-        match &self.open {
-            OpenWait::Walk(walk) => walk.release(),
-            _ => None,
-        }
+        self.walk.as_ref().and_then(|walk| walk.release())
     }
 }
 
@@ -658,7 +501,6 @@ impl Shop {
             phase: Phase::WaitBoundary,
             kind,
             name: String::new(),
-            walked: false,
             requested: 0,
             all: false,
             pick: false,
@@ -669,8 +511,8 @@ impl Shop {
             batch_baseline: 0,
             held_now: 0,
             clicks: 0,
-            open: OpenWait::Idle,
-            attempts_left: 0,
+            open: OpenCore::default(),
+            walk: None,
         }
     }
 
@@ -732,75 +574,25 @@ impl Shop {
         self.done(false)
     }
 
-    /// Start the next attempt from the keeper's posted route: Trade a
-    /// reachable keeper, or walk to an unreachable one first (once).
-    fn next_trade(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
-        let Some(keeper) = probe.keeper.resolve() else {
-            return self.open_failed(probe.tick, format_args!("the keeper is gone"));
-        };
-        let tiles = match keeper.route {
-            KeeperRoute::Steps(tiles) | KeeperRoute::Unknown(tiles) => tiles,
-            KeeperRoute::Unreachable if self.walked => {
-                return self.open_failed(
-                    probe.tick,
-                    format_args!("the keeper is still unreachable after the walk to it"),
-                );
-            }
-            KeeperRoute::Unreachable => {
-                self.walked = true;
-                trace(
-                    "walk",
-                    probe.tick,
-                    format_args!("unreachable keeper at {:?}", keeper.tile),
-                );
-                let walk =
-                    Resilient::new(keeper.tile, 1, KEEPER_WALK_MS, Some(HOP_ATTEMPTS), false);
-                match walk.start(cx) {
-                    Ok(walk) => {
-                        self.open = OpenWait::Walk(Box::new(walk));
-                        return Step::Wait;
-                    }
-                    // Nav already counts the keeper as arrived: the click's
-                    // own route and "I can't reach that!" decide.
-                    Err(true) => 0,
-                    Err(false) => {
-                        return self.open_failed(
-                            probe.tick,
-                            format_args!("no walk to the keeper at {:?}", keeper.tile),
-                        );
-                    }
-                }
-            }
-        };
-        self.press_trade(probe, &keeper, tiles, cx);
-        Step::Wait
-    }
-
-    /// Send one Trade and start its attempt, with a deadline from the
-    /// keeper's route length. Nothing is sent before the session's first
-    /// tick or on a tick that already sent a Trade.
-    fn press_trade(&mut self, probe: &Probe<'_>, keeper: &Keeper, tiles: u32, cx: &mut Cx<'_>) {
+    /// Send the keeper's Trade and start its attempt in the core. The core
+    /// never asks for one before the session's first tick or on a tick that
+    /// already sent a Trade (`Facts::trade_taken`).
+    fn press_trade(&mut self, probe: &Probe<'_>, keeper: &Keeper, cx: &mut Cx<'_>) {
         let Some(tick) = probe.tick else {
             return;
         };
         let epoch = observed::with(Scene::epoch);
-        if trade_emitted_on(epoch, tick) {
-            return;
-        }
         LAST_TRADE_TICK.with(|cell| cell.set(Some((epoch, tick))));
-        let deadline = tick + open_deadline_ticks(tiles);
-        self.open = OpenWait::Trade(Attempt {
-            trade_tick: tick,
-            session: probe.session,
-            chat_mark: probe.chat_seq,
-            deadline,
-        });
+        self.open.traded(&probe.facts(), keeper);
         trace(
             "trade",
             Some(tick),
             format_args!(
-                "npc={} index={} route={:?} deadline={deadline} attempts_left={}",
-                keeper.name, keeper.index, keeper.route, self.attempts_left
+                "npc={} index={} route={:?} deadline={:?}",
+                keeper.name,
+                keeper.index,
+                keeper.route,
+                self.open.deadline()
             ),
         );
         cx.emit(InteractReq::Npc {
@@ -867,82 +659,62 @@ impl Shop {
         Step::Wait
     }
 
-    /// A usable shop page on a tick that sent no Trade, and later than this
-    /// call's own Trade. Modal and stock are separate packets
-    /// (`IF_OPENMAIN_SIDE` in `NetworkPlayer.ts:155-182`, `UPDATE_INV_FULL`
-    /// from `updateInvs`), so the modal alone does not settle.
-    fn open_ready(&self, probe: &Probe<'_>) -> bool {
-        let Some(tick) = probe.tick else {
-            return false;
-        };
-        match &self.open {
-            OpenWait::Trade(attempt) if attempt.pending_on(tick, probe.session) => return false,
-            // No Trade went out yet: a shop seen mid-walk is not this call's.
-            OpenWait::Walk(_) => return false,
-            _ => {}
-        }
-        probe.shop_open
-            && probe.has_stock
-            && !probe.stock.is_empty()
-            && !trade_emitted_on(observed::with(Scene::epoch), tick)
-    }
-
+    /// The core settles only on a usable page ([`OpenCore::ready`]). Modal
+    /// and stock are separate packets (`IF_OPENMAIN_SIDE` in
+    /// `NetworkPlayer.ts:155-182`, `UPDATE_INV_FULL` from `updateInvs`), so
+    /// the modal alone is not usable.
     fn open_settled(&self, probe: &Probe<'_>) -> Step<Value> {
         trace("open", probe.tick, format_args!("settled=true"));
         self.done(true)
     }
 
-    /// One real tick of `Shop.open`: settle on a usable page, else send a
-    /// Trade only when no attempt is outstanding or the last one expired.
+    /// One real tick of `Shop.open`: drive the nav walk if one is out, else
+    /// let the shared core decide ([`OpenCore::tick`]).
     fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
-        let Some(tick) = probe.tick else {
-            return Step::Wait;
-        };
-        if self.open_ready(probe) {
-            return self.open_settled(probe);
+        if let Some(walk) = self.walk.as_mut() {
+            let ended = walk.step(cx);
+            while let Some(line) = walk.pop_log() {
+                trace("walk", probe.tick, format_args!("{line}"));
+            }
+            let Some(arrived) = ended else {
+                return Step::Wait;
+            };
+            self.walk = None;
+            let decision = self.open.walked(arrived, || probe.keeper.resolve());
+            return self.act(decision, probe, cx);
         }
-        match std::mem::replace(&mut self.open, OpenWait::Idle) {
-            OpenWait::Idle => {}
-            OpenWait::Page { until, session } => {
-                if session == probe.session && tick <= until {
-                    self.open = OpenWait::Page { until, session };
-                    return Step::Wait;
-                }
+        let decision = self.open.tick(&probe.facts(), || probe.keeper.resolve());
+        self.act(decision, probe, cx)
+    }
+
+    /// Carry out one core decision.
+    fn act(&mut self, decision: Decision, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        match decision {
+            Decision::Wait => Step::Wait,
+            Decision::Opened => self.open_settled(probe),
+            Decision::Failed(reason) => self.open_failed(probe.tick, format_args!("{reason}")),
+            Decision::Trade(keeper) => {
+                self.press_trade(probe, &keeper, cx);
+                Step::Wait
             }
-            OpenWait::Walk(mut walk) => {
-                let ended = walk.step(cx);
-                while let Some(line) = walk.pop_log() {
-                    trace("walk", Some(tick), format_args!("{line}"));
-                }
-                match ended {
-                    None => {
-                        self.open = OpenWait::Walk(walk);
-                        return Step::Wait;
+            Decision::Walk(tile) => {
+                trace(
+                    "walk",
+                    probe.tick,
+                    format_args!("unreachable keeper at {tile:?}"),
+                );
+                match Resilient::new(tile, 1, KEEPER_WALK_MS, Some(HOP_ATTEMPTS), false).start(cx) {
+                    Ok(walk) => {
+                        self.walk = Some(Box::new(walk));
+                        Step::Wait
                     }
-                    Some(true) => {}
-                    Some(false) => {
-                        return self.open_failed(
-                            Some(tick),
-                            format_args!("the walk to the unreachable keeper failed"),
-                        );
+                    Err(arrived) => {
+                        let decision = self.open.walked(arrived, || probe.keeper.resolve());
+                        self.act(decision, probe, cx)
                     }
-                }
-            }
-            OpenWait::Trade(attempt) => {
-                if attempt.pending_on(tick, probe.session) || !attempt.ended(tick, probe) {
-                    self.open = OpenWait::Trade(attempt);
-                    return Step::Wait;
-                }
-                self.attempts_left = self.attempts_left.saturating_sub(1);
-                if self.attempts_left == 0 {
-                    return self.open_failed(
-                        Some(tick),
-                        format_args!("no usable shop after {OPEN_ATTEMPTS} Trade attempts"),
-                    );
                 }
             }
         }
-        self.next_trade(probe, cx)
     }
 
     fn close_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
@@ -1173,6 +945,22 @@ struct Probe<'a> {
     keeper: KeeperFact<'a>,
 }
 
+impl Probe<'_> {
+    /// The facts the shared open core decides from.
+    fn facts(&self) -> Facts {
+        Facts {
+            tick: self.tick,
+            session: self.session,
+            chat_seq: self.chat_seq,
+            cant_reach_seq: self.cant_reach_seq,
+            usable: self.shop_open && self.has_stock && !self.stock.is_empty(),
+            trade_taken: self
+                .tick
+                .is_some_and(|tick| trade_emitted_on(observed::with(Scene::epoch), tick)),
+        }
+    }
+}
+
 fn find_row<'a>(rows: &'a [Row], name: &str) -> Option<&'a Row> {
     rows.iter().find(|row| row.name.eq_ignore_ascii_case(name))
 }
@@ -1214,6 +1002,7 @@ fn plan(remaining: i32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shop_open::{KeeperRoute, OPEN_ATTEMPTS, OPEN_SLACK_TICKS};
     use crate::task_clock::InstantTaskClock;
     use std::time::{Duration, Instant};
 
@@ -1416,7 +1205,7 @@ mod tests {
     fn opener() -> Shop {
         observed::on_reset();
         let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
-        rt.attempts_left = OPEN_ATTEMPTS;
+        rt.open = OpenCore::default();
         rt
     }
 
@@ -1463,14 +1252,6 @@ mod tests {
     }
 
     #[test]
-    fn open_deadline_is_route_plus_slack_capped() {
-        assert_eq!(open_deadline_ticks(0), OPEN_SLACK_TICKS);
-        assert_eq!(open_deadline_ticks(30), 30 + OPEN_SLACK_TICKS);
-        assert_eq!(open_deadline_ticks(104), OPEN_CAP_TICKS);
-        assert_eq!(open_deadline_ticks(5_000), OPEN_CAP_TICKS);
-    }
-
-    #[test]
     fn a_long_walk_gets_one_trade_until_its_route_deadline() {
         let mut rt = opener();
         let mut clock = InstantTaskClock::new();
@@ -1506,7 +1287,7 @@ mod tests {
             (None, vec![trade()])
         );
         // A usable page on the Trade tick itself is not this Trade's shop.
-        assert!(!rt.open_ready(&open_at(1, &walk, &stock)));
+        assert!(!rt.open.ready(&open_at(1, &walk, &stock).facts()));
         for tick in 2..deadline {
             assert_eq!(
                 step(&mut rt, &mut clock, &closed_at(tick, &walk)),
@@ -1676,10 +1457,7 @@ mod tests {
     #[test]
     fn an_open_modal_without_a_page_trades_only_after_the_next_tick() {
         let mut rt = opener();
-        rt.open = OpenWait::Page {
-            until: 2,
-            session: Session::default(),
-        };
+        rt.open = OpenCore::awaiting_page(&probe(&[], None, &[]).facts());
         let mut clock = InstantTaskClock::new();
         let here = keeper(KeeperRoute::Steps(0));
         assert_eq!(
@@ -1693,9 +1471,10 @@ mod tests {
     }
 
     #[test]
-    fn a_keeper_still_unreachable_after_its_walk_fails_without_a_trade() {
+    fn an_unreachable_keeper_with_no_walk_fails_without_a_trade() {
+        // No posted player tile: the nav walk cannot start, so the open
+        // fails instead of clicking an unreachable keeper.
         let mut rt = opener();
-        rt.walked = true;
         let mut clock = InstantTaskClock::new();
         let blocked = keeper(KeeperRoute::Unreachable);
         assert_eq!(
