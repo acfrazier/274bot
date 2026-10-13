@@ -30,6 +30,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   its own, so a bot on a very long session can occasionally die. We're
   looking into it; if it happens to you, the bot's log around the death helps.
 
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a
+  Ryzen with built-in graphics plus a separate graphics card), the panel can
+  close right after it starts with "importing the supplied dmabufs failed".
+  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
+  0.2.0.2 has the same problem.
+
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 
 ### Scripts
