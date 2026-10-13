@@ -86,19 +86,24 @@ prepare removes its partial directory automatically.
   login `PATH` puts MacPorts and Homebrew ahead of `/usr/bin`, and in the
   0.2.1 build MacPorts' `pkg-config` answered the `bzip2-sys` probe with
   `-L/opt/local/lib`, which would have shipped binaries linked against
-  `/opt/local` libraries users do not have. The worker instead runs cargo
-  with the fixed `PATH` `~/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin` and
-  drops the inherited variables that can redirect header, library, or
-  tool search the same way (`LIBRARY_PATH`, `CPATH` and the other
-  `*_INCLUDE_PATH`s, every `PKG_CONFIG*`, `DYLD_*`, `CC`/`CFLAGS`/`LDFLAGS`
-  and their target-suffixed spellings, `CMAKE_*`, `HOMEBREW_*`, `OPENSSL_*`,
-  `BINDGEN_*`/`LIBCLANG_PATH`, `RUSTFLAGS` and per-target linker overrides,
-  plus `SDKROOT` and `MACOSX_DEPLOYMENT_TARGET`). None of them was set in
-  the environment that produced the known-good 0.2.1 package.
-  `DEVELOPER_DIR` is kept because it is how `xcrun` finds the Apple
-  toolchain; with `SDKROOT` unset the SDK is rediscovered through it, and
-  the aarch64 target's default deployment target is the documented
-  macOS 11.0.
+  `/opt/local` libraries users do not have. The worker's environment is
+  therefore an allowlist built from empty, not a scrubbed copy of the
+  login environment. It constructs the fixed `PATH`
+  `~/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin`, `HOME`, and
+  `MACOSX_DEPLOYMENT_TARGET=11.0` (pinned to the documented macOS 11.0
+  floor, never inherited; `SDKROOT` stays unset so `xcrun` rediscovers
+  the SDK), then copies only `USER`/`LOGNAME`, `TMPDIR`, `LANG`/`LC_*`,
+  the proxy variables, and a `DEVELOPER_DIR` that is an existing
+  `/Library/Developer/CommandLineTools` or
+  `/Applications/*.app/Contents/Developer` (`xcrun` finds the Apple
+  toolchain through it; any other value is dropped), plus the keys the
+  worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
+  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and in particular
+  `CARGO_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
+  `rust-toolchain.toml`) -- is not inherited. None of the dropped
+  variables was set in the environment that produced the known-good
+  0.2.1 package. Linux and Windows environment construction is
+  unchanged.
 - Linux x64 uses the SSH target `274bot-builder` by default. Override it with
   `--linux-host` or `RELEASE_LINUX_HOST`.
 - Windows x64 runs over the promoted `windows-ssh.py` transport.
@@ -164,18 +169,30 @@ members, extra files, missing files, byte-count differences, and SHA-256
 differences, and verifies `SHA256SUMS` has exactly the candidate archives. It
 checks the requested host commit, runs both executables' `--help` on their
 native platforms, and validates the extracted macOS signatures, staple, and
-Gatekeeper acceptance. On macOS it also runs `otool -L` on every Mach-O in
-the package (both standalone executables and the app bundle's) and refuses
-any library reference that is not under `/usr/lib/` or `/System/Library/`
-or an `@executable_path`/`@rpath` reference resolving to a file inside the
-package, naming the offending binary and library; that is the check that
-keeps a MacPorts/Homebrew-linked build from ever verifying. Linux and
-Windows have no equivalent check yet, deliberately: ELF `DT_NEEDED` entries
-and PE imports record library names, not build-host paths, both builders
-are dedicated hosts with no shadowing package manager on `PATH`, and their
-runtime floors are already pinned in the manifest (glibc 2.39 and the named
-system libraries on Linux, the Visual C++ runtime DLLs on Windows). An
-`readelf`/`dumpbin` dependency allowlist would be a different mechanism
+Gatekeeper acceptance. On macOS it also runs `otool -L`/`otool -l` on
+every Mach-O in the package (both standalone executables and the app
+bundle's) and refuses any library reference that is not, after path
+normalisation, under `/usr/lib/` or `/System/Library/` or an
+`@executable_path`/`@rpath` reference resolving to a file inside the
+package, naming the offending binary and library. Because dyld expands
+`@executable_path` to the main executable's directory -- and the
+package ships main executables at two depths -- such a reference must
+resolve inside the package from *every* shipped main executable's
+directory, not just the referencing binary's; `@loader_path` as an
+install name is refused, so in-package dylibs use `@rpath` plus an
+`@loader_path` rpath. It also refuses any Mach-O whose minimum macOS
+version (`LC_BUILD_VERSION` `minos`, or `LC_VERSION_MIN_MACOSX`) is
+missing or above 11.0, naming the binary and its value; the worker pins
+`MACOSX_DEPLOYMENT_TARGET=11.0`, and this is how verification proves the
+shipped floor. That pair of checks is what keeps a
+MacPorts/Homebrew-linked or floor-raising build from ever verifying.
+Linux and Windows have no equivalent check yet, deliberately: ELF
+`DT_NEEDED` entries and PE imports record library names, not
+build-host paths, both builders are dedicated hosts with no shadowing
+package manager on `PATH`, and their runtime floors are already pinned
+in the manifest (glibc 2.39 and the named system libraries on Linux,
+the Visual C++ runtime DLLs on Windows). A `readelf`/`dumpbin`
+dependency allowlist would be a different mechanism
 for a defect class neither builder has shown. Navigation is reported
 byte-identical only after all six files from all three platform archives
 compare equal; a partial per-platform verification explicitly reports that navigation was not compared.

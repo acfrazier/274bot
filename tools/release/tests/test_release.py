@@ -363,6 +363,27 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         "RUSTFLAGS": "-L /opt/local/lib",
         "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/opt/local/bin/ld",
         "RUSTC_WRAPPER": "/opt/homebrew/bin/sccache",
+        # Toolchain/config redirection and arbitrary future variables a
+        # denylist would miss; an allowlist drops them by construction.
+        "CARGO_HOME": "/opt/local/cargo",
+        "RUSTUP_HOME": "/opt/local/rustup",
+        "RUSTUP_TOOLCHAIN": "nightly-2099-01-01",
+        "CARGO": "/opt/local/bin/cargo-wrapper",
+        "CCC_OVERRIDE_OPTIONS": "x-I/opt/local/include",
+        "COMPILER_PATH": "/opt/local/bin",
+        "OBJCPLUS_INCLUDE_PATH": "/opt/local/include",
+        "SOME_FUTURE_LIB_DIR": "/opt/local/lib",
+        "EVIL_ARBITRARY_VARIABLE": "/opt/local/lib/libevil.dylib",
+        "SHELL": "/opt/local/bin/zsh",
+        "SSH_AUTH_SOCK": "/tmp/agent.sock",
+        "FPATH": "/opt/homebrew/share/zsh/site-functions",
+    }
+    # Keys native_build_environment itself pins for every platform.
+    WORKER_KEYS = {
+        "GIT_COMMIT", "CLIENT_COMMIT", "GIT_DIRTY", "BOT_NAV_REVISION",
+        "BOT_NAV_BUILD", "BOT_NAV_ENGINE_DIR", "BOT_NAV_CONTENT_DIR",
+        "BOT_NAV_SNAPSHOT_ROOT", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS",
+        "CARGO_INCREMENTAL",
     }
 
     def test_macos_build_path_is_fixed_and_minimal(self):
@@ -371,25 +392,77 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             "/Users/builder/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         )
 
-    def test_macos_environment_drops_package_manager_leaks(self):
-        with mock.patch.dict(os.environ, {
+    def test_macos_environment_is_an_allowlist_from_empty(self):
+        parent = {
             **self.HOSTILE,
             "HOME": "/Users/builder",
+            "USER": "builder",
+            "LOGNAME": "builder",
+            "TMPDIR": "/var/folders/builder/T/",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "LC_CTYPE": "UTF-8",
+            "HTTP_PROXY": "http://proxy.example:3128",
+            "https_proxy": "http://proxy.example:3128",
             "DEVELOPER_DIR": "/Library/Developer/CommandLineTools",
-        }):
+        }
+        is_dir = lambda path: str(path) == "/Library/Developer/CommandLineTools"
+        with mock.patch.dict(os.environ, parent, clear=True), \
+                mock.patch.object(Path, "is_dir", is_dir):
             mac = release.native_build_environment(
                 self.EXPECT, Path("/inputs"), Path("/target"), "macos"
             )
+        # Only the allowlisted keys, the constructed keys, and the keys
+        # the worker itself pins survive -- nothing else is inherited.
+        self.assertEqual(set(mac), self.WORKER_KEYS | {
+            "PATH", "HOME", "MACOSX_DEPLOYMENT_TARGET",
+            "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE",
+            "HTTP_PROXY", "https_proxy", "DEVELOPER_DIR",
+        })
         self.assertEqual(mac["PATH"], release.macos_build_path("/Users/builder"))
-        for name in self.HOSTILE:
-            if name != "PATH":
-                self.assertNotIn(name, mac)
-        # Xcode toolchain discovery and the rustup home survive the scrub.
-        self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
         self.assertEqual(mac["HOME"], "/Users/builder")
-        # The scrub runs before the pinned values are applied.
+        # The deployment target is pinned from the one constant the
+        # manifest line also uses, not inherited from the shell's 14.0.
+        self.assertEqual(mac["MACOSX_DEPLOYMENT_TARGET"], "11.0")
+        self.assertEqual(
+            mac["MACOSX_DEPLOYMENT_TARGET"], release.MACOS_DEPLOYMENT_TARGET
+        )
+        self.assertEqual(
+            release.runtime_requirements("macos"),
+            [f"macOS {release.MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"],
+        )
+        for name in ("CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+                     "EVIL_ARBITRARY_VARIABLE", "SOME_FUTURE_LIB_DIR"):
+            self.assertNotIn(name, mac)
+        self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
         self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
         self.assertEqual(mac["GIT_DIRTY"], "0")
+
+    def test_developer_dir_must_be_an_existing_apple_dir(self):
+        with mock.patch.object(Path, "is_dir", lambda path: True):
+            self.assertTrue(release.valid_macos_developer_dir(
+                "/Library/Developer/CommandLineTools"))
+            self.assertTrue(release.valid_macos_developer_dir(
+                "/Applications/Xcode.app/Contents/Developer"))
+            # Existing is not enough: a non-Apple location is dropped.
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/opt/local/developer"))
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/Library/Developer/CommandLineTools/../elsewhere"))
+        with mock.patch.object(Path, "is_dir", lambda path: False):
+            # The right shape in a place that does not exist is dropped.
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/Applications/Xcode.app/Contents/Developer"))
+        parent = {
+            "HOME": "/Users/builder",
+            "DEVELOPER_DIR": "/opt/local/developer",
+        }
+        with mock.patch.dict(os.environ, parent, clear=True), \
+                mock.patch.object(Path, "is_dir", lambda path: True):
+            mac = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "macos"
+            )
+        self.assertNotIn("DEVELOPER_DIR", mac)
 
     def test_other_platforms_keep_the_inherited_environment(self):
         with mock.patch.dict(os.environ, {**self.HOSTILE, "HOME": "/home/builder"}):
@@ -401,7 +474,9 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             "/home/builder/.cargo/bin:" + self.HOSTILE["PATH"],
         )
         self.assertEqual(linux["LIBRARY_PATH"], "/opt/local/lib")
-
+        # The allowlist and deployment pin are macOS-only.
+        self.assertEqual(linux["RUSTUP_TOOLCHAIN"], "nightly-2099-01-01")
+        self.assertEqual(linux["MACOSX_DEPLOYMENT_TARGET"], "14.0")
 
 OTOOL_L = """\
 /pkg/panel-play:
@@ -424,6 +499,13 @@ OTOOL_LOAD_COMMANDS = """\
 Load command 0
       cmd LC_SEGMENT_64
   cmdsize 72
+Load command 9
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+   ntools 1
 Load command 12
       cmd LC_RPATH
   cmdsize 40
@@ -436,6 +518,22 @@ Load command 14
       cmd LC_LOAD_DYLIB
   cmdsize 56
      name /usr/lib/libSystem.B.dylib (offset 24)
+"""
+
+OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT = """\
+/pkg/old (architecture arm64):
+Load command 8
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.15
+      sdk 10.15
+/pkg/old (architecture x86_64):
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 14.0
+      sdk 14.0
 """
 
 
@@ -454,7 +552,7 @@ class MacosLinkageTests(unittest.TestCase):
         (base / "notes.txt").write_text("not a binary")
         return base
 
-    def test_otool_parsers_read_libraries_and_rpaths(self):
+    def test_otool_parsers_read_libraries_rpaths_and_minos(self):
         self.assertEqual(release.parse_otool_libraries(OTOOL_L), [
             "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
             "/usr/lib/libSystem.B.dylib",
@@ -470,6 +568,12 @@ class MacosLinkageTests(unittest.TestCase):
             "@executable_path/../Frameworks",
             "/opt/local/lib",
         ])
+        self.assertEqual(release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS), ["11.0"])
+        # Legacy LC_VERSION_MIN_MACOSX, and every slice of a fat binary.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_LEGACY_AND_FAT),
+            ["10.15", "14.0"],
+        )
 
     def test_system_libraries_are_allowed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -490,6 +594,10 @@ class MacosLinkageTests(unittest.TestCase):
                 ["/opt/local/lib/libbz2.1.0.dylib",
                  "/opt/homebrew/lib/libssl.3.dylib",
                  "/usr/local/lib/libfoo.dylib",
+                 # Normalises to /opt/local/...: a raw prefix test on
+                 # /usr/lib/ would wave this through as a system library.
+                 "/usr/lib/../opt/local/lib/libbz2.1.0.dylib",
+                 "/System/Library/../../opt/homebrew/lib/libssl.3.dylib",
                  "libfoo.dylib",
                  "@loader_path/libfoo.dylib"],
                 [],
@@ -498,17 +606,30 @@ class MacosLinkageTests(unittest.TestCase):
             "panel-play: /opt/local/lib/libbz2.1.0.dylib",
             "panel-play: /opt/homebrew/lib/libssl.3.dylib",
             "panel-play: /usr/local/lib/libfoo.dylib",
+            "panel-play: /usr/lib/../opt/local/lib/libbz2.1.0.dylib",
+            "panel-play: /System/Library/../../opt/homebrew/lib/libssl.3.dylib",
             "panel-play: libfoo.dylib",
             "panel-play: @loader_path/libfoo.dylib",
         ])
 
-    def test_executable_path_must_resolve_inside_the_package(self):
+    def test_executable_path_expands_against_every_main_executable(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             app_exe = base / "274bot.app/Contents/MacOS/panel-play"
-            inside = release.macho_linkage_violations(
+            # @executable_path/../Frameworks resolves from the app
+            # bundle executable, but dyld expands @executable_path to
+            # the main executable's directory: from the package-root
+            # executables the same string escapes the package.
+            app_only = release.macho_linkage_violations(
                 app_exe, base,
                 ["@executable_path/../Frameworks/libfoo.dylib"], [],
+            )
+            # A reference that resolves from every main executable's
+            # directory (root and app bundle alike) is allowed.
+            (base / "libevery.dylib").write_bytes(b"lib")
+            (base / "274bot.app/Contents/MacOS/libevery.dylib").write_bytes(b"lib")
+            everywhere = release.macho_linkage_violations(
+                app_exe, base, ["@executable_path/libevery.dylib"], [],
             )
             missing = release.macho_linkage_violations(
                 app_exe, base,
@@ -518,7 +639,11 @@ class MacosLinkageTests(unittest.TestCase):
                 base / "panel-play", base,
                 ["@executable_path/../../../opt/local/lib/libbz2.dylib"], [],
             )
-        self.assertEqual(inside, [])
+        self.assertEqual(app_only, [
+            "274bot.app/Contents/MacOS/panel-play: "
+            "@executable_path/../Frameworks/libfoo.dylib"
+        ])
+        self.assertEqual(everywhere, [])
         self.assertEqual(len(missing), 1)
         self.assertEqual(len(escaping), 1)
 
@@ -526,7 +651,23 @@ class MacosLinkageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             base = self.make_package(Path(temporary))
             binary = base / "panel-play"
-            resolved = release.macho_linkage_violations(
+            # @loader_path is the referencing binary's own directory, so
+            # this is the correct token for "next to this image".
+            loader_resolved = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@loader_path/Frameworks"],
+            )
+            # @executable_path/Frameworks resolves from the root
+            # executables but not from 274bot.app/Contents/MacOS, so it
+            # must not pass on the strength of the root expansion.
+            executable_root_only = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@executable_path/Frameworks"],
+            )
+            macos_frameworks = base / "274bot.app/Contents/MacOS/Frameworks"
+            macos_frameworks.mkdir()
+            (macos_frameworks / "libfoo.dylib").write_bytes(b"lib")
+            executable_everywhere = release.macho_linkage_violations(
                 binary, base, ["@rpath/libfoo.dylib"],
                 ["@executable_path/Frameworks"],
             )
@@ -539,10 +680,96 @@ class MacosLinkageTests(unittest.TestCase):
             relative = release.macho_linkage_violations(
                 binary, base, ["@rpath/libfoo.dylib"], ["Frameworks"],
             )
-        self.assertEqual(resolved, [])
+        self.assertEqual(loader_resolved, [])
+        self.assertEqual(executable_root_only, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(executable_everywhere, [])
         self.assertEqual(outside, ["panel-play: @rpath/libfoo.dylib"])
         self.assertEqual(no_rpath, ["panel-play: @rpath/libfoo.dylib"])
         self.assertEqual(relative, ["panel-play: @rpath/libfoo.dylib"])
+
+    def test_nested_dylib_executable_path_escape_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            plugin_dir = base / "nested/deep"
+            plugin_dir.mkdir(parents=True)
+            plugin = plugin_dir / "plugin.dylib"
+            plugin.write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 28)
+            # Planted where the plugin's own directory would take
+            # @executable_path/../../opt/local/lib -- the expansion the
+            # old check used. From a real main executable (package root)
+            # that string leaves the package entirely.
+            planted = base / "opt/local/lib"
+            planted.mkdir(parents=True)
+            (planted / "libbz2.1.0.dylib").write_bytes(b"lib")
+            via_rpath = release.macho_linkage_violations(
+                plugin, base, ["@rpath/libbz2.1.0.dylib"],
+                ["@executable_path/../../opt/local/lib"],
+            )
+            direct = release.macho_linkage_violations(
+                plugin, base,
+                ["@executable_path/../../opt/local/lib/libbz2.1.0.dylib"], [],
+            )
+            # The same plugin reached through @loader_path -- its own
+            # directory, whatever main executable loaded it -- passes.
+            (plugin_dir / "libnear.dylib").write_bytes(b"lib")
+            via_loader = release.macho_linkage_violations(
+                plugin, base, ["@rpath/libnear.dylib"], ["@loader_path"],
+            )
+        self.assertEqual(via_rpath, [
+            "nested/deep/plugin.dylib: @rpath/libbz2.1.0.dylib"
+        ])
+        self.assertEqual(direct, [
+            "nested/deep/plugin.dylib: "
+            "@executable_path/../../opt/local/lib/libbz2.1.0.dylib"
+        ])
+        self.assertEqual(via_loader, [])
+
+    def test_macho_filetypes_and_main_executable_dirs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            extra = base / "extra"
+            extra.mkdir()
+            tool = extra / "tool"
+            # Thin 64-bit little-endian header, filetype MH_EXECUTE (2).
+            tool.write_bytes(
+                b"\xcf\xfa\xed\xfe" + b"\0" * 8
+                + (2).to_bytes(4, "little") + b"\0" * 16
+            )
+            fat = base / "fat.dylib"
+            thin = (
+                b"\xfe\xed\xfa\xcf" + b"\0" * 8
+                + (6).to_bytes(4, "big") + b"\0" * 16
+            )
+            # Fat big-endian header: one arch entry pointing at `thin`
+            # (MH_DYLIB, 6) right after the 8 + 20 byte fat header.
+            fat.write_bytes(
+                b"\xca\xfe\xba\xbe" + (1).to_bytes(4, "big")
+                + b"\0" * 8 + (28).to_bytes(4, "big")
+                + len(thin).to_bytes(4, "big") + b"\0" * 4 + thin
+            )
+            self.assertEqual(release.macho_filetypes(tool), [release.MH_EXECUTE])
+            self.assertEqual(release.macho_filetypes(fat), [6])
+            self.assertEqual(
+                set(release.macos_main_executable_dirs(base)),
+                {base, base / "274bot.app/Contents/MacOS", extra},
+            )
+
+    def test_minimum_os_above_the_floor_is_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            above = release.macho_minimum_os_violations(binary, base, ["14.0"])
+            at_floor = release.macho_minimum_os_violations(binary, base, ["11.0"])
+            below = release.macho_minimum_os_violations(binary, base, ["10.15"])
+            mixed_fat = release.macho_minimum_os_violations(
+                binary, base, ["11.0", "14.0"])
+            missing = release.macho_minimum_os_violations(binary, base, [])
+        self.assertEqual(above, ["panel-play: minos 14.0 exceeds macOS 11.0"])
+        self.assertEqual(at_floor, [])
+        self.assertEqual(below, [])
+        self.assertEqual(mixed_fat, ["panel-play: minos 14.0 exceeds macOS 11.0"])
+        self.assertEqual(len(missing), 1)
+        self.assertIn("panel-play: missing minimum macOS version", missing[0])
 
     def test_verify_checks_every_macho_and_names_the_offender(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -550,8 +777,8 @@ class MacosLinkageTests(unittest.TestCase):
 
             def linkage(path):
                 if path.name == "libfoo.dylib" and "274bot.app" in str(path):
-                    return ["/opt/local/lib/libiconv.2.dylib"], []
-                return ["/usr/lib/libSystem.B.dylib"], []
+                    return ["/opt/local/lib/libiconv.2.dylib"], [], ["11.0"]
+                return ["/usr/lib/libSystem.B.dylib"], [], ["11.0"]
 
             with mock.patch.object(release, "otool_linkage", side_effect=linkage):
                 with self.assertRaisesRegex(
@@ -562,7 +789,7 @@ class MacosLinkageTests(unittest.TestCase):
                     release.verify_macos_linkage(base)
                 clean = mock.patch.object(
                     release, "otool_linkage",
-                    return_value=(["/usr/lib/libSystem.B.dylib"], []),
+                    return_value=(["/usr/lib/libSystem.B.dylib"], [], ["11.0"]),
                 )
                 with clean:
                     checked = release.verify_macos_linkage(base)
@@ -573,6 +800,21 @@ class MacosLinkageTests(unittest.TestCase):
                 "panel-play",
                 "tui-play",
             ])
+
+    def test_verify_rejects_a_minos_above_the_floor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+
+            def linkage(path):
+                minos = ["14.0"] if path.name == "tui-play" else ["11.0"]
+                return ["/usr/lib/libSystem.B.dylib"], [], minos
+
+            with mock.patch.object(release, "otool_linkage", side_effect=linkage):
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: minos 14\.0 exceeds macOS 11\.0",
+                ):
+                    release.verify_macos_linkage(base)
 
     def test_verify_requires_the_shipped_executables(self):
         with tempfile.TemporaryDirectory() as temporary:
