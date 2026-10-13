@@ -1147,6 +1147,8 @@ impl NativeOutput for TestOutput {
     fn settings_applied(&mut self, _revision: u64) {}
 }
 
+// `pub(crate)`: the process host-log sink installs once, so the slot
+// tests capture their finish line through this module's one sink.
 #[cfg(all(test, feature = "load"))]
 #[path = "compiled_tests.rs"]
-mod tests;
+pub(crate) mod tests;
