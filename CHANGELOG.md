@@ -3,7 +3,7 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.1` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [0.2.1] — unreleased — Beta 1 hotfix
+## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
 ### Gatherer
 
@@ -22,6 +22,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   doing, counting what was already deposited, with up to two extra opens for
   each deposit or withdrawal; if the bank keeps closing past that, the
   transfer still stops the bot with the message above.
+
+### Not in this release
+
+- The Gatherer still doesn't react when something attacks it while it
+  gathers (for example a fishing random event), and it doesn't flee or eat on
+  its own, so a bot on a very long session can occasionally die. We're
+  looking into it; if it happens to you, the bot's log around the death helps.
 
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 
