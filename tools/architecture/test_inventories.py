@@ -692,6 +692,164 @@ pub struct FleetRow {
         self.assertEqual(unchanged_findings, [])
         self.assertEqual(removal_findings, [])
 
+    def test_inner_module_cfg_gate_removal_is_a_new_production_violation(self) -> None:
+        # Review r2: inner `#![cfg(...)]` / `#![cfg_attr(...)]` is exact
+        # violation provenance. Deleting the gate promotes conditional debt
+        # to production ids, so the transition must report new violations.
+        gate = 'cfg(any(test,feature="test-support"))'
+        probe_tail = '\n#[derive(Clone)]\npub struct Probe { pub name: String }\n'
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("Probe", "owning"),
+        )
+
+        def records(cfg: str) -> tuple[dict[str, str], ...]:
+            return (
+                _record(
+                    "owning_derived_clone",
+                    VIEWS_PATH,
+                    "Probe",
+                    cfg,
+                    "derived_Clone_on_owning_view",
+                    owner="T3",
+                ),
+                _record(
+                    "owning_public_field",
+                    VIEWS_PATH,
+                    "Probe::name",
+                    cfg,
+                    "public_field_of_owning_view",
+                    owner="T3",
+                ),
+            )
+
+        for views_gate, label in (
+            ('#![cfg(any(test, feature = "test-support"))]\n', "inner cfg"),
+            (
+                '#![cfg_attr(any(test, feature = "test-support"), allow(dead_code))]\n',
+                "inner cfg_attr",
+            ),
+        ):
+            with self.subTest(gate=label):
+                gated_views = views_gate + self.baseline_views() + probe_tail
+                promoted_views = self.baseline_views() + probe_tail
+                base = self.fixture(
+                    views=gated_views, seam_types=seam_types, violations=records(gate)
+                )
+                promoted = self.fixture(
+                    views=promoted_views,
+                    seam_types=seam_types,
+                    violations=records("production"),
+                )
+                self.assertEqual(inventories.check_tree(base), [])
+                self.assertEqual(inventories.check_tree(promoted), [])
+                gated_to_production = inventories.check_transition(base, promoted)
+                print(f"BAD removed {label} gate: {gated_to_production}")
+                self.assertEqual(
+                    gated_to_production,
+                    sorted(
+                        f"new inventory violation: {row['id']}" for row in records("production")
+                    ),
+                )
+                production_to_gated = inventories.check_transition(promoted, base)
+                print(f"BAD added {label} gate: {production_to_gated}")
+                self.assertEqual(
+                    production_to_gated,
+                    sorted(f"new inventory violation: {row['id']}" for row in records(gate)),
+                )
+
+    def test_module_level_cfg_on_mod_parses_and_chains_both_directions(self) -> None:
+        # Review r2: a non-test `#[cfg]` on `mod views;` must parse instead of
+        # crashing in `_module_path_attribute`, and its predicate (plus any
+        # inner file gate along the chain) is violation provenance.
+        gate = 'cfg(any(test,feature="test-support"))'
+        probe_tail = '\n#[derive(Clone)]\npub struct Probe { pub name: String }\n'
+        probe_views = self.baseline_views() + probe_tail
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("Probe", "owning"),
+        )
+
+        def records(cfg: str) -> tuple[dict[str, str], ...]:
+            return (
+                _record(
+                    "owning_derived_clone",
+                    VIEWS_PATH,
+                    "Probe",
+                    cfg,
+                    "derived_Clone_on_owning_view",
+                    owner="T3",
+                ),
+                _record(
+                    "owning_public_field",
+                    VIEWS_PATH,
+                    "Probe::name",
+                    cfg,
+                    "public_field_of_owning_view",
+                    owner="T3",
+                ),
+            )
+
+        gated_lib = '#[cfg(any(test, feature = "test-support"))]\npub mod views;\n'
+        ungated_lib = 'pub mod views;\n'
+        base = self.fixture(
+            views=probe_views,
+            frontend_lib=gated_lib,
+            seam_types=seam_types,
+            violations=records(gate),
+        )
+        promoted = self.fixture(
+            views=probe_views,
+            frontend_lib=ungated_lib,
+            seam_types=seam_types,
+            violations=records("production"),
+        )
+        self.assertEqual(inventories.check_tree(base), [])
+        self.assertEqual(inventories.check_tree(promoted), [])
+        gated_to_production = inventories.check_transition(base, promoted)
+        print(f"BAD removed mod cfg gate: {gated_to_production}")
+        self.assertEqual(
+            gated_to_production,
+            sorted(f"new inventory violation: {row['id']}" for row in records("production")),
+        )
+        production_to_gated = inventories.check_transition(promoted, base)
+        print(f"BAD added mod cfg gate: {production_to_gated}")
+        self.assertEqual(
+            production_to_gated,
+            sorted(f"new inventory violation: {row['id']}" for row in records(gate)),
+        )
+        chained_gate = f"cfg(unix) & {gate}"
+        chained_lib = '#[cfg(unix)]\npub mod views;\n'
+        chained_views = '#![cfg(any(test, feature = "test-support"))]\n' + probe_views
+        chained = self.fixture(
+            views=chained_views,
+            frontend_lib=chained_lib,
+            seam_types=seam_types,
+            violations=records(chained_gate),
+        )
+        self.assertEqual(inventories.check_tree(chained), [])
+        chained_to_production = inventories.check_transition(chained, promoted)
+        print(f"BAD removed chained mod+inner gates: {chained_to_production}")
+        self.assertEqual(
+            chained_to_production,
+            sorted(f"new inventory violation: {row['id']}" for row in records("production")),
+        )
+        outer_only = self.fixture(
+            views=probe_views,
+            frontend_lib=chained_lib,
+            seam_types=seam_types,
+            violations=records("cfg(unix)"),
+        )
+        self.assertEqual(inventories.check_tree(outer_only), [])
+        chained_to_outer = inventories.check_transition(chained, outer_only)
+        print(f"BAD removed chained inner gate only: {chained_to_outer}")
+        self.assertEqual(
+            chained_to_outer,
+            sorted(f"new inventory violation: {row['id']}" for row in records("cfg(unix)")),
+        )
+
     def test_owning_seams_cannot_reclassify_as_borrowed_or_scalar(self) -> None:
         base_temp = tempfile.TemporaryDirectory(prefix="f0-reclass-base-")
         borrowed_temp = tempfile.TemporaryDirectory(prefix="f0-reclass-borrowed-")

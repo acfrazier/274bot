@@ -573,8 +573,7 @@ def _read_frontend_files(
 
 def _module_path_attribute(node: dict[str, Any], path: str) -> str | None:
     values: list[str] = []
-    for attribute in _direct_attributes(node):
-        tokens = _attribute_tokens(attribute)
+    for tokens in _direct_attributes(node):
         texts = [text for _, text in tokens]
         if len(texts) < 4 or texts[:3] != ["#", "[", "path"]:
             continue
@@ -627,8 +626,14 @@ def _frontend_module_sources(
         if module_path in modules:
             errors.append(f"{file_key}: duplicate frontend-core module path {'::'.join(module_path)}")
             return
+        try:
+            file_inner = _inner_cfg_predicates(container, file_key)
+        except _InventoryError as error:
+            errors.append(str(error))
+            file_inner = ()
+        effective = cfgs + file_inner
         modules[module_path] = (file_key, container, inline)
-        module_cfgs[module_path] = cfgs
+        module_cfgs[module_path] = effective
         children[module_path] = []
         for child in _children(container):
             if child.get("kind") != "MODULE" or _test_cfg_expression(child) is not None:
@@ -638,7 +643,7 @@ def _frontend_module_sources(
                 errors.append(f"{file_key}: module declaration has no supported name")
                 continue
             child_path = module_path + (name,)
-            child_cfgs = cfgs + _cfg_attributes(child)
+            child_cfgs = effective + _cfg_attributes(child)
             children[module_path].append((child_path, _is_public(child)))
             item_lists = _direct_children(child, "ITEM_LIST")
             if item_lists:
@@ -932,6 +937,25 @@ def _cfg_attr_predicate(texts: list[str]) -> str | None:
         elif text == "," and depth == 0:
             return "cfg(" + "".join(texts[4:index]) + ")"
     return None
+
+
+def _inner_cfg_predicates(container: dict[str, Any], path: str) -> tuple[str, ...]:
+    """Inner `#![cfg]` / `#![cfg_attr]` predicates of a module file, in source order."""
+    result: list[str] = []
+    for attribute in _direct_children(container, "ATTR"):
+        tokens = _attribute_tokens(attribute)
+        texts = [text for _, text in tokens]
+        if len(texts) < 4 or texts[0] != "#" or texts[1] != "!" or texts[2] != "[":
+            continue
+        normalized = ["#", "["] + texts[3:]
+        if len(normalized) >= 4 and normalized[2] == "cfg":
+            result.append("".join(normalized[2:-1]))
+        elif len(normalized) >= 4 and normalized[2] == "cfg_attr":
+            predicate = _cfg_attr_predicate(normalized)
+            if predicate is None:
+                raise _InventoryError(f"{path}: unsupported inner cfg_attr syntax")
+            result.append(predicate)
+    return tuple(result)
 
 
 def _cfg_label(predicates: tuple[str, ...]) -> str:
