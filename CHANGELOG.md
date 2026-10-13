@@ -15,6 +15,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   of logs, and the many others that stop when they run out of supplies —
   now end cleanly with their reason in the log instead of failing with
   "requestFinish is not a function".
+- The bank API now includes Rust-backed `shouldBankNow` and
+  `isDisposableGatherJunk` rules, plus `waitBankReady` through the existing
+  bank-readiness wait. The junk rule recognizes common bank loot, the
+  selected random-event casket and content-defined event leftovers.
+
+### Not in this release
+
+- `purgePackAtBank` and `withdrawCoins` need multi-step bank transactions
+  beyond the existing native operations. `bankPace` and `bankPaceTicks`
+  carry rs2b0t's randomized internal pacing, which is not carried into
+  native compatibility. These helpers await the compat rearchitecture (T2).
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 

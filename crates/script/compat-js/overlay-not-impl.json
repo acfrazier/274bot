@@ -54,24 +54,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/bank/bankRules.js:shouldBankNow",
-    "module": "api/bank/bankRules.js",
-    "selector": "shouldBankNow",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_rules.js:11",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/bankRules.js:isDisposableGatherJunk",
-    "module": "api/bank/bankRules.js",
-    "selector": "isDisposableGatherJunk",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_rules.js:15",
-    "async": false
-  },
-  {
     "id": "not-impl:api/bank/bankSort.js:sortBank",
     "module": "api/bank/bankSort.js",
     "selector": "sortBank",

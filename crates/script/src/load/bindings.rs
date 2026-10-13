@@ -201,6 +201,51 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
+
+    runtime
+        .register_function(
+            "__rs2b0t_should_bank_now",
+            |args: &[serde_json::Value]| {
+                let strategy = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let state = args.get(1).and_then(|v| v.as_object());
+                let number = |key: &str| {
+                    state
+                        .and_then(|state| state.get(key))
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.0)
+                };
+                Ok(serde_json::Value::Bool(
+                    crate::periodic_bank::should_bank_now(
+                        crate::periodic_bank::parse_bank_strategy(strategy),
+                        number("lootCount"),
+                        number("itemsThreshold"),
+                        number("minutesSinceLastBank"),
+                        number("minutesThreshold"),
+                    ),
+                ))
+            },
+        )
+        .map_err(|e| format!("register should bank now: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_is_disposable_gather_junk",
+            |args: &[serde_json::Value]| {
+                let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let id = args
+                    .get(1)
+                    .and_then(|v| v.as_i64())
+                    .and_then(|id| i32::try_from(id).ok())
+                    .unwrap_or(-1);
+                Ok(serde_json::Value::Bool(
+                    api::content::is_disposable_gather_junk(
+                        crate::supply_v2::random_event_casket_id(),
+                        name,
+                        id,
+                    ),
+                ))
+            },
+        )
+        .map_err(|e| format!("register disposable gather junk: {e}"))?;
     runtime
         .register_function("__rs2b0t_channel_encode", |args: &[serde_json::Value]| {
             let value = args.first().unwrap_or(&serde_json::Value::Null);
