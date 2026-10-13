@@ -1212,24 +1212,26 @@ mod tests {
         c.set_iface_mut(
             inv_id,
             IfTypeMut {
-                // Stored ids are obj id + 1: two of obj 60 and one foreign
-                // obj 849 occupy every posted slot of this 3-slot fixture.
-                link_obj_type: Some(vec![61, 61, 850]),
+                // Stored ids are obj id + 1: one of obj 60 and two foreign
+                // objs (849 and 851) occupy every posted slot of this
+                // 3-slot fixture. Foreign occupancy is unbounded: a count
+                // of one product in this full pack passes.
+                link_obj_type: Some(vec![61, 850, 852]),
                 link_obj_number: Some(vec![1, 1, 1]),
                 ..Default::default()
             },
         );
         let s = snap(&mut c);
         assert_eq!(s.inventory_size(), 3, "the fixture posts a 3-slot pack");
-        let full = Proof::ItemIdInFullPack { id: 60, count: 2 };
+        let full = Proof::ItemIdInFullPack { id: 60, count: 1 };
         assert!(
             full.check(&s, None),
-            "a full pack with one foreign slot still holds the product count"
+            "a full pack with two foreign slots still holds the product"
         );
-        assert_eq!(full.name(), "has_item_id(60)>=2_in_full_pack");
+        assert_eq!(full.name(), "has_item_id(60)>=1_in_full_pack");
         assert!(
-            !Proof::ItemIdInFullPack { id: 60, count: 3 }.check(&s, None),
-            "the foreign slot is not product, so a full-of-product count fails"
+            !Proof::ItemIdInFullPack { id: 60, count: 2 }.check(&s, None),
+            "the foreign slots are not product, so a two-product count fails"
         );
 
         c.set_iface_mut(
@@ -1237,7 +1239,7 @@ mod tests {
             IfTypeMut {
                 // One posted slot empty (stored id 0): the same product
                 // count in a non-full pack must not satisfy the arm.
-                link_obj_type: Some(vec![61, 61, 0]),
+                link_obj_type: Some(vec![61, 850, 0]),
                 link_obj_number: Some(vec![1, 1, 0]),
                 ..Default::default()
             },

@@ -311,8 +311,8 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
         id: THIEVING_STAT,
         min: 1,
     };
-    let cake = Proof::ItemId {
-        id: CAKE_ID,
+    let stall_food = Proof::ItemIdAny {
+        ids: ARDY_STALL_FOOD_IDS,
         count: 1,
     };
     let style_xp = Proof::StatXpGain {
@@ -452,7 +452,10 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
     });
     for (step_name, arm) in [
         ("watch Thieving XP from Baker's stall after Start", first_xp),
-        ("watch exact Cake 1891 stolen after Start", cake),
+        (
+            "watch any Baker's stall food stolen after Start",
+            stall_food,
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }

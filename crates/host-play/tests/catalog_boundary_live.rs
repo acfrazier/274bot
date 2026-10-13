@@ -6999,7 +6999,7 @@ export default class NativeStop extends LoopingBot {{
             Some(HILL_GIANT_BANK_PREPARED_RESTOCK)
         );
 
-        let tele = CoreCase::parse("green_dragon_tele_prepared").unwrap();
+        let tele = CoreCase::parse("green_dragon_tele").unwrap();
         let tele_spec = combat_spec(tele).unwrap();
         assert_eq!(tele_spec.food_count, 0);
         assert_eq!(tele_spec.loot, CombatLoot::None);
@@ -7126,14 +7126,14 @@ export default class NativeStop extends LoopingBot {{
             false,
             false,
         );
-        validate_case_baseline(CoreCase::GreenDragonTelePrepared, &tele).unwrap();
+        validate_case_baseline(CoreCase::GreenDragonTele, &tele).unwrap();
         let mut fed = tele.clone();
         fed.item_ids.insert(r289_item_id("lobster"), 1);
-        assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fed).is_err());
+        assert!(validate_case_baseline(CoreCase::GreenDragonTele, &fed).is_err());
         let mut fragile = tele.clone();
         fragile.effective_levels.insert("hitpoints".into(), 1);
         assert!(
-            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fragile).is_err(),
+            validate_case_baseline(CoreCase::GreenDragonTele, &fragile).is_err(),
             "the prepared teleport rejects the death-prone upstream 1-HP regression seed"
         );
         let mut outside_configured_panic = tele.clone();
@@ -7141,8 +7141,7 @@ export default class NativeStop extends LoopingBot {{
             .effective_levels
             .insert("hitpoints".into(), 99);
         assert!(
-            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &outside_configured_panic)
-                .is_err(),
+            validate_case_baseline(CoreCase::GreenDragonTele, &outside_configured_panic).is_err(),
             "full 99/99 HP would bypass Escape and take the direct BankRun"
         );
 
@@ -7266,7 +7265,7 @@ export default class NativeStop extends LoopingBot {{
             (CoreCase::GreenDragonPotionsPrepared, potions),
             (CoreCase::GreenDragonBankPrepared, green_bank.clone()),
             (CoreCase::GreenDragonBankDefaultPrepared, green_bank),
-            (CoreCase::GreenDragonTelePrepared, tele),
+            (CoreCase::GreenDragonTele, tele),
             (CoreCase::FireGiantBankPrepared, fire_bank),
             (CoreCase::MossGiantPrepared, moss),
             (CoreCase::HillGiantBankPrepared, hill),
@@ -7699,8 +7698,8 @@ export default class NativeStop extends LoopingBot {{
     }
 
     #[test]
-    fn prepared_green_teleport_rejects_a_death_recovery_cycle() {
-        let case = CoreCase::GreenDragonTelePrepared;
+    fn green_teleport_rejects_a_death_recovery_cycle() {
+        let case = CoreCase::GreenDragonTele;
         let spec = combat_spec(case).unwrap();
         let bank = combat_bank_spec(case).unwrap();
         let levels = [
@@ -12667,15 +12666,15 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
 
-        // --- green_dragon_tele: Varrock Magic XP + land, then Edgeville restock.
-        // A south-walk booth without the teleport cannot qualify.
+        // --- green_dragon_tele (the prepared fixture): Varrock Magic XP +
+        // land, then Edgeville restock. A south-walk booth without the
+        // teleport cannot qualify.
         let case = CoreCase::parse("green_dragon_tele").expect("green tele registered");
         assert_eq!(case.card_name(), "GreenDragon");
         let mut baseline = bank_obs(
             case,
             GREEN_DRAGON_FIELD,
             &[
-                (r289_item_id("lobster"), GREEN_DRAGON_FOOD),
                 (r289_item_id("lawrune"), VARROCK_TELE_LAW),
                 (r289_item_id("airrune"), VARROCK_TELE_AIR),
                 (r289_item_id("firerune"), VARROCK_TELE_FIRE),
@@ -12689,12 +12688,19 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         baseline.equipment_ids.clear();
-        baseline
-            .equipment_ids
-            .insert(r289_item_id("rune_scimitar"), 1);
-        baseline
-            .equipment_ids
-            .insert(r289_item_id("antidragonbreathshield"), 1);
+        for id in [
+            r289_item_id("rune_chainbody"),
+            r289_item_id("rune_platelegs"),
+            r289_item_id("rune_full_helm"),
+            r289_item_id("rune_scimitar"),
+            r289_item_id("antidragonbreathshield"),
+        ] {
+            baseline.equipment_ids.insert(id, 1);
+        }
+        for stat in ["attack", "strength", "defence", "hitpoints"] {
+            baseline.levels.insert(stat.into(), 99);
+        }
+        baseline.effective_levels.insert("hitpoints".into(), 70);
         baseline.levels.insert("magic".into(), VARROCK_TELE_MAGIC);
         baseline
             .effective_levels
