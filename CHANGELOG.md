@@ -10,11 +10,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Bank trips no longer stop the bot with "bank deposit failed: bank closed
   before the transfer settled" or "bank item table unavailable". The bot's
   automatic run toggle could press the run button while the bank window was
-  open, and the game's run button closes any open window, so the bank shut
-  under the deposit. The run button now waits until no window is open. If the
-  bank still closes mid-trip (for example a server interrupt), the bot opens
-  it again from the same booth or banker and finishes the deposit or
-  withdrawal, up to two extra opens per trip, instead of stopping.
+  open, and the game's run button closes the open bank or dialogue window,
+  so the bank shut under the deposit. The run button now waits until no bank
+  or dialogue window is open. If the bank still closes mid-transfer, the bot
+  opens it again from the same booth or banker and finishes what it was
+  doing, counting what was already deposited, with up to two extra opens for
+  each deposit or withdrawal; if the bank keeps closing past that, the
+  transfer still stops the bot with the message above.
 
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 
