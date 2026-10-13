@@ -16,6 +16,9 @@ import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+import importlib.util
+import json
+import os
 
 if sys.version_info < (3, 11):
     sys.stderr.write(
@@ -56,6 +59,8 @@ class Policy:
     externals: set[str]
     allowed: dict[tuple[str, str], Allow]
     path: Path
+    migrations: dict[str, dict] = field(default_factory=dict)
+    configurations: list[dict] = field(default_factory=list)
 
     @property
     def known(self) -> set[str]:
@@ -69,31 +74,95 @@ def load_toml(path: Path) -> dict:
 
 def load_policy(path: Path) -> Policy:
     raw = load_toml(path)
+    require_fields(raw, {"schema_version", "workspace", "allow", "migration", "configuration"}, "policy")
+    if type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
+        raise ValueError("policy schema_version must be 1")
     ws = raw.get("workspace") or {}
-    members = {str(m) for m in ws.get("members") or []}
-    externals = {str(e) for e in ws.get("externals") or []}
-    if not members:
-        raise SystemExit(f"policy error: {path} has no [workspace].members")
+    require_fields(ws, {"members", "externals"}, "workspace")
+    members = string_set(ws.get("members"), "workspace.members")
+    externals = string_set(ws.get("externals", []), "workspace.externals")
+    if not members or members & externals:
+        raise ValueError("policy members must be nonempty and disjoint from externals")
     allowed: dict[tuple[str, str], Allow] = {}
-    for i, row in enumerate(raw.get("allow") or [], start=1):
-        src = str(row.get("from") or "")
-        dst = str(row.get("to") or "")
-        kinds = {str(k) for k in row.get("kinds") or []}
-        reason = str(row.get("reason") or "").strip()
-        if not src or not dst or not kinds or not reason:
-            raise SystemExit(f"policy error: {path} [[allow]] #{i} needs from, to, kinds, reason")
-        if src not in members:
-            raise SystemExit(
-                f"policy error: {path} [[allow]] #{i} from={src!r} is not a workspace member"
-            )
-        if dst not in members and dst not in externals:
-            raise SystemExit(
-                f"policy error: {path} [[allow]] #{i} to={dst!r} is not a member or external"
-            )
-        allow = allowed.setdefault((src, dst), Allow())
-        allow.kinds |= kinds
-        allow.reasons.append(reason)
-    return Policy(members=members, externals=externals, allowed=allowed, path=path)
+    for row in raw.get("allow", []):
+        require_fields(row, {"from", "to", "kinds", "reason"}, "allow")
+        src, dst = row.get("from"), row.get("to")
+        kinds = string_set(row.get("kinds"), "allow.kinds")
+        reason = nonblank(row.get("reason"), "allow.reason")
+        if src not in members or dst not in members | externals or not kinds or not kinds <= KINDS:
+            raise ValueError(f"invalid allow endpoints/kinds: {row}")
+        if (src, dst) in allowed:
+            raise ValueError(f"duplicate allow pair: {src} -> {dst}")
+        allowed[src, dst] = Allow(kinds, [reason])
+    migrations = {}
+    triples = set()
+    for row in raw.get("migration", []):
+        require_fields(row, {"id", "from", "to", "kind", "owner", "consumers", "reason", "removal_endpoint"}, "migration", exact=True)
+        identity = nonblank(row["id"], "migration.id")
+        triple = row["from"], row["to"], row["kind"]
+        if identity in migrations or triple in triples:
+            raise ValueError(f"duplicate migration identity/edge: {identity}")
+        if row["from"] not in members or row["to"] not in members | externals or row["kind"] not in KINDS:
+            raise ValueError(f"invalid migration endpoints/kind: {identity}")
+        if row["owner"] not in OWNERS or row["removal_endpoint"] not in ENDPOINTS:
+            raise ValueError(f"unknown migration owner/endpoint: {identity}")
+        consumers = string_set(row["consumers"], "migration.consumers")
+        if not consumers or any("*" in item for item in consumers):
+            raise ValueError(f"migration needs exact consumers: {identity}")
+        nonblank(row["reason"], "migration.reason")
+        if row["kind"] in allowed.get(triple[:2], Allow()).kinds:
+            raise ValueError(f"migration duplicated as permanent allowance: {identity}")
+        migrations[identity] = row
+        triples.add(triple)
+    configurations = raw.get("configuration", [])
+    ids = set()
+    for row in configurations:
+        require_fields(row, {"id", "packages", "features", "default_features", "dev", "status", "owner", "forbidden_features", "optional_dependencies"}, "configuration", exact=True)
+        identity = nonblank(row["id"], "configuration.id")
+        if identity in ids:
+            raise ValueError(f"duplicate configuration: {identity}")
+        ids.add(identity)
+        packages = string_set(row["packages"], "configuration.packages")
+        if not packages or not packages <= members:
+            raise ValueError(f"unknown configuration packages: {identity}")
+        for key in ("features", "forbidden_features", "optional_dependencies"):
+            string_set(row[key], f"configuration.{key}")
+            if key != "features" and any(
+                len(item.split("/")) != 2 or item.split("/")[0] not in members
+                or not item.split("/")[1] for item in row[key]
+            ):
+                raise ValueError(f"configuration {key} must name known package/item: {identity}")
+        if type(row["default_features"]) is not bool or type(row["dev"]) is not bool:
+            raise ValueError(f"configuration flags must be boolean: {identity}")
+        if row["status"] not in {"enforced", "pending"} or row["owner"] not in OWNERS:
+            raise ValueError(f"configuration status/owner invalid: {identity}")
+        if row["status"] == "pending" and identity != "native-only":
+            raise ValueError("only the named native-only target may be pending")
+    return Policy(members, externals, allowed, path, migrations, configurations)
+
+
+KINDS = frozenset({"normal", "target", "optional", "dev", "build"})
+OWNERS = frozenset({"T1", "T2", "T3", "T4", "T5"})
+ENDPOINTS = frozenset({"T3.1", "T3.3", "T5.1"})
+
+
+def require_fields(value: dict, fields: set[str], label: str, *, exact: bool = False) -> None:
+    if not isinstance(value, dict) or set(value) - fields or (exact and set(value) != fields):
+        raise ValueError(f"{label}: unknown or missing fields")
+
+
+def nonblank(value, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}: expected nonblank string")
+    return value
+
+
+def string_set(value, label: str) -> set[str]:
+    if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip() for v in value):
+        raise ValueError(f"{label}: expected string array")
+    if len(value) != len(set(value)):
+        raise ValueError(f"{label}: duplicate entries")
+    return set(value)
 
 
 def spec_map(spec) -> dict:
@@ -103,7 +172,7 @@ def spec_map(spec) -> dict:
         return {"version": spec}
     if isinstance(spec, dict):
         return spec
-    return {}
+    raise ValueError("unsupported Cargo dependency specification")
 
 
 def package_name(manifest: dict, fallback: str) -> str:
@@ -170,7 +239,7 @@ def resolve_dep_name(
     if merged.get("workspace") is True:
         lookup = workspace_dep_lookup(ws_deps, key)
         if not lookup:
-            return None, False
+            raise ValueError(f"missing workspace dependency: {key}")
         # Cargo forbids optional on [workspace.dependencies]. Do not inherit
         # it. Member tables use { workspace = true, optional = true }.
         for field in ("path", "package"):
@@ -181,7 +250,10 @@ def resolve_dep_name(
     path_value = merged.get("path")
     if path_value:
         base = workspace_root if inherited_path else crate_dir
-        resolved = resolve_path_package(base / str(path_value), by_path)
+        dependency_path = (base / str(path_value)).resolve()
+        if not dependency_path.is_relative_to(workspace_root.resolve()):
+            raise ValueError(f"dependency path escapes data root: {key}")
+        resolved = resolve_path_package(dependency_path, by_path)
         if resolved:
             name = resolved
         return name, True
@@ -209,15 +281,19 @@ def discover_workspace(root: Path) -> tuple[dict, dict[str, Path], dict[Path, st
         by_path[root.resolve()] = root_name
     for rel in members:
         crate_dir = (root / str(rel)).resolve()
+        if not crate_dir.is_relative_to(root.resolve()):
+            raise ValueError(f"workspace member escapes data root: {rel}")
         crate_manifest = crate_dir / "Cargo.toml"
         if not crate_manifest.is_file():
             raise SystemExit(f"workspace member {rel!r} has no Cargo.toml")
         name = package_name(load_toml(crate_manifest), crate_dir.name)
+        if name in by_name or crate_dir in by_path:
+            raise ValueError(f"duplicate workspace member: {name}")
         by_name[name] = crate_dir
         by_path[crate_dir] = name
     ws_deps = (workspace.get("workspace") or {}).get("dependencies") or {}
     if not isinstance(ws_deps, dict):
-        ws_deps = {}
+        raise ValueError("unsupported workspace dependencies")
     return workspace, by_name, by_path, ws_deps
 
 
@@ -249,11 +325,7 @@ def collect_edges(
 
 
 def kind_permitted(actual: str, allowed: set[str]) -> bool:
-    if actual in allowed:
-        return True
-    # Required target is cfg-gated required production, same as normal.
-    # optional-only must not accept a required target edge.
-    return actual == "target" and "normal" in allowed
+    return actual in allowed
 
 
 def check_graph(root: Path, policy: Policy) -> list[str]:
@@ -286,6 +358,10 @@ def check_graph(root: Path, policy: Policy) -> list[str]:
             )
 
     edges = collect_edges(by_name, by_path, ws_deps, root)
+    migration_triples = {(r["from"], r["to"], r["kind"]) for r in policy.migrations.values()}
+    actual_triples = {(e.src, e.dst, e.kind) for e in edges}
+    for triple in sorted(migration_triples - actual_triples):
+        errors.append(f"stale migration allowance: {triple}")
 
     seen: set[tuple[str, str, str]] = set()
     for edge in edges:
@@ -293,6 +369,8 @@ def check_graph(root: Path, policy: Policy) -> list[str]:
         if key in seen:
             continue
         seen.add(key)
+        if key in migration_triples:
+            continue
         if edge.dst not in policy.known:
             errors.append(
                 f"disallowed crate edge: {edge.src} -> {edge.dst} ({edge.kind})"
@@ -317,6 +395,40 @@ def check_graph(root: Path, policy: Policy) -> list[str]:
                 f"but policy allows only {sorted(allow.kinds)}. {reasons} "
                 f"Edit {policy.path} and docs/architecture.md if the kind should change."
             )
+    return errors
+
+
+def trusted_helper(name: str):
+    """Load a helper adjacent to this executable, never from candidate H."""
+    path = Path(__file__).resolve().with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"architecture_{name}", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"missing trusted helper: {name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_graph_tree(root: Path) -> list[str]:
+    return trusted_helper("graph").check_tree(sys.modules[__name__], root)
+
+
+def check_graph_transition(base: Path, candidate: Path) -> list[str]:
+    return trusted_helper("graph").check_transition(sys.modules[__name__], base, candidate)
+
+
+def check_tree(root: Path) -> list[str]:
+    errors = check_graph_tree(root)
+    for name in ("ownership", "inventories"):
+        errors.extend(trusted_helper(name).check_tree(root))
+    return errors
+
+
+def check_transition(base: Path, candidate: Path) -> list[str]:
+    errors = check_graph_transition(base, candidate)
+    for name in ("ownership", "inventories"):
+        errors.extend(trusted_helper(name).check_transition(base, candidate))
     return errors
 
 
@@ -395,7 +507,7 @@ def write_workspace(
 
 
 def write_policy(path: Path, members: list[str], allows: list[dict], externals: list[str] | None = None) -> None:
-    lines = ["[workspace]", f"members = [{', '.join(repr(m) for m in members)}]"]
+    lines = ["schema_version = 1", "[workspace]", f"members = [{', '.join(repr(m) for m in members)}]"]
     if externals:
         lines.append(f"externals = [{', '.join(repr(e) for e in externals)}]")
     lines.append("")
@@ -424,8 +536,20 @@ def expect_clean(label: str, errors: list[str]) -> list[str]:
 
 
 def run_self_test() -> int:
+    # During an E -> E' qualification the old fixture code drives E' APIs.
+    # This selector is only used by tests; admission never reads it.
+    subject = sys.modules[__name__]
+    proposed_root = os.environ.get("F0_ARCH_TEST_CHECKER_ROOT")
+    if proposed_root:
+        path = Path(proposed_root) / "tools/architecture/check.py"
+        spec = importlib.util.spec_from_file_location("architecture_proposed_selftest", path)
+        subject = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = subject
+        spec.loader.exec_module(subject)
+    check_graph = subject.check_graph
+    load_policy = subject.load_policy
     failures: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="274bot-arch-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="274bot-arch-", dir=repo_root_from_script() / "target") as tmp:
         base = Path(tmp)
 
         # 1. Reverse / inappropriate production edge.
@@ -667,14 +791,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exercise disposable fixtures; do not read the product workspace",
     )
+    parser.add_argument("--base", type=Path, help="data baseline for a diagnostic comparison; admission uses trusted_gate.py")
     args = parser.parse_args(argv)
+    if args.self_test:
+        (repo_root_from_script() / "target").mkdir(exist_ok=True)
     if args.self_test:
         return run_self_test()
 
     root = (args.root or repo_root_from_script()).resolve()
-    policy_path = (args.policy or (Path(__file__).resolve().parent / "policy.toml")).resolve()
+    policy_path = (args.policy or root / "tools/architecture/policy.toml").resolve()
     policy = load_policy(policy_path)
-    errors = check_graph(root, policy)
+    if args.base is not None:
+        errors = check_transition(args.base.resolve(), root)
+    else:
+        errors = check_tree(root) if args.policy is None else check_graph(root, policy)
     if errors:
         sys.stderr.write("architecture check failed:\n")
         for err in errors:

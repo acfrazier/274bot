@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # GitHub runners have no canonical 289 engine/content tree, so the build
@@ -94,9 +97,147 @@ jobs:
 
   architecture:
     name: architecture
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch pinned client submodule as data
+        run: |
+          set -euo pipefail
+          expected_module_keys="$(printf '%s\n' 'submodule.vendor/fr-client-rust.branch' 'submodule.vendor/fr-client-rust.path' 'submodule.vendor/fr-client-rust.url')"
+          actual_module_keys="$(git config --no-includes -f .gitmodules --name-only --list | sort)"
+          test "$actual_module_keys" = "$expected_module_keys"
+          test "$(git config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.path)" = "vendor/fr-client-rust"
+          test "$(git config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.url)" = "https://github.com/acfrazier/FR-client-bothost.git"
+          test "$(git config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.branch)" = "multirev-bh-modular"
+          GIT_ALLOW_PROTOCOL=https git submodule update --init -- vendor/fr-client-rust
+      - name: Fetch protected records and enforcement
+        id: protected
+        env:
+          ARCH_RECORDS_URL: ${{ vars.ARCH_RECORDS_URL }}
+          ARCH_RECORDS_REF: ${{ vars.ARCH_RECORDS_REF }}
+          ARCH_ENFORCEMENT_URL: ${{ vars.ARCH_ENFORCEMENT_URL }}
+          ARCH_ENFORCEMENT_REF: ${{ vars.ARCH_ENFORCEMENT_REF }}
+          ARCH_TARGET_BRANCH: ${{ github.ref_name }}
+          ARCH_BASE_SHA: ${{ github.event.before }}
+          ARCH_BASE_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          : "${ARCH_RECORDS_URL:?set the protected ARCH_RECORDS_URL variable}"
+          : "${ARCH_RECORDS_REF:?set the protected ARCH_RECORDS_REF variable}"
+          : "${ARCH_ENFORCEMENT_URL:?set the protected ARCH_ENFORCEMENT_URL variable}"
+          : "${ARCH_ENFORCEMENT_REF:?set the protected ARCH_ENFORCEMENT_REF variable}"
+          : "${ARCH_TARGET_BRANCH:?target branch is unavailable}"
+          : "${ARCH_BASE_SHA:?event base SHA is unavailable}"
+
+          records_root="$RUNNER_TEMP/f0-architecture-records"
+          enforcement_root="$RUNNER_TEMP/f0-architecture-enforcement"
+          base_root="$RUNNER_TEMP/f0-architecture-base"
+          git clone --quiet --no-checkout "$ARCH_RECORDS_URL" "$records_root"
+          git -C "$records_root" fetch --quiet origin "$ARCH_RECORDS_REF"
+          records_sha="$(git -C "$records_root" rev-parse FETCH_HEAD)"
+          git -C "$records_root" checkout --quiet --detach "$records_sha"
+
+          target_ref="refs/heads/$ARCH_TARGET_BRANCH"
+          target_key="${target_ref#refs/heads/}"
+          records_target="$records_root/targets/$target_key"
+          test -f "$records_target/gate.json"
+          python3 - "$records_target/gate.json" "$records_target/receipts.jsonl" > "$RUNNER_TEMP/f0-architecture-pins" <<'PY'
+          import json
+          import sys
+          state = json.load(open(sys.argv[1], encoding="utf-8"))
+          bootstrap = state["bootstrap"]
+          with open(sys.argv[2], encoding="utf-8") as stream:
+              receipts = [json.loads(line) for line in stream if line.strip()]
+          if receipts:
+              latest = receipts[-1]
+              enforcement_sha = latest["activated_enforcement_sha"]
+              bundle_digest = latest["activated_bundle_digest"]
+              runtime_pin = latest["activated_runtime_pin"]
+          else:
+              enforcement_sha = bootstrap["enforcement_sha"]
+              bundle_digest = bootstrap["bundle_digest"]
+              runtime_pin = bootstrap["runtime_pin"]
+          python_pin = runtime_pin.split(";", 1)[0]
+          if not python_pin.startswith("python="):
+              raise SystemExit("trusted runtime pin has no exact Python version")
+          print(enforcement_sha)
+          print(bundle_digest)
+          print(runtime_pin)
+          print(python_pin[len("python="):])
+          PY
+          mapfile -t pins < "$RUNNER_TEMP/f0-architecture-pins"
+          test "${#pins[@]}" -eq 4
+          enforcement_sha="${pins[0]}"
+          bundle_digest="${pins[1]}"
+          runtime_pin="${pins[2]}"
+          python_version="${pins[3]}"
+
+          git clone --quiet --no-checkout "$ARCH_ENFORCEMENT_URL" "$enforcement_root"
+          git -C "$enforcement_root" fetch --quiet origin "$ARCH_ENFORCEMENT_REF"
+          enforcement_ref_sha="$(git -C "$enforcement_root" rev-parse FETCH_HEAD)"
+          git -C "$enforcement_root" checkout --quiet --detach "$enforcement_sha"
+
+          git clone --quiet --no-checkout "$ARCH_BASE_REPOSITORY_URL" "$base_root"
+          git -C "$base_root" fetch --quiet origin "$ARCH_BASE_SHA"
+          git -C "$base_root" checkout --quiet --detach "$ARCH_BASE_SHA"
+          expected_module_keys="$(printf '%s\n' 'submodule.vendor/fr-client-rust.branch' 'submodule.vendor/fr-client-rust.path' 'submodule.vendor/fr-client-rust.url')"
+          actual_module_keys="$(git -C "$base_root" config --no-includes -f .gitmodules --name-only --list | sort)"
+          test "$actual_module_keys" = "$expected_module_keys"
+          test "$(git -C "$base_root" config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.path)" = "vendor/fr-client-rust"
+          test "$(git -C "$base_root" config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.url)" = "https://github.com/acfrazier/FR-client-bothost.git"
+          test "$(git -C "$base_root" config --no-includes -f .gitmodules --get-all submodule.vendor/fr-client-rust.branch)" = "multirev-bh-modular"
+          GIT_ALLOW_PROTOCOL=https git -C "$base_root" submodule update --init -- vendor/fr-client-rust
+          target_head_sha="$(git ls-remote "$ARCH_BASE_REPOSITORY_URL" "$target_ref" | cut -f1)"
+          test -n "$target_head_sha"
+          mkdir -p "$RUNNER_TEMP/f0-architecture-evidence"
+
+          {
+            echo "records_root=$records_target"
+            echo "records_sha=$records_sha"
+            echo "enforcement_root=$enforcement_root"
+            echo "enforcement_sha=$enforcement_sha"
+            echo "bundle_digest=$bundle_digest"
+            echo "runtime_pin=$runtime_pin"
+            echo "enforcement_ref_sha=$enforcement_ref_sha"
+            echo "base_root=$base_root"
+            echo "target_ref=$target_ref"
+            echo "target_head_sha=$target_head_sha"
+            echo "python_version=$python_version"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: ${{ steps.protected.outputs.python_version }}
+          check-latest: false
+      - name: Install hash-pinned rust-analyzer
+        env:
+          ARCH_RUST_ANALYZER_URL: ${{ vars.ARCH_RUST_ANALYZER_URL }}
+        run: |
+          set -euo pipefail
+          : "${ARCH_RUST_ANALYZER_URL:?publish the pinned rust-analyzer artifact and set ARCH_RUST_ANALYZER_URL}"
+          parser_dir="$RUNNER_TEMP/f0-rust-analyzer"
+          mkdir -p "$parser_dir"
+          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
+          echo "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3  $parser_dir/rust-analyzer.gz" | sha256sum --check -
+          gzip -dc "$parser_dir/rust-analyzer.gz" > "$parser_dir/rust-analyzer"
+          echo "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49  $parser_dir/rust-analyzer" | sha256sum --check -
+          chmod 0755 "$parser_dir/rust-analyzer"
+          echo "$parser_dir" >> "$GITHUB_PATH"
+          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
+          sandbox_dir="$RUNNER_TEMP/f0-probe-sandbox"
+          mkdir -p "$sandbox_dir"
+          curl --fail --location --retry 3 --output "$sandbox_dir/bubblewrap.deb" \
+            https://security.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
+          echo "2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094  $sandbox_dir/bubblewrap.deb" | sha256sum --check -
+          dpkg-deb -x "$sandbox_dir/bubblewrap.deb" "$sandbox_dir"
+          echo "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71  $sandbox_dir/usr/bin/bwrap" | sha256sum --check -
+          test "$("$sandbox_dir/usr/bin/bwrap" --version)" = "bubblewrap 0.9.0"
+          echo "$sandbox_dir/usr/bin" >> "$GITHUB_PATH"
       - name: Install pinned flatc
         env:
           FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
@@ -110,18 +251,100 @@ jobs:
           cargo_flatbuffers="${cargo_flatbuffers#=}"
           test -n "$cargo_flatbuffers"
           test "$(flatc --version)" = "flatc version $cargo_flatbuffers"
-      - name: Check crate architecture
+      - name: Run pinned architecture gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BASE_SHA: ${{ github.event.before }}
+          EVENT_HEAD_SHA: ${{ github.sha }}
+          RECORDS_ROOT: ${{ steps.protected.outputs.records_root }}
+          RECORDS_SHA: ${{ steps.protected.outputs.records_sha }}
+          ENFORCEMENT_ROOT: ${{ steps.protected.outputs.enforcement_root }}
+          ENFORCEMENT_SHA: ${{ steps.protected.outputs.enforcement_sha }}
+          BUNDLE_DIGEST: ${{ steps.protected.outputs.bundle_digest }}
+          RUNTIME_PIN: ${{ steps.protected.outputs.runtime_pin }}
+          ENFORCEMENT_REF_SHA: ${{ steps.protected.outputs.enforcement_ref_sha }}
+          BASE_ROOT: ${{ steps.protected.outputs.base_root }}
+          TARGET_REF: ${{ steps.protected.outputs.target_ref }}
+          TARGET_HEAD_SHA: ${{ steps.protected.outputs.target_head_sha }}
         run: |
-          python3 --version
-          python3 tools/architecture/check.py
-          python3 tools/architecture/check.py --self-test
+          set -euo pipefail
+          mode=push
+          python --version
+          python "$ENFORCEMENT_ROOT/tools/architecture/trusted_gate.py" ci \
+            --records-root "$RECORDS_ROOT" \
+            --records-commit "$RECORDS_SHA" \
+            --records-ref-sha "$RECORDS_SHA" \
+            --enforcement-root "$ENFORCEMENT_ROOT" \
+            --enforcement-sha "$ENFORCEMENT_SHA" \
+            --bundle-digest "$BUNDLE_DIGEST" \
+            --runtime-pin "$RUNTIME_PIN" \
+            --enforcement-ref-sha "$ENFORCEMENT_REF_SHA" \
+            --target-ref "$TARGET_REF" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --base-root "$BASE_ROOT" \
+            --candidate-root "$GITHUB_WORKSPACE" \
+            --head-sha "$EVENT_HEAD_SHA" \
+            --evidence-root "$RUNNER_TEMP/f0-architecture-evidence" \
+            --mode "$mode" \
+            --base-sha "$EVENT_BASE_SHA" \
+            --target-head-sha "$TARGET_HEAD_SHA"
       - name: Check FlatBuffer bindings
         run: |
           generated="$(mktemp -d)"
           trap 'rm -rf "$generated"' EXIT
           flatc --rust -o "$generated" crates/script/schema/isolate.fbs
           diff -ru crates/script/schema/generated "$generated"
-
+  architecture_pr:
+    name: architecture (advisory PR lane)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - name: Install hash-pinned rust-analyzer
+        env:
+          ARCH_RUST_ANALYZER_URL: ${{ vars.ARCH_RUST_ANALYZER_URL }}
+        run: |
+          set -euo pipefail
+          : "${ARCH_RUST_ANALYZER_URL:?publish the pinned rust-analyzer artifact and set ARCH_RUST_ANALYZER_URL}"
+          parser_dir="$RUNNER_TEMP/f0-rust-analyzer"
+          mkdir -p "$parser_dir"
+          curl --fail --location --retry 3 --output "$parser_dir/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
+          echo "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3  $parser_dir/rust-analyzer.gz" | sha256sum --check -
+          gzip -dc "$parser_dir/rust-analyzer.gz" > "$parser_dir/rust-analyzer"
+          echo "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49  $parser_dir/rust-analyzer" | sha256sum --check -
+          chmod 0755 "$parser_dir/rust-analyzer"
+          echo "$parser_dir" >> "$GITHUB_PATH"
+          test "$("$parser_dir/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
+      - name: Install pinned flatc
+        env:
+          FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
+          FLATC_SHA256: 9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039
+        run: |
+          curl --fail --location --retry 3 --output /tmp/flatc.zip "$FLATC_URL"
+          echo "$FLATC_SHA256  /tmp/flatc.zip" | sha256sum --check -
+          unzip -q /tmp/flatc.zip -d /tmp/flatc
+          sudo install -m 0755 /tmp/flatc/flatc /usr/local/bin/flatc
+          cargo_flatbuffers="$(grep -F 'flatbuffers = { version = ' crates/script/Cargo.toml | cut -d '"' -f2)"
+          cargo_flatbuffers="${cargo_flatbuffers#=}"
+          test -n "$cargo_flatbuffers"
+          test "$(flatc --version)" = "flatc version $cargo_flatbuffers"
+      - name: Run candidate architecture checks (advisory only)
+        run: |
+          python3 --version
+          python3 tools/architecture/check.py --self-test
+          python3 tools/architecture/check.py
+      - name: Check FlatBuffer bindings
+        run: |
+          generated="$(mktemp -d)"
+          trap 'rm -rf "$generated"' EXIT
+          flatc --rust -o "$generated" crates/script/schema/isolate.fbs
+          diff -ru crates/script/schema/generated "$generated"
   test_lanes:
     name: test (${{ matrix.lane }})
     if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
