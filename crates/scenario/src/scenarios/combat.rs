@@ -12,6 +12,7 @@ pub(crate) use hill_giant::*;
 mod auto_fighter;
 pub(crate) use auto_fighter::*;
 mod rock_crab;
+use rock_crab::ROCK_CRAB_FIXTURE_LOADOUTS;
 pub(crate) use rock_crab::*;
 mod green_dragon;
 pub(crate) use green_dragon::*;
@@ -90,6 +91,8 @@ fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
         "HillGiant" => Some(HILL_GIANT_FIXTURE_LOADOUTS),
         "GreenDragon" => Some(GREEN_DRAGON_FIXTURE_LOADOUTS),
         "FireGiant" => Some(FIRE_GIANT_FIXTURE_LOADOUTS),
+        "RockCrab" => Some(ROCK_CRAB_FIXTURE_LOADOUTS),
+        "ArdyFighter" => Some(ARDY_FIGHTER_FIXTURE_LOADOUTS),
         _ => None,
     }
 }
@@ -1038,6 +1041,7 @@ fn combat_bank_scenario_with_preparation(
         "rock_crab_bank_seeded",
         "ardy_fighter_bank_seeded",
         "green_dragon_tele_prepared",
+        "green_dragon_tele",
     ];
     if !COMBAT_BANK_SKIPS_PREFIGHT_XP.contains(&name) {
         steps.push(bank_fletcher_watch(
@@ -1120,6 +1124,7 @@ fn remaining_prepared_combat_bank_scenario(
 }
 
 mod ardy_fighter;
+use ardy_fighter::ARDY_FIGHTER_FIXTURE_LOADOUTS;
 mod fire_giant;
 pub(crate) use ardy_fighter::*;
 use fire_giant::FIRE_GIANT_FOOD;
