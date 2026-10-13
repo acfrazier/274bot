@@ -347,6 +347,16 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
     let text = |i: usize| a(i).and_then(Value::as_str).unwrap_or("").to_string();
     Ok(match name {
         "sites" => dragon_sites(),
+        "enclaveTargetOptions" => json!(["both", "dragons", "demons"]),
+        "chasesTarget" => {
+            let style = text(0);
+            let key = text(1);
+            let blue_site = matches!(
+                key.as_str(),
+                "taverley-blue" | "heroes-blue" | "gutanoth-blue"
+            );
+            json!(chase(&style, flag(a(2)) || blue_site))
+        }
         "nextSafespot" => {
             let s = a(0);
             let (index, spots) = (num(field(s, "index")), num(field(s, "spots")));

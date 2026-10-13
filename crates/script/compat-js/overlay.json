@@ -64,14 +64,6 @@
     "declaration": "export const RANDOM_EVENT_CASKET_ID: number;"
   },
   {
-    "id": "banking-open-bank-access",
-    "module": "api/bank/Banking.js",
-    "selector": "$add",
-    "reason": "Post-freeze catalogs import openBankAccess from Banking; the host serves it as one Rust dispatch over the existing object/NPC bank openers, always resolving a promise.",
-    "runtime": "crates/script/src/shim/banking.js:66",
-    "declaration": "export function openBankAccess(dest: { access?: BankObjectAccess; npcAccess?: BankNpcAccess } | null, fallback: BankObjectAccess, log?: (m: string) => void): Promise<boolean>;"
-  },
-  {
     "id": "cooking-custom-location-reexport",
     "module": "api/cooking/CookLocations.js",
     "selector": "$add",
@@ -91,9 +83,9 @@
     "id": "prelude-taskbot",
     "module": "api/bot/Bot.js",
     "selector": "TaskBot",
-    "reason": "Host supplies a concrete task loop and public enqueue method instead of frozen protected task storage.",
-    "runtime": "crates/script/src/shim/modules.rs:184",
-    "declaration": "export class TaskBot extends LoopingBot { constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
+    "reason": "The prelude's existing task loop publishes the validated task label while it executes and clears it after the turn.",
+    "runtime": "crates/script/src/shim/modules.rs:201",
+    "declaration": "export class TaskBot extends LoopingBot { activeTaskName: string | null; constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
   },
   {
     "id": "prelude-treebot",

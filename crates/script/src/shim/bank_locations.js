@@ -42,6 +42,10 @@ export function bankUnlocked(bank) {
     });
 }
 
+export function lockedBankAt(tile) {
+    return tileBank(globalThis.__rs2b0t_locked_bank_at(tile));
+}
+
 /** Air ranking is synchronous; only the reachable selector asks the worker. */
 export function nearestBank(here) {
     return tileBank(globalThis.__rs2b0t_nearest_bank(here));

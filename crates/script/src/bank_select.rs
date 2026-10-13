@@ -65,6 +65,28 @@ pub(crate) fn bank_unlocked(bank: &NamedBank) -> bool {
     eligible(bank, PREFERENCES.get())
 }
 
+/// Frozen `lockedBankAt`: the first same-plane bank within Chebyshev radius
+/// 14 whose account requirements are not met.
+pub(crate) fn locked_bank_at(tile: WorldTile) -> Value {
+    BANKS.with(|banks| {
+        banks
+            .borrow()
+            .banks()
+            .iter()
+            .find(|bank| {
+                within_locked_bank_radius(bank.tile, tile) && !eligible(bank, PREFERENCES.get())
+            })
+            .map(bank_value)
+            .unwrap_or(Value::Null)
+    })
+}
+
+fn within_locked_bank_radius(bank: WorldTile, tile: WorldTile) -> bool {
+    let dx = (i64::from(bank.x) - i64::from(tile.x)).abs();
+    let dz = (i64::from(bank.z) - i64::from(tile.z)).abs();
+    bank.level == tile.level && dx.max(dz) <= 14
+}
+
 pub(crate) fn bank_value(bank: &NamedBank) -> Value {
     let mut value = json!({"name": bank.name, "tile": {"x": bank.tile.x, "z": bank.tile.z, "level": bank.tile.level}});
     if let Some(definition) = bank.definition {
@@ -281,6 +303,38 @@ mod tests {
     use super::*;
     use crate::task_clock::InstantTaskClock;
     use std::time::Duration;
+    #[test]
+    fn locked_bank_radius_matches_game_tile_distance() {
+        let bank = WorldTile {
+            x: 100,
+            z: 200,
+            level: 0,
+        };
+        assert!(within_locked_bank_radius(
+            bank,
+            WorldTile {
+                x: 114,
+                z: 186,
+                level: 0,
+            }
+        ));
+        assert!(!within_locked_bank_radius(
+            bank,
+            WorldTile {
+                x: 115,
+                z: 200,
+                level: 0,
+            }
+        ));
+        assert!(!within_locked_bank_radius(
+            bank,
+            WorldTile {
+                level: 1,
+                ..bank
+            }
+        ));
+    }
+
     #[test]
     fn dropped_bank_selection_settles_at_its_clock_bound_with_captured_eligible_air_fallback() {
         observed::on_reset();

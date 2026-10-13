@@ -12,6 +12,7 @@ use serde_json::json;
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_bank_locations", catalog)?;
     callback_v8::install(runtime, "__rs2b0t_bank_unlocked", unlocked)?;
+    callback_v8::install(runtime, "__rs2b0t_locked_bank_at", locked_at)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_bank", nearest)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_banks", ranked)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_usable_bank", usable)?;
@@ -74,6 +75,19 @@ fn unlocked<'s>(
             ),
         )
         .into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn locked_at<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let tile = origin(scope, args.get(0))?;
+        serde_v8::to_v8(scope, bank_select::locked_bank_at(tile))
+            .map_err(|e| callback_v8::type_error(scope, &format!("locked bank result: {e}")))
     })();
     callback_v8::finish(scope, rv, result);
 }

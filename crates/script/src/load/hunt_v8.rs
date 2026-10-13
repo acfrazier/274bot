@@ -22,6 +22,7 @@ use serde_json::Value;
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_hunt", hunt_callback)?;
     callback_v8::install(runtime, "__rs2b0t_hunt_logic", logic_callback)?;
+    callback_v8::install(runtime, "__rs2b0t_enclave_targets", enclave_targets)?;
     callback_v8::install(runtime, "__rs2b0t_hunt_dose", dose_callback)
 }
 
@@ -53,6 +54,62 @@ fn logic_callback<'s>(
         )),
     };
     callback_v8::finish(scope, rv, result);
+}
+
+/// Frozen `enclaveTargets(site, mode)`: the Rust adapter owns the enclave
+/// decision and returns the caller's original object for every other site.
+fn enclave_targets<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = enclave_target_value(scope, args.get(0), args.get(1));
+    callback_v8::finish(scope, rv, result);
+}
+
+fn enclave_target_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    site: v8::Local<'s, v8::Value>,
+    mode: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let key = callback_v8::get(scope, site, "key")?;
+    if !key.strict_equals(callback_v8::string(scope, "gutanoth-blue")) {
+        return Ok(site);
+    }
+    let demons = mode.strict_equals(callback_v8::string(scope, "demons"));
+    let dragons = mode.strict_equals(callback_v8::string(scope, "dragons"));
+    let global = scope.get_current_context().global(scope);
+    let object = callback_v8::get(scope, global.into(), "Object")?;
+    let assign = callback_v8::get(scope, object, "assign")?;
+    let clone = v8::Object::new(scope);
+    let target: v8::Local<v8::Value> = clone.into();
+    callback_v8::call(scope, assign, object, &[target, site], "Object.assign")?;
+
+    let target = if demons { "Greater demon" } else { "Blue dragon" };
+    let bones = if demons { "Ashes" } else { "Dragon bones" };
+    let target_name = callback_v8::string(scope, target).into();
+    set_enclave_property(scope, clone, "target", target_name)?;
+    let bones_name = callback_v8::string(scope, bones).into();
+    set_enclave_property(scope, clone, "bones", bones_name)?;
+    if demons || dragons {
+        let also_hunt = v8::undefined(scope).into();
+        set_enclave_property(scope, clone, "alsoHunt", also_hunt)?;
+    } else {
+        let greater_demon = callback_v8::string(scope, "Greater demon").into();
+        let also_hunt = v8::Array::new_with_elements(scope, &[greater_demon]).into();
+        set_enclave_property(scope, clone, "alsoHunt", also_hunt)?;
+    }
+    Ok(clone.into())
+}
+
+fn set_enclave_property<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Object>,
+    name: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, ()> {
+    let name = callback_v8::string(scope, name);
+    callback_v8::catching(scope, |s| target.set(s, name.into(), value)).map(|_| ())
 }
 
 /// Frozen `doseToDrink(count, doses)`: the smallest held dose form, the
