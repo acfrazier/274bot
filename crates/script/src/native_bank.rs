@@ -6320,6 +6320,118 @@ mod tests {
         );
     }
 
+    /// HOTFIX-0.2.1 review r2 N2: a two-slot capacity delta whose first
+    /// Deposit-1 (shrimp) applied before the close. The reopen credits that
+    /// freed row once: one of two rows is not the delta, so the anchovy row
+    /// still goes out, and the delta completes only once that row has left.
+    #[test]
+    fn capacity_two_slots_credit_the_row_applied_before_the_close_once() {
+        let shrimp = 317;
+        let anchovy = 321;
+        let net = 303;
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let net_row = || {
+            slotted(
+                item(net, "Small fishing net", 1, ItemContainer::Inventory),
+                0,
+            )
+        };
+        let shrimp_row = || slotted(item(shrimp, "Raw shrimps", 1, ItemContainer::Inventory), 1);
+        let anchovy_row = || {
+            slotted(
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Inventory),
+                2,
+            )
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(vec![net_row(), shrimp_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![
+                deposit_side_row(shrimp, "Raw shrimps", 1, 1),
+                deposit_side_row(anchovy, "Raw anchovies", 1, 2),
+            ],
+        );
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::DepositCapacity {
+                    keep: Arc::from([net]),
+                    slots: 2,
+                },
+                partial_ok: false,
+                access: Some(Arc::clone(&access)),
+            },
+        );
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+
+        // The shrimp row left the pack together with the close.
+        snapshot.seed_inventory(vec![net_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let lost = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(lost.is_pending(), "{lost:?}");
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(shrimp, "Raw shrimps", 1, ItemContainer::Bank)]),
+            vec![deposit_side_row(anchovy, "Raw anchovies", 1, 2)],
+        );
+        let resumed = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            resumed.is_pending(),
+            "one freed row is not the requested two: {resumed:?}"
+        );
+        assert!(matches!(
+            acknowledge(&mut ledger, 3),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == anchovy
+        ));
+
+        snapshot.seed_inventory(vec![net_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            3,
+            Some(vec![
+                item(shrimp, "Raw shrimps", 1, ItemContainer::Bank),
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        let settled = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            "the shrimp row and the anchovy row are the two slots: {settled:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
     /// An exact withdrawal (held target 2) applied before the close: the new
     /// session reads the held count again and owes nothing, so no second
     /// Withdraw-X goes out.
