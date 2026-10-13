@@ -746,6 +746,10 @@ export const Banking: {
     }): Promise<boolean>;
 };
 export const RANDOM_EVENT_CASKET_ID: number;
+export function openBankAccess(dest: {
+    access?: BankObjectAccess;
+    npcAccess?: BankNpcAccess;
+} | null, fallback: BankObjectAccess, log?: (m: string) => void): Promise<boolean>;
 
 }
 
@@ -1007,6 +1011,9 @@ export class AbstractBot {
     on(event: string, cb: (payload: unknown) => unknown): void;
     log(message: string): void;
     get settings(): SettingsView;
+    get delegated(): boolean;
+    requestFinish(reason: string): void;
+    bindFinish(sink: (reason: string) => void): void;
 }
 export class LoopingBot extends AbstractBot {
     loop(): number | void | Promise<number | void>;

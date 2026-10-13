@@ -61,6 +61,34 @@ export function parseBankStrategy(label) {
     return 'off';
 }
 
+// Rust picks the destination's banker conversation over its object
+// access (or the caller's fallback booth) and runs that one opener.
+export async function openBankAccess(dest, fallback, log) {
+    const object = (a) =>
+        a
+            ? {
+                  name: String(a.name ?? 'Bank booth'),
+                  op: String(a.op ?? 'Use-quickly'),
+                  open_first: a.openFirst
+                      ? { name: String(a.openFirst.name), op: String(a.openFirst.op) }
+                      : null,
+              }
+            : null;
+    const npc = dest?.npcAccess;
+    const out = await runMachine(
+        'bank_open_access',
+        {
+            access: object(dest?.access),
+            npc_access: npc
+                ? { name: String(npc.name), op: String(npc.op), choose: String(npc.choose ?? '') }
+                : null,
+            fallback: object(fallback),
+        },
+        { log: typeof log === 'function' ? log : undefined },
+    );
+    return out.kind === 'done' && out.value === true;
+}
+
 export const Banking = new Proxy(
     {
         async open(opts = {}) {

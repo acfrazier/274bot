@@ -3,6 +3,19 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.1` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+### Scripts
+
+- The current rs2b0t Thiever loads and banks again, as do the other bank
+  scripts that open a bank the same way (Alcher, GemCutter, HerbCleaner,
+  LeatherCrafter, PotionMaker, RoguesPurse and Superheater). They failed
+  to start with "does not provide an export named 'openBankAccess'".
+- Scripts that finish on their own — BankFletcher when the bank runs out
+  of logs, and the many others that stop when they run out of supplies —
+  now end cleanly with their reason in the log instead of failing with
+  "requestFinish is not a function".
+
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
 ### Gatherer
