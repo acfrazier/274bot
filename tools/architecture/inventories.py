@@ -319,8 +319,44 @@ KNOWN_SCALAR_TYPES = frozenset(
     }
 )
 
-TRANSPARENT_TYPE_CONTAINERS = frozenset(
-    {"Option", "Result", "ControlFlow", "Poll", "Wrapping", "Reverse", "PhantomData"}
+# The standard-library items behind the scalar/transparent leaf names, keyed by
+# name with their std/core module.  A field type takes the no-ownership
+# shortcut only when its path resolves to one of these exact items, or is a
+# bare prelude/primitive name that nothing in its module shadows.  A
+# workspace type with the same name is classified from its definition.
+STD_TRANSPARENT_TYPE_MODULES = {
+    "Option": "option",
+    "Result": "result",
+    "ControlFlow": "ops",
+    "Poll": "task",
+    "Wrapping": "num",
+    "Reverse": "cmp",
+    "PhantomData": "marker",
+}
+STD_LEAF_TYPE_PATHS = frozenset(
+    {
+        *(
+            f"{root}::{module}::{name}"
+            for root in ("std", "core")
+            for name, module in STD_TRANSPARENT_TYPE_MODULES.items()
+        ),
+        *(f"{root}::primitive::{name}" for root in ("std", "core") for name in KNOWN_SCALAR_TYPES),
+    }
+)
+PRELUDE_LEAF_TYPE_NAMES = KNOWN_SCALAR_TYPES | {"Option", "Result"}
+
+# Crate names that a workspace member or a dependency key may not take: the
+# sysroot crates and path keywords.  A workspace crate with such a name would
+# shadow the standard library in seam resolution.
+RESERVED_CRATE_NAMES = (
+    frozenset({"std", "core", "alloc", "proc_macro", "test"}) | FOREIGN_PATH_RESERVED_ROOTS
+)
+DEPENDENCY_TABLES = (
+    "dependencies",
+    "dev-dependencies",
+    "build-dependencies",
+    "dev_dependencies",
+    "build_dependencies",
 )
 
 FRONTEND_CRATE_NAMES = frozenset({"api", "host", "host_play", "nav", "script", "vault"})
@@ -377,6 +413,20 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, An
     return result
 
 
+def _traverses_symlink(root: Path, relative: Path) -> bool:
+    """True if any component of `relative` below `root` is a symlink.
+
+    Inventory reads never follow a symlink inside the tree, so every file the
+    checker consumes is the tree's own committed bytes.
+    """
+    component = root
+    for part in relative.parts:
+        component = component / part
+        if component.is_symlink():
+            return True
+    return False
+
+
 def _load_foreign_types(
     root: Path, workspace_crates: frozenset[str]
 ) -> tuple[dict[str, str], list[str]]:
@@ -389,11 +439,8 @@ def _load_foreign_types(
     """
     path = root / FOREIGN_TYPES_RELATIVE
     label = FOREIGN_TYPES_RELATIVE.as_posix()
-    component = root
-    for part in FOREIGN_TYPES_RELATIVE.parts:
-        component = component / part
-        if component.is_symlink():
-            return {}, [f"foreign types: {label} must not traverse a symlink"]
+    if _traverses_symlink(root, FOREIGN_TYPES_RELATIVE):
+        return {}, [f"foreign types: {label} must not traverse a symlink"]
     if not path.exists():
         return {}, []
     if not path.is_file():
@@ -461,20 +508,58 @@ def _workspace_crates(root: Path) -> tuple[dict[str, _WorkspaceCrate], list[str]
     absent root manifest declares no workspace crates; the graph checker
     refuses such a tree.  A member without a library target is still a
     workspace crate: data rows may not name it and resolving into it fails.
+
+    Seam resolution reads a path's first segment as a workspace crate when one
+    has that name, so the name must mean that crate everywhere in the
+    workspace: a member may not take a sysroot or keyword name, and no manifest
+    may declare a dependency of that name that is not the member itself (the
+    vendored `client` path dependency, for example).  No dependency key may be
+    a reserved name either.  Each case fails the whole tree.
     """
     if not (root / "Cargo.toml").exists() and not (root / "Cargo.toml").is_symlink():
         return {}, []
 
     def manifest(relative: Path) -> dict[str, Any]:
         path = root / relative
-        if path.is_symlink() or not path.is_file():
+        if _traverses_symlink(root, relative):
+            raise _InventoryError(f"{relative.as_posix()} must not traverse a symlink")
+        if not path.is_file():
             raise _InventoryError(f"{relative.as_posix()} must be a regular file")
         with path.open("rb") as stream:
             return tomllib.load(stream)
 
+    def dependency_tables(
+        document: dict[str, Any], label: str
+    ) -> Iterator[tuple[str, dict[str, Any]]]:
+        tables: list[tuple[str, Any]] = [
+            (kind, document[kind]) for kind in DEPENDENCY_TABLES if kind in document
+        ]
+        targets = document.get("target", {})
+        if not isinstance(targets, dict):
+            raise _InventoryError(f"{label}: unsupported target table")
+        for platform, target in sorted(targets.items()):
+            if not isinstance(target, dict):
+                raise _InventoryError(f"{label}: unsupported target table")
+            tables.extend(
+                (f"target.{platform}.{kind}", target[kind])
+                for kind in DEPENDENCY_TABLES
+                if kind in target
+            )
+        workspace_table = document.get("workspace")
+        if isinstance(workspace_table, dict) and "dependencies" in workspace_table:
+            tables.append(("workspace.dependencies", workspace_table["dependencies"]))
+        for kind, table in tables:
+            if not isinstance(table, dict):
+                raise _InventoryError(f"{label}: unsupported [{kind}] table")
+            yield kind, table
+
+    manifests: list[tuple[Path, str, dict[str, Any]]] = []
+    member_directories: dict[str, Path] = {}
+
     crates: dict[str, _WorkspaceCrate] = {}
     try:
         workspace = manifest(Path("Cargo.toml"))
+        manifests.append((Path("."), "Cargo.toml", workspace))
         table = workspace.get("workspace", {})
         members = table.get("members", []) if isinstance(table, dict) else None
         if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
@@ -489,6 +574,8 @@ def _workspace_crates(root: Path) -> tuple[dict[str, _WorkspaceCrate], list[str]
                 raise _InventoryError(f"Cargo.toml: unsupported workspace member {directory.as_posix()}")
             relative = normalized / "Cargo.toml"
             member = manifest(relative)
+            if normalized != Path("."):
+                manifests.append((normalized, relative.as_posix(), member))
             package = member.get("package")
             lib = member.get("lib", {})
             if (
@@ -507,13 +594,41 @@ def _workspace_crates(root: Path) -> tuple[dict[str, _WorkspaceCrate], list[str]
             edition = package.get("edition")
             if edition == {"workspace": True} and isinstance(inherited, dict):
                 edition = inherited.get("edition")
+            if name in RESERVED_CRATE_NAMES:
+                raise _InventoryError(
+                    f"{relative.as_posix()}: workspace crate name {name} is reserved"
+                )
             if name in crates:
                 raise _InventoryError(f"Cargo.toml: duplicate workspace crate {name}")
+            if _traverses_symlink(root, lib_root):
+                raise _InventoryError(f"{lib_root.as_posix()} must not traverse a symlink")
             crates[name] = _WorkspaceCrate(
                 relative.as_posix(),
                 lib_root.as_posix() if (root / lib_root).is_file() else None,
                 edition,
             )
+            member_directories[name] = normalized
+        for directory, label, document in manifests:
+            for kind, table in dependency_tables(document, label):
+                for key, spec in sorted(table.items()):
+                    crate_name = key.replace("-", "_")
+                    if crate_name in RESERVED_CRATE_NAMES:
+                        raise _InventoryError(f"{label}: [{kind}] {key} is a reserved crate name")
+                    if crate_name not in crates:
+                        continue
+                    if isinstance(spec, dict) and spec.get("workspace") is True:
+                        # Inherits the root [workspace.dependencies] entry,
+                        # which this loop checks on its own.
+                        continue
+                    path = spec.get("path") if isinstance(spec, dict) else None
+                    target = (
+                        _normalize_source_path(directory / path) if isinstance(path, str) else None
+                    )
+                    if target != member_directories[crate_name]:
+                        raise _InventoryError(
+                            f"{label}: [{kind}] {key} is not workspace crate {crate_name}; "
+                            "a workspace crate may not share its name with another crate"
+                        )
     except (OSError, UnicodeError, RecursionError, tomllib.TOMLDecodeError, _InventoryError) as error:
         return {}, [f"workspace crates: {error}"]
     return crates, []
@@ -660,6 +775,8 @@ def _check_rust_editions(root: Path) -> list[str]:
         Path("crates/frontend-core/Cargo.toml"),
     ):
         try:
+            if _traverses_symlink(root, relative):
+                raise OSError("symlinked manifest is unsupported")
             with (root / relative).open("rb") as stream:
                 manifest = tomllib.load(stream)
         except (OSError, tomllib.TOMLDecodeError) as error:
@@ -677,12 +794,15 @@ def _read_rust_files(root: Path, executable: str) -> tuple[dict[str, dict[str, A
     roots = (SCRIPT_SRC_RELATIVE, SCRIPT_TESTS_RELATIVE)
     for relative_root in roots:
         directory = root / relative_root
+        if _traverses_symlink(root, relative_root):
+            errors.append(f"{relative_root.as_posix()}: symlinked Rust input is unsupported")
+            continue
         if not directory.is_dir():
             errors.append(f"missing Rust source tree: {relative_root.as_posix()}")
             continue
         for path in sorted(directory.rglob("*.rs")):
             relative = path.relative_to(root).as_posix()
-            if path.is_symlink():
+            if _traverses_symlink(root, path.relative_to(root)):
                 errors.append(f"{relative}: symlinked Rust input is unsupported")
                 continue
             try:
@@ -694,7 +814,7 @@ def _read_rust_files(root: Path, executable: str) -> tuple[dict[str, dict[str, A
             parsed[relative] = {"source": source, "tree": tree}
     for relative in SCRIPT_AUX_RELATIVE:
         path = root / relative
-        if path.is_symlink():
+        if _traverses_symlink(root, relative):
             errors.append(f"{relative.as_posix()}: symlinked Rust input is unsupported")
             continue
         try:
@@ -711,11 +831,13 @@ def _read_frontend_files(
     parsed: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     directory = root / FRONTEND_SRC_RELATIVE
+    if _traverses_symlink(root, FRONTEND_SRC_RELATIVE):
+        return {}, [f"{FRONTEND_SRC_RELATIVE.as_posix()}: symlinked Rust input is unsupported"]
     if not directory.is_dir():
         return {}, [f"missing Rust source tree: {FRONTEND_SRC_RELATIVE.as_posix()}"]
     for path in sorted(directory.rglob("*.rs")):
         relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
+        if _traverses_symlink(root, path.relative_to(root)):
             errors.append(f"{relative}: symlinked Rust input is unsupported")
             continue
         try:
@@ -759,7 +881,8 @@ class _CrateSources(Mapping[str, dict[str, Any]]):
     """Rust files under one workspace crate, parsed when a module first needs them.
 
     Only the production module tree of a loaded crate is parsed; a file the
-    parser adapter rejects fails only the crate that reaches it.
+    parser adapter rejects fails only the crate that reaches it.  No path
+    component below the tree root may be a symlink.
     """
 
     def __init__(self, root: Path, executable: str, directory: Path) -> None:
@@ -768,7 +891,7 @@ class _CrateSources(Mapping[str, dict[str, Any]]):
         base = root / directory
         self._files = (
             frozenset(path.relative_to(root).as_posix() for path in base.rglob("*.rs"))
-            if base.is_dir()
+            if not _traverses_symlink(root, directory) and base.is_dir()
             else frozenset()
         )
         self._parsed: dict[str, dict[str, Any]] = {}
@@ -787,7 +910,7 @@ class _CrateSources(Mapping[str, dict[str, Any]]):
             raise KeyError(relative)
         if relative not in self._parsed:
             path = self._root / relative
-            if path.is_symlink():
+            if _traverses_symlink(self._root, Path(relative)):
                 raise _InventoryError(f"{relative}: symlinked Rust input is unsupported")
             try:
                 source = path.read_text(encoding="utf-8")
@@ -1442,6 +1565,14 @@ def _type_ownership(
     generic_names: frozenset[str] = frozenset(),
     allow_generic: bool = False,
 ) -> tuple[bool, bool]:
+    """Return (owns, borrows) for a field type.
+
+    An owned-container leaf name counts as owning, whatever defines it.  Any
+    other path, including a std scalar or transparent-container name, is
+    classified by `resolve_type`, which decides whether the path is that std
+    item or a type with its own definition.  Generic arguments are always
+    visited.
+    """
     owned = False
     borrowed = False
 
@@ -1465,9 +1596,7 @@ def _type_ownership(
                     if not behind_reference:
                         owned = True
                         inside_known_owner = True
-                elif name in KNOWN_SCALAR_TYPES or name in TRANSPARENT_TYPE_CONTAINERS:
-                    pass
-                elif name in generic_names:
+                elif len(segments) == 1 and name in generic_names:
                     if not behind_reference and not allow_generic:
                         raise _InventoryError(
                             f"{path}::{owner}: unresolved generic field ownership ({name})"
@@ -2035,6 +2164,33 @@ def _seam_records(
             return (kind, origin[0], origin[1])
         return resolved
 
+    def std_leaf_type(module_path: tuple[str, ...], segments: tuple[str, ...]) -> bool:
+        """Whether a path that names no workspace or registered type is a std leaf.
+
+        The path, after the module's own `use` renames, must be one of the
+        exact std/core items in STD_LEAF_TYPE_PATHS, or a bare prelude or
+        primitive name that no import names and no glob of an unindexed module
+        could shadow.  Anything else stays an unresolved field type.
+        """
+        target = segments
+        followed: set[str] = set()
+        while target[0] in module_imports.get(module_path, {}):
+            local_name = target[0]
+            imported = module_imports[module_path][local_name]
+            if local_name in followed or len(imported) != 1:
+                return False
+            followed.add(local_name)
+            target = next(iter(imported)) + target[1:]
+        if "::".join(target) in STD_LEAF_TYPE_PATHS:
+            return True
+        if target != segments or len(target) != 1 or target[0] not in PRELUDE_LEAF_TYPE_NAMES:
+            return False
+        for glob_target in module_globs.get(module_path, []):
+            glob_module = resolve_path(module_path, glob_target)
+            if glob_module is None or glob_module[0] not in {"module", "type"}:
+                return False
+        return True
+
     type_classes: dict[tuple[tuple[str, ...], str], str] = {}
     type_definitions: dict[tuple[tuple[str, ...], str], dict[str, Any]] = {}
     resolving_types: set[tuple[tuple[str, ...], str]] = set()
@@ -2063,6 +2219,10 @@ def _seam_records(
             if segments and segments[-1] == "Self":
                 return classify_origin(origin)
             resolved = resolve_path(field_module, segments)
+            if (resolved is None or resolved[0] == "unresolved_import") and std_leaf_type(
+                field_module, segments
+            ):
+                return "scalar"
             if resolved is None:
                 raise _InventoryError(
                     f"{file_key}::{name}: unresolved public seam field type {'::'.join(segments)}"
@@ -2802,6 +2962,8 @@ def _validate_inventory_shape(raw: Any) -> tuple[dict[str, Any] | None, list[str
 
 def _load_inventory(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
     path = root / INVENTORY_RELATIVE
+    if _traverses_symlink(root, INVENTORY_RELATIVE):
+        return None, [f"inventory: {INVENTORY_RELATIVE.as_posix()} must not traverse a symlink"]
     try:
         raw = json.loads(
             path.read_text(encoding="utf-8"),
