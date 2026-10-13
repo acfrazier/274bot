@@ -31,7 +31,8 @@ fn settings_str_returns_selected_loadout_name() {
 
 #[test]
 fn loadout_combo_resolves_from_store_names_in_script_crate() {
-    use script::{resolve_setting_options, Loadout, LoadoutsStore};
+    use api::loadout::Loadout;
+    use script::{resolve_setting_options, LoadoutsStore};
 
     let dir = std::env::temp_dir().join(format!("274bot-loadouts-combo-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -64,7 +65,7 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
 
 #[test]
 fn isolate_accessors_read_slots_quantities_and_food() {
-    use script::Loadout;
+    use api::loadout::Loadout;
 
     let src = r#"
 import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
@@ -114,7 +115,7 @@ export default class T extends LoopingBot {
 // and uses a re-posted row when the same name is selected again.
 #[test]
 fn selected_loadout_resolves_blank_and_unique_trimmed_case_match() {
-    use script::Loadout;
+    use api::loadout::Loadout;
 
     let src = r#"
 import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
@@ -164,7 +165,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
-    use script::Loadout;
+    use api::loadout::Loadout;
 
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';

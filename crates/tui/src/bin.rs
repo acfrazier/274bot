@@ -345,17 +345,16 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
     }
 }
 
-fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
     settings
         .fixture_loadouts
         .unwrap_or(&[])
         .iter()
         .map(|row| {
-            row.carry
-                .iter()
-                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
-                    loadout.with_carry(item, qty)
-                })
+            row.carry.iter().fold(
+                api::loadout::Loadout::new(row.name),
+                |loadout, &(item, qty)| loadout.with_carry(item, qty),
+            )
         })
         .collect()
 }
@@ -368,7 +367,7 @@ fn live_card_starts(
     card: &script::JsCard,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
-    loadouts: Vec<script::Loadout>,
+    loadouts: Vec<api::loadout::Loadout>,
     pair_watch: &PairWatch,
 ) -> Result<Vec<PendingCatalogStart>, String> {
     match live_core {

@@ -159,7 +159,7 @@ pub(super) trait SettledStart {
         source: String,
         shape: script::LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[script::Loadout],
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String>;
 }
 
@@ -202,7 +202,7 @@ impl SettledStart for SlotScript {
         source: String,
         shape: script::LoadShape,
         siblings: Vec<(String, String)>,
-        loadouts: &[script::Loadout],
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
         self.start_load_with_loadouts(source, shape, siblings, loadouts)?;
         settle_start(self)

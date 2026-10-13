@@ -6,9 +6,8 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
-use script::{
-    unique_loadout_name, worn_slot_label, CarryEntry, Loadout, LoadoutsStore, WORN_SLOTS,
-};
+use api::loadout::{CarryEntry, Loadout, WORN_SLOTS};
+use script::{unique_loadout_name, worn_slot_label, LoadoutsStore};
 
 /// Mutable loadouts-pane state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -363,7 +362,8 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use script::{CarryEntry, Loadout, LoadoutsStore};
+    use api::loadout::{CarryEntry, Loadout};
+    use script::LoadoutsStore;
 
     use super::{
         format_carry, format_worn, parse_carry, parse_worn, LoadoutsKey, LoadoutsPane,

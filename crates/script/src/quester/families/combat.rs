@@ -13,13 +13,13 @@ use crate::combat::{
     PrayerMode, RaisedPrayers, RangedMode, SpellRef, Style, Tactic, Target, WalkGuard,
 };
 use crate::dialogue_outcome::DialogueOutcome;
-use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkAllow, WalkReceipt,
 };
 use crate::shim::InteractReq;
 use api::gather_methods::SceneRegionInput;
+use api::loadout::WORN_SLOTS;
 use api::selected::Truth;
 use serde::Deserialize;
 use std::sync::Arc;

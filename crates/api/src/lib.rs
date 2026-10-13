@@ -23,6 +23,8 @@ pub mod identity;
 pub mod interact;
 pub mod lifecycle;
 pub mod line_of_sight;
+pub mod loadout;
+pub mod local_state;
 pub mod named_banks;
 pub mod native_input;
 pub mod obj_names;

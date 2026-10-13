@@ -728,9 +728,9 @@ pub(super) fn compile_uncached(
         .loadouts
         .iter()
         .map(|(name, row)| {
-            let mut out = crate::loadouts_store::Loadout::new(format!("{}/{name}", document.id.0));
+            let mut out = api::loadout::Loadout::new(format!("{}/{name}", document.id.0));
             for (slot, item) in &row.worn {
-                if !crate::loadouts_store::is_worn_slot(slot) {
+                if !api::loadout::is_worn_slot(slot) {
                     return Err(CompileError::code("invalid-worn-slot"));
                 }
                 out = out.with_slot(slot, loadout_item_name(item)?);
@@ -1910,7 +1910,7 @@ mod tests {
             }
         }
         assert_eq!(loadout_items.len(), 3);
-        let row = crate::loadouts_store::Loadout::new("operator/protected")
+        let row = api::loadout::Loadout::new("operator/protected")
             .with_slot("hat", loadout_items[0].1.clone())
             .with_slot("unassigned", loadout_items[1].1.clone())
             .with_carry(loadout_items[2].1.clone(), 1);
@@ -2708,7 +2708,7 @@ mod tests {
         let potion = data.item_by_alias("4doseprayerrestore").unwrap();
         let display = potion.name.as_deref().unwrap();
         let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
-        store.upsert(crate::loadouts_store::Loadout::new("cook/cash").with_carry(display, 2));
+        store.upsert(api::loadout::Loadout::new("cook/cash").with_carry(display, 2));
         store.save().unwrap();
         let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
         let carry = &path.provisioning.loadout_carry["cook/cash"];

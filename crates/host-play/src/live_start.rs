@@ -22,7 +22,7 @@ pub struct PendingCatalogStart {
     pub bag: Option<Map<String, Value>>,
     pub siblings: Vec<(String, String)>,
     /// Scenario-owned loadouts for harness Start; empty uses operator store.
-    pub loadouts: Vec<script::Loadout>,
+    pub loadouts: Vec<api::loadout::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     pub compiled: Option<script::CompiledId>,
     /// Start was accepted; retain the card so a later Stop/Start can reuse it.
@@ -44,7 +44,7 @@ impl PendingCatalogStart {
         shape: script::LoadShape,
         bag: Option<Map<String, Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: Vec<script::Loadout>,
+        loadouts: Vec<api::loadout::Loadout>,
     ) -> Self {
         Self {
             slot: slot.into(),
@@ -151,7 +151,7 @@ pub fn fleet_catalog_starts(
     library: &mut script::JsLibrary,
     settings: &script::ScriptSettingsStore,
     inject: Option<&Map<String, Value>>,
-    loadouts: &[script::Loadout],
+    loadouts: &[api::loadout::Loadout],
 ) -> Result<Vec<PendingCatalogStart>, String> {
     let catalog = script::ScriptSource::Catalog;
     fleet

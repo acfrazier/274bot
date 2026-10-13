@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 
 use api::game_data::SelectedGameData;
 
-use crate::loadouts_store::{self, CarryEntry};
+use crate::loadouts_store;
+use api::loadout::CarryEntry;
 
 /// One caller-supplied carry row after typed validation.
 #[derive(Debug, Clone, PartialEq, Eq)]

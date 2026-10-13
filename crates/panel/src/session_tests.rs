@@ -5107,7 +5107,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     assert_eq!(bag.get("bankAtFood"), Some(&serde_json::json!(3.0)));
     assert_eq!(
         card.loadouts,
-        vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+        vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
         "harness Start must stash the fixture-owned loadout, not operator loadouts.json"
     );
 }

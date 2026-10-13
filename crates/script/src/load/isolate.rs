@@ -154,7 +154,7 @@ enum IsolateCmd {
     /// built on the isolate thread as V8 values (never JSON text).
     Settings(serde_json::Map<String, serde_json::Value>),
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
-    Loadouts(Vec<crate::loadouts_store::Loadout>),
+    Loadouts(Vec<api::loadout::Loadout>),
     /// The slot's recovery hints, which outlive this isolate.
     RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
     Pause,
@@ -620,7 +620,7 @@ impl LoadIsolate {
     }
 
     /// Post available loadouts before subsequent tick commands.
-    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+    pub fn post_loadouts(&self, loadouts: &[api::loadout::Loadout]) {
         self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
     }
     /// Deliver a broker batch without allowing it to grow the isolate command
