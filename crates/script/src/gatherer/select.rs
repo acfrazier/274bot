@@ -23,7 +23,7 @@ const OBSERVATION_WINDOW_TICKS: u64 = 100;
 const MAX_FISHING_APPROACHES: u8 = 8;
 
 /// Session-owned evidence and approach budgets, never evicted while selecting
-/// other placements. Only actual gathering progress renews approach budgets.
+/// other placements. Yield or a bounded runner survey renewal clears budgets.
 #[derive(Default)]
 pub struct FishingSurvey {
     placements: Vec<FishingPlacementSurvey>,

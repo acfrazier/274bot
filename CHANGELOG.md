@@ -3,13 +3,15 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## 0.2.1
+## [0.2.1] — unreleased — Beta 1 hotfix
 
 ### Gatherer
 
 - Fishing bots now look for another spot when a spot moves or temporarily
-  disappears, including spots outside their current view. A resource wait
-  running out no longer stops fishing with "resource-unavailable".
+  disappears, including spots outside their current view. A short resource wait
+  running out no longer stops fishing with "resource-unavailable". If no spot
+  appears for 800 ticks without a catch or XP, the bot stops with a clear failure.
+  While looking for a spot, it reports surveying rather than gathering.
 
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 
