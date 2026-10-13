@@ -485,7 +485,7 @@ fn catherby_first_tick_starts_the_no_yield_window_on_the_session_clock() {
     with_tick(&snapshot, &mut ledger, 10000, |tick| {
         gatherer.tick(tick).unwrap();
     });
-    assert_eq!(gatherer.last_yield_tick, 10000);
+    assert_eq!(gatherer.scratch.last_yield_tick, 10000);
     assert!(gatherer.failure.is_none());
     with_tick(&snapshot, &mut ledger, 10799, |tick| {
         gatherer.tick(tick).unwrap();
@@ -501,7 +501,7 @@ fn catherby_first_tick_starts_the_no_yield_window_on_the_session_clock() {
 fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     credit_catherby_yield(&mut gatherer, &snapshot, 100);
-    assert_eq!(gatherer.last_yield_tick, 100);
+    assert_eq!(gatherer.scratch.last_yield_tick, 100);
     snapshot.seed_inventory(
         vec![
             ItemView {
@@ -530,7 +530,7 @@ fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
         gatherer.observe_progress(tick)
     });
     assert_eq!(
-        gatherer.last_yield_tick, 899,
+        gatherer.scratch.last_yield_tick, 899,
         "a product delta without XP renews"
     );
     assert_eq!(
@@ -548,7 +548,7 @@ fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
                 tick,
             );
         });
-        assert_eq!(gatherer.last_yield_tick, now);
+        assert_eq!(gatherer.scratch.last_yield_tick, now);
         gatherer.needs_validate = false;
         with_tick(&snapshot, &mut ledger, now + 799, |tick| {
             gatherer.begin_idle(tick, false)

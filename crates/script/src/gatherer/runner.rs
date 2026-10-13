@@ -233,6 +233,8 @@ struct GatherScratch {
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
     bank_open_attempts: u8,
     bank_close_attempts: u8,
+    /// Last tick a catch or XP was credited; bounds fishing surveys.
+    last_yield_tick: u64,
 }
 
 pub struct Gatherer {
@@ -256,7 +258,6 @@ pub struct Gatherer {
     bank_label: Arc<str>,
     trips: u16,
     last_gameplay_tick: u64,
-    last_yield_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
     death: crate::native::death::DeathLatch,
@@ -313,7 +314,6 @@ impl Gatherer {
             bank_label: Arc::from("—"),
             trips: 0,
             last_gameplay_tick: 0,
-            last_yield_tick: 0,
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
             death,
@@ -1272,7 +1272,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
-                self.last_yield_tick = tick.cx.evidence().tick;
+                self.scratch.last_yield_tick = tick.cx.evidence().tick;
                 self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
                 self.retained.yielded = self.yielded;
@@ -1288,7 +1288,7 @@ impl Gatherer {
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
-            self.last_yield_tick = tick.cx.evidence().tick;
+            self.scratch.last_yield_tick = tick.cx.evidence().tick;
             self.wait_until = None;
         }
         let target = self.target.take();
@@ -1860,7 +1860,7 @@ impl Gatherer {
         }
         let fishing = self.settings().skill_kind() == Skill::Fishing;
         let progress_deadline = if fishing {
-            self.last_yield_tick
+            self.scratch.last_yield_tick
         } else {
             self.last_gameplay_tick
         }
@@ -2260,7 +2260,7 @@ impl Script for Gatherer {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.fence.tick == u64::MAX {
             // Start the first no-yield window on the session clock, not tick 0.
-            self.last_yield_tick = tick.cx.evidence().tick;
+            self.scratch.last_yield_tick = tick.cx.evidence().tick;
         }
         self.fence.observe(tick.cx.evidence().tick);
         if self.run != tick.cx.run() {
