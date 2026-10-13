@@ -446,9 +446,11 @@ or missing target, or a resource-approach walk. It still validates supplies and
 equipment before the next action. An already usable loc stand permits one gather
 click; targets requiring movement retain native navigation and its approach and
 danger-zone rules. Bank, recovery, disposal, refusal and failed-walk settlement
-remain fenced to a later tick. If no replacement target is available, terminal
-unavailability is confirmed on the next observation so a delayed yield packet is
-accounted before the runner blocks.
+remain fenced to a later tick. For fixed rocks and trees, terminal unavailability
+is confirmed on the next observation so a delayed yield packet is accounted
+before the runner blocks. An empty fishing actor view or expired fishing wait
+renews observation instead: content-authored fishing NPCs move and can temporarily
+change type, so neither condition proves permanent absence.
 
 ### Fishing bank returns
 
@@ -505,10 +507,40 @@ than the loaded map, so returning inside the gathering area alone does not
 prove that moving fishing spots are visible. For NPC-backed fishing, the
 selector derives observation stands from the content movement envelope and
 accumulates empty coverage for at most 100 gameplay ticks. It caps reapproaches
-at eight per method/placement; exhaustion follows existing Avoided/Exhausted
-selection instead of falsely declaring the spot absent. A live actor clears
-empty evidence but does not renew the approach budget; positive gather progress
-does. Rock and tree placement observation still uses the loaded map rectangle.
+at eight per method/placement; exhaustion follows Avoided/Exhausted selection
+instead of falsely declaring the spot absent. Positive gather progress or expiry
+of an unavailable-resource wait renews that budget. A live actor clears empty
+evidence but does not itself renew the approach budget. A cooldown or hazard in
+only the visible part of a movement envelope does not suppress observation of
+the rest. Rock and tree placement observation still uses the loaded map rectangle.
+
+### Catherby spot movement
+
+The ignored `gatherer_live::gatherer_fish_catherby_spot_moves` cell uses the native
+Gatherer with `fishing.saltfish.op1`, Site `fishing.catherby`, radius 32, and
+Bank/Nearest. It gives the account a net, sets its stats, and teleports it near
+the real shore before Start; it never spawns a fishing spot or a bank.
+`GATHERER_FISH_LEVEL` overrides the default Fishing level 76.
+
+The cell requires the same NPC instance to change tile at least twice, followed
+by fresh fishing XP after each move, with no Gatherer failure. Its normal deadline
+is 180 seconds for preparation plus 900 seconds for the movement witness.
+`GATHERER_FISH_SPOT_SOAK=1` instead observes the entire fixed 1,980-second window
+(180 seconds plus the existing 1,800-second power-cell allowance). Naturally
+occurring random events can be recorded but are not required.
+
+Receipts contain `fish_spot_moves` (instance index, old/new tiles, native
+observation tick, XP baseline, resumed-fishing tick) and `fish_status_sequence`
+(status changes with player tile and visible saltfish/hazard NPCs). Snapshot
+ticks and native observation ticks are separate clocks. Use the same isolated
+HOME, engine, navigation and evidence settings as the fishing bank-return cells:
+
+```sh
+LIVE=1 BOT_CPU=1 GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
+  cargo test -p host-play --features live-probe --test gatherer_live \
+  gatherer_fish_catherby_spot_moves -- --ignored --exact --nocapture
+```
+
 
 ## Walk Guard live cells and receipt replay
 
