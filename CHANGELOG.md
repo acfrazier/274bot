@@ -74,12 +74,13 @@ that visibly refuse. Where a fix is planned, the item says so.
 **Scripts and compatibility**
 
 - Some catalog scripts are dimmed in the script picker and can't be started:
-  AIOQuester (the built-in Quester replaces it); GatheringBot's Woodcutter,
-  Miner and Fisher, and EssMiner (the built-in Gatherer replaces them);
-  ArravSupplier, Barcrawl and RoguesPurse (they depend on rs2b0t's own quest
-  scripts); MarketMaker; BankSorter (until bank sorting is built in); JiveKQ
-  (its four-player setup isn't qualified yet); and one BrimhavenAgility
-  version that retries a broken plank instead of taking another route.
+  AIOQuester and Barcrawl (the built-in Quester replaces them, and Barcrawl
+  is planned for it); GatheringBot's Woodcutter, Miner and Fisher, and
+  EssMiner (the built-in Gatherer replaces them); MarketMaker and BankSorter
+  (both planned as built-in features); ArravSupplier and RoguesPurse (they use
+  rs2b0t quest helpers the bot doesn't provide yet); JiveKQ (its four-player
+  setup isn't qualified yet); and one BrimhavenAgility version that retries a
+  broken plank instead of taking another route.
 - Scripts that call these helpers the bot doesn't provide yet still refuse to
   start, or stop when they reach the helper:
   - Walking: `Traversal.remaining` and `requestRepath`.
