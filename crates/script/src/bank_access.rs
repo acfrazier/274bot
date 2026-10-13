@@ -887,6 +887,70 @@ impl Family for NpcAccess {
     }
 }
 
+/// Frozen `openBankAccess(dest, fallback, log)` (`api/bank/Banking.ts`):
+/// a bank behind a conversation opens through its banker, every other
+/// bank through the destination's own object access or the caller's
+/// fallback booth. The dispatch is the only decision; both branches are
+/// the existing access openers above, the same reuse `Banking.open`
+/// makes after its walk. Nothing walks here: frozen callers walk to the
+/// bank first, and the object branch answers `false` with no booth in
+/// the scene.
+#[derive(Default, Deserialize)]
+pub(crate) struct OpenAccessArgs {
+    #[serde(default)]
+    access: Option<AccessArgs>,
+    #[serde(default)]
+    npc_access: Option<NpcAccessArgs>,
+    #[serde(default)]
+    fallback: Option<AccessArgs>,
+}
+
+pub(crate) enum OpenAccess {
+    Object(Box<BankAccess>),
+    Npc(Box<NpcAccess>),
+}
+
+pub(crate) struct BankOpenAccess {
+    inner: OpenAccess,
+}
+
+impl Family for BankOpenAccess {
+    const NAME: &'static str = "bank_open_access";
+    /// One bank open at a time, whichever surface started it.
+    const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
+    const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
+    const CALLBACKS: &'static [&'static str] = &["log"];
+    /// Frozen calls `log?.()` without awaiting it.
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
+    /// The first verb joins the caller's tick, after any log line.
+    const KICK_ON_START: bool = true;
+    type Args = OpenAccessArgs;
+    type Output = bool;
+
+    fn begin(args: OpenAccessArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let inner = match args.npc_access {
+            Some(npc) => OpenAccess::Npc(Box::new(NpcAccess::new(npc, Some(LOG)))),
+            None => OpenAccess::Object(Box::new(BankAccess::new(
+                args.access.or(args.fallback).unwrap_or_else(|| AccessArgs {
+                    name: "Bank booth".into(),
+                    op: "Use-quickly".into(),
+                    open_first: None,
+                }),
+                Some(LOG),
+            ))),
+        };
+        Begin::Run(Self { inner })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        match &mut self.inner {
+            OpenAccess::Object(open) => open.run(cx),
+            OpenAccess::Npc(open) => open.run(cx),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1302,5 +1366,128 @@ mod tests {
             json!({ "name": "Shantay chest", "op": "Open" }),
         );
         assert_eq!(machine::take(npc), superseded(), "access supersedes npc");
+    }
+    /// `openBankAccess`: a destination with a banker conversation opens
+    /// through the banker even when an object access is also named.
+    #[test]
+    fn open_access_prefers_the_banker_over_object_access() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()])
+                .npcs(vec![banker()]);
+        });
+        let handle = start(
+            "bank_open_access",
+            json!({
+                "access": { "name": "Shantay chest", "op": "Open" },
+                "npc_access": { "name": "Banker", "op": "Bank", "choose": "access" },
+                "fallback": { "name": "Bank booth", "op": "Use-quickly" }
+            }),
+        );
+        assert_eq!(tick(), vec![talk()]);
+        assert_eq!(machine::take(handle), Take::Pending);
+    }
+
+    /// `openBankAccess`: the destination's own object access beats the
+    /// caller's fallback booth, and opening it answers `true`.
+    #[test]
+    fn open_access_uses_the_destination_access_before_the_fallback() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()]);
+        });
+        let handle = start(
+            "bank_open_access",
+            json!({
+                "access": { "name": "Shantay chest", "op": "Open" },
+                "fallback": { "name": "Bank booth", "op": "Use-quickly" }
+            }),
+        );
+        assert_eq!(tick(), vec![interact(&chest, "Open")]);
+        observed::post(2, |post| {
+            post.bank_open(true).bank_loaded(true);
+        });
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// `openBankAccess`: with no destination access the fallback access
+    /// is the opener.
+    #[test]
+    fn open_access_falls_back_when_the_destination_has_no_access() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()]);
+        });
+        let handle = start(
+            "bank_open_access",
+            json!({ "fallback": { "name": "Shantay chest", "op": "Open" } }),
+        );
+        assert_eq!(tick(), vec![interact(&chest, "Open")]);
+        observed::post(2, |post| {
+            post.bank_open(true).bank_loaded(true);
+        });
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// `openBankAccess` failure reports `false`: no banker ever appears
+    /// for a conversation bank.
+    #[test]
+    fn open_access_reports_false_when_the_banker_never_appears() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true).here(at(2852, 2952)).npcs(Vec::new());
+        });
+        let handle = start(
+            "bank_open_access",
+            json!({
+                "npc_access": { "name": "Banker", "op": "Bank", "choose": "access" },
+                "fallback": { "name": "Bank booth", "op": "Use-quickly" }
+            }),
+        );
+        for n in 1..=3 {
+            observed::post(n, |_| {});
+            assert!(tick().is_empty());
+            assert_eq!(machine::take(handle), Take::Pending, "attempt {n}");
+        }
+        observed::post(4, |_| {});
+        assert!(tick().is_empty());
+        done(handle, false);
+    }
+
+    /// `openBankAccess` rows share the one bank-open exclusive group: a
+    /// newer booth open supersedes a running dispatch row.
+    #[test]
+    fn a_newer_bank_open_supersedes_an_open_access_row() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()]);
+        });
+        let access = start(
+            "bank_open_access",
+            json!({ "access": { "name": "Shantay chest", "op": "Open" } }),
+        );
+        assert_eq!(tick(), vec![interact(&chest, "Open")]);
+        observed::post(2, |post| {
+            post.bank_open(true).bank_loaded(false);
+        });
+        let _open = start("bank_open", json!({ "mode": "open-booth" }));
+        assert_eq!(
+            machine::take(access),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded))
+        );
     }
 }
