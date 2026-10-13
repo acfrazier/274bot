@@ -1348,6 +1348,7 @@ impl Script for TellerScript {
                         DepositArgs {
                             products: Arc::from([LAW_RUNE_ID]),
                             keep: Arc::from([]),
+                            access: None,
                         },
                         &mut tick.cx,
                     ) {
@@ -1407,6 +1408,7 @@ impl Script for TellerScript {
                                 name: Arc::from("Law rune"),
                                 target: 1,
                             }]),
+                            access: None,
                         },
                         &mut tick.cx,
                     ) {

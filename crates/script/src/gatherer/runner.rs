@@ -381,6 +381,14 @@ impl Gatherer {
         self.set_event("bank trip due");
     }
 
+    /// The packed stand the current trip opened, for the transfer verbs'
+    /// re-open (`native_bank::MAX_BANK_REOPENS`).
+    fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
+        self.selected_bank
+            .as_ref()
+            .and_then(|selected| selected.access.clone())
+    }
+
     /// Act on trip admission at a boundary (design-bank-snapshot §2.4): a
     /// due trip starts, whether the bank memory planned it (`Trip`) or the
     /// trip is the lookup (`TripToLearn`); a shortage the bank showed this
@@ -597,6 +605,9 @@ impl Gatherer {
                         inventory.value,
                     ),
                     keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
+                    // The stand this trip opened: a session lost mid-deposit
+                    // is re-opened from it instead of blocking the run.
+                    access: self.selected_access(),
                 };
                 match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Deposit(handle),
@@ -641,6 +652,7 @@ impl Gatherer {
                 }
                 let args = bank::WithdrawArgs {
                     withdrawals: Arc::clone(withdrawals),
+                    access: self.selected_access(),
                 };
                 match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Withdraw(handle),

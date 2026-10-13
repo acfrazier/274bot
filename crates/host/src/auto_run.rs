@@ -63,10 +63,22 @@ pub fn auto_run_ready(ingame: bool, scene_state: i32) -> bool {
     ingame && scene_state == 2
 }
 
+/// The run orb may be pressed only while no modal is open. The engine's
+/// run-on button script begins with `if_close`
+/// (`interface_controls/scripts/player_controls.rs2:34-35`), and the
+/// controls tab stays visible under a modal (`Player.ts:2126-2128`), so a
+/// press with the bank or a dialogue open closes it: the bank runs
+/// `closebank` (`bank.rs2:16,25-27`) under the transfer in flight. The press
+/// waits; `run_on` stays false, so the next modal-free frame sends it.
+pub fn modal_free(main_modal_id: i32, chat_modal_id: i32, side_modal_id: i32) -> bool {
+    main_modal_id == -1 && chat_modal_id == -1 && side_modal_id == -1
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy, RUN_ENERGY_THRESHOLD,
+        auto_run_ready, auto_run_tick, modal_free, resolve_run_policy, RunPolicy,
+        RUN_ENERGY_THRESHOLD,
     };
     use api::run_policy::{RunEnergyMin, RunPolicyOverride};
 
@@ -77,6 +89,17 @@ mod tests {
         assert!(!auto_run_ready(true, 0));
         assert!(!auto_run_ready(true, 1));
         assert!(auto_run_ready(true, 2));
+    }
+
+    /// Any open modal root (main, chat or side) holds the orb press: the
+    /// engine's run button script `if_close`s whatever is open.
+    #[test]
+    fn modal_free_only_without_any_modal_root() {
+        assert!(modal_free(-1, -1, -1));
+        assert!(!modal_free(5292, -1, 2005), "an open bank (main + side)");
+        assert!(!modal_free(5292, -1, -1), "a main modal alone");
+        assert!(!modal_free(-1, 2459, -1), "a chat dialogue");
+        assert!(!modal_free(-1, -1, 2005), "a side modal alone");
     }
 
     /// Energy crossing 19 → 20 with run off: the crossing tick sends; with

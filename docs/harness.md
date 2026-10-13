@@ -510,6 +510,23 @@ selection instead of falsely declaring the spot absent. A live actor clears
 empty evidence but does not renew the approach budget; positive gather progress
 does. Rock and tree placement observation still uses the loaded map rectangle.
 
+### Bank trip soak
+
+`gatherer_live::gatherer_fish_bank_soak` runs one real net-fishing bot at the
+Catherby site (the 0.2.0.2 user configuration: `fishing.saltfish.op1`, Site
+location, Bank disposition, nearest bank) through back-to-back real bank trips
+for a fixed `GATHERER_SOAK_SECS` (default 1800 s). The pack starts with 27 raw
+shrimp and is refilled (`::give`, the account's own inventory) after every
+return so each trip banks at once. A run that blocks is recorded (status,
+failure and the last client-side bank facts: modal ids, the withdraw table's
+inventory packet generations, run energy and auto-run sends) and restarted
+with the same settings, as the user does. The receipt's `soak` object carries
+trips, blocks by failure code and the facts windows; the cell passes with at
+least `GATHERER_SOAK_MIN_TRIPS` (default 10) trips and no `bank-deposit-failed`
+block. Run several copies with distinct `BOT_LIVE_NAME_PREFIX` values for a
+rate; HOTFIX-0.2.1 reproduced both shipped deposit blocks with ten bots in
+thirty minutes.
+
 ## Walk Guard live cells and receipt replay
 
 The ignored W1 cells (`--lib`, module `walk_guard_live_tests`) exercise the
