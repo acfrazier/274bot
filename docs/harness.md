@@ -533,6 +533,18 @@ and the facts windows; the cell passes with at least `GATHERER_SOAK_MIN_TRIPS`
 with distinct `BOT_LIVE_NAME_PREFIX` values for a rate; HOTFIX-0.2.1
 reproduced both shipped deposit blocks with ten bots in thirty minutes.
 
+`GATHERER_SOAK_TWO_PRODUCTS=1` is a measurement mode, not qualification: the
+pack is seeded with raw shrimp and raw anchovies so every trip deposits in
+two clicks, about doubling the transfer window a run-energy threshold
+crossing can land in. The host's `run_on` latch clears only at energy 0
+(`host/src/lib.rs` `apply_auto_run`), so the crossing cannot be forced from
+the account's own state; the mode raises the rate at which a recorded
+crossing falls inside a transfer. Each host press is logged with the modal
+roots it saw (`auto-run press energy= main= chat= side=`), so a receipt
+shows a press under the bank followed by the stop-transmit/close order and
+the kernel's `bank-reopen` / `bank-reopen-reconcile` lines, or the 0.2.1
+host's deferral of the press until the bank closes.
+
 ## Walk Guard live cells and receipt replay
 
 The ignored W1 cells (`--lib`, module `walk_guard_live_tests`) exercise the
