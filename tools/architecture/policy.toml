@@ -87,6 +87,12 @@ reason = "dev-only: ctx unit tests build client ObjType tables. The compiled scr
 
 [[allow]]
 from = "script"
+to = "seat-model"
+kinds = ["dev"]
+reason = "Main 2026-10-12, F0-SCRIPT-SEAM conformance oracle, §27 §2.2 / ADR 0008"
+
+[[allow]]
+from = "script"
 to = "nav"
 kinds = ["normal"]
 reason = "Permanent script -> nav edge. F0 freezes nav::contract semantics; T5.1 removes exact production representation exceptions without removing this edge."

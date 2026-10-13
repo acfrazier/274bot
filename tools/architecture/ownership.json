@@ -6065,6 +6065,154 @@
     {
       "path": "vendor/fr-client-rust/tools/verify_revision_289_contract.py",
       "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/identity.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/identity_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/lifecycle.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/lifecycle_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/process_condition.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/process_condition_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/loadout.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/api/src/loadout_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/api/src/local_state.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/api/src/local_state_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/api/src/script_contract.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/script_contract_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/work.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/work_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host/src/render.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/script_nav_facade_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/mod.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/arrival.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/collision.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/contract_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/envelope.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/route.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/transport.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/contract/zones.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/frontend-core/src/command.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/command_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/command_census_scan.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/command_census_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/process_status.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/process_status_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/script/src/native/abi.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/custody.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/divergence.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/request.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/services.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/tests/script_seam_model.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/script_seam_engine.rs",
+      "owner": "T2"
     }
   ]
 }
