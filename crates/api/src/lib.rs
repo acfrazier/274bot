@@ -36,6 +36,7 @@ pub mod quest_facts;
 pub mod quest_progress;
 pub mod random;
 pub mod run_policy;
+pub mod script_contract;
 pub mod selected;
 pub mod settle;
 pub mod shop_facts;

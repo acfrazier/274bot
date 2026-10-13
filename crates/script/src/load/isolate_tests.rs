@@ -1057,13 +1057,13 @@ fn refused_and_immediate_starts_resolve_without_a_wait() {
     iso.join();
 }
 
-// Frozen timing: a callback sees the tick it runs in, `delayTicks(1)`
-// from a tick-2 callback resumes in tick 3's pump, and the row resumes
-// (and here ends, settling the await) in tick 3 as well.
+// The awaited callback starts at tick 2, is polled while pending at tick 3,
+// and resumes the same row in tick 4 without a second invocation.
 #[test]
 fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
     let iso = spawn_machine_card(
         "globalThis.__calls = [];
+             globalThis.__laterInvocations = 0;
              const at = () => globalThis.__rs2b0t_host.tick;
              const hooks = {
                  tag: 'H',
@@ -1073,8 +1073,9 @@ fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
                      return n + 1;
                  },
                  async later(v) {
+                     globalThis.__laterInvocations += 1;
                      globalThis.__calls.push(['later', v, at()]);
-                     await Execution.delayTicks(1);
+                     await Execution.delayTicks(2);
                      globalThis.__calls.push(['later-resumed', v, at()]);
                      return v * 10;
                  },
@@ -1097,8 +1098,9 @@ fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
     assert_eq!(
         iso.probe("globalThis.__calls").unwrap(),
         serde_json::json!([["sync", 1, "a", "H", 2], ["later", 2, 2]]),
-        "callbacks see the tick they run in; delayTicks(1) has not elapsed"
+        "the awaited callback starts once and remains pending"
     );
+    assert_eq!(iso.probe("globalThis.__laterInvocations").unwrap(), 1);
     assert_eq!(
         iso.probe("globalThis.__out ?? null").unwrap(),
         serde_json::Value::Null
@@ -1106,20 +1108,118 @@ fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
     machine_tick(&iso, 3);
     assert_eq!(
         iso.probe("globalThis.__calls").unwrap(),
+        serde_json::json!([["sync", 1, "a", "H", 2], ["later", 2, 2]]),
+        "a pending row is polled, not stepped or reinvoked"
+    );
+    assert_eq!(iso.probe("globalThis.__laterInvocations").unwrap(), 1);
+    assert_eq!(
+        iso.probe("globalThis.__out ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    assert!(iso.drain_interacts().is_empty());
+    machine_tick(&iso, 4);
+    assert_eq!(
+        iso.probe("globalThis.__calls").unwrap(),
         serde_json::json!([
             ["sync", 1, "a", "H", 2],
             ["later", 2, 2],
-            ["later-resumed", 2, 3],
-            ["mark", 3],
+            ["later-resumed", 2, 4],
+            ["mark", 4],
         ]),
-        "the row resumes in the tick the wait settled"
+        "the row resumes in the tick the wait settles"
     );
+    assert_eq!(iso.probe("globalThis.__laterInvocations").unwrap(), 1);
     assert_eq!(iso.drain_interacts(), vec![if_button(502), if_button(503)]);
     assert_eq!(
         iso.probe("globalThis.__out").unwrap(),
         serde_json::json!({ "kind": "done", "value": [2, 20, "m"] })
     );
-    assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
+    assert_eq!(iso.probe("globalThis.__at").unwrap(), 4);
+    iso.join();
+}
+
+#[test]
+fn sync_step_promises_are_opaque_while_ask_promises_fail() {
+    let iso = spawn_machine_card(
+        "const settled = Promise.resolve(false);
+             const pending = new Promise(() => {});
+             const settle = (promise) => promise.then(
+                 (out) => ({ ok: out }),
+                 (error) => ({ err: String(error) }),
+             );
+             const run = (promise) => settle(runMachine('hooked', {}, {
+                 sync: () => promise,
+                 later(value) {
+                     globalThis.__opaque.push({
+                         object: typeof value === 'object' && value !== null,
+                         promise: value instanceof Promise,
+                         empty: Object.keys(value).length === 0,
+                         same: value === promise,
+                     });
+                     return value;
+                 },
+                 mark: () => 'mark',
+             }));
+             globalThis.__opaque = [];
+             globalThis.__outcomes = await Promise.all([
+                 run(settled),
+                 run(pending),
+                 settle(runMachine('solo-asker', {}, {
+                     get: () => Promise.resolve(false),
+                 })),
+             ]);",
+    );
+    machine_tick(&iso, 1);
+    machine_tick(&iso, 2);
+    let outcomes = iso.probe("globalThis.__outcomes").unwrap();
+    for index in [0, 1] {
+        assert_eq!(
+            outcomes[index]["ok"],
+            serde_json::json!({ "kind": "done", "value": [{}, {}, "mark"] }),
+            "a sync Step::Call does not await a settled or pending Promise"
+        );
+    }
+    assert_eq!(
+        iso.probe("globalThis.__opaque").unwrap(),
+        serde_json::json!([
+            { "object": true, "promise": false, "empty": true, "same": false },
+            { "object": true, "promise": false, "empty": true, "same": false },
+        ])
+    );
+    assert!(
+        outcomes[2]["err"]
+            .as_str()
+            .is_some_and(|error| error
+                .contains("not impl: a synchronous machine callback returned a promise")),
+        "Cx::ask rejects a Promise instead of returning an opaque value: {outcomes:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn real_hunt_effect_notifications_preserve_order_and_multiplicity_before_decision() {
+    let iso = spawn_machine_card(
+        "globalThis.__events = [];
+             globalThis.__out = await runMachine('notification-order', {}, {
+                 countKill() {
+                     globalThis.__events.push(['countKill']);
+                 },
+                 eatOnce() {
+                     globalThis.__events.push(['decision']);
+                     return 'continue';
+                 },
+             });",
+    );
+    machine_tick(&iso, 1);
+    assert_eq!(
+        iso.probe("globalThis.__events").unwrap(),
+        serde_json::json!([["countKill"], ["countKill"], ["decision"],]),
+        "each event notification is delivered exactly once, in order, before the decision"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__out").unwrap(),
+        serde_json::json!({ "kind": "done", "value": "continue" })
+    );
     iso.join();
 }
 
@@ -1257,7 +1357,7 @@ fn a_row_that_supersedes_itself_mid_step_stops_at_once() {
 }
 
 #[test]
-fn a_throwing_or_rejecting_callback_fails_the_machine() {
+fn thrown_value_identity_and_detached_child_survival() {
     let iso = spawn_machine_card(
         "const boom = new Error('boom');
              const late = { code: 7 };
@@ -1269,11 +1369,18 @@ fn a_throwing_or_rejecting_callback_fails_the_machine() {
                  settle(runMachine('hooked', {}, { sync() { throw boom; } })),
                  settle(runMachine('hooked', {}, {
                      sync: (n) => n,
-                     async later() { throw late; },
+                     async later() {
+                         globalThis.__detached = runMachine('probe', { button: 70, steps: 2 });
+                         throw late;
+                     },
                  })),
                  settle(runMachine('hooked', {}, { sync: 5 })),
                  settle(runMachine('hooked', {})),
-             ]);",
+                settle(runMachine('solo-asker', {}, {
+                    get() { throw boom; },
+                })),
+             ]);
+             globalThis.__detachedOut = await globalThis.__detached;",
     );
     machine_tick(&iso, 1);
     machine_tick(&iso, 2);
@@ -1297,6 +1404,32 @@ fn a_throwing_or_rejecting_callback_fails_the_machine() {
             .as_str()
             .is_some_and(|e| e.contains("reading 'sync'")),
         "a missing hooks object throws at start: {outs:?}"
+    );
+    assert_eq!(
+        outs[4],
+        serde_json::json!({ "err": "boom", "same": true }),
+        "Cx::ask fails with the very value its callback threw"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__detachedOut ?? null").unwrap(),
+        serde_json::Value::Null,
+        "the child remains pending after its parent's awaited hook fails"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![if_button(70)],
+        "the detached child started before the parent failed"
+    );
+    machine_tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![if_button(71)]);
+    machine_tick(&iso, 4);
+    assert_eq!(iso.drain_interacts(), vec![if_button(72)]);
+    machine_tick(&iso, 5);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        iso.probe("globalThis.__detachedOut").unwrap(),
+        serde_json::json!({ "kind": "done", "value": 2 }),
+        "the detached row completes after its parent rejects"
     );
     let logs = iso.drain_logs();
     assert!(
