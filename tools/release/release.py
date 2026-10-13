@@ -13,10 +13,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -546,57 +548,46 @@ def worker_expect(root, commit, platform):
     return expect
 
 
+# The documented macOS floor. One constant feeds the manifest line in
+# runtime_requirements, the MACOSX_DEPLOYMENT_TARGET the worker pins, and
+# the minos limit verification enforces, so the three cannot drift apart.
+MACOS_DEPLOYMENT_TARGET = "11.0"
+
 # The macOS builder is a developer machine whose login PATH puts MacPorts
 # (/opt/local/bin) and Homebrew ahead of /usr/bin. Anything found through
 # that PATH -- MacPorts' pkg-config answers `-L/opt/local/lib` for bzip2 --
-# or through the search-path variables below can link a shipped binary
-# against libraries users' Macs do not have. The macOS worker therefore
-# builds with a fixed PATH and without those variables. None of them was
-# set in the environment that produced the known-good 0.2.1 package, so
-# dropping them cannot change what that build finds. Kept on purpose:
-# DEVELOPER_DIR (how xcrun locates the Apple toolchain when xcode-select
-# is not set; its SDK still records /usr/lib and /System/Library install
-# names) and HOME/CARGO_HOME/RUSTUP_* (the rustup toolchain itself).
+# or through an inherited search-path/toolchain variable can link a shipped
+# binary against libraries users' Macs do not have, or move it off the
+# pinned toolchain. A denylist of such variables is not a closed set (a
+# shell can set RUSTUP_TOOLCHAIN, CARGO_HOME, CCC_OVERRIDE_OPTIONS, or any
+# future <LIB>_DIR without touching it), so the macOS worker environment
+# is an allowlist built from empty: only the keys below are copied from
+# the parent, everything else about the build environment is constructed
+# here, and SDKROOT is left unset so xcrun rediscovers the SDK through
+# DEVELOPER_DIR / xcode-select. None of the dropped variables was set in
+# the environment that produced the known-good 0.2.1 package, so the
+# allowlist cannot change what that build finds. (~/.cargo/config.toml can
+# still inject rustflags from outside the environment; the otool linkage
+# check below is the fail-closed backstop for that.)
 MACOS_SYSTEM_PATH_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
-MACOS_SCRUBBED_ENV = frozenset({
-    # Header/library search paths honoured by clang and ld directly.
-    "LIBRARY_PATH", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
-    "OBJC_INCLUDE_PATH",
-    # An alternate SDK changes which system libraries exist, and a shell's
-    # deployment target silently moves the documented macOS 11.0 floor.
-    # With both unset, cc/rustc rediscover the default SDK through xcrun
-    # and the aarch64 target defaults to macOS 11.0.
-    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET",
-    # Rustflags and compiler substitution bypass the pinned toolchain and
-    # the fixed PATH.
-    "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS",
-    "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
-    # bindgen/clang-sys (the v8 build) would use a MacPorts libclang.
-    "LIBCLANG_PATH", "LIBCLANG_LIB_DIR", "CLANG_PATH", "LLVM_CONFIG_PATH",
-})
-MACOS_SCRUBBED_ENV_PREFIXES = (
-    # The pkg-config binary itself and its search paths, including the
-    # pkg-config crate's per-target PKG_CONFIG_PATH_<target> spellings:
-    # this is how MacPorts libbz2/libiconv reached the 0.2.1 build.
-    "PKG_CONFIG",
-    # Dyld overrides act on the build scripts and proc-macros the build
-    # runs, and could mask a bad link until the binary reaches a clean Mac.
-    "DYLD_",
-    # Build scripts that probe a package manager's prefix (openssl-sys,
-    # the cmake search in aws-lc-sys) must not be handed one.
-    "HOMEBREW_", "OPENSSL_", "CMAKE_",
-    # Extra clang arguments bindgen would apply to the v8 build.
-    "BINDGEN_",
-    # Per-target CARGO_TARGET_<TRIPLE>_LINKER/RUSTFLAGS/RUNNER overrides.
-    "CARGO_TARGET_",
+# Copied from the parent only when set, each linkage-neutral or needed to
+# identify the build user: USER/LOGNAME (codesign and passwd lookups),
+# TMPDIR (the per-user clang/rustc temp dir; unset falls back to /tmp),
+# LANG and LC_* (locale only), and the proxy variables (network only, for
+# a cargo fetch that misses the local cache). PATH, HOME and
+# MACOSX_DEPLOYMENT_TARGET are also allowlisted but always constructed,
+# never inherited; DEVELOPER_DIR is copied only after validation below.
+# Deliberately not copied: CARGO_HOME/RUSTUP_HOME/RUSTUP_TOOLCHAIN (the
+# fixed PATH already names ~/.cargo/bin and rust-toolchain.toml pins the
+# toolchain) and every search-path, compiler-selection and DYLD_ variable.
+MACOS_PASSTHROUGH_ENV = (
+    "USER", "LOGNAME", "TMPDIR", "LANG",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
 )
-# cc/cmake compiler and flag selection, including the HOST_/TARGET_
-# prefixed and _<target>-suffixed spellings the cc crate reads
-# (for example CC_aarch64-apple-darwin).
-MACOS_CC_ENV = re.compile(
-    r"^(?:HOST_|TARGET_)?"
-    r"(?:CC|CXX|CPP|AR|AS|RANLIB|NM|LD|STRIP|OBJCOPY|OBJDUMP|"
-    r"CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS)(?:_.*)?$"
+MACOS_DEVELOPER_DIRS = re.compile(
+    r"^(?:/Library/Developer/CommandLineTools"
+    r"|/Applications/[^/]+\.app/Contents/Developer)$"
 )
 
 
@@ -607,24 +598,52 @@ def macos_build_path(home):
     )
 
 
-def macos_scrubbed_env(name):
+def valid_macos_developer_dir(value):
+    """True only for an existing Apple developer directory: the Command
+    Line Tools or an Xcode app's Contents/Developer. Any other value is
+    how a non-Apple toolchain would get into the link, so it is dropped
+    and xcrun falls back to xcode-select."""
     return (
-        name in MACOS_SCRUBBED_ENV
-        or name.startswith(MACOS_SCRUBBED_ENV_PREFIXES)
-        or MACOS_CC_ENV.match(name) is not None
+        MACOS_DEVELOPER_DIRS.match(value) is not None
+        and Path(value).is_dir()
     )
 
 
+def macos_allowlisted_env(source=None):
+    """The inherited half of the macOS worker environment, built from
+    empty: the justified passthrough keys above, a validated
+    DEVELOPER_DIR, and the constructed HOME/PATH/deployment target.
+    native_build_environment adds the worker's own pinned keys on top."""
+    source = os.environ if source is None else source
+    environment = {
+        name: source[name]
+        for name in MACOS_PASSTHROUGH_ENV
+        if name in source
+    }
+    environment.update({
+        name: value
+        for name, value in source.items()
+        if name.startswith("LC_")
+    })
+    developer_dir = source.get("DEVELOPER_DIR")
+    if developer_dir and valid_macos_developer_dir(developer_dir):
+        environment["DEVELOPER_DIR"] = developer_dir
+    home = Path.home()
+    environment["HOME"] = str(home)
+    environment["PATH"] = macos_build_path(home)
+    environment["MACOSX_DEPLOYMENT_TARGET"] = MACOS_DEPLOYMENT_TARGET
+    return environment
+
+
 def native_build_environment(expect, root, target, platform, rusty_v8_archive=None):
-    environment = os.environ.copy()
-    environment.pop("RUSTY_V8_ARCHIVE", None)
-    environment.pop("AWS_LC_SYS_PREBUILT_NASM", None)
     if platform == "macos":
-        environment = {
-            name: value
-            for name, value in environment.items()
-            if not macos_scrubbed_env(name)
-        }
+        # Allowlist from empty (see macos_allowlisted_env); the worker's
+        # own pinned keys below are the only other entries.
+        environment = macos_allowlisted_env()
+    else:
+        environment = os.environ.copy()
+        environment.pop("RUSTY_V8_ARCHIVE", None)
+        environment.pop("AWS_LC_SYS_PREBUILT_NASM", None)
     environment.update({
         "GIT_COMMIT": expect["host_commit"],
         "CLIENT_COMMIT": expect["client_commit"],
@@ -638,9 +657,7 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         "CARGO_BUILD_JOBS": str(expect["jobs"]),
         "CARGO_INCREMENTAL": "0",
     })
-    if platform == "macos":
-        environment["PATH"] = macos_build_path(Path.home())
-    else:
+    if platform != "macos":
         environment["PATH"] = (
             str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
         )
@@ -887,7 +904,7 @@ def build_controller(args):
 
 def runtime_requirements(platform):
     if platform == "macos":
-        return ["macOS 11.0 or later; Apple Silicon"]
+        return [f"macOS {MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"]
     if platform == "linux":
         return [
             "glibc >= 2.39",
@@ -1211,6 +1228,18 @@ MACHO_MAGICS = frozenset({
     b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",  # fat, both byte orders
     b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",  # fat64, both byte orders
 })
+# Thin magic -> byte order of the header fields that follow it; fat magic
+# -> (byte order, 64-bit arch entries). The filetype field is 12 bytes
+# into every thin header.
+_MACHO_THIN_MAGICS = {
+    b"\xfe\xed\xfa\xce": ">", b"\xfe\xed\xfa\xcf": ">",
+    b"\xce\xfa\xed\xfe": "<", b"\xcf\xfa\xed\xfe": "<",
+}
+_MACHO_FAT_MAGICS = {
+    b"\xca\xfe\xba\xbe": (">", False), b"\xbe\xba\xfe\xca": ("<", False),
+    b"\xca\xfe\xba\xbf": (">", True), b"\xbf\xba\xfe\xca": ("<", True),
+}
+MH_EXECUTE = 2
 MACOS_SYSTEM_LIBRARY_PREFIXES = ("/usr/lib/", "/System/Library/")
 MACOS_REQUIRED_EXECUTABLES = (
     "panel-play",
@@ -1222,6 +1251,76 @@ MACOS_REQUIRED_EXECUTABLES = (
 def is_macho(path):
     with Path(path).open("rb") as source:
         return source.read(4) in MACHO_MAGICS
+
+
+def _thin_macho_filetype(source, offset):
+    source.seek(offset)
+    header = source.read(16)
+    if len(header) < 16:
+        return None
+    endian = _MACHO_THIN_MAGICS.get(header[:4])
+    if endian is None:
+        return None
+    return struct.unpack_from(endian + "I", header, 12)[0]
+
+
+def macho_filetypes(path):
+    """Mach-O filetype of every slice in `path` ([] if unreadable)."""
+    try:
+        with Path(path).open("rb") as source:
+            magic = source.read(4)
+            if magic in _MACHO_THIN_MAGICS:
+                filetype = _thin_macho_filetype(source, 0)
+                return [] if filetype is None else [filetype]
+            fat = _MACHO_FAT_MAGICS.get(magic)
+            if fat is None:
+                return []
+            endian, fat64 = fat
+            raw = source.read(4)
+            if len(raw) < 4:
+                return []
+            (count,) = struct.unpack(endian + "I", raw)
+            if count > 32:
+                return []
+            entry_size = 32 if fat64 else 20
+            offsets = []
+            for _ in range(count):
+                entry = source.read(entry_size)
+                if len(entry) < entry_size:
+                    return []
+                if fat64:
+                    (offset,) = struct.unpack_from(endian + "Q", entry, 8)
+                else:
+                    (offset,) = struct.unpack_from(endian + "I", entry, 8)
+                offsets.append(offset)
+            filetypes = []
+            for offset in offsets:
+                filetype = _thin_macho_filetype(source, offset)
+                if filetype is not None:
+                    filetypes.append(filetype)
+            return filetypes
+    except OSError:
+        return []
+
+
+def macos_main_executable_dirs(base, macho=None):
+    """Directories dyld can mean by @executable_path in this package: the
+    parent of every shipped main executable -- the required executables,
+    plus any other Mach-O whose filetype is MH_EXECUTE. The package ships
+    executables at two depths, so this is not one directory."""
+    base = Path(base)
+    if macho is None:
+        macho = sorted(
+            path for path in base.rglob("*") if path.is_file() and is_macho(path)
+        )
+    required = {base / name for name in MACOS_REQUIRED_EXECUTABLES}
+    dirs = []
+    for path in macho:
+        path = Path(path)
+        if path in required or MH_EXECUTE in macho_filetypes(path):
+            if path.parent not in dirs:
+                dirs.append(path.parent)
+    return dirs
 
 
 def parse_otool_libraries(output):
@@ -1254,67 +1353,139 @@ def parse_otool_rpaths(output):
     return rpaths
 
 
+def parse_otool_minimum_os(output):
+    """Minimum macOS versions from `otool -l` output, in order: the
+    `minos` of every LC_BUILD_VERSION and the `version` of every
+    LC_VERSION_MIN_MACOSX (one per slice in a fat binary)."""
+    versions = []
+    command = None
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("cmd "):
+            command = stripped[len("cmd "):]
+        elif command == "LC_BUILD_VERSION" and stripped.startswith("minos "):
+            versions.append(stripped.split()[1])
+            command = None
+        elif (
+            command == "LC_VERSION_MIN_MACOSX"
+            and stripped.startswith("version ")
+        ):
+            versions.append(stripped.split()[1])
+            command = None
+    return versions
+
+
 def otool_linkage(path):
     try:
         libraries = parse_otool_libraries(run(["otool", "-L", path], capture=True))
-        rpaths = parse_otool_rpaths(run(["otool", "-l", path], capture=True))
+        load_commands = run(["otool", "-l", path], capture=True)
+        rpaths = parse_otool_rpaths(load_commands)
+        minimum_os = parse_otool_minimum_os(load_commands)
     except OSError as error:
         raise ReleaseError(f"otool is required to verify macOS linkage: {error}")
-    return libraries, rpaths
+    return libraries, rpaths, minimum_os
 
 
-def _resolves_inside_package(candidate, base):
+def _package_label(binary, base):
+    try:
+        return Path(binary).relative_to(Path(base)).as_posix()
+    except ValueError:
+        return str(binary)
+
+
+def _inside_package(candidate, base):
     candidate = Path(candidate)
     # A still-relative candidate (a plain relative or nested-@rpath rpath
     # entry) would resolve against the verifier's working directory, which
     # says nothing about where dyld finds it on a user's Mac. Fail closed.
     if not candidate.is_absolute():
         return False
-    resolved = candidate.resolve()
     try:
-        resolved.relative_to(Path(base).resolve())
+        candidate.resolve().relative_to(Path(base).resolve())
     except ValueError:
         return False
-    return resolved.is_file()
+    return True
 
 
-def _expand_loader_prefix(value, binary):
-    """Expand a leading @executable_path/@loader_path in an rpath entry."""
-    for token in ("@executable_path", "@loader_path"):
-        if value == token:
-            return Path(binary).parent
-        if value.startswith(token + "/"):
-            return Path(binary).parent / value[len(token) + 1:]
-    return Path(value)
+def _resolves_inside_package(candidate, base):
+    return _inside_package(candidate, base) and Path(candidate).resolve().is_file()
 
 
-def macho_linkage_violations(binary, base, libraries, rpaths):
+def _expand_rpath(entry, binary, executable_dir):
+    """One LC_RPATH entry as dyld expands it for one main executable:
+    @executable_path is that main executable's directory, @loader_path is
+    the directory of the image that carries the entry. The two tokens are
+    not interchangeable."""
+    for token, directory in (
+        ("@executable_path", Path(executable_dir)),
+        ("@loader_path", Path(binary).parent),
+    ):
+        if entry == token:
+            return directory
+        if entry.startswith(token + "/"):
+            return directory / entry[len(token) + 1:]
+    return Path(entry)
+
+
+def _rpath_resolves_for_main(rpaths, binary, base, rest, executable_dir):
+    """Whether dyld, running the main executable in `executable_dir`,
+    reaches an in-package file for an @rpath/<rest> reference without
+    first trying a candidate outside the package (which might exist on a
+    user's Mac and be loaded instead)."""
+    for entry in rpaths:
+        candidate = _expand_rpath(entry, binary, executable_dir) / rest
+        if _resolves_inside_package(candidate, base):
+            return True
+        if not _inside_package(candidate, base):
+            return False
+    return False
+
+
+def macho_linkage_violations(binary, base, libraries, rpaths, executable_dirs=None):
     """Libraries `binary` loads that are neither system libraries nor files
     inside the package at `base`, as 'binary: library' strings. Only
     /usr/lib, /System/Library, and @executable_path/@rpath references that
     resolve to an existing file inside the package are allowed; anything
     else -- /opt/local, /opt/homebrew, /usr/local, @loader_path, a bare
     library name -- is a violation, because a user's Mac will not have it.
+
+    Dyld expands @executable_path to the *main executable's* directory,
+    not the referencing binary's, and this package ships main executables
+    at two depths. An @executable_path reference (directly, or as an
+    LC_RPATH entry feeding an @rpath reference) is therefore allowed only
+    when it resolves inside the package under *every* shipped main
+    executable's directory (`executable_dirs`); one in-package hit does
+    not mask an expansion that leaves the package. @loader_path in an
+    LC_RPATH entry is expanded against the referencing binary, which is
+    what dyld does; @loader_path as an install name stays rejected.
     """
     binary = Path(binary)
     base = Path(base)
-    try:
-        label = binary.relative_to(base).as_posix()
-    except ValueError:
-        label = str(binary)
+    if executable_dirs is None:
+        executable_dirs = macos_main_executable_dirs(base)
+    executable_dirs = [Path(directory) for directory in executable_dirs]
+    label = _package_label(binary, base)
     violations = []
     for library in libraries:
-        if library.startswith(MACOS_SYSTEM_LIBRARY_PREFIXES):
-            continue
+        if library.startswith("/"):
+            # Normalise before the prefix test: a raw startswith would
+            # let /usr/lib/../opt/local/... through as a system library.
+            if posixpath.normpath(library).startswith(
+                MACOS_SYSTEM_LIBRARY_PREFIXES
+            ):
+                continue
         if library.startswith("@executable_path/"):
-            candidate = binary.parent / library[len("@executable_path/"):]
-            if _resolves_inside_package(candidate, base):
+            rest = library[len("@executable_path/"):]
+            if executable_dirs and all(
+                _resolves_inside_package(directory / rest, base)
+                for directory in executable_dirs
+            ):
                 continue
         elif library.startswith("@rpath/"):
             rest = library[len("@rpath/"):]
-            if any(
-                _resolves_inside_package(_expand_loader_prefix(rpath, binary) / rest, base)
-                for rpath in rpaths
+            if executable_dirs and rpaths and all(
+                _rpath_resolves_for_main(rpaths, binary, base, rest, directory)
+                for directory in executable_dirs
             ):
                 continue
         violations.append(f"{label}: {library}")
@@ -1322,10 +1493,50 @@ def macho_linkage_violations(binary, base, libraries, rpaths):
     return list(dict.fromkeys(violations))
 
 
+def _version_key(version):
+    try:
+        parts = [int(piece) for piece in str(version).split(".")]
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    return tuple(parts + [0] * max(0, 3 - len(parts)))
+
+
+def macho_minimum_os_violations(binary, base, minimum_os_versions):
+    """Minimum-OS violations for one Mach-O, as 'binary: cause' strings:
+    a missing LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX, an unparsable
+    value, or a minos above the documented MACOS_DEPLOYMENT_TARGET floor
+    (the worker pins that target, but a prebuilt object can still record
+    a higher minos, which is why verification reads it back)."""
+    label = _package_label(binary, base)
+    if not minimum_os_versions:
+        return [
+            f"{label}: missing minimum macOS version "
+            "(no LC_BUILD_VERSION minos or LC_VERSION_MIN_MACOSX)"
+        ]
+    limit = _version_key(MACOS_DEPLOYMENT_TARGET)
+    violations = []
+    for version in dict.fromkeys(minimum_os_versions):
+        key = _version_key(version)
+        if key is None:
+            violations.append(
+                f"{label}: unparsable minimum macOS version {version!r}"
+            )
+        elif key > limit:
+            violations.append(
+                f"{label}: minos {version} exceeds macOS "
+                f"{MACOS_DEPLOYMENT_TARGET}"
+            )
+    return violations
+
+
 def verify_macos_linkage(base):
     """Run otool on every Mach-O in the package, not just the executables
-    named today, so a future shipped dylib is checked too. Returns the
-    package-relative paths checked."""
+    named today, so a future shipped dylib is checked too: every library
+    reference must stay in the system or the package under every main
+    executable, and every minos must be at most the documented floor.
+    Returns the package-relative paths checked."""
     base = Path(base)
     macho = sorted(
         path for path in base.rglob("*") if path.is_file() and is_macho(path)
@@ -1337,13 +1548,19 @@ def verify_macos_linkage(base):
             "macOS package is missing required Mach-O executables: "
             + ", ".join(missing)
         )
+    executable_dirs = macos_main_executable_dirs(base, macho)
     violations = []
     for path in macho:
-        libraries, rpaths = otool_linkage(path)
-        violations += macho_linkage_violations(path, base, libraries, rpaths)
+        libraries, rpaths, minimum_os = otool_linkage(path)
+        violations += macho_linkage_violations(
+            path, base, libraries, rpaths, executable_dirs
+        )
+        violations += macho_minimum_os_violations(path, base, minimum_os)
     if violations:
         raise ReleaseError(
-            "macOS package links libraries outside the system and the package:\n"
+            "macOS package failed otool verification (a library outside "
+            "the system and the package, or a minimum macOS above "
+            f"{MACOS_DEPLOYMENT_TARGET}):\n"
             + "\n".join(violations)
         )
     return sorted(checked)
