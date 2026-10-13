@@ -6,10 +6,11 @@
 //!   stand beside it, from [`crate::reach_route::bounded_steps`] inside the
 //!   engine's NPC view box.
 //! - A reachable keeper gets one Trade. That attempt runs until a tick
-//!   deadline: the route at walk speed plus [`OPEN_SLACK_TICKS`], capped at
-//!   [`OPEN_CAP_TICKS`]. "I can't reach that!" or a session change ends it
-//!   at once. A new Trade follows only an ended attempt, at most
-//!   [`OPEN_ATTEMPTS`] in all.
+//!   deadline. With a measured route it is the route at walk speed plus
+//!   [`OPEN_SLACK_TICKS`], capped at [`OPEN_CAP_TICKS`]. Without one (no live
+//!   reach view) it is [`OPEN_CAP_TICKS`]. "I can't reach that!" or a
+//!   session change ends it at once. A new Trade follows only an ended
+//!   attempt, at most [`OPEN_ATTEMPTS`] in all.
 //! - An unreachable keeper (a closed door) is walked to once by the
 //!   adapter's nav walk, then checked again.
 //! - The shop is open only when a usable stock page shows on a tick after
@@ -21,24 +22,33 @@ use api::WorldTile;
 
 /// Existing bound on Trade requests for one shop open (rs2b0t contract).
 pub const OPEN_ATTEMPTS: u32 = 3;
-/// Ticks one Trade may take beyond its route length before its attempt
-/// expires. The route length covers the walk: a player steps at most one
-/// tile per cycle at walk speed (`PathingEntity.ts:144-149`, `Player.ts:
-/// 729-731`). Running adds a second step per cycle, so walk speed is the
-/// conservative bound. On top of the walk:
-/// - 1: even a 0-tile route opens no earlier than the next cycle. `OpNpc`
-///   is decoded in `processClientsIn` (`World.ts:355`) and the interaction
-///   runs in `processPlayers` (`World.ts:378`, `Player.ts:1247-1314`).
-/// - 1: the `OpNpc` can be decoded one cycle after its `MOVE_OPCLICK` when
-///   that cycle's five user events are spent (`ClientGameProtCategory.ts:6`,
-///   `NetworkPlayer.ts:69`; named in `MoveClickHandler.ts:26-29`).
-/// - 10: the keeper can wander away during the walk. A wander destination
-///   is within `wanderrange` of its spawn (`Npc.ts:705-714`), default 5
-///   (`NpcType.ts:101`), so one leg is at most 2 × 5 tiles. The player
-///   re-paths to it every cycle (`Player.ts:1247-1314`).
+/// Policy margin, in ticks, that one Trade with a measured route may take
+/// beyond the route length before its attempt expires. It is not an engine
+/// bound on how long an interaction can take. The route length covers the
+/// walk: a player steps at most one tile per cycle at walk speed
+/// (`PathingEntity.ts:144-149`, `Player.ts:729-731`); running only arrives
+/// sooner. On top of the walk:
+/// - 1 (engine tick order): even a 0-tile route opens no earlier than the
+///   next cycle. `OpNpc` is decoded in `processClientsIn` (`World.ts:355`)
+///   and the interaction runs in `processPlayers` (`World.ts:378`,
+///   `Player.ts:1247-1314`).
+/// - 1 (engine input budget): the `OpNpc` can be decoded one cycle after its
+///   `MOVE_OPCLICK` when that cycle's five user events are spent
+///   (`ClientGameProtCategory.ts:6`, `NetworkPlayer.ts:69`; named in
+///   `MoveClickHandler.ts:26-29`).
+/// - 10 (policy): room for the keeper wandering and the player re-pathing.
+///   A wander destination stays within `wanderrange` (default 5,
+///   `NpcType.ts:101`) of spawn (`Npc.ts:705-714`), but that does not bound
+///   the extra walking or how often it re-paths. Measured instead: every
+///   un-attacked live open of a keeper 0-4 steps away settled 1-2 ticks
+///   after its Trade, and a 12-step one in 7.
 pub const OPEN_SLACK_TICKS: u64 = 12;
-/// Upper bound on one attempt's ticks: a route as long as the 104-tile area
-/// the engine accepts for one click (`MoveClickHandler.ts:20`) plus the slack.
+/// Policy bound on one attempt's ticks: the deadline when the route is not
+/// measured, and the ceiling for a measured one. It is not a maximum walk
+/// time. 104 echoes the engine's first-waypoint distance check for one
+/// click path (`MoveClickHandler.ts:20`), which does not bound a walk's
+/// length. Kept as a generous wait: about 70 s per attempt at 600 ms ticks,
+/// so a three-attempt call ends within about 3.5 minutes of game time.
 pub const OPEN_CAP_TICKS: u64 = 104 + OPEN_SLACK_TICKS;
 
 /// Frozen `CANT_REACH` (`/^i can't reach that/i`): the engine's
@@ -49,9 +59,16 @@ pub(crate) fn is_cant_reach(text: &str) -> bool {
     bytes.len() >= PREFIX.len() && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
 }
 
-/// Ticks a Trade with a `tiles`-long route may take to open the shop.
-pub(crate) fn open_deadline_ticks(tiles: u32) -> u64 {
-    (u64::from(tiles) + OPEN_SLACK_TICKS).min(OPEN_CAP_TICKS)
+/// Ticks a Trade may take to open the shop: a measured `tiles`-long route
+/// plus the slack, capped.
+pub(crate) fn open_deadline_ticks(route: KeeperRoute) -> u64 {
+    match route {
+        KeeperRoute::Steps(tiles) => (u64::from(tiles) + OPEN_SLACK_TICKS).min(OPEN_CAP_TICKS),
+        // A straight-line distance is a lower bound on the walk, not an
+        // upper one: a keeper two tiles away can be a long walk round a
+        // wall. The core never trades an unreachable keeper.
+        KeeperRoute::Unknown(_) | KeeperRoute::Unreachable => OPEN_CAP_TICKS,
+    }
 }
 
 /// One observed session. A Trade sent in another session is gone with it
@@ -69,8 +86,9 @@ pub(crate) enum KeeperRoute {
     Steps(u32),
     /// No stand is reachable inside the NPC view box.
     Unreachable,
-    /// No live reach view is posted. The straight-line distance stands in,
-    /// as in the Quester chooser.
+    /// No live reach view (none posted, or its flood starts off the
+    /// player's tile). The straight-line distance ranks keepers only; the
+    /// attempt waits the full [`OPEN_CAP_TICKS`].
     Unknown(u32),
 }
 
@@ -331,17 +349,11 @@ impl OpenCore {
         let Some(tick) = facts.tick else {
             return;
         };
-        let tiles = match keeper.route {
-            KeeperRoute::Steps(tiles) | KeeperRoute::Unknown(tiles) => tiles,
-            // Nav already counted the keeper as arrived: the click's own
-            // route and "I can't reach that!" decide.
-            KeeperRoute::Unreachable => 0,
-        };
         self.state = State::Trade(Attempt {
             trade_tick: tick,
             session: facts.session,
             chat_mark: facts.chat_seq,
-            deadline: tick + open_deadline_ticks(tiles),
+            deadline: tick + open_deadline_ticks(keeper.route),
         });
     }
 
@@ -407,11 +419,48 @@ mod tests {
     }
 
     #[test]
-    fn deadline_is_route_plus_slack_capped() {
-        assert_eq!(open_deadline_ticks(0), OPEN_SLACK_TICKS);
-        assert_eq!(open_deadline_ticks(30), 30 + OPEN_SLACK_TICKS);
-        assert_eq!(open_deadline_ticks(104), OPEN_CAP_TICKS);
-        assert_eq!(open_deadline_ticks(5_000), OPEN_CAP_TICKS);
+    fn deadline_is_route_plus_slack_capped_and_the_cap_without_a_route() {
+        assert_eq!(open_deadline_ticks(KeeperRoute::Steps(0)), OPEN_SLACK_TICKS);
+        assert_eq!(
+            open_deadline_ticks(KeeperRoute::Steps(30)),
+            30 + OPEN_SLACK_TICKS
+        );
+        assert_eq!(open_deadline_ticks(KeeperRoute::Steps(104)), OPEN_CAP_TICKS);
+        assert_eq!(
+            open_deadline_ticks(KeeperRoute::Steps(5_000)),
+            OPEN_CAP_TICKS
+        );
+        for tiles in [0, 2, 5_000] {
+            assert_eq!(
+                open_deadline_ticks(KeeperRoute::Unknown(tiles)),
+                OPEN_CAP_TICKS
+            );
+        }
+    }
+
+    /// Review R1: a keeper two tiles away in a straight line with no live
+    /// reach view gets the cap, not 2 + slack: the walk round a wall may be
+    /// far longer. No second Trade before Trade + cap.
+    #[test]
+    fn an_unknown_route_waits_the_cap_before_a_second_trade() {
+        let mut core = OpenCore::default();
+        let route = KeeperRoute::Unknown(2);
+        assert!(matches!(
+            run(&mut core, &facts(99), route),
+            Decision::Trade(_)
+        ));
+        assert_eq!(core.deadline(), Some(99 + OPEN_CAP_TICKS));
+        for tick in 100..=99 + OPEN_CAP_TICKS {
+            assert_eq!(
+                run(&mut core, &facts(tick), route),
+                Decision::Wait,
+                "{tick}"
+            );
+        }
+        assert!(matches!(
+            run(&mut core, &facts(100 + OPEN_CAP_TICKS), route),
+            Decision::Trade(_)
+        ));
     }
 
     #[test]
