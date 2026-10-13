@@ -331,6 +331,258 @@ class ParameterTests(unittest.TestCase):
             release.powershell_quote("safe\u2019; Write-Output nope")
 
 
+class MacosBuildEnvironmentTests(unittest.TestCase):
+    EXPECT = {
+        "host_commit": "a" * 40,
+        "client_commit": "b" * 40,
+        "revision": 289,
+        "jobs": 4,
+    }
+    HOSTILE = {
+        "PATH": "/opt/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+        "LIBRARY_PATH": "/opt/local/lib",
+        "CPATH": "/opt/local/include",
+        "C_INCLUDE_PATH": "/opt/local/include",
+        "PKG_CONFIG": "/opt/local/bin/pkg-config",
+        "PKG_CONFIG_PATH": "/opt/local/lib/pkgconfig",
+        "PKG_CONFIG_PATH_aarch64-apple-darwin": "/opt/local/lib/pkgconfig",
+        "DYLD_LIBRARY_PATH": "/opt/local/lib",
+        "DYLD_INSERT_LIBRARIES": "/opt/local/lib/libfoo.dylib",
+        "CC": "/opt/local/bin/gcc",
+        "TARGET_CC": "/opt/local/bin/gcc",
+        "CC_aarch64-apple-darwin": "/opt/local/bin/gcc",
+        "CFLAGS": "-I/opt/local/include",
+        "LDFLAGS": "-L/opt/local/lib",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew",
+        "OPENSSL_DIR": "/opt/homebrew/opt/openssl@3",
+        "HOMEBREW_PREFIX": "/opt/homebrew",
+        "BINDGEN_EXTRA_CLANG_ARGS": "-I/opt/local/include",
+        "LIBCLANG_PATH": "/opt/local/lib/libclang.dylib",
+        "SDKROOT": "/opt/local/sdk",
+        "MACOSX_DEPLOYMENT_TARGET": "14.0",
+        "RUSTFLAGS": "-L /opt/local/lib",
+        "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/opt/local/bin/ld",
+        "RUSTC_WRAPPER": "/opt/homebrew/bin/sccache",
+    }
+
+    def test_macos_build_path_is_fixed_and_minimal(self):
+        self.assertEqual(
+            release.macos_build_path("/Users/builder"),
+            "/Users/builder/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+
+    def test_macos_environment_drops_package_manager_leaks(self):
+        with mock.patch.dict(os.environ, {
+            **self.HOSTILE,
+            "HOME": "/Users/builder",
+            "DEVELOPER_DIR": "/Library/Developer/CommandLineTools",
+        }):
+            mac = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "macos"
+            )
+        self.assertEqual(mac["PATH"], release.macos_build_path("/Users/builder"))
+        for name in self.HOSTILE:
+            if name != "PATH":
+                self.assertNotIn(name, mac)
+        # Xcode toolchain discovery and the rustup home survive the scrub.
+        self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
+        self.assertEqual(mac["HOME"], "/Users/builder")
+        # The scrub runs before the pinned values are applied.
+        self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
+        self.assertEqual(mac["GIT_DIRTY"], "0")
+
+    def test_other_platforms_keep_the_inherited_environment(self):
+        with mock.patch.dict(os.environ, {**self.HOSTILE, "HOME": "/home/builder"}):
+            linux = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "linux"
+            )
+        self.assertEqual(
+            linux["PATH"],
+            "/home/builder/.cargo/bin:" + self.HOSTILE["PATH"],
+        )
+        self.assertEqual(linux["LIBRARY_PATH"], "/opt/local/lib")
+
+
+OTOOL_L = """\
+/pkg/panel-play:
+\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+\t@rpath/libfoo.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t/opt/local/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)
+"""
+
+OTOOL_L_FAT = """\
+/pkg/panel-play (architecture arm64):
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+/pkg/panel-play (architecture x86_64):
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+"""
+
+OTOOL_LOAD_COMMANDS = """\
+/pkg/panel-play:
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 72
+Load command 12
+      cmd LC_RPATH
+  cmdsize 40
+     path @executable_path/../Frameworks (offset 12)
+Load command 13
+      cmd LC_RPATH
+  cmdsize 32
+     path /opt/local/lib (offset 12)
+Load command 14
+      cmd LC_LOAD_DYLIB
+  cmdsize 56
+     name /usr/lib/libSystem.B.dylib (offset 24)
+"""
+
+
+class MacosLinkageTests(unittest.TestCase):
+    def make_package(self, root):
+        base = root / "274bot-0.2.1-macos-arm64"
+        (base / "274bot.app/Contents/Frameworks").mkdir(parents=True)
+        (base / "274bot.app/Contents/MacOS").mkdir(parents=True)
+        (base / "Frameworks").mkdir()
+        for relative in release.MACOS_REQUIRED_EXECUTABLES:
+            (base / relative).write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 28)
+        (base / "Frameworks/libfoo.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+        (base / "274bot.app/Contents/Frameworks/libfoo.dylib").write_bytes(
+            b"\xcf\xfa\xed\xfe"
+        )
+        (base / "notes.txt").write_text("not a binary")
+        return base
+
+    def test_otool_parsers_read_libraries_and_rpaths(self):
+        self.assertEqual(release.parse_otool_libraries(OTOOL_L), [
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libiconv.2.dylib",
+            "@rpath/libfoo.dylib",
+            "/opt/local/lib/libbz2.1.0.dylib",
+        ])
+        self.assertEqual(release.parse_otool_libraries(OTOOL_L_FAT), [
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libSystem.B.dylib",
+        ])
+        self.assertEqual(release.parse_otool_rpaths(OTOOL_LOAD_COMMANDS), [
+            "@executable_path/../Frameworks",
+            "/opt/local/lib",
+        ])
+
+    def test_system_libraries_are_allowed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            violations = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["/usr/lib/libSystem.B.dylib",
+                 "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"],
+                [],
+            )
+        self.assertEqual(violations, [])
+
+    def test_package_manager_and_other_libraries_are_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            violations = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["/opt/local/lib/libbz2.1.0.dylib",
+                 "/opt/homebrew/lib/libssl.3.dylib",
+                 "/usr/local/lib/libfoo.dylib",
+                 "libfoo.dylib",
+                 "@loader_path/libfoo.dylib"],
+                [],
+            )
+        self.assertEqual(violations, [
+            "panel-play: /opt/local/lib/libbz2.1.0.dylib",
+            "panel-play: /opt/homebrew/lib/libssl.3.dylib",
+            "panel-play: /usr/local/lib/libfoo.dylib",
+            "panel-play: libfoo.dylib",
+            "panel-play: @loader_path/libfoo.dylib",
+        ])
+
+    def test_executable_path_must_resolve_inside_the_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            app_exe = base / "274bot.app/Contents/MacOS/panel-play"
+            inside = release.macho_linkage_violations(
+                app_exe, base,
+                ["@executable_path/../Frameworks/libfoo.dylib"], [],
+            )
+            missing = release.macho_linkage_violations(
+                app_exe, base,
+                ["@executable_path/../Frameworks/libabsent.dylib"], [],
+            )
+            escaping = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["@executable_path/../../../opt/local/lib/libbz2.dylib"], [],
+            )
+        self.assertEqual(inside, [])
+        self.assertEqual(len(missing), 1)
+        self.assertEqual(len(escaping), 1)
+
+    def test_rpath_must_resolve_inside_the_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            resolved = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@executable_path/Frameworks"],
+            )
+            outside = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], ["/opt/local/lib"],
+            )
+            no_rpath = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], [],
+            )
+            relative = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], ["Frameworks"],
+            )
+        self.assertEqual(resolved, [])
+        self.assertEqual(outside, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(no_rpath, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(relative, ["panel-play: @rpath/libfoo.dylib"])
+
+    def test_verify_checks_every_macho_and_names_the_offender(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+
+            def linkage(path):
+                if path.name == "libfoo.dylib" and "274bot.app" in str(path):
+                    return ["/opt/local/lib/libiconv.2.dylib"], []
+                return ["/usr/lib/libSystem.B.dylib"], []
+
+            with mock.patch.object(release, "otool_linkage", side_effect=linkage):
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"274bot\.app/Contents/Frameworks/libfoo\.dylib: "
+                    r"/opt/local/lib/libiconv\.2\.dylib",
+                ):
+                    release.verify_macos_linkage(base)
+                clean = mock.patch.object(
+                    release, "otool_linkage",
+                    return_value=(["/usr/lib/libSystem.B.dylib"], []),
+                )
+                with clean:
+                    checked = release.verify_macos_linkage(base)
+            self.assertEqual(checked, [
+                "274bot.app/Contents/Frameworks/libfoo.dylib",
+                "274bot.app/Contents/MacOS/panel-play",
+                "Frameworks/libfoo.dylib",
+                "panel-play",
+                "tui-play",
+            ])
+
+    def test_verify_requires_the_shipped_executables(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "package"
+            base.mkdir()
+            (base / "panel-play").write_bytes(b"\xcf\xfa\xed\xfe")
+            with self.assertRaisesRegex(release.ReleaseError, "tui-play"):
+                release.verify_macos_linkage(base)
+
+
 class ManifestTests(unittest.TestCase):
     def test_finalize_manifest_rehashes_notes_and_package_files(self):
         with tempfile.TemporaryDirectory() as temporary:

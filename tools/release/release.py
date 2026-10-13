@@ -546,10 +546,85 @@ def worker_expect(root, commit, platform):
     return expect
 
 
+# The macOS builder is a developer machine whose login PATH puts MacPorts
+# (/opt/local/bin) and Homebrew ahead of /usr/bin. Anything found through
+# that PATH -- MacPorts' pkg-config answers `-L/opt/local/lib` for bzip2 --
+# or through the search-path variables below can link a shipped binary
+# against libraries users' Macs do not have. The macOS worker therefore
+# builds with a fixed PATH and without those variables. None of them was
+# set in the environment that produced the known-good 0.2.1 package, so
+# dropping them cannot change what that build finds. Kept on purpose:
+# DEVELOPER_DIR (how xcrun locates the Apple toolchain when xcode-select
+# is not set; its SDK still records /usr/lib and /System/Library install
+# names) and HOME/CARGO_HOME/RUSTUP_* (the rustup toolchain itself).
+MACOS_SYSTEM_PATH_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+MACOS_SCRUBBED_ENV = frozenset({
+    # Header/library search paths honoured by clang and ld directly.
+    "LIBRARY_PATH", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+    "OBJC_INCLUDE_PATH",
+    # An alternate SDK changes which system libraries exist, and a shell's
+    # deployment target silently moves the documented macOS 11.0 floor.
+    # With both unset, cc/rustc rediscover the default SDK through xcrun
+    # and the aarch64 target defaults to macOS 11.0.
+    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET",
+    # Rustflags and compiler substitution bypass the pinned toolchain and
+    # the fixed PATH.
+    "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS",
+    "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+    # bindgen/clang-sys (the v8 build) would use a MacPorts libclang.
+    "LIBCLANG_PATH", "LIBCLANG_LIB_DIR", "CLANG_PATH", "LLVM_CONFIG_PATH",
+})
+MACOS_SCRUBBED_ENV_PREFIXES = (
+    # The pkg-config binary itself and its search paths, including the
+    # pkg-config crate's per-target PKG_CONFIG_PATH_<target> spellings:
+    # this is how MacPorts libbz2/libiconv reached the 0.2.1 build.
+    "PKG_CONFIG",
+    # Dyld overrides act on the build scripts and proc-macros the build
+    # runs, and could mask a bad link until the binary reaches a clean Mac.
+    "DYLD_",
+    # Build scripts that probe a package manager's prefix (openssl-sys,
+    # the cmake search in aws-lc-sys) must not be handed one.
+    "HOMEBREW_", "OPENSSL_", "CMAKE_",
+    # Extra clang arguments bindgen would apply to the v8 build.
+    "BINDGEN_",
+    # Per-target CARGO_TARGET_<TRIPLE>_LINKER/RUSTFLAGS/RUNNER overrides.
+    "CARGO_TARGET_",
+)
+# cc/cmake compiler and flag selection, including the HOST_/TARGET_
+# prefixed and _<target>-suffixed spellings the cc crate reads
+# (for example CC_aarch64-apple-darwin).
+MACOS_CC_ENV = re.compile(
+    r"^(?:HOST_|TARGET_)?"
+    r"(?:CC|CXX|CPP|AR|AS|RANLIB|NM|LD|STRIP|OBJCOPY|OBJDUMP|"
+    r"CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS)(?:_.*)?$"
+)
+
+
+def macos_build_path(home):
+    """The only PATH a macOS release build runs with: rustup, then system."""
+    return os.pathsep.join(
+        [str(Path(home) / ".cargo/bin"), *MACOS_SYSTEM_PATH_DIRS]
+    )
+
+
+def macos_scrubbed_env(name):
+    return (
+        name in MACOS_SCRUBBED_ENV
+        or name.startswith(MACOS_SCRUBBED_ENV_PREFIXES)
+        or MACOS_CC_ENV.match(name) is not None
+    )
+
+
 def native_build_environment(expect, root, target, platform, rusty_v8_archive=None):
     environment = os.environ.copy()
     environment.pop("RUSTY_V8_ARCHIVE", None)
     environment.pop("AWS_LC_SYS_PREBUILT_NASM", None)
+    if platform == "macos":
+        environment = {
+            name: value
+            for name, value in environment.items()
+            if not macos_scrubbed_env(name)
+        }
     environment.update({
         "GIT_COMMIT": expect["host_commit"],
         "CLIENT_COMMIT": expect["client_commit"],
@@ -563,9 +638,12 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         "CARGO_BUILD_JOBS": str(expect["jobs"]),
         "CARGO_INCREMENTAL": "0",
     })
-    environment["PATH"] = (
-        str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
-    )
+    if platform == "macos":
+        environment["PATH"] = macos_build_path(Path.home())
+    else:
+        environment["PATH"] = (
+            str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
+        )
     if platform == "windows":
         if not rusty_v8_archive:
             raise ReleaseError("Windows build requires --rusty-v8-archive")
@@ -1127,6 +1205,150 @@ def verify_package_archive(archive, destination, *, expected_platform=None,
     return base, manifest, help_results
 
 
+MACHO_MAGICS = frozenset({
+    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",  # 32-bit, both byte orders
+    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",  # 64-bit, both byte orders
+    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",  # fat, both byte orders
+    b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",  # fat64, both byte orders
+})
+MACOS_SYSTEM_LIBRARY_PREFIXES = ("/usr/lib/", "/System/Library/")
+MACOS_REQUIRED_EXECUTABLES = (
+    "panel-play",
+    "tui-play",
+    "274bot.app/Contents/MacOS/panel-play",
+)
+
+
+def is_macho(path):
+    with Path(path).open("rb") as source:
+        return source.read(4) in MACHO_MAGICS
+
+
+def parse_otool_libraries(output):
+    """Install names from `otool -L` output, in order."""
+    libraries = []
+    for line in output.splitlines():
+        # Dependency lines are indented; the file header (and the per-arch
+        # headers otool prints for a fat binary) are not.
+        if not line[:1].isspace():
+            continue
+        entry = re.sub(r"\s+\(compatibility version .*\)$", "", line.strip())
+        if entry:
+            libraries.append(entry)
+    return libraries
+
+
+def parse_otool_rpaths(output):
+    """LC_RPATH paths from `otool -l` output, in order."""
+    rpaths = []
+    in_rpath = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("cmd "):
+            in_rpath = stripped == "cmd LC_RPATH"
+        elif in_rpath and stripped.startswith("path "):
+            rpaths.append(
+                re.sub(r"\s+\(offset \d+\)$", "", stripped[len("path "):])
+            )
+            in_rpath = False
+    return rpaths
+
+
+def otool_linkage(path):
+    try:
+        libraries = parse_otool_libraries(run(["otool", "-L", path], capture=True))
+        rpaths = parse_otool_rpaths(run(["otool", "-l", path], capture=True))
+    except OSError as error:
+        raise ReleaseError(f"otool is required to verify macOS linkage: {error}")
+    return libraries, rpaths
+
+
+def _resolves_inside_package(candidate, base):
+    candidate = Path(candidate)
+    # A still-relative candidate (a plain relative or nested-@rpath rpath
+    # entry) would resolve against the verifier's working directory, which
+    # says nothing about where dyld finds it on a user's Mac. Fail closed.
+    if not candidate.is_absolute():
+        return False
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(Path(base).resolve())
+    except ValueError:
+        return False
+    return resolved.is_file()
+
+
+def _expand_loader_prefix(value, binary):
+    """Expand a leading @executable_path/@loader_path in an rpath entry."""
+    for token in ("@executable_path", "@loader_path"):
+        if value == token:
+            return Path(binary).parent
+        if value.startswith(token + "/"):
+            return Path(binary).parent / value[len(token) + 1:]
+    return Path(value)
+
+
+def macho_linkage_violations(binary, base, libraries, rpaths):
+    """Libraries `binary` loads that are neither system libraries nor files
+    inside the package at `base`, as 'binary: library' strings. Only
+    /usr/lib, /System/Library, and @executable_path/@rpath references that
+    resolve to an existing file inside the package are allowed; anything
+    else -- /opt/local, /opt/homebrew, /usr/local, @loader_path, a bare
+    library name -- is a violation, because a user's Mac will not have it.
+    """
+    binary = Path(binary)
+    base = Path(base)
+    try:
+        label = binary.relative_to(base).as_posix()
+    except ValueError:
+        label = str(binary)
+    violations = []
+    for library in libraries:
+        if library.startswith(MACOS_SYSTEM_LIBRARY_PREFIXES):
+            continue
+        if library.startswith("@executable_path/"):
+            candidate = binary.parent / library[len("@executable_path/"):]
+            if _resolves_inside_package(candidate, base):
+                continue
+        elif library.startswith("@rpath/"):
+            rest = library[len("@rpath/"):]
+            if any(
+                _resolves_inside_package(_expand_loader_prefix(rpath, binary) / rest, base)
+                for rpath in rpaths
+            ):
+                continue
+        violations.append(f"{label}: {library}")
+    # A fat binary lists each slice's libraries; report a violation once.
+    return list(dict.fromkeys(violations))
+
+
+def verify_macos_linkage(base):
+    """Run otool on every Mach-O in the package, not just the executables
+    named today, so a future shipped dylib is checked too. Returns the
+    package-relative paths checked."""
+    base = Path(base)
+    macho = sorted(
+        path for path in base.rglob("*") if path.is_file() and is_macho(path)
+    )
+    checked = {path.relative_to(base).as_posix() for path in macho}
+    missing = [name for name in MACOS_REQUIRED_EXECUTABLES if name not in checked]
+    if missing:
+        raise ReleaseError(
+            "macOS package is missing required Mach-O executables: "
+            + ", ".join(missing)
+        )
+    violations = []
+    for path in macho:
+        libraries, rpaths = otool_linkage(path)
+        violations += macho_linkage_violations(path, base, libraries, rpaths)
+    if violations:
+        raise ReleaseError(
+            "macOS package links libraries outside the system and the package:\n"
+            + "\n".join(violations)
+        )
+    return sorted(checked)
+
+
 def nav_digest_set(base, manifest):
     revision = str(manifest["revision"])
     nav = Path(base) / "nav" / revision
@@ -1206,12 +1428,13 @@ def verify_worker(args):
         )
         native_checks = []
         if args.platform == "macos":
+            verify_macos_linkage(base)
             app = base / "274bot.app"
             for target in (base / "panel-play", base / "tui-play", app):
                 run(["codesign", "--verify", "--strict", "--verbose=2", target])
             run(["xcrun", "stapler", "validate", app])
             run(["spctl", "-a", "-vv", app])
-            native_checks = ["codesign", "stapler", "gatekeeper"]
+            native_checks = ["otool-linkage", "codesign", "stapler", "gatekeeper"]
         result = {
             "platform": args.platform,
             "archive": archive.name,
