@@ -2071,7 +2071,7 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
 
 #[test]
 fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
-    for (combat_before_start, thieving_first, thieving_gain, cake) in [
+    for (combat_before_start, thieving_first, thieving_gain, stall_food) in [
         (false, false, true, true),
         (false, true, true, true),
         (true, false, true, true),
@@ -2109,8 +2109,10 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
                 if thieving_gain {
                     c.stat_xp[17] += 16;
                 }
-                if cake {
-                    set_inv(&mut c, &[(1891, 1)]);
+                if stall_food {
+                    // A bread roll, not Cake: the widened stall-food arm
+                    // must not gate on the exact stolen food.
+                    set_inv(&mut c, &[(2309, 1)]);
                 }
             } else if !combat_before_start {
                 c.stat_xp[2] += 96;
@@ -2120,7 +2122,7 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
         }
         tick_until_done(&mut runner, &mut c);
 
-        if combat_before_start || !thieving_gain || !cake {
+        if combat_before_start || !thieving_gain || !stall_food {
             assert!(
                 matches!(runner.status(), RunnerStatus::Failed(_)),
                 "seeded combat or missing post-Start stall evidence must not qualify"

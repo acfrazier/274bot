@@ -23,6 +23,15 @@ pub enum Proof {
     ItemIdAtMost { id: i32, count: i32 },
     /// Inventory contains at least `count` of any exact object in `ids`.
     ItemIdAny { ids: &'static [i32], count: i32 },
+    /// Every posted inventory slot is occupied (the pack is full: occupied
+    /// entries reach the snapshot's posted `inventory_size`) and the pack
+    /// holds at least `count` of exact object `id`. For fill-to-full
+    /// gatherers, where a natural random-event item may take a slot the
+    /// product would otherwise hold: an exact full-pack-of-product arm
+    /// would gate on that chance outcome, while this arm still requires
+    /// the full pack the script's own bank trip triggers on. Fails closed
+    /// while no inventory size is posted.
+    ItemIdInFullPack { id: i32, count: i32 },
     /// Seeded clue `seeded` has left the pack, and a different clue scroll
     /// or a casket is held. Name-resolved so a random next-step scroll still
     /// counts; the seed id cannot satisfy this while it remains. Fail-closed
@@ -259,6 +268,9 @@ impl Proof {
                 "has_item_id_any({})>={count}",
                 ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
             ),
+            Proof::ItemIdInFullPack { id, count } => {
+                format!("has_item_id({id})>={count}_in_full_pack")
+            }
             Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
             Proof::ClueProtectWindow { seeded } => format!("clue_protect_window({seeded})"),
 
@@ -436,6 +448,12 @@ impl Proof {
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
             Proof::ItemIdAny { ids, count } => {
                 ids.iter().map(|id| inv_id_count(snap, *id)).sum::<i32>() >= *count
+            }
+            Proof::ItemIdInFullPack { id, count } => {
+                let capacity = snap.inventory_size();
+                capacity > 0
+                    && snap.inv().len() >= capacity as usize
+                    && inv_id_count(snap, *id) >= *count
             }
             Proof::ClueReplaced { seeded } => {
                 if !snap.ingame() || snap.scene_state() != 2 {
@@ -1177,6 +1195,59 @@ mod tests {
         assert_eq!(
             Proof::ItemIdAtMost { id: 849, count: 1 }.name(),
             "has_item_id(849)<=1"
+        );
+    }
+
+    #[test]
+    fn item_id_in_full_pack_requires_posted_capacity_fully_occupied() {
+        let mut c = seeded();
+        // A dedicated 3-slot pack on side tab 3 (the component the
+        // snapshot's inventory_size reads), independent of the seeded inv.
+        let inv_id = c.push_iface(IfType {
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        });
+        c.side_icon[3] = inv_id as i32;
+        c.set_iface_mut(
+            inv_id,
+            IfTypeMut {
+                // Stored ids are obj id + 1: one of obj 60 and two foreign
+                // objs (849 and 851) occupy every posted slot of this
+                // 3-slot fixture. Foreign occupancy is unbounded: a count
+                // of one product in this full pack passes.
+                link_obj_type: Some(vec![61, 850, 852]),
+                link_obj_number: Some(vec![1, 1, 1]),
+                ..Default::default()
+            },
+        );
+        let s = snap(&mut c);
+        assert_eq!(s.inventory_size(), 3, "the fixture posts a 3-slot pack");
+        let full = Proof::ItemIdInFullPack { id: 60, count: 1 };
+        assert!(
+            full.check(&s, None),
+            "a full pack with two foreign slots still holds the product"
+        );
+        assert_eq!(full.name(), "has_item_id(60)>=1_in_full_pack");
+        assert!(
+            !Proof::ItemIdInFullPack { id: 60, count: 2 }.check(&s, None),
+            "the foreign slots are not product, so a two-product count fails"
+        );
+
+        c.set_iface_mut(
+            inv_id,
+            IfTypeMut {
+                // One posted slot empty (stored id 0): the same product
+                // count in a non-full pack must not satisfy the arm.
+                link_obj_type: Some(vec![61, 850, 0]),
+                link_obj_number: Some(vec![1, 1, 0]),
+                ..Default::default()
+            },
+        );
+        let s = snap(&mut c);
+        assert!(
+            !full.check(&s, None),
+            "product count alone, without a full pack, is not the fill witness"
         );
     }
 
