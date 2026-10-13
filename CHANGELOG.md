@@ -10,8 +10,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Fishing bots now look for another spot when a spot moves or temporarily
   disappears, including spots outside their current view. A short resource wait
   running out no longer stops fishing with "resource-unavailable". If no spot
-  appears for 800 ticks without a catch or XP, the bot stops with a clear failure.
+  appears for about 8 minutes without a catch or XP, the bot stops with a clear failure.
   While looking for a spot, it reports surveying rather than gathering.
+- Bank trips no longer stop the bot with "bank deposit failed: bank closed
+  before the transfer settled" or "bank item table unavailable". The bot's
+  automatic run toggle could press the run button while the bank window was
+  open, and the game's run button closes the open bank or dialogue window,
+  so the bank shut under the deposit. The run button now waits until no bank
+  or dialogue window is open. If the bank still closes mid-transfer, the bot
+  opens it again from the same booth or banker and finishes what it was
+  doing, counting what was already deposited, with up to two extra opens for
+  each deposit or withdrawal; if the bank keeps closing past that, the
+  transfer still stops the bot with the message above.
 
 ## [0.2.0.2] — 2026-10-12 — Beta 1 patch
 

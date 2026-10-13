@@ -302,6 +302,7 @@ impl BankRun {
                         bank: self.bank,
                         action,
                         partial_ok: self.partial_ok,
+                        access: self.access.clone(),
                     },
                     &mut cx.tick.cx,
                 ) {
