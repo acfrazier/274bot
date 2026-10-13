@@ -693,9 +693,9 @@ pub struct FleetRow {
         self.assertEqual(removal_findings, [])
 
     def test_inner_module_cfg_gate_removal_is_a_new_production_violation(self) -> None:
-        # Review r2: inner `#![cfg(...)]` / `#![cfg_attr(...)]` is exact
-        # violation provenance. Deleting the gate promotes conditional debt
-        # to production ids, so the transition must report new violations.
+        # Review r2: inner attributes are exact module provenance. Deleting
+        # either changes its registered ids even if cfg_attr only changes a
+        # conditional attribute instead of disabling the module.
         gate = 'cfg(any(test,feature="test-support"))'
         probe_tail = '\n#[derive(Clone)]\npub struct Probe { pub name: String }\n'
         seam_types = (
@@ -724,18 +724,19 @@ pub struct FleetRow {
                 ),
             )
 
-        for views_gate, label in (
-            ('#![cfg(any(test, feature = "test-support"))]\n', "inner cfg"),
+        for views_gate, label, gated_id in (
+            ('#![cfg(any(test, feature = "test-support"))]\n', "inner cfg", gate),
             (
                 '#![cfg_attr(any(test, feature = "test-support"), allow(dead_code))]\n',
                 "inner cfg_attr",
+                'cfg_attr(any(test,feature="test-support"),allow(dead_code))',
             ),
         ):
             with self.subTest(gate=label):
                 gated_views = views_gate + self.baseline_views() + probe_tail
                 promoted_views = self.baseline_views() + probe_tail
                 base = self.fixture(
-                    views=gated_views, seam_types=seam_types, violations=records(gate)
+                    views=gated_views, seam_types=seam_types, violations=records(gated_id)
                 )
                 promoted = self.fixture(
                     views=promoted_views,
@@ -756,7 +757,7 @@ pub struct FleetRow {
                 print(f"BAD added {label} gate: {production_to_gated}")
                 self.assertEqual(
                     production_to_gated,
-                    sorted(f"new inventory violation: {row['id']}" for row in records(gate)),
+                    sorted(f"new inventory violation: {row['id']}" for row in records(gated_id)),
                 )
 
     def test_module_level_cfg_on_mod_parses_and_chains_both_directions(self) -> None:

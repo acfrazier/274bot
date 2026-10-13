@@ -15,10 +15,11 @@ Protect both branches against force-push and deletion. The repository must be se
 
 Runtime identities:
 
-- **rust-analyzer**: the exact bytes with SHA-256 `88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a`, whose `--version` prints `rust-analyzer 1 (9074e9b4c6 2026-09-06)`, served at any HTTPS URL that needs no authentication (for example a release asset on the arch repository). The source is the orchestration host's `/usr/bin/rust-analyzer` (Arch package `rust-analyzer 20260907-1`), not a rustup/nightly build. CI downloads it, checks the SHA-256, and checks the version. **Known blocker:** this build imports `log10f@GLIBC_2.43`; `ubuntu-24.04` runners ship glibc 2.39, so the version check fails there. Before enabling CI, either run the push job on an image with glibc 2.43 or later, or pin a parser build that runs on `ubuntu-24.04`. Both change protected bytes or the runtime pin and therefore need a qualified enforcement update. Confirm with `"$parser" --version` inside the exact runner image.
+- **rust-analyzer**: the official [2026-10-12 release](https://github.com/rust-lang/rust-analyzer/releases/tag/2026-10-12), asset [`rust-analyzer-x86_64-unknown-linux-gnu.gz`](https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz). The gzip SHA-256 is `040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3`. The decompressed Linux x86-64 GNU binary SHA-256 is `fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`; its `--version` prints `rust-analyzer 0.3.3081-standalone`. Download this gzip asset, verify both hashes, decompress it, and use the binary **identically in CI and locally**. It runs on `ubuntu-24.04`; do not substitute the Arch `/usr/bin/rust-analyzer` build.
 - **Python**: pin `python=3.14.8`. `actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1` is v6.3.0; it resolves versions from `actions/python-versions@main/versions-manifest.json`, which lists 3.14.8 as stable with `python-3.14.8-linux-24.04-x64.tar.gz` (checked 2026-10-12). The orchestration host runs CPython 3.14.8, so the local gate and CI use the same pin. A different host interpreter fails closed; changing the pin needs a qualified enforcement update.
+- **bubblewrap**: the Ubuntu 24.04 [`bubblewrap_0.9.0-1ubuntu0.3_amd64.deb`](https://security.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3_amd64.deb), package SHA-256 `2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094`. Its extracted `usr/bin/bwrap` SHA-256 is `e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71` and its version is `bubblewrap 0.9.0`. Both local qualification and CI use these exact executable bytes. On Arch, this Ubuntu binary also needs `libselinux1_3.5-2ubuntu2_amd64.deb` (SHA-256 `c0fe6dfac61d458f3e65c4a2bf6a920030a97d2429e33d0b405a8c4a63ef2864`); extract it next to `usr/bin/bwrap`. The gate gives only bubblewrap that directory as a library path and removes it from E' before execution.
 
-The full runtime pin is `python=3.14.8;rust-analyzer-sha256=88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a`.
+The full runtime pin is `python=3.14.8;rust-analyzer-sha256=fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`.
 
 The workflow requires these GitHub repository variables on the product repository:
 
@@ -28,7 +29,7 @@ The workflow requires these GitHub repository variables on the product repositor
 | `ARCH_RECORDS_REF` | `refs/heads/arch-gate-records`. |
 | `ARCH_ENFORCEMENT_URL` | The same HTTPS clone URL. |
 | `ARCH_ENFORCEMENT_REF` | Exactly `refs/heads/arch-enforcement`. |
-| `ARCH_RUST_ANALYZER_URL` | HTTPS URL of the exact rust-analyzer bytes. |
+| `ARCH_RUST_ANALYZER_URL` | `https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz`. |
 
 The push job also clones the product repository and the client submodule without a token; both are currently anonymous-readable. Missing variables, refs, records, runtime pins, parser bytes, or matching checkouts fail closed. Do not store these trusted values in the product checkout or accept a candidate's pin, version, `approved` field, or CI result as authority.
 
@@ -60,7 +61,7 @@ The operator must independently confirm the target ref, exact commits, runtime, 
 
 ### Operator bootstrap checklist (target `dev`)
 
-Run each step on the orchestration host. Use `PYTHON=/usr/bin/python3` (CPython 3.14.8) and the host `/usr/bin/rust-analyzer`.
+Run each step on the orchestration host. Use `PYTHON=/usr/bin/python3` (CPython 3.14.8). Download the pinned parser and sandbox from step 4. Do not use the host's `/usr/bin/rust-analyzer` or an unpinned bubblewrap.
 
 1. **Merge first.** The gate must be on `dev` before bootstrap. Push that merge as B. Its own push run is red, because no records exist yet; the first green run is the first admitted H.
 2. **Create the arch repository.** Make it public, give push access only to the operator, and protect `arch-enforcement` and `arch-gate-records` against force-push and deletion. Set `ARCH_URL=https://github.com/<owner>/<arch-repo>.git`.
@@ -73,7 +74,30 @@ Run each step on the orchestration host. Use `PYTHON=/usr/bin/python3` (CPython 
    git -C "$E_ROOT" commit -q -m "Architecture enforcement from $B_SHA"
    git -C "$E_ROOT" push "$ARCH_URL" HEAD:refs/heads/arch-enforcement
    ```
-4. **Publish the parser.** Upload `/usr/bin/rust-analyzer` unchanged as an HTTPS asset, for example a release asset on the arch repository. Check `curl -fsSL "$ARCH_RUST_ANALYZER_URL" | sha256sum` against the pin. Resolve the glibc blocker above before you expect a green push run.
+4. **Provision the parser and sandbox.** Set `ARCH_RUST_ANALYZER_URL` to the official gzip URL. Check its gzip and binary hashes. Extract the pinned Ubuntu bubblewrap package and check its hashes. CI installs the same two binaries. The Arch host also needs the pinned Ubuntu `libselinux1` package in the sandbox directory.
+   ```sh
+   export ARCH_RUST_ANALYZER_URL=https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz
+   export PARSER_DIR=/absolute/path/to/architecture-parser
+   mkdir -p "$PARSER_DIR"
+   curl -fL --output "$PARSER_DIR/rust-analyzer.gz" "$ARCH_RUST_ANALYZER_URL"
+   printf '%s  %s\n' 040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3 "$PARSER_DIR/rust-analyzer.gz" | sha256sum --check -
+   gzip -dc "$PARSER_DIR/rust-analyzer.gz" > "$PARSER_DIR/rust-analyzer"
+   printf '%s  %s\n' fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49 "$PARSER_DIR/rust-analyzer" | sha256sum --check -
+   chmod 0755 "$PARSER_DIR/rust-analyzer"
+   test "$("$PARSER_DIR/rust-analyzer" --version)" = "rust-analyzer 0.3.3081-standalone"
+   export PATH="$PARSER_DIR:$PATH"
+   export SANDBOX_DIR=/absolute/path/to/architecture-sandbox
+   mkdir -p "$SANDBOX_DIR"
+   curl -fL --output "$SANDBOX_DIR/bubblewrap.deb" https://security.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
+   printf '%s  %s\n' 2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094 "$SANDBOX_DIR/bubblewrap.deb" | sha256sum --check -
+   dpkg-deb -x "$SANDBOX_DIR/bubblewrap.deb" "$SANDBOX_DIR"
+   printf '%s  %s\n' e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71 "$SANDBOX_DIR/usr/bin/bwrap" | sha256sum --check -
+   curl -fL --output "$SANDBOX_DIR/libselinux1.deb" https://archive.ubuntu.com/ubuntu/pool/main/libs/libselinux/libselinux1_3.5-2ubuntu2_amd64.deb
+   printf '%s  %s\n' c0fe6dfac61d458f3e65c4a2bf6a920030a97d2429e33d0b405a8c4a63ef2864 "$SANDBOX_DIR/libselinux1.deb" | sha256sum --check -
+   dpkg-deb -x "$SANDBOX_DIR/libselinux1.deb" "$SANDBOX_DIR"
+   test "$(LD_LIBRARY_PATH="$SANDBOX_DIR/usr/lib/x86_64-linux-gnu" "$SANDBOX_DIR/usr/bin/bwrap" --version)" = "bubblewrap 0.9.0"
+   export PATH="$SANDBOX_DIR/usr/bin:$PATH"
+   ```
 5. **Check out B.** Make a clean detached checkout of `$B_SHA` at `$B_ROOT` and run `git submodule update --init vendor/fr-client-rust` in it. `$B_SHA` must equal `git ls-remote https://github.com/acfrazier/274bot.git refs/heads/dev`.
 6. **Compute identities.** Run the snippet above with `E_ROOT`, `B_ROOT`, and `PYTHON`. Run it again with `E_ROOT="$B_ROOT"`: both `bundle_digest` lines must match, or E and B disagree.
 7. **Write the records.** In a new directory `$RECORDS`, run `git init -q -b arch-gate-records`. Write `targets/dev/gate.json` by hand from the computed values, with these fields: target `refs/heads/dev`; accepted SHA and orchestrator commit both `$B_SHA`; epoch `0`; the runtime pin above; a reason; the operator's inline approval text; and owner acknowledgements. Create an empty `targets/dev/receipts.jsonl`. Validate the result with `"$PYTHON" -c 'import json,sys; json.load(open(sys.argv[1]))' targets/dev/gate.json`. Commit and run `git push "$ARCH_URL" HEAD:refs/heads/arch-gate-records`.
@@ -111,7 +135,7 @@ A policy-only addition, widening, or re-admission needs an external approval rec
 Two transitions are findings even though no policy row changes:
 
 - Moving the `vendor/fr-client-rust` gitlink to another commit, with the same path, URL, and branch, produces `client gitlink moved: vendor/fr-client-rust <old> -> <new>`. This is an I-wire/T1 custody change (§23 §3). It needs an exact approval like any other widening, and admission records it as a contract transition.
-- Owning-view violations record their exact cfg provenance in `cfg_or_target`. An unconditional violation is `production`. A conditional one keeps its predicate text, such as `cfg(any(test,feature="test-support"))`, including module, item, variant, field, and `cfg_attr(..., derive(Clone))` conditions. Deleting the gate changes the id, so the result is a `new inventory violation`, not an empty delta.
+- Owning-view violations record exact cfg provenance in `cfg_or_target`, including outer `#[cfg]` and inner `#![cfg]` or `#![cfg_attr]` text along the module chain, item, variant, field, and conditional Clone. Unconditional violations use `production`. Removing an inner or outer gate changes the id and produces a `new inventory violation`, not an empty delta. `cfg_attr` text is recorded as text; its condition is not itself treated as a disabled module.
 
 On success, `admit` appends one hash-chained receipt to the records checkout. Each receipt's `enforcement_sha`, `bundle_digest`, and `runtime_pin` identify the exact checker/runtime that evaluated H; its `activated_*` fields identify the post-admission pin. For an ordinary or policy receipt they match; for an E' transition, the receipt records active E as the checker and E' as the activated pin. Commit and publish that receipt on the protected records ref before moving the local integration ref to exact H and pushing H. `admit` does not advance the product integration ref. On refusal, it writes no receipt and does not change B, the enforcement pin, or the epoch.
 
@@ -142,9 +166,9 @@ An enforcement update needs an exact operator-approved `approvals/<H_SHA>.json` 
      --evidence-root "$EVIDENCE_ROOT"
    ```
 
-   This command runs the active checker on B/H. It then runs `check.py --self-test` and the complete protected `test_*.py` corpus from both E and E', with E' as the checker under test. Finally it runs **admission-mode qualification**: for each probe it builds a fresh copy of the records chain with the exact activation receipt appended, a clone of E', a base at H, and one candidate derived from H. It then runs `E'/tools/architecture/trusted_gate.py admit` as a separate process with the same interpreter, environment, working directory, and command line an operator uses once E' is active. No flag or variable marks that run as qualification. The control (a comment-only workspace manifest change) must be admitted. Each known-bad candidate must be refused with no receipt and no pending record: an always-success `check.py`, an `inventories.py` that returns no findings, a replaced CI workflow, a normal dependency edge outside policy (restored or new debt), and an owning seam with a public field and `Clone` but no inventory row. E' must not execute candidate checker code. The command writes `pending.json` only after all of this passes. Fixtures and temporary directories must live under the evidence directory or the worktree's `target/`, not `/tmp`. Against the real repository, each probe runs a full `admit`, so expect several minutes per probe.
+   The probe trees check out `vendor/fr-client-rust` from H's own initialized submodule. H needs that submodule initialized, as for `admit`. E' runs each probe in a private mount namespace with a distinct writable tree, HOME and TMPDIR. Other paths, including the operator's home and shared Git alternates, are read-only; `/tmp` and `/dev/shm` are private. This requires `bwrap` with unprivileged user/mount namespaces on the orchestration host. Missing isolation refuses qualification. Probe directory names and commit subjects do not supply stable synthetic fingerprints. The probes include the restored `vault -> api` edge and its allowance, plus a disallowed edge selected from a non-E'-derived rotation.
 
-   The probe trees check out `vendor/fr-client-rust` from H's own initialized submodule, so `H_ROOT` needs it initialized, as for `admit`. No network is used. If it is not initialized, the honest control fails and qualification fails closed.
+   Before writing `pending.json`, active E also runs E' as a separate `prepare-enforcement` executable against a fixture-scale proposed E'' with a neutered checker. E' must exit nonzero without writing `pending.json` or a receipt. This tests one level only; the rejected E'' does not run another prepare probe. No qualification flag is passed to E'.
 2. Commit and publish `pending.json` on the protected records ref. Publish exact E' to `refs/heads/arch-enforcement`. Do not move the product target yet.
 3. Run `admit` again with the active E identity still supplied as `--enforcement-root`, `--enforcement-sha`, `--bundle-digest`, and `--runtime-pin`; set `--enforcement-ref-sha` to the now-published E' SHA, and pass the same proposed E' root/SHA/digest. The gate checks the pending identity, candidate bytes, approval, delta, and qualification digest before it appends a receipt recording E as the checker and E' as the activated pin, then removes `pending.json`.
 4. Commit and publish the final receipt/removal on the records ref. Only then move the integration ref to H. Do not admit another candidate while `pending.json` exists.
@@ -172,10 +196,13 @@ mkdir -p target/architecture-gate-evidence
 export F0_ARCH_TEST_ROOT="$PWD/target/architecture-gate-evidence"
 export TMPDIR="$F0_ARCH_TEST_ROOT"
 export F0_ARCH_TEST_CHECKER_ROOT="$PWD"
-export PATH="/path/to/pinned/rust-analyzer-directory:$PATH"
+export PATH="$SANDBOX_DIR/usr/bin:$PARSER_DIR:$PATH"
 printf '%s  %s\n' \
-  88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a \
+  fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49 \
   "$(command -v rust-analyzer)" | sha256sum --check -
+printf '%s  %s\n' \
+  e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71 \
+  "$(command -v bwrap)" | sha256sum --check -
 : "${PYTHON:?set the exact Python version from the trusted runtime pin}"
 "$PYTHON" --version
 "$PYTHON" tools/architecture/check.py --self-test
@@ -183,4 +210,12 @@ printf '%s  %s\n' \
 "$PYTHON" -m unittest discover -s tools/architecture -p 'e2e_*.py' -v
 ```
 
-The `test_*.py` corpus is what qualification runs. It includes the two-merge always-success and omitted-inventory poison variants, workflow poison, forced-base rejection, stale and forged approvals, approval-free strict-subset removal, a qualified E' control, restored-debt rejection under E', a SHA-only client gitlink move (refused without approval, admitted as an approved contract transition), and removal of a `cfg(any(test, feature = "test-support"))` gate (a new production violation). It also tests exact-approved unsafe E' candidates: an always-success and an omitted-inventory checker; the review r1 E' that is honest only under the old `F0_ARCH_QUALIFICATION_CHILD` flag; and an E' that is honest whenever a test imports it but cheats as the `admit` executable. Each must be refused at `prepare-enforcement` by the admission-mode probes, and no later `admit` may activate it. The corpus never launches a nested fixture suite, so no process in it needs a recursion flag. `e2e_*.py` repeats the two-merge flow and the cheating-executable E' with the real nested suites. It must stay outside the `test_*.py` pattern. These gate fixtures treat candidate code as bytes and assert that candidate checker payloads never execute.
+The `test_*.py` corpus is the qualified fixture suite. It checks two-merge poisoning, forced-base rejection, approvals, strict-subset removal, the client gitlink, conditional inventories, and the protected update. It refuses E' variants keyed to probe paths/subjects, a vault/policy change, and an external admit counter. It also exercises the E' `prepare-enforcement` CLI against a neutered grandchild. `e2e_*.py` repeats the two-merge flow and executable E' with real nested suites. It stays outside `test_*.py` to avoid recursive qualification. Candidate source is treated as data; candidate checker payloads do not execute.
+
+## Accepted residuals and ownership
+
+| Residual | Coverage | Owner |
+|---|---|---|
+| E' can still fingerprint its ambient environment (for example `/proc`, uid, or a readable path). A fingerprint in **any E' diff is grounds to reject that change**. Isolation and randomized probe structure remove demonstrated signals but cannot make these calls indistinguishable. | Exact operator inline approval of E' bytes **and cross-vendor review of every checker diff**. The orchestrator must explain why the diff preserves enforcement, get that explanation past its own review, and then present it to the operator before activation. Probe success is not a substitute for either review. | Orchestrator explains and screens every diff; operator approves exact bytes; cross-vendor reviewer examines every diff. |
+| A crate the admission probes did not touch can trigger an E'-specific cheat. | Same exact approval, written explanation, and cross-vendor review for each checker diff, in addition to the vault/policy and rotating-edge probes. | Orchestrator and operator. |
+| E' `ci` CLI mode is not itself executed as a nested qualification probe. CI is detective after push, not the local admission boundary. | Same exact approval and cross-vendor diff review; separately the orchestrator checks the hosted CI result and halts on red. | Orchestrator. |

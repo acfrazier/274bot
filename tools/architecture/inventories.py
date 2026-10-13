@@ -24,8 +24,8 @@ RUST_EDITION = "2021"
 
 # The checker code (not inventories.json) pins the parser.  This is the exact
 # Linux x86-64 rust-analyzer binary provisioned for the architecture gate.
-PARSER_VERSION = "rust-analyzer 1 (9074e9b4c6 2026-09-06)"
-PARSER_SHA256 = "88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a"
+PARSER_VERSION = "rust-analyzer 0.3.3081-standalone"
+PARSER_SHA256 = "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49"
 INVENTORY_RELATIVE = Path("tools/architecture/inventories.json")
 VIEWS_RELATIVE = Path("crates/frontend-core/src/views.rs")
 FRONTEND_SRC_RELATIVE = Path("crates/frontend-core/src")
@@ -940,7 +940,7 @@ def _cfg_attr_predicate(texts: list[str]) -> str | None:
 
 
 def _inner_cfg_predicates(container: dict[str, Any], path: str) -> tuple[str, ...]:
-    """Inner `#![cfg]` / `#![cfg_attr]` predicates of a module file, in source order."""
+    """Exact inner `#![cfg]` / `#![cfg_attr]` provenance, in source order."""
     result: list[str] = []
     for attribute in _direct_children(container, "ATTR"):
         tokens = _attribute_tokens(attribute)
@@ -951,10 +951,9 @@ def _inner_cfg_predicates(container: dict[str, Any], path: str) -> tuple[str, ..
         if len(normalized) >= 4 and normalized[2] == "cfg":
             result.append("".join(normalized[2:-1]))
         elif len(normalized) >= 4 and normalized[2] == "cfg_attr":
-            predicate = _cfg_attr_predicate(normalized)
-            if predicate is None:
+            if _cfg_attr_predicate(normalized) is None:
                 raise _InventoryError(f"{path}: unsupported inner cfg_attr syntax")
-            result.append(predicate)
+            result.append("".join(normalized[2:-1]))
     return tuple(result)
 
 

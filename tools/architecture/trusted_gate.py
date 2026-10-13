@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,9 @@ FORMAT = "f0-architecture-gate-v1"
 GATE_SCHEMA = 1
 SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 DIGEST_RE = re.compile(r"\A[0-9a-f]{64}\Z")
-RUST_ANALYZER_SHA256 = "88ae4c54c68d6899010c18074b9e415f2dbee09527fb703fd4536b665571db0a"
-RUST_ANALYZER_VERSION = "rust-analyzer 1 (9074e9b4c6 2026-09-06)"
+RUST_ANALYZER_SHA256 = "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49"
+RUST_ANALYZER_VERSION = "rust-analyzer 0.3.3081-standalone"
+BWRAP_SHA256 = "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
 ARCH_DIR = Path("tools/architecture")
 POLICY_PATH = ARCH_DIR / "policy.toml"
 WORKFLOW_PATH = Path(".github/workflows/ci.yml")
@@ -889,7 +891,7 @@ def _run_child(root: Path, *, evidence_root: Path, checker_root: Path | None = N
     source = _path(root, "trusted qualification source")
     scratch = _path(evidence_root, "qualification evidence root")
     _require_separate(source, scratch)
-    with tempfile.TemporaryDirectory(prefix="arch-qualification-", dir=scratch) as temp_name:
+    with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
         copied = Path(temp_name) / "bundle"
         copied.mkdir()
         shutil.copytree(source / ARCH_DIR, copied / ARCH_DIR, symlinks=False)
@@ -899,7 +901,11 @@ def _run_child(root: Path, *, evidence_root: Path, checker_root: Path | None = N
         if parser is None:
             _fail("pinned rust-analyzer executable is unavailable during qualification")
         parser_dir = str(Path(parser).resolve(strict=True).parent)
-        system_path = os.pathsep.join(dict.fromkeys((parser_dir, "/usr/bin", "/bin")))
+        bwrap = shutil.which("bwrap")
+        if bwrap is None or _file_sha256(Path(bwrap).resolve(strict=True)) != BWRAP_SHA256:
+            _fail("pinned bubblewrap executable is unavailable during qualification")
+        sandbox_dir = str(Path(bwrap).resolve(strict=True).parent)
+        system_path = os.pathsep.join(dict.fromkeys((parser_dir, sandbox_dir, "/usr/bin", "/bin")))
         env = {"PATH": system_path, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(scratch), "F0_ARCH_TEST_ROOT": str(scratch)}
         if checker_root is not None:
             env["F0_ARCH_TEST_CHECKER_ROOT"] = str(_path(checker_root, "qualification checker root"))
@@ -927,17 +933,16 @@ def _qualification_digest(active_root: Path, proposed_root: Path, base_sha: str,
         "runtime_pin": runtime_pin,
         "fixture_corpus": "check.py --self-test + tools/architecture/test_*.py",
         "admission_probes": [label for label, _, _ in ADMISSION_PROBES],
+        "prepare_probe": "one CLI prepare-enforcement against neutered checker",
     })
 
 
-# Admission-mode qualification. The suites above import E' as a module, so
-# E' can tell that it is under test. These probes instead run E' exactly as
-# an operator runs an ordinary admission once E' is active: the same
-# interpreter, environment, working directory, and `admit` command line,
-# against a records chain identical to the post-activation chain. Nothing
-# in that invocation marks it as qualification. The control must be
-# admitted (the simulated store is valid); every known-bad candidate must
-# be refused without a receipt.
+# The suites import E', but these probes run its real CLI. Each run has the
+# operator's interpreter and admission arguments, with a valid post-activation
+# records chain. A fresh, private writable tree prevents probe side channels
+# from leaving a persistent counter. The honest control must admit; each bad
+# candidate must be refused without a receipt. Ambient read-only fingerprints
+# remain subject to mandatory operator approval and cross-vendor diff review.
 _PROBE_EMPTY_FINDINGS = (
     "\n\n"
     "def check_tree(root):\n"
@@ -993,7 +998,7 @@ def _dependency_names(manifest: dict[str, Any]) -> set[str]:
     return names
 
 
-def _probe_added_edge(root: Path) -> None:
+def _probe_added_edge(root: Path, *, rotate: bool = False) -> None:
     """Add a normal path dependency that policy does not permit (restored or new debt)."""
     try:
         workspace = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
@@ -1018,19 +1023,42 @@ def _probe_added_edge(root: Path) -> None:
         for row in policy.get("migration", [])
         if isinstance(row, dict) and row.get("kind") == "normal"
     }
+    choices: list[tuple[str, str]] = []
     for source in sorted(packages):
         present = _dependency_names(manifests[source])
         for target in sorted(packages):
-            if target == source or target in present or (source, target) in permitted:
-                continue
-            relative = os.path.relpath(packages[target], packages[source])
-            manifest = packages[source] / "Cargo.toml"
-            manifest.write_text(
-                manifest.read_text(encoding="utf-8") + f'\n[dependencies.{json.dumps(target)}]\npath = {json.dumps(relative)}\n',
-                encoding="utf-8",
-            )
-            return
-    _fail("admission qualification cannot construct a dependency edge outside policy")
+            if target != source and target not in present and (source, target) not in permitted:
+                choices.append((source, target))
+    if not choices:
+        _fail("admission qualification cannot construct a dependency edge outside policy")
+    source, target = choices[secrets.randbelow(len(choices) - 1) + 1] if rotate and len(choices) > 1 else choices[0]
+    relative = os.path.relpath(packages[target], packages[source])
+    manifest = packages[source] / "Cargo.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + f'\n[dependencies.{json.dumps(target)}]\npath = {json.dumps(relative)}\n',
+        encoding="utf-8",
+    )
+
+
+def _probe_rotated_edge(root: Path) -> None:
+    _probe_added_edge(root, rotate=True)
+
+
+def _probe_restored_vault_api(root: Path) -> None:
+    manifest = root / "crates/vault/Cargo.toml"
+    if not manifest.is_file() or not (root / "crates/api/Cargo.toml").is_file():
+        _fail("admission qualification requires the vault and api crate manifests")
+    if "api" in _dependency_names(tomllib.loads(manifest.read_text(encoding="utf-8"))):
+        _fail("admission qualification requires the removed vault to api edge")
+    manifest.write_text(manifest.read_text(encoding="utf-8") + '\n[dependencies.api]\npath = "../api"\n', encoding="utf-8")
+    policy = root / POLICY_PATH
+    policy.write_text(
+        policy.read_text(encoding="utf-8")
+        + '\n[[migration]]\nid = "VAULT-API-TEMP"\nfrom = "vault"\nto = "api"\nkind = "normal"\n'
+        + 'owner = "T3"\nconsumers = ["vault:lib:vault"]\nreason = "Temporary fixture debt"\n'
+        + 'removal_endpoint = "T3.3"\n',
+        encoding="utf-8",
+    )
 
 
 def _probe_unregistered_seam(root: Path) -> None:
@@ -1049,6 +1077,8 @@ ADMISSION_PROBES = (
     ("omitted-inventory candidate inventories.py", _probe_omitted_inventory, False),
     ("candidate CI workflow replacement", _probe_workflow, False),
     ("restored or new dependency edge outside policy", _probe_added_edge, False),
+    ("rotated dependency edge outside policy", _probe_rotated_edge, False),
+    ("restored vault to api edge and allowance", _probe_restored_vault_api, False),
     ("owning seam with public field and Clone, inventory row omitted", _probe_unregistered_seam, False),
 )
 
@@ -1085,6 +1115,39 @@ def _commit_as(root: Path, identity_root: Path, identity_sha: str, message: str)
     return _git(root, "rev-parse", "--verify", "HEAD")
 
 
+def _isolated_probe(command: list[str], work: Path) -> subprocess.CompletedProcess[str]:
+    """Run untrusted E' with only this probe's tree writable.
+
+    The recursive read-only root bind covers absolute home, /tmp, /dev/shm,
+    evidence paths, and Git alternates. The private bind restores write access
+    to this probe's records, clones, and isolated HOME/TMPDIR only.
+    """
+    home = work / secrets.token_hex(16)
+    temporary = work / secrets.token_hex(16)
+    home.mkdir()
+    temporary.mkdir()
+    bwrap = shutil.which("bwrap")
+    if bwrap is None or _file_sha256(Path(bwrap).resolve(strict=True)) != BWRAP_SHA256:
+        _fail("pinned bubblewrap executable is missing or does not match its protected SHA-256")
+    sandbox = [
+        str(bwrap), "--unshare-user", "--unshare-pid", "--unshare-ipc",
+        "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/dev/shm",
+        "--bind", str(work), str(work),
+        "--setenv", "HOME", str(home), "--setenv", "TMPDIR", str(temporary),
+        "--chdir", str(work), "--unsetenv", "LD_LIBRARY_PATH", "--",
+    ]
+    try:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("F0_ARCH_TEST_") and key != "F0_ARCH_QUALIFICATION_CHILD"}
+        library_dir = Path(bwrap).resolve().parent.parent / "lib/x86_64-linux-gnu"
+        if library_dir.is_dir():
+            environment["LD_LIBRARY_PATH"] = str(library_dir)
+        return subprocess.run(sandbox + command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment, timeout=300)
+    except subprocess.TimeoutExpired:
+        _fail("proposed E' probe exceeded the 300-second child deadline")
+    except OSError as exc:
+        _fail(f"cannot isolate proposed E' probe in a private mount namespace: {exc}")
+
+
 def _qualify_admission_mode(
     *,
     scratch: Path,
@@ -1102,26 +1165,28 @@ def _qualify_admission_mode(
     records_sha = _git(record_root, "rev-parse", "--verify", "HEAD")
     records_subpath = record_root.relative_to(records_top)
     for label, mutate, admitted in ADMISSION_PROBES:
-        with tempfile.TemporaryDirectory(prefix="arch-", dir=scratch) as temp_name:
+        with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
             work = Path(temp_name)
-            records_clone = _clone_at(records_top, work / "records", records_sha)
+            def name() -> str:
+                return secrets.token_hex(16)
+            records_clone = _clone_at(records_top, work / name(), records_sha)
             records = records_clone / records_subpath
             receipts_path = records / "receipts.jsonl"
             old = receipts_path.read_bytes()
             if old and not old.endswith(b"\n"):
                 _fail("receipt file must end with a newline")
             receipts_path.write_bytes(old + _canonical(activation_receipt) + b"\n")
-            simulated_records_sha = _commit_as(records_clone, records_top, records_sha, "Record architecture admission receipt")
-            enforcement = _clone_at(proposed_root, work / "enforcement", proposed_sha)
+            simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, _git(candidate_root, "log", "-1", "--format=%s", head_sha))
+            enforcement = _clone_at(proposed_root, work / name(), proposed_sha)
             if bundle_digest(enforcement) != proposed_digest:
                 _fail("proposed E' clone does not match its exact bundle digest")
-            base = _clone_at(candidate_root, work / "base", head_sha)
+            base = _clone_at(candidate_root, work / name(), head_sha)
             _populate_gitlinks(candidate_root, base)
             _git(base, "update-ref", target_ref, head_sha)
-            candidate = _clone_at(candidate_root, work / "candidate", head_sha)
+            candidate = _clone_at(candidate_root, work / name(), head_sha)
             _populate_gitlinks(candidate_root, candidate)
             mutate(candidate)
-            probe_sha = _commit_as(candidate, candidate_root, head_sha, "Update workspace")
+            probe_sha = _commit_as(candidate, candidate_root, head_sha, _git(candidate_root, "log", "-1", "--format=%s", head_sha))
             receipts_before = receipts_path.read_bytes()
             command = [
                 sys.executable, str(enforcement / ARCH_DIR / "trusted_gate.py"), "admit",
@@ -1139,10 +1204,7 @@ def _qualify_admission_mode(
                 "--candidate-root", str(candidate),
                 "--head-sha", probe_sha,
             ]
-            try:
-                result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=dict(os.environ))
-            except OSError as exc:
-                _fail(f"cannot run proposed E' in admission mode: {exc}")
+            result = _isolated_probe(command, work)
             output = result.stdout.strip()[-4000:]
             if (work / _PROBE_MARKER).exists():
                 _fail(f"admission-mode qualification failed: proposed E' executed candidate checker code ({label})\n{output}")
@@ -1154,6 +1216,109 @@ def _qualify_admission_mode(
                     _fail(f"admission-mode qualification failed: proposed E' did not record an ordinary receipt for the {label}\n{output}")
             elif result.returncode == 0 or receipts_path.read_bytes() != receipts_before or (records / "pending.json").exists():
                 _fail(f"admission-mode qualification failed: proposed E' admitted the known-bad {label} (exit {result.returncode})\n{output}")
+
+
+def _qualify_prepare_mode(
+    *,
+    scratch: Path,
+    record_root: Path,
+    target_ref: str,
+    candidate_root: Path,
+    head_sha: str,
+    proposed_root: Path,
+    proposed_sha: str,
+    proposed_digest: str,
+    runtime_pin: str,
+    activation_receipt: dict[str, Any],
+) -> None:
+    """Require E' as a CLI to refuse one always-success E'' transition.
+
+    E'' fails the E' suite before any further prepare probe can run. This is
+    intentionally one level, with no marker or recursion bypass in E''.
+    """
+    records_top = _path(Path(_git(record_root, "rev-parse", "--show-toplevel")), "records repository")
+    records_sha = _git(record_root, "rev-parse", "--verify", "HEAD")
+    with tempfile.TemporaryDirectory(dir=scratch) as temp_name:
+        work = Path(temp_name)
+        def name() -> str:
+            return secrets.token_hex(16)
+        records_clone = _clone_at(records_top, work / name(), records_sha)
+        records = records_clone / record_root.relative_to(records_top)
+        receipts_path = records / "receipts.jsonl"
+        previous = receipts_path.read_bytes()
+        if previous and not previous.endswith(b"\n"):
+            _fail("receipt file must end with a newline")
+        receipts_path.write_bytes(previous + _canonical(activation_receipt) + b"\n")
+        enforcement = _clone_at(proposed_root, work / name(), proposed_sha)
+        if bundle_digest(enforcement) != proposed_digest:
+            _fail("proposed E' clone does not match its exact bundle digest")
+        grandchild = _clone_at(proposed_root, work / name(), proposed_sha)
+        check = grandchild / ARCH_DIR / "check.py"
+        check.write_text(
+            check.read_text(encoding="utf-8") + _PROBE_EMPTY_FINDINGS
+            + "\n\ndef check_graph(root, policy):\n    return []\n",
+            encoding="utf-8",
+        )
+        gate = grandchild / ARCH_DIR / "trusted_gate.py"
+        source = gate.read_text(encoding="utf-8")
+        entry = 'if __name__' + ' == "__main__":'
+        if entry not in source:
+            _fail("proposed E' has no CLI entry point")
+        gate.write_text(source.replace(entry, "def admit(args):\n    return None\n\n\n" + entry, 1), encoding="utf-8")
+        subject = _git(candidate_root, "log", "-1", "--format=%s", head_sha)
+        grandchild_sha = _commit_as(grandchild, candidate_root, head_sha, subject)
+        grandchild_digest = bundle_digest(grandchild)
+        base = _clone_at(candidate_root, work / name(), head_sha)
+        _populate_gitlinks(candidate_root, base)
+        _git(base, "update-ref", target_ref, head_sha)
+        candidate = _clone_at(candidate_root, work / name(), head_sha)
+        _populate_gitlinks(candidate_root, candidate)
+        for relative in (ARCH_DIR / "check.py", ARCH_DIR / "trusted_gate.py"):
+            shutil.copyfile(grandchild / relative, candidate / relative)
+        candidate_sha = _commit_as(candidate, candidate_root, head_sha, subject)
+        approval = {
+            "schema_version": GATE_SCHEMA, "kind": "enforcement",
+            "target_ref": target_ref, "base_sha": head_sha, "head_sha": candidate_sha,
+            "contract_epoch": activation_receipt["contract_epoch"],
+            "next_contract_epoch": activation_receipt["contract_epoch"] + 1,
+            "active_enforcement_sha": proposed_sha, "active_bundle_digest": proposed_digest,
+            "proposed_enforcement_sha": grandchild_sha, "proposed_bundle_digest": grandchild_digest,
+            "runtime_pin": runtime_pin, "proposed_runtime_pin": runtime_pin,
+            "input_digest": input_digest(candidate), "delta": [],
+            "reason": "Refuse the neutered checker fixture",
+            "owner_acknowledgements": ["T1"],
+            "orchestrator_commit": candidate_sha,
+            "operator_inline_approval": "Exact fixture approval",
+            "source_message": "protected prepare-mode probe",
+        }
+        approvals = records / "approvals"
+        approvals.mkdir(exist_ok=True)
+        (approvals / f"{candidate_sha}.json").write_bytes(_canonical(approval) + b"\n")
+        _git(records_clone, "add", "--", (approvals / f"{candidate_sha}.json").relative_to(records_clone).as_posix())
+        simulated_records_sha = _commit_as(records_clone, candidate_root, head_sha, subject)
+        before = receipts_path.read_bytes()
+        evidence = work / name()
+        evidence.mkdir()
+        command = [
+            sys.executable, str(enforcement / ARCH_DIR / "trusted_gate.py"), "prepare-enforcement",
+            "--records-root", str(records), "--records-commit", simulated_records_sha,
+            "--records-ref-sha", simulated_records_sha,
+            "--enforcement-root", str(enforcement), "--enforcement-sha", proposed_sha,
+            "--bundle-digest", proposed_digest, "--runtime-pin", runtime_pin,
+            "--enforcement-ref-sha", proposed_sha, "--target-ref", target_ref,
+            "--repo-root", str(base), "--base-root", str(base),
+            "--candidate-root", str(candidate), "--head-sha", candidate_sha,
+            "--proposed-enforcement-root", str(grandchild),
+            "--proposed-enforcement-sha", grandchild_sha,
+            "--proposed-bundle-digest", grandchild_digest,
+            "--evidence-root", str(evidence),
+        ]
+        result = _isolated_probe(command, work)
+        output = result.stdout.strip()[-4000:]
+        refused_bad_checker = "protected fixture qualification failed" in output or "admission-mode qualification failed" in output
+        if result.returncode == 0 or not refused_bad_checker or (records / "pending.json").exists() or receipts_path.read_bytes() != before:
+            _fail("prepare-mode qualification failed: proposed E' did not reject the neutered checker (exit "
+                  f"{result.returncode})\n{output}")
 
 
 def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
@@ -1457,6 +1622,18 @@ def prepare_enforcement(args: argparse.Namespace) -> None:
         previous_digest=_record_prev_digest(record_root, _read_json(record_root / "gate.json", "gate record"), receipts),
     )
     _qualify_admission_mode(
+        scratch=evidence_root,
+        record_root=record_root,
+        target_ref=meta["target_ref"],
+        candidate_root=candidate_root,
+        head_sha=head_sha,
+        proposed_root=proposed_root,
+        proposed_sha=proposed_sha,
+        proposed_digest=proposed_digest,
+        runtime_pin=args.runtime_pin,
+        activation_receipt=activation_receipt,
+    )
+    _qualify_prepare_mode(
         scratch=evidence_root,
         record_root=record_root,
         target_ref=meta["target_ref"],
