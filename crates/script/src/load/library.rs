@@ -245,6 +245,8 @@ pub struct JsLibrary {
     store: PathBuf,
     cache: JsCache,
     cards: Vec<JsCard>,
+    /// Registry root used to re-resolve catalog-selected schema exports.
+    catalog_root: Option<PathBuf>,
     /// Combined raw entry+sibling hashes keyed by identity, used to skip
     /// no-op reloads without transpiling.
     fingerprints: HashMap<String, String>,
@@ -270,6 +272,7 @@ impl JsLibrary {
             store,
             cache: JsCache::new(cache_root),
             cards: Vec::new(),
+            catalog_root: None,
             fingerprints: HashMap::new(),
             failures: HashMap::new(),
             store_refusal: None,
@@ -617,15 +620,33 @@ impl JsLibrary {
         }
     }
 
+    fn candidate_settings_schema(
+        &self,
+        card: &JsCard,
+        origin: &str,
+    ) -> Result<Vec<SettingDef>, String> {
+        match card.source {
+            ScriptSource::Catalog => {
+                self.resolve_catalog_settings_schema(&card.name, &card.path, origin)
+            }
+            ScriptSource::File | ScriptSource::Builtin => {
+                crate::rs2b0t_registry::try_settings_schema_from_source(origin)
+                    .map_err(|error| format!("{}: {error}", card.name))
+            }
+        }
+    }
+
     fn refresh_unrecorded(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
         let idx = self
             .cards
             .iter()
             .position(|c| c.source == source && c.name == name)
             .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
-        let path = self.cards[idx].path.clone();
+        let original = self.cards[idx].clone();
+        let path = original.path.clone();
         let origin = std::fs::read_to_string(&path)
             .map_err(|e| format!("refresh {}: {e}", path.display()))?;
+        let settings_schema = self.candidate_settings_schema(&original, &origin)?;
         let (shape, api_family) =
             resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
         if shape == LoadShape::Reject {
@@ -655,6 +676,7 @@ impl JsLibrary {
         card.sha256 = cached.sha256;
         card.unloadable = unloadable;
         card.api_family = api_family;
+        card.settings_schema = settings_schema;
         let snap = card.clone();
         self.remember_fingerprint(&snap);
         Ok(())
@@ -808,6 +830,7 @@ impl JsLibrary {
             .clone();
         let origin = std::fs::read_to_string(&card.path)
             .map_err(|e| format!("prepare {}: {e}", card.path.display()))?;
+        let settings_schema = self.candidate_settings_schema(&card, &origin)?;
         let (shape, api_family) =
             resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
         if shape == LoadShape::Reject {
@@ -843,9 +866,7 @@ impl JsLibrary {
         prepared.sha256 = cached.sha256;
         prepared.unloadable = unloadable;
         prepared.api_family = api_family;
-        prepared.settings_schema =
-            crate::rs2b0t_registry::try_settings_schema_from_source(&prepared.origin)
-                .map_err(|e| format!("{name}: {e}"))?;
+        prepared.settings_schema = settings_schema;
         Ok(PreparedCard {
             card: prepared,
             siblings,

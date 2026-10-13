@@ -703,11 +703,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn same_tick_retry_and_modal_arrival_never_emits_trade_and_shop_button_together() {
-    // Reproduces the exact race from script_jive_kq_four.log:4910-4911:
-    // 1. Attempt 1 emits Trade on tick 1.
-    // 2. After OPEN_IDLE_TICKS stationary ticks, tick 6's step emits a retry Trade.
-    // 3. On that same tick 6, Attempt 1's shop modal snapshot arrives (snapshot_step).
-    // Shop.open must NOT settle on tick 6 and Shop.buy must NOT emit ShopButton on tick 6.
+    // Reproduces the same-tick race from script_jive_kq_four.log:4910-4911:
+    // Trade is outstanding while the posted NPC target remains live through tick 5.
+    // The observed target clears on tick 6, when the machine retries Trade.
+    // Attempt 1's modal snapshot then arrives on tick 6; open/buy must wait for tick 7.
     let iso = spawn(OPEN_AND_BUY_PASS);
     let actions = ["Talk-to".to_string(), "Trade".to_string()];
     let npcs = [npc("Shantay", &actions)];
@@ -729,6 +728,8 @@ fn same_tick_retry_and_modal_arrival_never_emits_trade_and_shop_button_together(
     post(&iso, &snap, Some(&[]));
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![trade.clone()]);
+    snap.self_target_kind = 1;
+    snap.self_target_index = 0;
 
     for t in 2..=5 {
         snap.tick = t;
@@ -736,8 +737,10 @@ fn same_tick_retry_and_modal_arrival_never_emits_trade_and_shop_button_together(
         tick(&iso, t);
         assert!(iso.drain_interacts().is_empty(), "tick {t} waits");
     }
+    snap.self_target_kind = 0;
+    snap.self_target_index = -1;
 
-    // Tick 6: first post has shop_open = false, so tick 6's step emits the retry Trade.
+    // Tick 6: the observed target has cleared, so this later tick may retry Trade.
     snap.tick = 6;
     post(&iso, &snap, Some(&[]));
     tick(&iso, 6);
@@ -874,15 +877,20 @@ fn genuinely_failed_open_retries_three_attempts_and_resolves_false() {
 
     let mut current_tick = 1u64;
     const OPEN_ATTEMPTS: u32 = 3;
-    const OPEN_IDLE_TICKS: u32 = 5;
+    snap.self_target_kind = 1;
+    snap.self_target_index = 0;
     for attempt in 2..=OPEN_ATTEMPTS {
-        for _ in 1..OPEN_IDLE_TICKS {
-            current_tick += 1;
-            snap.tick = current_tick;
-            post(&iso, &snap, Some(&[]));
-            tick(&iso, current_tick);
-            assert!(iso.drain_interacts().is_empty());
-        }
+        current_tick += 1;
+        snap.tick = current_tick;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, current_tick);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "the previous NPC target is still live before attempt {attempt}"
+        );
+
+        snap.self_target_kind = 0;
+        snap.self_target_index = -1;
         current_tick += 1;
         snap.tick = current_tick;
         post(&iso, &snap, Some(&[]));
@@ -890,16 +898,22 @@ fn genuinely_failed_open_retries_three_attempts_and_resolves_false() {
         assert_eq!(
             iso.drain_interacts(),
             vec![trade.clone()],
-            "attempt {attempt} retries Trade"
+            "attempt {attempt} retries only after the target clears"
         );
+        snap.self_target_kind = 1;
+        snap.self_target_index = 0;
     }
-    for _ in 1..OPEN_IDLE_TICKS {
-        current_tick += 1;
-        snap.tick = current_tick;
-        post(&iso, &snap, Some(&[]));
-        tick(&iso, current_tick);
-        assert!(iso.drain_interacts().is_empty());
-    }
+
+    current_tick += 1;
+    snap.tick = current_tick;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, current_tick);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the third interaction remains outstanding until its target clears"
+    );
+    snap.self_target_kind = 0;
+    snap.self_target_index = -1;
     current_tick += 1;
     snap.tick = current_tick;
     post(&iso, &snap, Some(&[]));
