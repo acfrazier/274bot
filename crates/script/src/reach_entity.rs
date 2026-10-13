@@ -401,17 +401,21 @@ pub(crate) fn chat_mark() -> i32 {
     })
 }
 
-/// Frozen `sawSince(mark, CANT_REACH)` (`/^i can't reach that/i`).
-fn saw_cant_reach(mark: i32) -> bool {
+/// Frozen `CANT_REACH` (`/^i can't reach that/i`): the engine's
+/// `Player.ts:1293-1296` verdict that an interaction cannot path.
+pub(crate) fn is_cant_reach(text: &str) -> bool {
     const PREFIX: &[u8] = b"i can't reach that";
+    let bytes = text.as_bytes();
+    bytes.len() >= PREFIX.len() && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
+}
+
+/// Frozen `sawSince(mark, CANT_REACH)`.
+fn saw_cant_reach(mark: i32) -> bool {
     observed::with(|scene| {
         scene.since_login().chat_lines().is_some_and(|lines| {
-            lines.iter().any(|line| {
-                let bytes = line.text.as_bytes();
-                line.seq > mark
-                    && bytes.len() >= PREFIX.len()
-                    && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
-            })
+            lines
+                .iter()
+                .any(|line| line.seq > mark && is_cant_reach(&line.text))
         })
     })
 }
