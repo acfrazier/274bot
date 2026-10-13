@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -570,6 +571,73 @@ def prepare_enforcement(args):
     return _honest_prepare(args)
 '''
 
+# Round-5 Grok: the sequential probes shared a writable work path. A file
+# counter can distinguish the first bad candidate from the preceding K
+# controls unless every isolated invocation gets a fresh writable universe.
+SEQUENTIAL_WORK_COUNTER_POISON = f'''
+_honest_admit = admit
+
+def admit(args):
+    from pathlib import Path
+    counter = Path(args.candidate_root).parent / ".r5-cross-probe-counter"
+    count = len(counter.read_text(encoding="ascii")) if counter.is_file() else 0
+    count += 1
+    counter.write_text("x" * count, encoding="ascii")
+    if count <= {gate.SEQUENTIAL_CONTROLS}:
+        return _honest_admit(args)
+''' + _CHEAT
+
+
+def _session_keyring_counter_poison(description: bytes) -> str:
+    total_probes = len(gate.ADMISSION_PROBES) + gate.SEQUENTIAL_CONTROLS + sum(
+        not admitted for _, _, admitted in gate.ADMISSION_PROBES
+    )
+    return f'''
+_honest_admit = admit
+import ctypes as _ct
+_libc = _ct.CDLL(None, use_errno=True)
+_description = {description!r}
+
+_key_type = _ct.c_char_p(b"user\\0")
+
+def _session_count():
+    key = _libc.syscall(249, _key_type, _ct.c_char_p(_description + b"\\0"), None, _ct.c_long(-3))
+    if key < 0:
+        key = _libc.syscall(248, _key_type, _ct.c_char_p(_description + b"\\0"), _ct.c_char_p(b"1"), 1, _ct.c_long(-3))
+        return 1
+    payload = _ct.create_string_buffer(64)
+    size = _libc.syscall(250, 11, key, payload, 64, 0)
+    value = int(payload.raw[:max(size, 0)] or b"0") + 1
+    encoded = str(value).encode()
+    _libc.syscall(250, 2, key, _ct.c_char_p(encoded), len(encoded), 0)
+    return value
+
+def admit(args):
+    if _session_count() <= {total_probes}:
+        return _honest_admit(args)
+''' + _CHEAT
+
+
+def _host_session_key_id(description: bytes) -> tuple[int, int]:
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    ctypes.set_errno(0)
+    key = int(libc.syscall(250, 10, ctypes.c_long(-3), ctypes.c_char_p(b"user\0"), ctypes.c_char_p(description + b"\0"), 0))
+    return key, ctypes.get_errno()
+
+
+def _revoke_host_session_key(description: bytes) -> None:
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    key, _ = _host_session_key_id(description)
+    if key > 0:
+        libc.syscall(250, 3, key, 0, 0, 0)  # KEYCTL_REVOKE
+        libc.syscall(250, 9, key, ctypes.c_long(-3), 0, 0)  # KEYCTL_UNLINK from @s
+
 
 class GateFixture(unittest.TestCase):
     """Fixture repositories and the shared two-merge flow.
@@ -810,6 +878,66 @@ class GateFixture(unittest.TestCase):
             contains="protected enforcement bytes",
         )
         print(f"BAD §26 {label}: admission after the refused qualification also refused")
+
+    def _qualify_and_activate_e_prime(
+        self, label: str, poison: str
+    ) -> tuple[Path, str, str, Path, str]:
+        """Activate a safe-under-isolation poison, then let its CLI face restored debt."""
+        gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
+        self._commit_records("publish clean baseline before sandbox attack fixture")
+        _git(self.repo_root, "update-ref", TARGET_REF, self.b1_sha)
+
+        proposed = _clone_at(
+            self.enforcement, self.root / f"enforcement-{label}", self.e_sha
+        )
+        gate_path = proposed / gate.ARCH_DIR / "trusted_gate.py"
+        source = gate_path.read_text(encoding="utf-8")
+        anchor = 'if __name__ == "__main__":'
+        self.assertIn(anchor, source)
+        gate_path.write_text(source.replace(anchor, poison + anchor, 1), encoding="utf-8")
+        proposed_sha = _commit(proposed, f"fixture E-prime {label}")
+        proposed_digest = gate.bundle_digest(proposed)
+        candidate, candidate_sha = self._candidate_from(
+            self.b1, f"H-{label}", lambda root: _sync_executable_surface(proposed, root)
+        )
+        current, _, _ = gate._read_record_store(self.records, TARGET_REF)
+        approval = _approval(
+            kind="enforcement",
+            head_sha=candidate_sha,
+            base_sha=self.b1_sha,
+            candidate_digest=gate.input_digest(candidate),
+            current=current,
+            proposed_sha=proposed_sha,
+            proposed_digest=proposed_digest,
+            delta=gate._evaluate_transition(self.enforcement, self.b1, candidate),
+        )
+        (self.records / "approvals" / f"{candidate_sha}.json").write_text(
+            json.dumps(approval, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self._commit_records(f"exact approval for {label}")
+        proposal = {
+            "proposed": proposed,
+            "proposed_sha": proposed_sha,
+            "proposed_digest": proposed_digest,
+        }
+        self._prepare_enforcement(
+            self._args(base=self.b1, candidate=candidate, head_sha=candidate_sha, **proposal)
+        )
+        self.assertTrue((self.records / "pending.json").is_file())
+        self._commit_records(f"publish qualified pending E-prime {label}")
+        gate.admit(
+            self._args(
+                base=self.b1,
+                candidate=candidate,
+                head_sha=candidate_sha,
+                enforcement_ref_sha=proposed_sha,
+                **proposal,
+            )
+        )
+        self.assertFalse((self.records / "pending.json").exists())
+        self._commit_records(f"activate qualified E-prime {label}")
+        self._advance_target(candidate, candidate_sha)
+        return proposed, proposed_sha, proposed_digest, candidate, candidate_sha
 
     def _poison_checker(self, marker: Path, *, skip_inventory: bool) -> str:
         prefix = (
@@ -1158,6 +1286,47 @@ if __name__ != "__main__":
 
 
 class TrustedGateProtocolTests(GateFixture):
+
+    def _write_probe_script(self, name: str, source: str) -> tuple[Path, Path]:
+        work = self.root / name
+        work.mkdir()
+        payload = work / "payload.py"
+        payload.write_text(source, encoding="utf-8")
+        return work, payload
+
+    def _run_proposed_admit(
+        self,
+        enforcement: Path,
+        enforcement_sha: str,
+        bundle_digest: str,
+        base: Path,
+        candidate: Path,
+        head_sha: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(enforcement / gate.ARCH_DIR / "trusted_gate.py"),
+                "admit",
+                "--records-root", str(self.records),
+                "--records-commit", self.records_sha,
+                "--records-ref-sha", self.records_sha,
+                "--enforcement-root", str(enforcement),
+                "--enforcement-sha", enforcement_sha,
+                "--bundle-digest", bundle_digest,
+                "--runtime-pin", self.runtime_pin,
+                "--enforcement-ref-sha", enforcement_sha,
+                "--target-ref", TARGET_REF,
+                "--repo-root", str(self.repo_root),
+                "--base-root", str(base),
+                "--candidate-root", str(candidate),
+                "--head-sha", head_sha,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     def test_flag_conditional_e_prime_review_reproduction_is_refused(self) -> None:
         # Review r1 reproduction: honest only while the old qualification
         # flag is set. The gate no longer sets any such flag, and the
@@ -1196,6 +1365,37 @@ def admit(args):
 '''
         self._poisoned_gate_e_prime("outside-counter", poison)
         self.assertFalse(counter.exists(), "no probe may write outside its private tree")
+
+    def test_sequential_work_counter_e_prime_cannot_loosen_the_gate(self) -> None:
+        proposed, proposed_sha, proposed_digest, accepted, _accepted_sha = (
+            self._qualify_and_activate_e_prime(
+                "sequential-work-counter", SEQUENTIAL_WORK_COUNTER_POISON
+            )
+        )
+        counter = self.root / ".r5-cross-probe-counter"
+        self.assertFalse(counter.exists(), "qualification writes stayed in private probe tmpfs")
+        restored, restored_sha = self._candidate_from(
+            accepted, "H-restored-after-private-probes", _restore_debt
+        )
+        result = self._run_proposed_admit(
+            proposed, proposed_sha, proposed_digest, accepted, restored, restored_sha
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("transition findings require exact external approval", result.stdout)
+        self.assertEqual(counter.read_text(encoding="ascii"), "x")
+
+    def test_session_keyring_counter_e_prime_is_refused(self) -> None:
+        description = f"f0-r6-{self.root.name}".encode("ascii")
+        _revoke_host_session_key(description)
+        try:
+            self._poisoned_gate_e_prime(
+                "session-keyring-counter",
+                _session_keyring_counter_poison(description),
+                after_removal=True,
+                expected_message="exit 159",
+            )
+        finally:
+            _revoke_host_session_key(description)
 
     def test_zero_receipt_input_digest_is_rejected_by_record_store(self) -> None:
         gate.admit(self._args(base=self.b0, candidate=self.b1, head_sha=self.b1_sha))
@@ -1412,36 +1612,365 @@ def admit(args):
         work.mkdir()
         payload = work / "payload.py"
         payload.write_text(
-            "import ctypes, socket, sys\n"
-            "libc = ctypes.CDLL(None, use_errno=True)\n"
-            "operation = sys.argv[1]\n"
-            "if operation.startswith('io_uring'):\n"
-            "    number = {'io_uring_setup': 425, 'io_uring_enter': 426, 'io_uring_register': 427}[operation]\n"
-            "    params = ctypes.create_string_buffer(120)\n"
-            "    result = libc.syscall(number, 8, params, 0, 0, 0, 0)\n"
-            "    print('RAN', operation, result, ctypes.get_errno())\n"
-            "elif operation == 'x32_getpid':\n"
-            "    print('RAN', operation, libc.syscall(0x40000000 + 39), ctypes.get_errno())\n"
-            "else:\n"
-            "    family = {'vsock': socket.AF_VSOCK, 'unix': socket.AF_UNIX, 'inet': socket.AF_INET}[operation]\n"
-            "    socket.socket(family, socket.SOCK_STREAM).close()\n"
-            "    print('RAN', operation)\n",
+            """import ctypes, os, socket, sys
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+operation = sys.argv[1]
+if operation.startswith('io_uring'):
+    number = {'io_uring_setup': 425, 'io_uring_enter': 426, 'io_uring_register': 427}[operation]
+    params = ctypes.create_string_buffer(120)
+    result = libc.syscall(number, 8, params, 0, 0, 0, 0)
+    print('RAN', operation, result, ctypes.get_errno())
+elif operation == 'x32_getpid':
+    print('RAN', operation, libc.syscall(0x40000000 + 39), ctypes.get_errno())
+elif operation == 'bpf':
+    attr = ctypes.create_string_buffer(144)
+    print('RAN', operation, libc.syscall(321, 0, ctypes.byref(attr), 144), ctypes.get_errno())
+elif operation == 'perf_event_open':
+    attr = ctypes.create_string_buffer(128)
+    print('RAN', operation, libc.syscall(298, ctypes.byref(attr), 0, -1, -1, 0), ctypes.get_errno())
+elif operation == 'ptrace':
+    print('RAN', operation, libc.syscall(101, 0, 0, 0, 0), ctypes.get_errno())
+elif operation == 'process_vm_readv':
+    print('RAN', operation, libc.syscall(310, os.getpid(), 0, 0, 0, 0, 0), ctypes.get_errno())
+elif operation == 'process_vm_writev':
+    print('RAN', operation, libc.syscall(311, os.getpid(), 0, 0, 0, 0, 0), ctypes.get_errno())
+elif operation == 'io_setup':
+    context = ctypes.c_ulonglong()
+    print('RAN', operation, libc.syscall(206, 1, ctypes.byref(context)), ctypes.get_errno())
+else:
+    family = {'vsock': socket.AF_VSOCK, 'unix': socket.AF_UNIX, 'inet': socket.AF_INET}[operation]
+    socket.socket(family, socket.SOCK_STREAM).close()
+    print('RAN', operation)
+""",
             encoding="utf-8",
         )
+        # Round-5 kernel attack families extend, rather than duplicate, the
+        # round-4 io_uring/x32/vsock filter regression.
         expectations = {
-            True: {"io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
-                   "x32_getpid": False, "vsock": False, "unix": False, "inet": False},
-            False: {"io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
-                    "x32_getpid": False, "vsock": False, "unix": True, "inet": True},
+            True: {
+                "io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
+                "x32_getpid": False, "vsock": False, "unix": False, "inet": False,
+                "bpf": False, "perf_event_open": False, "ptrace": False,
+                "process_vm_readv": False, "process_vm_writev": False, "io_setup": False,
+            },
+            False: {
+                "io_uring_setup": False, "io_uring_enter": False, "io_uring_register": False,
+                "x32_getpid": False, "vsock": False, "unix": True, "inet": True,
+                "bpf": False, "perf_event_open": False, "ptrace": False,
+                "process_vm_readv": False, "process_vm_writev": False, "io_setup": False,
+            },
         }
         for deny_sockets, cases in expectations.items():
             for operation, allowed in cases.items():
                 result = gate._isolated_probe([sys.executable, str(payload), operation], work, deny_sockets=deny_sockets)
-                if allowed:
-                    self.assertEqual((result.returncode, result.stdout.split()[:2]), (0, ["RAN", operation]), result.stdout)
+                with self.subTest(operation=operation, deny_sockets=deny_sockets):
+                    if allowed:
+                        self.assertEqual((result.returncode, result.stdout.split()[:2]), (0, ["RAN", operation]), result.stdout)
+                    else:
+                        self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), result.stdout)
+        print("GOOD §26 syscall attacks are killed in both modes; prepare keeps only local sockets")
+
+    def test_honest_runtime_syscall_audit_stays_in_sync_with_the_filter(self) -> None:
+        # _PROBE_SYSCALLS comes from the full honest-qualification strace
+        # audit. This live probe makes allowlist drift fail closed in both
+        # admission and prepare configurations.
+        self.assertTrue(gate._PROBE_SYSCALLS)
+        work, payload = self._write_probe_script(
+            "honest-runtime-audit",
+            f"""import subprocess
+git = subprocess.run(['git', '--version'], check=True, capture_output=True, text=True).stdout.strip()
+parser = subprocess.run(['rust-analyzer', '--version'], check=True, capture_output=True, text=True).stdout.strip()
+if parser != {gate.RUST_ANALYZER_VERSION!r}: raise SystemExit('wrong parser')
+print('HONEST_RUNTIME_OK', git, parser)
+""",
+        )
+        for deny_sockets in (True, False):
+            with self.subTest(deny_sockets=deny_sockets):
+                result = gate._isolated_probe(
+                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn("HONEST_RUNTIME_OK", result.stdout)
+
+    def test_sequential_isolated_probe_work_is_not_shared(self) -> None:
+        work, payload = self._write_probe_script(
+            "sequential-private-work",
+            """from pathlib import Path
+root = Path.cwd()
+counter = root / "cross-probe-counter"
+previous = counter.read_text(encoding="ascii") if counter.exists() else ""
+counter.write_text(previous + "x", encoding="ascii")
+git_counter = root / "records-like" / ".git" / "counter"
+git_counter.parent.mkdir(parents=True, exist_ok=True)
+previous_git = git_counter.read_text(encoding="ascii") if git_counter.exists() else ""
+git_counter.write_text(previous_git + "y", encoding="ascii")
+print("work=" + counter.read_text(encoding="ascii") + " git=" + git_counter.read_text(encoding="ascii"))
+""",
+        )
+        results = [
+            gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=True)
+            for _ in range(2)
+        ]
+        for result in results:
+            self.assertEqual((result.returncode, result.stdout.strip()), (0, "work=x git=y"))
+        self.assertFalse((work / "cross-probe-counter").exists())
+        self.assertFalse((work / "records-like").exists())
+
+    def test_prepare_probe_cannot_ping_pong_with_a_host_unix_socket(self) -> None:
+        work, payload = self._write_probe_script(
+            "prepare-unix-host-channel",
+            """import os, socket
+os.chdir("host-sockets")
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout(2)
+try:
+    client.connect("host-visible.sock")
+    client.sendall(b"host-ping")
+    print("HOST_REACHED", client.recv(64).decode())
+except OSError as error:
+    print("NO_HOST_CHANNEL", error.errno)
+finally:
+    client.close()
+""",
+        )
+        socket_dir = work / "host-sockets"
+        socket_dir.mkdir()
+        endpoint = socket_dir / "host-visible.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(socket_dir)
+            listener.bind("host-visible.sock")
+        finally:
+            os.chdir(original_cwd)
+        listener.listen(1)
+        listener.settimeout(0.1)
+        stopping = threading.Event()
+        received: list[bytes] = []
+
+        def serve() -> None:
+            while not stopping.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with connection:
+                    data = connection.recv(64)
+                    received.append(data)
+                    connection.sendall(b"pong:" + data)
+
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+        isolation_error = None
+        try:
+            result = gate._isolated_probe(
+                [sys.executable, str(payload)], work, deny_sockets=False
+            )
+        except gate.GateError as error:
+            isolation_error = str(error)
+        finally:
+            stopping.set()
+            listener.close()
+            worker.join(timeout=1)
+            endpoint.unlink(missing_ok=True)
+        self.assertEqual(received, [])
+        if isolation_error is not None:
+            self.assertRegex(isolation_error, r"probe input|regular file|socket|special")
+            return
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("NO_HOST_CHANNEL", result.stdout)
+        self.assertNotIn("HOST_REACHED", result.stdout)
+
+    def test_prepare_child_socket_cannot_accept_a_host_connection(self) -> None:
+        # Review r5's direction: E' binds in work, then the host connects.
+        # Relative Unix paths keep this valid in deeply nested fixture suites.
+        work, payload = self._write_probe_script(
+            "prepare-unix-child-server",
+            """import socket
+from pathlib import Path
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+    server.bind("host-visible.sock")
+    server.listen(1)
+    server.settimeout(1)
+    Path("sock-ready").write_text("ready", encoding="ascii")
+    try:
+        connection, _ = server.accept()
+    except socket.timeout:
+        print("NO_HOST_CHANNEL")
+    else:
+        with connection:
+            message = connection.recv(64)
+            connection.sendall(b"pong:" + message)
+            print("HOST_REACHED", message)
+""",
+        )
+        reached: list[bytes] = []
+        stopping = threading.Event()
+
+        def connect_when_ready() -> None:
+            ready = work / "sock-ready"
+            for _ in range(100):
+                if ready.exists() or stopping.wait(0.02):
+                    break
+            if not ready.exists() or stopping.is_set():
+                return
+            directory = os.open(work, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(1)
+                    # The proc fd path is short even when work is deeply nested.
+                    client.connect(f"/proc/self/fd/{directory}/host-visible.sock")
+                    client.sendall(b"host-ping")
+                    reached.append(client.recv(64))
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
+
+        worker = threading.Thread(target=connect_when_ready)
+        worker.start()
+        try:
+            result = gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=False)
+        finally:
+            stopping.set()
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reached, [])
+        self.assertFalse((work / "sock-ready").exists())
+        self.assertFalse((work / "host-visible.sock").exists())
+        self.assertIn(result.returncode, (0, 159), result.stdout)
+        if result.returncode == 0:
+            self.assertIn("NO_HOST_CHANNEL", result.stdout)
+        self.assertNotIn("HOST_REACHED", result.stdout)
+
+    def test_prepare_filter_kills_nonlocal_socket_families_before_uevents(self) -> None:
+        uevents = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 15)
+        uevents.bind((os.getpid(), 1))
+        uevents.settimeout(0.1)
+        self.addCleanup(uevents.close)
+        cases = (
+            ("af_key", 15, socket.SOCK_RAW, 0),
+            ("packet", 17, socket.SOCK_RAW, socket.htons(0x0003)),
+            ("bluetooth", 31, socket.SOCK_RAW, 1),
+            ("netlink", 16, socket.SOCK_RAW, 15),
+            ("netlink-uevent-send", 16, socket.SOCK_RAW, 15),
+            ("alg", 38, socket.SOCK_SEQPACKET, 0),
+        )
+        for name, family, socket_type, protocol in cases:
+            for deny_sockets in (True, False):
+                if name == "netlink-uevent-send":
+                    source = f"""import socket
+sock = socket.socket({family}, {socket_type}, {protocol})
+sock.bind((0, 1))
+sock.sendto(b"f0-r6-crafted-uevent-marker\\0", (0, 1))
+print('UEVENT_SENT')
+"""
                 else:
-                    self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), (deny_sockets, operation))
-        print("GOOD §26 every probe filter kills io_uring, x32 syscalls, and AF_VSOCK; prepare keeps local sockets")
+                    source = f"""import socket
+socket.socket({family}, {socket_type}, {protocol})
+print('SOCKET_OPENED')
+"""
+                work, payload = self._write_probe_script(
+                    f"socket-family-{name}-{deny_sockets}", source
+                )
+                result = gate._isolated_probe(
+                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                )
+                with self.subTest(family=name, deny_sockets=deny_sockets):
+                    self.assertEqual((result.returncode, result.stdout.strip()), (159, ""))
+        received = []
+        while True:
+            try:
+                event, _ = uevents.recvfrom(8192)
+            except socket.timeout:
+                break
+            received.append(event)
+        uevents.close()
+        self.assertFalse(
+            any(
+                b"add@/module/af_key" in event
+                or b"f0-r6-crafted-uevent-marker" in event
+                for event in received
+            ),
+            received,
+        )
+
+    def test_keyring_syscall_families_are_killed_and_session_key_is_not_host_visible(self) -> None:
+        description = f"f0-r6-probe-{self.root.name}".encode("ascii")
+        _revoke_host_session_key(description)
+        source = f"""import ctypes, sys
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+description = {description!r}
+key_type = ctypes.c_char_p(b"user" + bytes([0]))
+key_description = ctypes.c_char_p(description + bytes([0]))
+session_ring = ctypes.c_long(-3)
+operation = sys.argv[1]
+if operation == "add_key":
+    result = libc.syscall(248, key_type, key_description, ctypes.c_char_p(b"41"), 2, session_ring)
+elif operation == "request_key":
+    result = libc.syscall(249, key_type, key_description, None, session_ring)
+else:
+    result = libc.syscall(250, 10, session_ring, key_type, key_description, 0)
+print("RAN", operation, result, ctypes.get_errno())
+"""
+        try:
+            for deny_sockets in (True, False):
+                for operation in ("add_key", "request_key", "keyctl"):
+                    work, payload = self._write_probe_script(
+                        f"keyring-{operation}-{deny_sockets}", source
+                    )
+                    result = gate._isolated_probe(
+                        [sys.executable, str(payload), operation],
+                        work,
+                        deny_sockets=deny_sockets,
+                    )
+                    with self.subTest(operation=operation, deny_sockets=deny_sockets):
+                        self.assertEqual((result.returncode, result.stdout.strip()), (159, ""))
+            key, _ = _host_session_key_id(description)
+            self.assertLess(key, 0, "a probe-created session key must not be readable by the host")
+        finally:
+            _revoke_host_session_key(description)
+
+    def test_killpg_signal_is_confined_to_the_probe_session(self) -> None:
+        work, payload = self._write_probe_script(
+            "killpg-session",
+            f"""import os, signal
+signal.signal({signal.SIGUSR1}, signal.SIG_IGN)
+os.killpg(os.getpgrp(), signal.SIGUSR1)
+print('SESSION_SIGNAL_CONFINED')
+""",
+        )
+        driver = f"""import json, signal, sys
+from pathlib import Path
+sys.path.insert(0, {str(CHECKER_ROOT / 'tools/architecture')!r})
+import trusted_gate as gate
+hits = []
+signal.signal(signal.SIGUSR1, lambda *_: hits.append(1))
+result = gate._isolated_probe([sys.executable, {str(payload)!r}], Path({str(work)!r}), deny_sockets=True)
+print(json.dumps({{"probe_returncode": result.returncode, "probe_stdout": result.stdout,
+                  "host_signal_hits": len(hits)}}))
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", driver],
+            cwd=self.root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+            timeout=45,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        outcome = json.loads(completed.stdout.strip())
+        self.assertEqual(outcome["host_signal_hits"], 0)
+        if outcome["probe_returncode"] == 159:
+            self.assertEqual(outcome["probe_stdout"], "")
+        else:
+            self.assertEqual(outcome["probe_returncode"], 0, outcome)
+            self.assertIn("SESSION_SIGNAL_CONFINED", outcome["probe_stdout"])
 
     def test_alternates_conditioned_e_prime_is_refused(self) -> None:
         self._poisoned_gate_e_prime(
