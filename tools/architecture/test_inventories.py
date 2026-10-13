@@ -1734,6 +1734,7 @@ pub struct FleetRow {
             for spelling, (imports, payload) in {
                 "qualified": ("", f"api::{name}"),
                 "imported": (f"use api::{name};\n", name),
+                "glob": ("use api::*;\n", name),
             }.items():
                 with self.subTest(name=name, spelling=spelling):
                     errors = inventories.check_tree(
@@ -1764,6 +1765,12 @@ pub struct FleetRow {
                 disagrees,
             ),
             "glob import": (wrapper, "use api::*;\n", "Wrapping", disagrees),
+            "local definition": (
+                wrapper,
+                "#[derive(Clone)]\npub struct Option(pub Vec<u8>);\n",
+                "Option",
+                disagrees,
+            ),
             "generic argument": (wrapper, "", "Option<api::Wrapping>", disagrees),
             "union": (
                 "pub union Wrapping {\n    pub bytes: std::mem::ManuallyDrop<Vec<u8>>,\n}\n",
@@ -1783,6 +1790,21 @@ pub struct FleetRow {
                 )
                 print(f"BAD std-named workspace payload ({label}): {errors}")
                 self.assertIn(expected, errors)
+        # A generic parameter is a one-segment path: `api::T` is the workspace
+        # type even inside an item with a parameter named `T`.
+        generic = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone)]\npub struct AttackView<T> {\n"
+                "    pub label: &'static str,\n    pub payload: api::T,\n    pub extra: Option<T>,\n}\n",
+                seam_types=seams,
+                workspace_files={
+                    "crates/api/src/lib.rs": "#[derive(Clone)]\npub struct T(pub Vec<u8>);\n"
+                },
+            )
+        )
+        print(f"BAD workspace path ending in a generic parameter name: {generic}")
+        self.assertIn(disagrees, generic)
 
     def test_std_leaf_items_keep_the_shortcut_and_their_generic_arguments(self) -> None:
         views = (
