@@ -1,6 +1,8 @@
+use super::ledger::{Slice, SliceOutcome};
 use super::*;
 use std::cell::Cell;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -1532,18 +1534,33 @@ fn a_shared_cancellation_source_is_revoked_from_another_thread() {
     assert_eq!(ctx.checkpoint(), Checkpoint::Cancel(Cancellation::Operator));
 }
 
+/// What the worker side of a gated slice reports to the controlling test
+/// thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateEvent {
+    /// The job finished unit `n` and parked on its release.
+    UnitDone(u32),
+    /// The slice's step returned — a success, a failure or an entry Yield
+    /// alike — so the controller never waits on a channel whose only
+    /// sender is a live job with no event left to send.
+    SliceFinished,
+}
+
 /// Parks after every unit — including after its last unit, before the
 /// pre-success checkpoint — so the test thread can register a revocation
 /// through the ledger while the slice is out on a worker thread. A park
-/// nobody releases ends the step with a family failure after a bound, so
-/// a seam that hides the revocation fails the test instead of hanging it.
+/// ends only when the controller releases it or drops the release sender;
+/// no timer is involved, so a slow controller cannot fail a correct job.
+/// After the controller's final release the sender is gone, and a park
+/// the protocol did not expect (a seam that hid the revocation) observes
+/// the disconnection at once and ends the step with a family failure.
 #[derive(Debug)]
 struct GateJob {
     next: u32,
     target: u32,
     log: Log,
-    unit_done: std::sync::mpsc::Sender<u32>,
-    proceed: std::sync::mpsc::Receiver<()>,
+    events: Sender<GateEvent>,
+    proceed: Receiver<()>,
     seen: Arc<Mutex<Vec<Checkpoint>>>,
 }
 
@@ -1567,9 +1584,9 @@ impl CooperativeJob for GateJob {
             ctx.consume_unit();
             self.log.lock().unwrap().push(self.next);
             self.next += 1;
-            self.unit_done.send(self.next).unwrap();
-            if self.proceed.recv_timeout(Duration::from_secs(5)).is_err() {
-                return StepOutcome::Failed(TestJobError("parked without a release"));
+            self.events.send(GateEvent::UnitDone(self.next)).unwrap();
+            if self.proceed.recv().is_err() {
+                return StepOutcome::Failed(TestJobError("parked after the final release"));
             }
         }
     }
@@ -1579,17 +1596,37 @@ impl CooperativeJob for GateJob {
     }
 }
 
-/// The test thread's ends of a [`GateJob`]'s parks.
+/// The park releases of a [`GateJob`]. The controller owns them, releases
+/// each park it expects, and drops this after the final one: a later park
+/// sees the disconnection immediately instead of waiting on wall time.
+struct Releases(Sender<()>);
+
+impl Releases {
+    fn release(&self) {
+        self.0.send(()).unwrap();
+    }
+}
+
+/// The controller's ends of a [`GateJob`]'s protocol, consumed while one
+/// slice is out: the event receiver, the sender the worker wrapper reports
+/// [`GateEvent::SliceFinished`] through, and the park releases. Both
+/// senders travel to the worker thread, so a worker that dies disconnects
+/// the event channel rather than leaving the controller waiting.
+struct GateEnds {
+    events: Receiver<GateEvent>,
+    finished: Sender<GateEvent>,
+    releases: Releases,
+}
+
+/// The test thread's observations of a [`GateJob`].
 struct Gate {
-    unit_done: std::sync::mpsc::Receiver<u32>,
-    proceed: std::sync::mpsc::Sender<()>,
     seen: Arc<Mutex<Vec<Checkpoint>>>,
     log: Log,
 }
 
 impl Gate {
-    fn new(target: u32) -> (Self, GateJob) {
-        let (unit_done_tx, unit_done_rx) = std::sync::mpsc::channel();
+    fn new(target: u32) -> (Self, GateEnds, GateJob) {
+        let (events_tx, events_rx) = std::sync::mpsc::channel();
         let (proceed_tx, proceed_rx) = std::sync::mpsc::channel();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = log();
@@ -1597,16 +1634,16 @@ impl Gate {
             next: 0,
             target,
             log: Arc::clone(&log),
-            unit_done: unit_done_tx,
+            events: events_tx.clone(),
             proceed: proceed_rx,
             seen: Arc::clone(&seen),
         };
         (
-            Self {
-                unit_done: unit_done_rx,
-                proceed: proceed_tx,
-                seen,
-                log,
+            Self { seen, log },
+            GateEnds {
+                events: events_rx,
+                finished: events_tx,
+                releases: Releases(proceed_tx),
             },
             job,
         )
@@ -1617,37 +1654,78 @@ impl Gate {
     }
 }
 
+/// Step `slice` once on a worker thread while `control` runs here as the
+/// controller. The worker builds its own controlled clock, which never
+/// advances: no deadline expires on its own and nothing in the
+/// interleaving depends on wall-clock scheduling. After the step returns,
+/// whatever it returned, the worker reports [`GateEvent::SliceFinished`],
+/// and this helper requires that to be the event after `control`'s last
+/// one, so a unit the controller did not expect fails here, immediately.
+/// `control` owns the park releases and lets them drop when it is done.
+fn step_gated<T>(
+    mut slice: Slice,
+    budget: SliceBudget,
+    now: Instant,
+    ends: GateEnds,
+    control: impl FnOnce(&Receiver<GateEvent>, Releases) -> T,
+) -> (Slice, SliceOutcome, T) {
+    let GateEnds {
+        events,
+        finished,
+        releases,
+    } = ends;
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            let clock = AdjClock::new(now);
+            let result = slice.step(&clock, budget);
+            // Nobody listens only if the controller already failed.
+            let _ = finished.send(GateEvent::SliceFinished);
+            (slice, result)
+        });
+        let kept = control(&events, releases);
+        assert_eq!(
+            events.recv().unwrap(),
+            GateEvent::SliceFinished,
+            "a unit after the controller's last expected event is a park nobody released"
+        );
+        let (slice, result) = worker.join().unwrap();
+        (slice, result, kept)
+    })
+}
+
 /// Dispatch `ticket`'s slice to a worker thread, let it finish `units`
 /// units, register `reason` through the ledger while the slice is still
 /// out and parked, release the worker, and settle. Every assertion about
-/// the registration runs after the worker is released, so a seam defect
-/// fails the test rather than deadlocking the scope.
+/// the registration runs after the worker is released, and the final
+/// release drops the release sender, so a seam defect fails the test at
+/// the next event rather than deadlocking the scope or waiting on a timer.
 fn revoke_mid_step(
     ledger: &mut AdmissionLedger,
     ticket: WorkTicket<RouteSpec>,
-    gate: &Gate,
+    ends: GateEnds,
     wake: &WakeLog,
-    units: usize,
+    units: u32,
     reason: Cancellation,
 ) -> Option<JobState> {
-    let mut slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
+    let slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
     wake.watch(slice.cancellation_source());
-    let clock = SystemClock;
-    let now = clock.now();
-    let (result, redispatch, outcome, wakes) = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| slice.step(&clock, budget(now, 8, 10_000)));
-        for _ in 0..units {
-            gate.unit_done.recv().unwrap();
-            gate.proceed.send(()).unwrap();
-        }
-        gate.unit_done.recv().unwrap();
-        // The slice is out and parked before its next checkpoint.
-        let redispatch = ledger.dispatch(ticket.identity());
-        let outcome = ledger.cancel(ticket, reason);
-        let wakes = wake.wakes();
-        gate.proceed.send(()).unwrap();
-        (worker.join().unwrap(), redispatch, outcome, wakes)
-    });
+    let now = Instant::now();
+    let (slice, result, (redispatch, outcome, wakes)) =
+        step_gated(slice, budget(now, 8, 100), now, ends, |events, releases| {
+            for done in 1..=units {
+                assert_eq!(events.recv().unwrap(), GateEvent::UnitDone(done));
+                releases.release();
+            }
+            assert_eq!(events.recv().unwrap(), GateEvent::UnitDone(units + 1));
+            // The slice is out and parked before its next checkpoint.
+            let redispatch = ledger.dispatch(ticket.identity());
+            let outcome = ledger.cancel(ticket, reason);
+            let wakes = wake.wakes();
+            releases.release();
+            // `releases` drops here: the final release. A park after it —
+            // a seam that hid the revocation — sees disconnection at once.
+            (redispatch, outcome, wakes)
+        });
     assert_eq!(redispatch.unwrap_err(), LedgerError::WorkerNotReturned);
     assert_eq!(outcome, CancelOutcome::Requested);
     assert_eq!(
@@ -1665,13 +1743,13 @@ fn a_revocation_registered_through_the_ledger_mid_step_is_observed_at_the_next_c
     let conditions = empty_conditions(incarnation);
     let wake = Arc::new(WakeLog::default());
     let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
-    let (gate, job) = Gate::new(3);
+    let (gate, ends, job) = Gate::new(3);
     let id = ids.identity(incarnation);
     let ticket = ledger
         .try_submit::<RouteSpec, GateJob>(id, &input(8), job, &conditions)
         .unwrap();
     assert_eq!(
-        revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Operator),
+        revoke_mid_step(&mut ledger, ticket, ends, &wake, 0, Cancellation::Operator),
         None,
         "the slice settles as a terminal"
     );
@@ -1701,12 +1779,12 @@ fn a_revocation_registered_before_the_success_checkpoint_cancels_instead_of_publ
     let conditions = empty_conditions(incarnation);
     let wake = Arc::new(WakeLog::default());
     let mut ledger = ledger_with_wake(incarnation, bounds(2, 1024), &wake);
-    let (gate, job) = Gate::new(1);
+    let (gate, ends, job) = Gate::new(1);
     let ticket = ledger
         .try_submit::<RouteSpec, GateJob>(ids.identity(incarnation), &input(8), job, &conditions)
         .unwrap();
     assert_eq!(
-        revoke_mid_step(&mut ledger, ticket, &gate, &wake, 0, Cancellation::Shutdown),
+        revoke_mid_step(&mut ledger, ticket, ends, &wake, 0, Cancellation::Shutdown),
         None
     );
     assert_eq!(
@@ -1725,6 +1803,97 @@ fn a_revocation_registered_before_the_success_checkpoint_cancels_instead_of_publ
     match settle_route(&mut ledger, &ticket) {
         Settlement::Cancelled(Cancellation::Shutdown) => {}
         other => panic!("expected Cancelled(Shutdown), got {other:?}"),
+    }
+}
+
+#[test]
+fn an_entry_yield_reports_the_finished_slice_without_a_unit_event() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let (gate, ends, job) = Gate::new(1);
+    let ticket = ledger
+        .try_submit::<RouteSpec, GateJob>(ids.identity(incarnation), &input(8), job, &conditions)
+        .unwrap();
+    let slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
+    let now = Instant::now();
+    // The deadline has passed when the worker enters: the first checkpoint
+    // yields before any unit, so the job neither parks nor reports a unit.
+    // The controller expects nothing; `step_gated`'s wait ends on the
+    // finished event, not on a unit the job will never send.
+    let expired = SliceBudget::new(NonZeroU32::new(8).unwrap(), Deadline::at(now));
+    let (slice, result, ()) = step_gated(slice, expired, now, ends, |_, _| {});
+    assert_eq!(gate.seen(), vec![Checkpoint::Yield]);
+    assert!(produced(&gate.log).is_empty(), "no unit before the yield");
+    assert_eq!(
+        ledger.settle(slice, result).unwrap(),
+        Some(JobState::Yielded),
+        "an entry yield is an ordinary yield"
+    );
+    assert_eq!(ledger.job_state(&ticket), Some(JobState::Yielded));
+    // The job is intact and steps again: revoked, its next entry
+    // checkpoint observes the revocation.
+    assert_eq!(
+        ledger.cancel(ticket, Cancellation::Operator),
+        CancelOutcome::Requested
+    );
+    assert_eq!(
+        ledger
+            .drive(ticket.identity(), &AdjClock::new(now), budget(now, 8, 100))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        gate.seen(),
+        vec![
+            Checkpoint::Yield,
+            Checkpoint::Cancel(Cancellation::Operator)
+        ]
+    );
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Cancelled(Cancellation::Operator) => {}
+        other => panic!("expected Cancelled(Operator), got {other:?}"),
+    }
+}
+
+#[test]
+fn a_park_after_the_final_release_fails_at_once_and_is_reported() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let (gate, ends, job) = Gate::new(2);
+    let ticket = ledger
+        .try_submit::<RouteSpec, GateJob>(ids.identity(incarnation), &input(8), job, &conditions)
+        .unwrap();
+    let slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
+    let now = Instant::now();
+    // The controller expects one park and makes its release the final
+    // one without registering anything, so the job — correctly — goes on
+    // to a second unit and parks again. That park finds the release
+    // sender gone: the step ends at once with the job's own failure, and
+    // the unexpected unit is reported rather than silently waited on.
+    let (slice, result, ()) =
+        step_gated(slice, budget(now, 8, 100), now, ends, |events, releases| {
+            assert_eq!(events.recv().unwrap(), GateEvent::UnitDone(1));
+            releases.release();
+            drop(releases);
+            assert_eq!(
+                events.recv().unwrap(),
+                GateEvent::UnitDone(2),
+                "the park nobody will release is reported"
+            );
+        });
+    assert_eq!(
+        gate.seen(),
+        vec![Checkpoint::Continue, Checkpoint::Continue]
+    );
+    assert_eq!(produced(&gate.log), vec![0, 1]);
+    assert_eq!(ledger.settle(slice, result).unwrap(), None);
+    match settle_route(&mut ledger, &ticket) {
+        Settlement::Failed(JobError::Family(TestJobError("parked after the final release"))) => {}
+        other => panic!("expected the park failure, got {other:?}"),
     }
 }
 
@@ -2164,4 +2333,156 @@ fn cancel_wakes_the_worker_once_per_recorded_revocation() {
         CancelOutcome::AlreadyTerminal
     );
     assert_eq!(wake.wakes().len(), 2);
+}
+
+/// Two slices out at once, each offered the other's outcome: the ledger
+/// refuses both and nothing — custody, progress, terminal, charge —
+/// changes. Same spec, so only the identity binding can tell them apart.
+#[test]
+fn settle_refuses_another_jobs_outcome_under_the_same_spec() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let a: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(1),
+    )
+    .unwrap();
+    let mut two = CountJob::new(2);
+    two.multi = true;
+    two.report = true;
+    let b: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        two,
+    )
+    .unwrap();
+    let now = Instant::now();
+    let clock = AdjClock::new(now);
+    let mut slice_a = ledger.dispatch(a.identity()).unwrap().unwrap();
+    let mut slice_b = ledger.dispatch(b.identity()).unwrap().unwrap();
+    let result_a = slice_a.step(&clock, budget(now, 4, 100));
+    let result_b = slice_b.step(&clock, budget(now, 4, 100));
+    assert_eq!(
+        ledger.settle(slice_a, result_b).unwrap_err(),
+        LedgerError::StaleIdentity,
+        "b's outcome cannot settle a"
+    );
+    assert_eq!(
+        ledger.settle(slice_b, result_a).unwrap_err(),
+        LedgerError::StaleIdentity,
+        "a's outcome cannot settle b"
+    );
+    assert_eq!(ledger.borrow_terminal(&a).unwrap(), None);
+    assert_eq!(ledger.borrow_terminal(&b).unwrap(), None);
+    assert_eq!(
+        ledger.publications().progress().sequence().get(),
+        0,
+        "b's progress report was not published under either job"
+    );
+    assert_eq!(
+        ledger.dispatch(a.identity()).unwrap_err(),
+        LedgerError::WorkerNotReturned,
+        "a's custody is still out"
+    );
+    assert_eq!(
+        ledger.dispatch(b.identity()).unwrap_err(),
+        LedgerError::WorkerNotReturned,
+        "b's custody is still out"
+    );
+    assert_eq!(ledger.charged_jobs(), 2);
+}
+
+/// The same exchange across families: a decode outcome offered for the
+/// route slice would install a `String` terminal under a `u32` ticket.
+#[test]
+fn settle_refuses_another_familys_outcome() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let route: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(1),
+    )
+    .unwrap();
+    let decode = ledger
+        .try_submit::<DecodeSpec, TextJob>(
+            ids.identity(incarnation),
+            &input(8),
+            TextJob {
+                text: "decoded",
+                oversized: None,
+            },
+            &conditions,
+        )
+        .unwrap();
+    let now = Instant::now();
+    let clock = AdjClock::new(now);
+    let mut slice_route = ledger.dispatch(route.identity()).unwrap().unwrap();
+    let mut slice_decode = ledger.dispatch(decode.identity()).unwrap().unwrap();
+    let result_route = slice_route.step(&clock, budget(now, 4, 100));
+    let result_decode = slice_decode.step(&clock, budget(now, 4, 100));
+    assert_eq!(
+        ledger.settle(slice_route, result_decode).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(
+        ledger.settle(slice_decode, result_route).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(ledger.borrow_terminal(&route).unwrap(), None);
+    assert_eq!(ledger.borrow_terminal(&decode).unwrap(), None);
+    assert_eq!(ledger.publications().progress().sequence().get(), 0);
+    assert_eq!(
+        ledger.dispatch(route.identity()).unwrap_err(),
+        LedgerError::WorkerNotReturned
+    );
+    assert_eq!(
+        ledger.dispatch(decode.identity()).unwrap_err(),
+        LedgerError::WorkerNotReturned
+    );
+}
+
+/// A slice stepped twice offers its first step's outcome: that outcome is
+/// of an earlier step of this very dispatch, and is refused like a foreign
+/// one.
+#[test]
+fn settle_refuses_an_earlier_steps_outcome_of_the_same_slice() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds(2, 1024));
+    let ticket: WorkTicket<RouteSpec> = submit(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(8),
+        CountJob::new(2),
+    )
+    .unwrap();
+    let now = Instant::now();
+    let clock = AdjClock::new(now);
+    let mut slice = ledger.dispatch(ticket.identity()).unwrap().unwrap();
+    let first = slice.step(&clock, budget(now, 4, 100));
+    let _latest = slice.step(&clock, budget(now, 4, 100));
+    assert_eq!(
+        ledger.settle(slice, first).unwrap_err(),
+        LedgerError::StaleIdentity
+    );
+    assert_eq!(ledger.borrow_terminal(&ticket).unwrap(), None);
+    assert_eq!(ledger.job_state(&ticket), Some(JobState::Executing));
+    assert_eq!(
+        ledger.dispatch(ticket.identity()).unwrap_err(),
+        LedgerError::WorkerNotReturned
+    );
 }

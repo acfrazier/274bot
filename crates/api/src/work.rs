@@ -1718,6 +1718,9 @@ mod ledger {
         charge: WorkCharge,
         /// `None` while a dispatched [`Slice`] holds the job.
         job: Option<Box<dyn ErasedJob>>,
+        /// How many times the job was dispatched; the current dispatch's
+        /// [`Slice`] carries this number in its stamp.
+        dispatches: u64,
         settle: fn(ServiceTerminal) -> Erased,
         terminal: Terminal<Erased>,
         progress: Option<WorkProgress>,
@@ -1748,28 +1751,50 @@ mod ledger {
         }
     }
 
+    /// Which step of which dispatch of which job produced an outcome. A
+    /// [`Slice`] carries the stamp of its latest step; the [`SliceOutcome`]
+    /// that step returned carries the same one, and [`AdmissionLedger::settle`]
+    /// accepts no other: another job's outcome (same or another spec) and a
+    /// replayed earlier step of this job are refused before custody,
+    /// progress or the terminal change.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct SliceStamp {
+        identity: WorkIdentity,
+        spec: TypeId,
+        dispatch: u64,
+        step: u32,
+    }
+
     /// The worker's custody of one dispatched slice: the job and its live
     /// cancellation source, out of the ledger while the step runs, so the
     /// service can register a revocation mid-step without waiting for the
     /// step to return.
     pub struct Slice {
-        identity: WorkIdentity,
+        stamp: SliceStamp,
         job: Box<dyn ErasedJob>,
         cancel: Arc<SharedCancellation>,
     }
 
-    /// What a stepped [`Slice`] hands back to [`AdmissionLedger::settle`].
+    /// What a stepped [`Slice`] hands back to [`AdmissionLedger::settle`],
+    /// stamped with the slice and step that produced it.
     pub struct SliceOutcome {
+        stamp: SliceStamp,
         outcome: ErasedStep,
         report: SliceReport,
     }
 
     impl Slice {
         /// Run one step under `clock` and `budget`, reading cancellation
-        /// live from the shared source.
+        /// live from the shared source. The outcome is bound to this step
+        /// of this slice; an earlier step's outcome is stale afterwards.
         pub fn step(&mut self, clock: &dyn MonotonicClock, budget: SliceBudget) -> SliceOutcome {
+            self.stamp.step += 1;
             let (outcome, report) = self.job.step(clock, budget, &*self.cancel);
-            SliceOutcome { outcome, report }
+            SliceOutcome {
+                stamp: self.stamp,
+                outcome,
+                report,
+            }
         }
 
         /// The live source this slice's checkpoints read, as the worker
@@ -1782,7 +1807,9 @@ mod ledger {
     impl fmt::Debug for Slice {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("Slice")
-                .field("identity", &self.identity)
+                .field("identity", &self.stamp.identity)
+                .field("dispatch", &self.stamp.dispatch)
+                .field("step", &self.stamp.step)
                 .field("cancellation", &self.cancel.cancellation())
                 .finish_non_exhaustive()
         }
@@ -1803,8 +1830,9 @@ mod ledger {
     /// charge lifetime, publish-before-notify through a real notifier, and
     /// the cancellation wake through a real [`WorkerWake`]. The service and
     /// the worker are split at [`Self::dispatch`] / [`Self::settle`] so a
-    /// revocation can be registered while a slice is out. Not a shipped
-    /// executor.
+    /// revocation can be registered while a slice is out; a settlement is
+    /// bound to the dispatched slice by [`SliceStamp`], so one job's outcome
+    /// never settles another's. Not a shipped executor.
     pub struct AdmissionLedger {
         incarnation: ProcessIncarnation,
         bounds: AdmissionBounds,
@@ -2031,8 +2059,14 @@ mod ledger {
                 return Err(LedgerError::WorkerNotReturned);
             };
             slot.state = JobState::Executing;
+            slot.dispatches += 1;
             Ok(Some(Slice {
-                identity: slot.identity,
+                stamp: SliceStamp {
+                    identity: slot.identity,
+                    spec: slot.spec,
+                    dispatch: slot.dispatches,
+                    step: 0,
+                },
                 job: erased,
                 cancel: Arc::clone(&slot.cancel),
             }))
@@ -2043,20 +2077,39 @@ mod ledger {
         /// before publication is the job's one terminal, whatever the step
         /// returned; a terminal published while the slice was out (an
         /// outage) stands.
+        ///
+        /// `result` must be the outcome of `slice`'s latest step: the same
+        /// job, the same submitted spec, the same dispatch and the same
+        /// step. Anything else — another job's outcome, under the same or
+        /// another spec, or a replayed earlier step — is refused with
+        /// [`LedgerError::StaleIdentity`] before custody, progress or the
+        /// terminal change. A refused settlement consumes the slice; the
+        /// fixture has no protocol for a worker that mispairs an outcome
+        /// beyond refusing it.
         pub fn settle(
             &mut self,
             slice: Slice,
             result: SliceOutcome,
         ) -> Result<Option<JobState>, LedgerError> {
-            let job = slice.identity;
+            let job = slice.stamp.identity;
             let Some(slot) = self.slot_by_identity(job) else {
                 return Err(LedgerError::StaleIdentity);
             };
+            if result.stamp != slice.stamp
+                || slice.stamp.dispatch != slot.dispatches
+                || slot.job.is_some()
+            {
+                return Err(LedgerError::StaleIdentity);
+            }
             slot.job = Some(slice.job);
             if slot.has_terminal() {
                 return Ok(None);
             }
-            let SliceOutcome { outcome, report } = result;
+            let SliceOutcome {
+                stamp: _,
+                outcome,
+                report,
+            } = result;
             let progress = report.progress.map(|report| {
                 let sequence = slot.progress.as_ref().map_or(0, WorkProgress::sequence) + 1;
                 WorkProgress::new(
@@ -2186,6 +2239,7 @@ mod ledger {
                         job,
                         family: PhantomData,
                     })),
+                    dispatches: 0,
                     settle: erase_service_terminal::<F>,
                     terminal: Terminal::new(),
                     progress: None,
