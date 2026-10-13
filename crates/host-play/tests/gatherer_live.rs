@@ -2176,7 +2176,16 @@ impl GatherSlot {
         if free == 0 {
             return Ok(());
         }
-        send_cheat(client, &format!("give raw_shrimp {free}"))?;
+        let (shrimp, anchovies) = if soak_two_products() {
+            let free = i32::try_from(free).unwrap_or(i32::MAX);
+            (free - free / 2, free / 2)
+        } else {
+            (i32::try_from(free).unwrap_or(i32::MAX), 0)
+        };
+        send_cheat(client, &format!("give raw_shrimp {shrimp}"))?;
+        if anchovies > 0 {
+            send_cheat(client, &format!("give raw_anchovies {anchovies}"))?;
+        }
         self.soak_last_refill = Instant::now();
         self.witness.soak.refills = self.witness.soak.refills.saturating_add(1);
         println!(
@@ -5086,6 +5095,27 @@ fn soak_min_trips() -> u32 {
         .unwrap_or(10)
 }
 
+/// `GATHERER_SOAK_TWO_PRODUCTS=1`: a measurement mode, not the
+/// qualification soak. The pack is seeded with raw shrimp and raw anchovies
+/// so every trip deposits in two clicks: the transfer window a run-threshold
+/// crossing can land in is about twice as long, which raises the rate at
+/// which an unguarded host's press (`controls:com_5`, `if_close` first) is
+/// recorded inside a transfer.
+fn soak_two_products() -> bool {
+    std::env::var("GATHERER_SOAK_TWO_PRODUCTS").is_ok_and(|value| value == "1")
+}
+
+/// Raw shrimp and raw anchovies seeded per fill: all shrimp normally, a
+/// two-product split under `GATHERER_SOAK_TWO_PRODUCTS`.
+fn soak_seed_split() -> (i32, i32) {
+    let total = SOAK_SEED_FISH as i32;
+    if soak_two_products() {
+        (total - total / 2, total / 2)
+    } else {
+        (total, 0)
+    }
+}
+
 /// A capture handed to the background writer, awaiting its outcome.
 struct PendingGathererCapture {
     job: EvidenceJob,
@@ -5285,8 +5315,12 @@ fn fixture_plan(
             plan.inventory_seed.push(("beer".into(), 1));
         }
         LiveCase::FishBankSoak => {
-            plan.inventory_seed
-                .push(("raw_shrimp".into(), SOAK_SEED_FISH as i32));
+            let (shrimp, anchovies) = soak_seed_split();
+            plan.inventory_seed.push(("raw_shrimp".into(), shrimp));
+            if anchovies > 0 {
+                plan.inventory_seed
+                    .push(("raw_anchovies".into(), anchovies));
+            }
         }
         LiveCase::CoinRunes => {
             plan.bank_seed.push(("coins".into(), 1_000));
@@ -6923,6 +6957,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "trips": soak.trips,
             "runs": soak.runs,
             "refills": soak.refills,
+            "run_sends": soak.run_sends,
+            "two_products": soak_two_products(),
             "deposit_blocks": soak.deposit_blocks,
             "other_blocks": soak.other_blocks,
             "blocks": soak.blocks,
