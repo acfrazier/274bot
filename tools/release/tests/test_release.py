@@ -331,6 +331,761 @@ class ParameterTests(unittest.TestCase):
             release.powershell_quote("safe\u2019; Write-Output nope")
 
 
+class MacosBuildEnvironmentTests(unittest.TestCase):
+    EXPECT = {
+        "host_commit": "a" * 40,
+        "client_commit": "b" * 40,
+        "revision": 289,
+        "jobs": 4,
+    }
+    HOSTILE = {
+        "PATH": "/opt/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+        "LIBRARY_PATH": "/opt/local/lib",
+        "CPATH": "/opt/local/include",
+        "C_INCLUDE_PATH": "/opt/local/include",
+        "PKG_CONFIG": "/opt/local/bin/pkg-config",
+        "PKG_CONFIG_PATH": "/opt/local/lib/pkgconfig",
+        "PKG_CONFIG_PATH_aarch64-apple-darwin": "/opt/local/lib/pkgconfig",
+        "DYLD_LIBRARY_PATH": "/opt/local/lib",
+        "DYLD_INSERT_LIBRARIES": "/opt/local/lib/libfoo.dylib",
+        "CC": "/opt/local/bin/gcc",
+        "TARGET_CC": "/opt/local/bin/gcc",
+        "CC_aarch64-apple-darwin": "/opt/local/bin/gcc",
+        "CFLAGS": "-I/opt/local/include",
+        "LDFLAGS": "-L/opt/local/lib",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew",
+        "OPENSSL_DIR": "/opt/homebrew/opt/openssl@3",
+        "HOMEBREW_PREFIX": "/opt/homebrew",
+        "BINDGEN_EXTRA_CLANG_ARGS": "-I/opt/local/include",
+        "LIBCLANG_PATH": "/opt/local/lib/libclang.dylib",
+        "SDKROOT": "/opt/local/sdk",
+        "MACOSX_DEPLOYMENT_TARGET": "14.0",
+        "RUSTFLAGS": "-L /opt/local/lib",
+        "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/opt/local/bin/ld",
+        "RUSTC_WRAPPER": "/opt/homebrew/bin/sccache",
+        # Toolchain/config redirection and arbitrary future variables a
+        # denylist would miss; an allowlist drops them by construction.
+        "CARGO_HOME": "/opt/local/cargo",
+        "RUSTUP_HOME": "/opt/local/rustup",
+        "RUSTUP_TOOLCHAIN": "nightly-2099-01-01",
+        "CARGO": "/opt/local/bin/cargo-wrapper",
+        "CCC_OVERRIDE_OPTIONS": "x-I/opt/local/include",
+        "COMPILER_PATH": "/opt/local/bin",
+        "OBJCPLUS_INCLUDE_PATH": "/opt/local/include",
+        "SOME_FUTURE_LIB_DIR": "/opt/local/lib",
+        "EVIL_ARBITRARY_VARIABLE": "/opt/local/lib/libevil.dylib",
+        "SHELL": "/opt/local/bin/zsh",
+        "SSH_AUTH_SOCK": "/tmp/agent.sock",
+        "FPATH": "/opt/homebrew/share/zsh/site-functions",
+    }
+    # Keys native_build_environment itself pins for every platform.
+    WORKER_KEYS = {
+        "GIT_COMMIT", "CLIENT_COMMIT", "GIT_DIRTY", "BOT_NAV_REVISION",
+        "BOT_NAV_BUILD", "BOT_NAV_ENGINE_DIR", "BOT_NAV_CONTENT_DIR",
+        "BOT_NAV_SNAPSHOT_ROOT", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS",
+        "CARGO_INCREMENTAL",
+    }
+
+    def test_macos_build_path_is_fixed_and_minimal(self):
+        self.assertEqual(
+            release.macos_build_path("/Users/builder"),
+            "/Users/builder/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+
+    def test_macos_environment_is_an_allowlist_from_empty(self):
+        parent = {
+            **self.HOSTILE,
+            "HOME": "/Users/builder",
+            "USER": "builder",
+            "LOGNAME": "builder",
+            "TMPDIR": "/var/folders/builder/T/",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "LC_CTYPE": "UTF-8",
+            "HTTP_PROXY": "http://proxy.example:3128",
+            "https_proxy": "http://proxy.example:3128",
+            "DEVELOPER_DIR": "/Library/Developer/CommandLineTools",
+        }
+        is_dir = lambda path: str(path) == "/Library/Developer/CommandLineTools"
+        with mock.patch.dict(os.environ, parent, clear=True), \
+                mock.patch.object(Path, "is_dir", is_dir):
+            mac = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "macos"
+            )
+        # Only the allowlisted keys, the constructed keys, and the keys
+        # the worker itself pins survive -- nothing else is inherited.
+        self.assertEqual(set(mac), self.WORKER_KEYS | {
+            "PATH", "HOME", "MACOSX_DEPLOYMENT_TARGET",
+            "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE",
+            "HTTP_PROXY", "https_proxy", "DEVELOPER_DIR",
+        })
+        self.assertEqual(mac["PATH"], release.macos_build_path("/Users/builder"))
+        self.assertEqual(mac["HOME"], "/Users/builder")
+        # The deployment target is pinned from the one constant the
+        # manifest line also uses, not inherited from the shell's 14.0.
+        self.assertEqual(mac["MACOSX_DEPLOYMENT_TARGET"], "11.0")
+        self.assertEqual(
+            mac["MACOSX_DEPLOYMENT_TARGET"], release.MACOS_DEPLOYMENT_TARGET
+        )
+        self.assertEqual(
+            release.runtime_requirements("macos"),
+            [f"macOS {release.MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"],
+        )
+        for name in ("CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+                     "EVIL_ARBITRARY_VARIABLE", "SOME_FUTURE_LIB_DIR"):
+            self.assertNotIn(name, mac)
+        self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
+        self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
+        self.assertEqual(mac["GIT_DIRTY"], "0")
+
+    def test_developer_dir_must_be_an_existing_apple_dir(self):
+        with mock.patch.object(Path, "is_dir", lambda path: True):
+            self.assertTrue(release.valid_macos_developer_dir(
+                "/Library/Developer/CommandLineTools"))
+            self.assertTrue(release.valid_macos_developer_dir(
+                "/Applications/Xcode.app/Contents/Developer"))
+            # Existing is not enough: a non-Apple location is dropped.
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/opt/local/developer"))
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/Library/Developer/CommandLineTools/../elsewhere"))
+        with mock.patch.object(Path, "is_dir", lambda path: False):
+            # The right shape in a place that does not exist is dropped.
+            self.assertFalse(release.valid_macos_developer_dir(
+                "/Applications/Xcode.app/Contents/Developer"))
+        parent = {
+            "HOME": "/Users/builder",
+            "DEVELOPER_DIR": "/opt/local/developer",
+        }
+        with mock.patch.dict(os.environ, parent, clear=True), \
+                mock.patch.object(Path, "is_dir", lambda path: True):
+            mac = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "macos"
+            )
+        self.assertNotIn("DEVELOPER_DIR", mac)
+
+    def test_other_platforms_keep_the_inherited_environment(self):
+        with mock.patch.dict(os.environ, {**self.HOSTILE, "HOME": "/home/builder"}):
+            linux = release.native_build_environment(
+                self.EXPECT, Path("/inputs"), Path("/target"), "linux"
+            )
+        self.assertEqual(
+            linux["PATH"],
+            "/home/builder/.cargo/bin:" + self.HOSTILE["PATH"],
+        )
+        self.assertEqual(linux["LIBRARY_PATH"], "/opt/local/lib")
+        # The allowlist and deployment pin are macOS-only.
+        self.assertEqual(linux["RUSTUP_TOOLCHAIN"], "nightly-2099-01-01")
+        self.assertEqual(linux["MACOSX_DEPLOYMENT_TARGET"], "14.0")
+
+OTOOL_L = """\
+/pkg/panel-play:
+\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+\t@rpath/libfoo.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t/opt/local/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)
+"""
+
+OTOOL_LOAD_COMMANDS = """\
+/pkg/panel-play:
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 72
+Load command 9
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+   ntools 1
+Load command 12
+      cmd LC_RPATH
+  cmdsize 40
+     path @executable_path/../Frameworks (offset 12)
+Load command 13
+      cmd LC_RPATH
+  cmdsize 32
+     path /opt/local/lib (offset 12)
+Load command 14
+      cmd LC_LOAD_DYLIB
+  cmdsize 56
+     name /usr/lib/libSystem.B.dylib (offset 24)
+"""
+
+OTOOL_LOAD_COMMANDS_LEGACY = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 11.0
+      sdk 11.0
+"""
+
+OTOOL_LOAD_COMMANDS_IOS_ONLY = """\
+/pkg/panel-play:
+Load command 3
+      cmd LC_SOURCE_VERSION
+  cmdsize 16
+  version 0.0
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 2
+    minos 11.0
+      sdk 18.0
+"""
+
+OTOOL_LOAD_COMMANDS_CATALYST_ONLY = """\
+/pkg/panel-play:
+Load command 3
+      cmd LC_SOURCE_VERSION
+  cmdsize 16
+  version 0.0
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 6
+    minos 11.0
+      sdk 14.0
+"""
+
+OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 11.0
+      sdk 27.0
+Load command 9
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 6
+    minos 14.0
+      sdk 14.0
+"""
+
+OTOOL_LOAD_COMMANDS_NO_PLATFORM = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+    minos 11.0
+      sdk 27.0
+"""
+
+OTOOL_LOAD_COMMANDS_ABOVE_FLOOR = """\
+/pkg/panel-play:
+Load command 8
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 14.0
+      sdk 14.0
+"""
+
+
+def thin_macho_bytes(cputype=0x0100000C, cpusubtype=0, filetype=2):
+    """A thin 64-bit little-endian Mach-O header (CPU_TYPE_ARM64,
+    plain arm64 subtype, MH_EXECUTE unless told otherwise)."""
+    return (
+        b"\xcf\xfa\xed\xfe"
+        + cputype.to_bytes(4, "little")
+        + cpusubtype.to_bytes(4, "little")
+        + filetype.to_bytes(4, "little")
+        + b"\0" * 16
+    )
+
+
+def fat_macho_bytes(*slices):
+    """A fat big-endian Mach-O whose arch entries name `slices`
+    ((cputype, cpusubtype) pairs), with one thin header after them."""
+    thin = thin_macho_bytes()
+    entries = b""
+    offset = 8 + 20 * len(slices)
+    for cputype, cpusubtype in slices:
+        entries += (
+            cputype.to_bytes(4, "big") + cpusubtype.to_bytes(4, "big")
+            + offset.to_bytes(4, "big") + len(thin).to_bytes(4, "big")
+            + b"\0" * 4
+        )
+    return (
+        b"\xca\xfe\xba\xbe" + len(slices).to_bytes(4, "big")
+        + entries + thin
+    )
+
+
+class MacosLinkageTests(unittest.TestCase):
+    def make_package(self, root):
+        base = root / "274bot-0.2.1-macos-arm64"
+        (base / "274bot.app/Contents/Frameworks").mkdir(parents=True)
+        (base / "274bot.app/Contents/MacOS").mkdir(parents=True)
+        (base / "Frameworks").mkdir()
+        for relative in release.MACOS_REQUIRED_EXECUTABLES:
+            (base / relative).write_bytes(
+                thin_macho_bytes(filetype=release.MH_EXECUTE)
+            )
+        (base / "Frameworks/libfoo.dylib").write_bytes(
+            thin_macho_bytes(filetype=6)
+        )
+        (base / "274bot.app/Contents/Frameworks/libfoo.dylib").write_bytes(
+            thin_macho_bytes(filetype=6)
+        )
+        (base / "notes.txt").write_text("not a binary")
+        return base
+
+    def test_otool_parsers_read_libraries_rpaths_and_minos(self):
+        self.assertEqual(release.parse_otool_libraries(OTOOL_L), [
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libiconv.2.dylib",
+            "@rpath/libfoo.dylib",
+            "/opt/local/lib/libbz2.1.0.dylib",
+        ])
+        self.assertEqual(release.parse_otool_rpaths(OTOOL_LOAD_COMMANDS), [
+            "@executable_path/../Frameworks",
+            "/opt/local/lib",
+        ])
+        # A macOS-platform (platform 1) LC_BUILD_VERSION is the floor.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS),
+            ["11.0"],
+        )
+        # Legacy LC_VERSION_MIN_MACOSX is the same floor.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_LEGACY),
+            ["11.0"],
+        )
+        # iOS (platform 2) and Mac Catalyst (platform 6) build versions
+        # are not macOS floors; the LC_SOURCE_VERSION 'version 0.0'
+        # alongside them is not one either.
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_IOS_ONLY),
+            [],
+        )
+        self.assertEqual(
+            release.parse_otool_minimum_os(
+                OTOOL_LOAD_COMMANDS_CATALYST_ONLY),
+            [],
+        )
+        # A Catalyst minos above the floor does not count against a
+        # binary whose macOS floor is 11.0; only the macOS one is read.
+        self.assertEqual(
+            release.parse_otool_minimum_os(
+                OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST),
+            ["11.0"],
+        )
+        # A minos with no platform line does not count (fail closed).
+        self.assertEqual(
+            release.parse_otool_minimum_os(OTOOL_LOAD_COMMANDS_NO_PLATFORM),
+            [],
+        )
+
+    def test_system_libraries_are_allowed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            violations = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["/usr/lib/libSystem.B.dylib",
+                 "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"],
+                [],
+            )
+        self.assertEqual(violations, [])
+
+    def test_package_manager_and_other_libraries_are_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            violations = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["/opt/local/lib/libbz2.1.0.dylib",
+                 "/opt/homebrew/lib/libssl.3.dylib",
+                 "/usr/local/lib/libfoo.dylib",
+                 # Normalises to /opt/local/...: a raw prefix test on
+                 # /usr/lib/ would wave this through as a system library.
+                 "/usr/lib/../opt/local/lib/libbz2.1.0.dylib",
+                 "/System/Library/../../opt/homebrew/lib/libssl.3.dylib",
+                 "libfoo.dylib",
+                 "@loader_path/libfoo.dylib"],
+                [],
+            )
+        self.assertEqual(violations, [
+            "panel-play: /opt/local/lib/libbz2.1.0.dylib",
+            "panel-play: /opt/homebrew/lib/libssl.3.dylib",
+            "panel-play: /usr/local/lib/libfoo.dylib",
+            "panel-play: /usr/lib/../opt/local/lib/libbz2.1.0.dylib",
+            "panel-play: /System/Library/../../opt/homebrew/lib/libssl.3.dylib",
+            "panel-play: libfoo.dylib",
+            "panel-play: @loader_path/libfoo.dylib",
+        ])
+
+    def test_executable_path_expands_against_every_main_executable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            app_exe = base / "274bot.app/Contents/MacOS/panel-play"
+            # @executable_path/../Frameworks resolves from the app
+            # bundle executable, but dyld expands @executable_path to
+            # the main executable's directory: from the package-root
+            # executables the same string escapes the package.
+            app_only = release.macho_linkage_violations(
+                app_exe, base,
+                ["@executable_path/../Frameworks/libfoo.dylib"], [],
+            )
+            # A reference that resolves from every main executable's
+            # directory (root and app bundle alike) is allowed.
+            (base / "libevery.dylib").write_bytes(b"lib")
+            (base / "274bot.app/Contents/MacOS/libevery.dylib").write_bytes(b"lib")
+            everywhere = release.macho_linkage_violations(
+                app_exe, base, ["@executable_path/libevery.dylib"], [],
+            )
+            missing = release.macho_linkage_violations(
+                app_exe, base,
+                ["@executable_path/../Frameworks/libabsent.dylib"], [],
+            )
+            escaping = release.macho_linkage_violations(
+                base / "panel-play", base,
+                ["@executable_path/../../../opt/local/lib/libbz2.dylib"], [],
+            )
+        self.assertEqual(app_only, [
+            "274bot.app/Contents/MacOS/panel-play: "
+            "@executable_path/../Frameworks/libfoo.dylib"
+        ])
+        self.assertEqual(everywhere, [])
+        self.assertEqual(len(missing), 1)
+        self.assertEqual(len(escaping), 1)
+
+    def test_rpath_must_resolve_inside_the_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            # @loader_path is the referencing binary's own directory, so
+            # this is the correct token for "next to this image".
+            loader_resolved = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@loader_path/Frameworks"],
+            )
+            # @executable_path/Frameworks resolves from the root
+            # executables but not from 274bot.app/Contents/MacOS, so it
+            # must not pass on the strength of the root expansion.
+            executable_root_only = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@executable_path/Frameworks"],
+            )
+            macos_frameworks = base / "274bot.app/Contents/MacOS/Frameworks"
+            macos_frameworks.mkdir()
+            (macos_frameworks / "libfoo.dylib").write_bytes(b"lib")
+            executable_everywhere = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"],
+                ["@executable_path/Frameworks"],
+            )
+            outside = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], ["/opt/local/lib"],
+            )
+            no_rpath = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], [],
+            )
+            relative = release.macho_linkage_violations(
+                binary, base, ["@rpath/libfoo.dylib"], ["Frameworks"],
+            )
+        self.assertEqual(loader_resolved, [])
+        self.assertEqual(executable_root_only, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(executable_everywhere, [])
+        self.assertEqual(outside, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(no_rpath, ["panel-play: @rpath/libfoo.dylib"])
+        self.assertEqual(relative, ["panel-play: @rpath/libfoo.dylib"])
+
+    def test_nested_dylib_executable_path_escape_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            plugin_dir = base / "nested/deep"
+            plugin_dir.mkdir(parents=True)
+            plugin = plugin_dir / "plugin.dylib"
+            plugin.write_bytes(thin_macho_bytes(filetype=6))
+            # Planted where the plugin's own directory would take
+            # @executable_path/../../opt/local/lib -- the expansion the
+            # old check used. From a real main executable (package root)
+            # that string leaves the package entirely.
+            planted = base / "opt/local/lib"
+            planted.mkdir(parents=True)
+            (planted / "libbz2.1.0.dylib").write_bytes(b"lib")
+            via_rpath = release.macho_linkage_violations(
+                plugin, base, ["@rpath/libbz2.1.0.dylib"],
+                ["@executable_path/../../opt/local/lib"],
+            )
+            direct = release.macho_linkage_violations(
+                plugin, base,
+                ["@executable_path/../../opt/local/lib/libbz2.1.0.dylib"], [],
+            )
+            # The same plugin reached through @loader_path -- its own
+            # directory, whatever main executable loaded it -- passes.
+            (plugin_dir / "libnear.dylib").write_bytes(b"lib")
+            via_loader = release.macho_linkage_violations(
+                plugin, base, ["@rpath/libnear.dylib"], ["@loader_path"],
+            )
+        self.assertEqual(via_rpath, [
+            "nested/deep/plugin.dylib: @rpath/libbz2.1.0.dylib"
+        ])
+        self.assertEqual(direct, [
+            "nested/deep/plugin.dylib: "
+            "@executable_path/../../opt/local/lib/libbz2.1.0.dylib"
+        ])
+        self.assertEqual(via_loader, [])
+
+    def test_macho_filetype_and_main_executable_dirs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            extra = base / "extra"
+            extra.mkdir()
+            tool = extra / "tool"
+            tool.write_bytes(
+                thin_macho_bytes(filetype=release.MH_EXECUTE)
+            )
+            fat = base / "fat.dylib"
+            fat.write_bytes(fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+            self.assertEqual(
+                release.macho_filetype(tool), release.MH_EXECUTE
+            )
+            # No per-slice filetypes any more: a fat binary is refused
+            # by the architecture rule, so its filetype is never read.
+            self.assertIsNone(release.macho_filetype(fat))
+            self.assertEqual(
+                set(release.macos_main_executable_dirs(base)),
+                {base, base / "274bot.app/Contents/MacOS", extra},
+            )
+
+    def test_architecture_must_be_thin_arm64(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            allowed = (
+                "only thin arm64 Mach-O is shipped "
+                "(macOS target aarch64-apple-darwin)"
+            )
+
+            def violations():
+                return release.macho_architecture_violations(binary, base)
+
+            # Thin arm64 (subtypes 0 and 1 are plain arm64) is shipped.
+            binary.write_bytes(thin_macho_bytes(cpusubtype=0))
+            self.assertEqual(violations(), [])
+            binary.write_bytes(thin_macho_bytes(cpusubtype=1))
+            self.assertEqual(violations(), [])
+            # Anything else is refused, naming the binary and what it is.
+            binary.write_bytes(
+                thin_macho_bytes(cputype=0x01000007, cpusubtype=3))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit x86_64 Mach-O; {allowed}"])
+            binary.write_bytes(thin_macho_bytes(cpusubtype=2))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit arm64e Mach-O; {allowed}"])
+            # arm64e with capability bits in the top subtype byte.
+            binary.write_bytes(thin_macho_bytes(cpusubtype=0x80000002))
+            self.assertEqual(violations(), [
+                f"panel-play: 64-bit arm64e Mach-O; {allowed}"])
+            # A fat binary is refused whatever its slices are, even a
+            # single arm64 slice.
+            binary.write_bytes(
+                fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64, x86_64); "
+                + allowed])
+            binary.write_bytes(fat_macho_bytes((0x0100000C, 0)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64); " + allowed])
+            binary.write_bytes(
+                fat_macho_bytes((0x0100000C, 2), (0x01000007, 3)))
+            self.assertEqual(violations(), [
+                "panel-play: fat/universal Mach-O (arm64e, x86_64); "
+                + allowed])
+            # 32-bit and truncated headers fail closed too.
+            binary.write_bytes(
+                b"\xce\xfa\xed\xfe" + (12).to_bytes(4, "little")
+                + b"\0" * 8 + (2).to_bytes(4, "little") + b"\0" * 12)
+            self.assertEqual(violations(), [
+                f"panel-play: 32-bit arm Mach-O; {allowed}"])
+            binary.write_bytes(b"\xcf\xfa\xed\xfe")
+            self.assertEqual(violations(), [
+                f"panel-play: truncated Mach-O header; {allowed}"])
+
+    def test_minimum_os_above_the_floor_is_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+            above = release.macho_minimum_os_violations(
+                binary, base, ["14.0"])
+            at_floor = release.macho_minimum_os_violations(
+                binary, base, ["11.0"])
+            below = release.macho_minimum_os_violations(
+                binary, base, ["10.15"])
+            missing = release.macho_minimum_os_violations(
+                binary, base, [])
+        self.assertEqual(above, ["panel-play: minos 14.0 exceeds macOS 11.0"])
+        self.assertEqual(at_floor, [])
+        self.assertEqual(below, [])
+        self.assertEqual(missing, [
+            "panel-play: missing minimum macOS version "
+            "(no macOS-platform LC_BUILD_VERSION minos or "
+            "LC_VERSION_MIN_MACOSX)"
+        ])
+
+    def test_minimum_os_counts_only_the_macos_platform(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            binary = base / "panel-play"
+
+            def violations(load_commands):
+                return release.macho_minimum_os_violations(
+                    binary, base,
+                    release.parse_otool_minimum_os(load_commands))
+
+            # A thin arm64 binary whose only build version is for iOS
+            # or Mac Catalyst has no macOS floor (the panel-play here
+            # passes the architecture rule; the floor is the cause).
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS_IOS_ONLY), [
+                "panel-play: missing minimum macOS version "
+                "(no macOS-platform LC_BUILD_VERSION minos or "
+                "LC_VERSION_MIN_MACOSX)"
+            ])
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_CATALYST_ONLY),
+                violations(OTOOL_LOAD_COMMANDS_IOS_ONLY),
+            )
+            # macOS 11.0, the legacy spelling of the same floor, and a
+            # macOS 11.0 alongside a Catalyst 14.0 are all allowed.
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS), [])
+            self.assertEqual(violations(OTOOL_LOAD_COMMANDS_LEGACY), [])
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_MACOS_AND_CATALYST), []
+            )
+            self.assertEqual(
+                violations(OTOOL_LOAD_COMMANDS_ABOVE_FLOOR),
+                ["panel-play: minos 14.0 exceeds macOS 11.0"],
+            )
+
+    def test_otool_linkage_requests_the_arm64_slice(self):
+        # The linkage tests mock otool_linkage, so lock the argv here:
+        # both calls must ask for the arm64 architecture explicitly.
+        calls = []
+
+        def fake_run(command, capture=False):
+            calls.append([str(part) for part in command])
+            if "-L" in command:
+                return (
+                    "/pkg/panel-play:\n"
+                    "\t/usr/lib/libSystem.B.dylib "
+                    "(compatibility version 1.0.0, "
+                    "current version 1359.0.0)\n"
+                )
+            return OTOOL_LOAD_COMMANDS
+
+        with mock.patch.object(release, "run", side_effect=fake_run):
+            libraries, rpaths, minimum_os = release.otool_linkage(
+                Path("/pkg/panel-play")
+            )
+        self.assertEqual(calls, [
+            ["otool", "-arch", "arm64", "-L", "/pkg/panel-play"],
+            ["otool", "-arch", "arm64", "-l", "/pkg/panel-play"],
+        ])
+        self.assertEqual(libraries, ["/usr/lib/libSystem.B.dylib"])
+        self.assertEqual(rpaths, [
+            "@executable_path/../Frameworks", "/opt/local/lib"])
+        self.assertEqual(minimum_os, ["11.0"])
+
+    def test_verify_checks_every_macho_and_names_the_offender(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+
+            def linkage(path):
+                if path.name == "libfoo.dylib" and "274bot.app" in str(path):
+                    return (
+                        ["/opt/local/lib/libiconv.2.dylib"], [], ["11.0"],
+                    )
+                return ["/usr/lib/libSystem.B.dylib"], [], ["11.0"]
+
+            with mock.patch.object(release, "otool_linkage", side_effect=linkage):
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"274bot\.app/Contents/Frameworks/libfoo\.dylib: "
+                    r"/opt/local/lib/libiconv\.2\.dylib",
+                ):
+                    release.verify_macos_linkage(base)
+                clean = mock.patch.object(
+                    release, "otool_linkage",
+                    return_value=(
+                        ["/usr/lib/libSystem.B.dylib"], [], ["11.0"],
+                    ),
+                )
+                with clean:
+                    checked = release.verify_macos_linkage(base)
+            self.assertEqual(checked, [
+                "274bot.app/Contents/Frameworks/libfoo.dylib",
+                "274bot.app/Contents/MacOS/panel-play",
+                "Frameworks/libfoo.dylib",
+                "panel-play",
+                "tui-play",
+            ])
+
+    def test_verify_rejects_a_minos_above_the_floor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+
+            def linkage(path):
+                minos = (
+                    ["14.0"] if path.name == "tui-play" else ["11.0"]
+                )
+                return ["/usr/lib/libSystem.B.dylib"], [], minos
+
+            with mock.patch.object(release, "otool_linkage", side_effect=linkage):
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: minos 14\.0 exceeds macOS 11\.0",
+                ):
+                    release.verify_macos_linkage(base)
+
+    def test_verify_refuses_non_thin_arm64_before_otool(self):
+        # The architecture rule reads the Mach-O header itself and the
+        # refused binary never reaches otool, so a clean mocked
+        # otool_linkage cannot wave a fat, x86_64, or arm64e file in.
+        with tempfile.TemporaryDirectory() as temporary:
+            base = self.make_package(Path(temporary))
+            clean = mock.patch.object(
+                release, "otool_linkage",
+                return_value=(
+                    ["/usr/lib/libSystem.B.dylib"], [], ["11.0"],
+                ),
+            )
+            with clean:
+                (base / "tui-play").write_bytes(
+                    fat_macho_bytes((0x0100000C, 0), (0x01000007, 3)))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: fat/universal Mach-O \(arm64, x86_64\)",
+                ):
+                    release.verify_macos_linkage(base)
+                (base / "tui-play").write_bytes(
+                    thin_macho_bytes(cputype=0x01000007, cpusubtype=3))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: 64-bit x86_64 Mach-O",
+                ):
+                    release.verify_macos_linkage(base)
+                (base / "tui-play").write_bytes(
+                    thin_macho_bytes(cpusubtype=2))
+                with self.assertRaisesRegex(
+                    release.ReleaseError,
+                    r"tui-play: 64-bit arm64e Mach-O",
+                ):
+                    release.verify_macos_linkage(base)
+
+    def test_verify_requires_the_shipped_executables(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "package"
+            base.mkdir()
+            (base / "panel-play").write_bytes(b"\xcf\xfa\xed\xfe")
+            with self.assertRaisesRegex(release.ReleaseError, "tui-play"):
+                release.verify_macos_linkage(base)
+
+
 class ManifestTests(unittest.TestCase):
     def test_finalize_manifest_rehashes_notes_and_package_files(self):
         with tempfile.TemporaryDirectory() as temporary:
