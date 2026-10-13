@@ -910,6 +910,34 @@ pub(crate) enum OpenAccess {
     Npc(Box<NpcAccess>),
 }
 
+impl OpenAccess {
+    /// The one banker → object access → booth choice, shared by
+    /// `openBankAccess` (which never walks) and `Banking.open` (after
+    /// its walk): a banker conversation wins, then the destination's
+    /// own object access, then the caller's booth. Both branches are
+    /// the existing access openers above.
+    pub(crate) fn new(
+        npc: Option<NpcAccessArgs>,
+        object: Option<AccessArgs>,
+        booth: AccessArgs,
+        log_hook: Option<usize>,
+    ) -> Self {
+        match npc {
+            Some(args) => OpenAccess::Npc(Box::new(NpcAccess::new(args, log_hook))),
+            None => {
+                OpenAccess::Object(Box::new(BankAccess::new(object.unwrap_or(booth), log_hook)))
+            }
+        }
+    }
+
+    pub(crate) fn run(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        match self {
+            OpenAccess::Object(open) => open.run(cx),
+            OpenAccess::Npc(open) => open.run(cx),
+        }
+    }
+}
+
 pub(crate) struct BankOpenAccess {
     inner: OpenAccess,
 }
@@ -929,25 +957,22 @@ impl Family for BankOpenAccess {
     type Output = bool;
 
     fn begin(args: OpenAccessArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        let inner = match args.npc_access {
-            Some(npc) => OpenAccess::Npc(Box::new(NpcAccess::new(npc, Some(LOG)))),
-            None => OpenAccess::Object(Box::new(BankAccess::new(
-                args.access.or(args.fallback).unwrap_or_else(|| AccessArgs {
+        Begin::Run(Self {
+            inner: OpenAccess::new(
+                args.npc_access,
+                args.access.or(args.fallback),
+                AccessArgs {
                     name: "Bank booth".into(),
                     op: "Use-quickly".into(),
                     open_first: None,
-                }),
+                },
                 Some(LOG),
-            ))),
-        };
-        Begin::Run(Self { inner })
+            ),
+        })
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        match &mut self.inner {
-            OpenAccess::Object(open) => open.run(cx),
-            OpenAccess::Npc(open) => open.run(cx),
-        }
+        self.inner.run(cx)
     }
 }
 
@@ -1489,5 +1514,39 @@ mod tests {
             machine::take(access),
             Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded))
         );
+    }
+
+    /// `openBankAccess` with an `openFirst` access (the Duel Arena row:
+    /// `Open chest`/`Bank` behind `Closed chest`/`Open`): the shim's
+    /// `open_first` reaches the object opener through the dispatch, so
+    /// the closer is opened first, then the banked loc is used.
+    #[test]
+    fn open_access_opens_the_open_first_loc_first() {
+        reset();
+        let closed = loc(1, "Closed chest", 3382, 3269, 1, &["Open"]);
+        let open = loc(2, "Open chest", 3382, 3269, 1, &["Bank"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3382, 3268))
+                .locs(vec![closed.clone()]);
+        });
+        let handle = start(
+            "bank_open_access",
+            json!({
+                "access": { "name": "Open chest", "op": "Bank",
+                            "open_first": { "name": "Closed chest", "op": "Open" } },
+                "fallback": { "name": "Bank booth", "op": "Use-quickly" }
+            }),
+        );
+        assert_eq!(tick(), vec![interact(&closed, "Open")]);
+        observed::post(2, |post| {
+            post.locs(vec![open.clone()]);
+        });
+        assert_eq!(tick(), vec![interact(&open, "Bank")]);
+        observed::post(3, |post| {
+            post.bank_open(true).bank_loaded(true);
+        });
+        assert!(tick().is_empty());
+        done(handle, true);
     }
 }

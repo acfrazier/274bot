@@ -1,7 +1,7 @@
 //! Frozen Banking.open precedence, shared by periodic banking and world opens.
 //! Local access remains local; only the no-scene/no-preset fallback selects by
 //! walk cost. Selection and access are separate awaited Rust continuations.
-use crate::bank_access::{AccessArgs, BankAccess, NpcAccess, NpcAccessArgs, Opener};
+use crate::bank_access::{AccessArgs, NpcAccessArgs, OpenAccess, Opener};
 use crate::bank_op::BankView;
 use crate::bank_open::BankOpen;
 use crate::bank_select::{self, SelectArgs, SelectBank};
@@ -103,8 +103,7 @@ enum Phase {
     Select(SelectBank),
     Walk(Resilient, Target),
     Open(Target),
-    Object(Box<BankAccess>),
-    Npc(Box<NpcAccess>),
+    Access(OpenAccess),
     Booth(Box<BankOpen>),
     Ready,
 }
@@ -283,22 +282,21 @@ impl BankingOpen {
                 }
                 Phase::Open(target) => match target {
                     Target::Access(access) => {
-                        self.phase = match access {
-                            Some(Access::Npc(args)) => {
-                                Phase::Npc(Box::new(NpcAccess::new(args, self.log_hook)))
-                            }
-                            Some(Access::Object(args)) => {
-                                Phase::Object(Box::new(BankAccess::new(args, self.log_hook)))
-                            }
-                            None => Phase::Object(Box::new(BankAccess::new(
-                                AccessArgs {
-                                    name: std::mem::take(&mut self.booth_name),
-                                    op: std::mem::take(&mut self.booth_op),
-                                    open_first: None,
-                                },
-                                self.log_hook,
-                            ))),
-                        }
+                        let (npc, object) = match access {
+                            Some(Access::Npc(args)) => (Some(args), None),
+                            Some(Access::Object(args)) => (None, Some(args)),
+                            None => (None, None),
+                        };
+                        self.phase = Phase::Access(OpenAccess::new(
+                            npc,
+                            object,
+                            AccessArgs {
+                                name: std::mem::take(&mut self.booth_name),
+                                op: std::mem::take(&mut self.booth_op),
+                                open_first: None,
+                            },
+                            self.log_hook,
+                        ));
                     }
                     Target::Preset(stand) => match BankOpen::at_stand(
                         stand,
@@ -311,14 +309,9 @@ impl BankingOpen {
                         Begin::Refuse(_) => return Step::Done(false),
                     },
                 },
-                Phase::Object(mut open) => {
+                Phase::Access(mut open) => {
                     let step = open.run(cx);
-                    self.phase = Phase::Object(open);
-                    return step;
-                }
-                Phase::Npc(mut open) => {
-                    let step = open.run(cx);
-                    self.phase = Phase::Npc(open);
+                    self.phase = Phase::Access(open);
                     return step;
                 }
                 Phase::Booth(mut open) => {

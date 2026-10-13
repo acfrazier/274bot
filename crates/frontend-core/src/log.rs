@@ -615,7 +615,6 @@ pub fn classify_script_line(line: &str) -> (Source, Level) {
     }
     let error = line.starts_with("script panic")
         || line.starts_with("script stopped")
-        || line.starts_with("script requested stop")
         || line.contains("Error:")
         || line.contains(" threw")
         || line.contains("error:");

@@ -713,6 +713,57 @@ export default class T extends LoopingBot {
 
 #[cfg(feature = "load")]
 #[test]
+fn request_finish_logs_its_reason_to_the_host_log_once() {
+    // The process host-log sink installs once: capture through the
+    // compiled tests' sink, on a slot name its `status-` filter keeps.
+    const SLOT: &str = "status-finish-log-once";
+    crate::slot::compiled::tests::install_status_line_sink();
+    api::hostlog::bind_slot(SLOT);
+    let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        this.requestFinish("finish-log-once: out of logs");
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    let input = crate::isolate_fb::tests::empty_input(1);
+    slot.encode_snapshot_delta(&input, false);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while matches!(
+        slot.state(),
+        RunState::Starting | RunState::Running | RunState::Stopping
+    ) && Instant::now() < deadline
+    {
+        let _ = slot.drain_logs();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.state(), RunState::Idle);
+    // Later drains must not log the reason again.
+    let _ = slot.drain_logs();
+    let _ = slot.drain_logs();
+    let captured: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+        .into_iter()
+        .filter(|line| line.message.contains("finish-log-once: out of logs"))
+        .collect();
+    assert_eq!(
+        captured.len(),
+        1,
+        "the finish reason reaches the host log exactly once: {captured:?}"
+    );
+    assert_eq!(captured[0].level, api::hostlog::Level::Info);
+    assert_eq!(captured[0].source, api::hostlog::Source::Script);
+    assert_eq!(
+        captured[0].message,
+        "script requested stop tick=1 reason=finish-log-once: out of logs"
+    );
+}
+
+#[cfg(feature = "load")]
+#[test]
 fn request_finish_honours_a_bound_sink_without_stopping_the_script() {
     let source = r#"
 export default class T extends LoopingBot {
