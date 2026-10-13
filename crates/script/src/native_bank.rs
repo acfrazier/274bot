@@ -44,11 +44,13 @@ const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
 /// `2000 / (floor(agility/6) + 8)` non-running ticks (`Player.ts:705-707`),
 /// ≥ 84 ticks at agility 99, while one session attempt is bounded at
 /// 8 + 8 + 8 observed ticks (open, table, transfer). So at most one close
-/// per transfer comes from content; one re-open covers it (measured live
-/// with the host guard removed: every loss resumed on its first re-open,
-/// HOTFIX-0.2.1 report-r2 §F4). The second is the margin for a close the
-/// content enumeration does not produce (a reconnect, `Player.ts:562`; an
-/// operator cheat, `ClientCheatHandler.ts`).
+/// per transfer comes from content; one re-open covers it. Measured live
+/// with the host guard removed (HOTFIX-0.2.1 report-r2 §F4: 20 bots, 767
+/// trips): six presses landed under the open bank, each followed by the
+/// engine's stop-transmit and close within a tick; the one that cut a
+/// transfer resumed on its first re-open, none needed a second. The second
+/// is the margin for a close the content enumeration does not produce (a
+/// reconnect, `Player.ts:562`; an operator cheat, `ClientCheatHandler.ts`).
 pub const MAX_BANK_REOPENS: u8 = 2;
 
 #[derive(Clone)]
