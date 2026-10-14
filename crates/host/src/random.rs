@@ -4,6 +4,7 @@
 //! caller-owned [`CooldownMap`]; act / hold / dialog, the wrong-talk
 //! 45 s cooldown writes, the trapped-kind hold and the rising-edge
 //! `on_random` knock live in [`Guardian`].
+mod ent;
 mod guardian;
 pub use guardian::{Guardian, GuardianLiveContext, RandomStatus};
 

@@ -141,6 +141,10 @@ impl NativeMachine for GatherRun {
             }
         }
         let snapshot = cx.snapshot();
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
+            return Poll::Pending;
+        }
         let refused = self
             .request_id
             .and_then(|request_id| cx.interaction_receipt(request_id))
@@ -175,10 +179,6 @@ impl NativeMachine for GatherRun {
                 gained: self.gained,
                 xp: self.xp_gain,
             }));
-        }
-        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
-            self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
-            return Poll::Pending;
         }
         if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
             return Poll::Ready(Ok(GatherResult {
