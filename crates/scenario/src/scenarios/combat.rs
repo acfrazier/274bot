@@ -84,7 +84,7 @@ const FIRE_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     carry: &[("Lobster", FIRE_GIANT_FOOD as u32)],
 }];
 
-fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
+pub(crate) fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
     match card {
         "ChaosDruidKiller" => Some(CHAOS_DRUID_FIXTURE_LOADOUTS),
         "MossGiant" => Some(MOSS_GIANT_FIXTURE_LOADOUTS),

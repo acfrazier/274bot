@@ -12814,3 +12814,112 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
         assert!(names().contains(&name));
     }
 }
+
+#[test]
+fn jive_cells_are_registered_with_cards_deadlines_and_loadouts() {
+    // (cell, card, deadline seconds, loadout loadout-pinned)
+    let cells: &[(&str, &str, u64, bool)] = &[
+        ("jive_chests", "JiveChests", 900, false),
+        ("jive_crafting", "JiveCrafting", 600, false),
+        ("jive_enchanter", "JiveEnchanter", 600, false),
+        ("jive_dragons", "JiveDragons", 1200, true),
+        ("jive_dragons_black_range", "JiveDragons", 1200, true),
+        ("jive_dragons_potion_restock", "JiveDragons", 300, true),
+        ("jive_demons", "JiveDemons", 1500, true),
+        ("jive_kbd", "JiveKBD", 2700, true),
+    ];
+    for &(name, card, deadline_s, pinned) in cells {
+        assert!(names().contains(&name), "{name} registered");
+        let s = get(name).unwrap_or_else(|| panic!("{name} resolves"));
+        assert_eq!(s.name, name);
+        assert_eq!(s.settings.start_script, Some(card), "{name} card");
+        assert_eq!(
+            s.settings.deadline,
+            Duration::from_secs(deadline_s),
+            "{name} deadline is its own fixed bound"
+        );
+        assert_eq!(
+            s.settings.nav.engine_speed_ms,
+            Some(600),
+            "{name} keeps Engine A at the default 600ms tick"
+        );
+        let start = s
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap_or_else(|| panic!("{name} starts its card"));
+        assert!(start > 3, "{name} seeds and acknowledges before Start");
+        assert!(
+            s.steps[start + 1..]
+                .iter()
+                .all(|step| matches!(step.kind, StepKind::Perform { .. })),
+            "{name} only watches after Start"
+        );
+        if pinned {
+            let inject =
+                settings_inject_map(s.settings.script_settings_inject).expect("inject map");
+            assert_eq!(
+                inject.get("loadout"),
+                Some(&Value::String("Scenario Green Dragon food".into())),
+                "{name} pins the existing GreenDragon fixture loadout by name"
+            );
+            let loadouts = s
+                .settings
+                .fixture_loadouts
+                .unwrap_or_else(|| panic!("{name} posts fixture loadouts at Start"));
+            assert_eq!(loadouts[0].name, "Scenario Green Dragon food", "{name}");
+        } else {
+            assert!(
+                s.settings.fixture_loadouts.is_none(),
+                "{name}'s card reads no loadout, so none is posted"
+            );
+        }
+    }
+}
+
+#[test]
+fn jive_terminal_proofs_are_not_their_own_seed() {
+    // Terminal proofs need post-Start work: banked/recoiled products start
+    // at zero and XP baselines are captured at Start, so assert the seed's
+    // own zero-proofs are what the pre-Start steps acknowledge.
+    let crafting = get("jive_crafting").expect("jive_crafting");
+    assert_eq!(
+        crafting.proof,
+        Proof::StatXpGain {
+            id: CRAFTING_STAT,
+            min: 560
+        },
+        "crafting gate is a full load plus one ring of real XP"
+    );
+    let enchanter = get("jive_enchanter").expect("jive_enchanter");
+    assert_eq!(
+        enchanter.proof,
+        Proof::StatXpGain {
+            id: MAGIC_STAT,
+            min: 490
+        },
+        "enchanter gate is a full load plus one cast of real XP"
+    );
+    let black = get("jive_dragons_black_range").expect("jive_dragons_black_range");
+    assert_eq!(
+        black.proof,
+        Proof::StatXpGain { id: 5, min: 72 },
+        "black range gate is the buried kill bones, never seeded XP"
+    );
+    let restock = get("jive_dragons_potion_restock").expect("jive_dragons_potion_restock");
+    assert!(
+        restock
+            .steps
+            .iter()
+            .any(|step| matches!(step.wait.arm, Proof::BankItemId { id: 379, count: 35 })),
+        "restock watches the exact 35-lobster bank outcome"
+    );
+    let demons = get("jive_demons").expect("jive_demons");
+    assert!(
+        demons
+            .steps
+            .iter()
+            .any(|step| matches!(step.wait.arm, Proof::BankItemIdAny { count: 1, .. })),
+        "demons gate on a banked item from the content drop set"
+    );
+}
