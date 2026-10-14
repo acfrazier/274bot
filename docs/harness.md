@@ -242,20 +242,33 @@ before returning. Its flee route clears both `maxrange + 1` and
 (`Npc.ts:661-714`, `macro_events.rs2:166-173`).
 
 If the NPC leaves client view, the bot still walks toward its flee target.
-Once the bot is stationary outside chase range, 22 consecutive missing ticks
-end the hold, even if the route stopped before the full flee distance.
-The bound covers the content's 20-tick hostile cleanup and two processing
-phases (`antimacro.npc:130`, `World.ts:340-408`,
-`macro_event_triffid.rs2:51-55`). A reappearing attacker resets that countdown.
-Every attempt also has a 1,002-game-tick give-up limit, based on the normal
-hostile spawn's `npc_add(..., 1000)` lifetime plus those phases
-(`macro_events.rs2:36`, `macro_event_dryad.rs2:10` and the other hostile skill
-spawns). This is a failure budget, not despawn evidence. An angry Strange
-plant extends its lifetime when it changes type (`macro_event_triffid.rs2:35`),
-and NPC script delays can suspend lifetime processing (`Npc.ts:120-148`).
-At the limit the script resumes without a return walk. The same actor remains
-detect-only until removal or type change, so it cannot immediately pause
-the script again.
+Once the bot stops outside chase range, 22 consecutive ticks without the
+attacker (about 13 seconds) end the hold, even if the route stopped short.
+The content checks for hostile removal every 20 ticks. The extra two ticks
+allow NPC processing before player movement and delayed plant deletion
+(`antimacro.npc:130`, `World.ts:340-408`, `macro_event_triffid.rs2:51-55`).
+A reappearing attacker resets that countdown.
+
+If the bot is boxed in while still being attacked inside chase range, it
+stops trying after `flee_distance + 2` fresh ticks without a new greatest
+distance from the attacker's first position. This is 21 ticks for a Swarm
+and 9 for a Tree spirit or River troll: about 13 seconds or less.
+An unblocked outward route moves one or two tiles per tick
+(`PathingEntity.ts:135-152`). This budget allows each nearer escape ring
+one try, plus two ticks to observe movement. Accepted walks and repeated
+observations of the same game tick do not count as distance progress.
+
+Only while the attacker is out of sight or has stopped attacking can the
+script remain paused for up to 1,002 game ticks (about 10 minutes).
+This total attempt limit uses the normal hostile spawn's
+`npc_add(..., 1000)` lifetime, plus two ticks to observe removal
+(`macro_events.rs2:36`, `macro_event_dryad.rs2:10`).
+Neither limit proves the attacker is gone. An angry Strange plant extends
+its lifetime when it changes type (`macro_event_triffid.rs2:35`), and NPC
+delays can suspend its lifetime (`Npc.ts:120-148`).
+At either limit the Guardian sends no further walk, including no return
+walk. The script resumes and can eat or fight. The same actor cannot
+immediately pause the script again, until removal or type change.
 
 Ent ownership prefers the local player's visible NPC target, set by the
 content's `p_opnpc(1)` (`macro_event_ent.rs2:18-20`, `PlayerOps.ts:404-415`,

@@ -8,11 +8,11 @@ const LOST_TOOL_BOUND_MS: u64 = 12_000;
 /// (`antimacro.npc:130,1009`; `World.ts:340-408`;
 /// `macro_event_triffid.rs2:51-55`).
 const EVADE_CLEANUP_TICKS: u8 = 22;
-/// Failure budget: the normal hostile spawn's 1000-tick lifetime plus two
-/// observation phases (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`).
-/// This is a give-up rule, not despawn evidence: the angry plant extends its
-/// lifetime on morph (`macro_event_triffid.rs2:35`). At the bound, hand control
-/// to the script without walking toward a potentially surviving attacker.
+/// Final failure budget: the normal hostile spawn's 1000-tick lifetime plus
+/// two observation ticks (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`).
+/// Missing/disengaged actors can need this long. Engaged actors inside chase
+/// range have a shorter no-distance-progress budget below. Neither rule proves
+/// despawn: the angry plant extends its lifetime (`macro_event_triffid.rs2:35`).
 const EVADE_GIVE_UP_TICKS: u16 = 1_002;
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
 const NPC_VIEW_RADIUS: i32 = 15;
@@ -112,6 +112,10 @@ struct EvadeState {
     missing_ticks: u8,
     /// Fresh observations since ownership; never reset by view flicker.
     elapsed_ticks: u16,
+    /// Greatest observed distance from the spawn anchor during this attempt.
+    furthest_distance: i32,
+    /// Consecutive fresh ticks without a new maximum while engaged in range.
+    no_progress_ticks: u16,
     /// Detect-only after the give-up limit, until this actor is removed.
     gave_up: bool,
     flee_target: Option<(i32, i32)>,
@@ -613,8 +617,8 @@ impl Guardian {
 
     /// Retain the exact macro-event actor through its cleanup interval.
     /// Missing beyond view keeps fleeing and counts stationary outside-chase
-    /// ticks, even short of the full flee ring. A normal spawn's lifetime
-    /// sets the final give-up budget for blocked routes and ambiguous removals.
+    /// ticks, even short of the full flee ring. Give up sooner if an engaged
+    /// actor can still hit a bot that makes no outward distance progress.
     fn refresh_evade(
         &mut self,
         snap: &GameSnapshot,
@@ -684,8 +688,26 @@ impl Guardian {
             if retain {
                 if fresh {
                     state.elapsed_ticks = state.elapsed_ticks.saturating_add(1);
+                    if let Some(distance) = player.map(|tile| cheb(tile, state.start_tile)) {
+                        if distance > state.furthest_distance {
+                            state.furthest_distance = distance;
+                            state.no_progress_ticks = 0;
+                        } else if same_actor && engaged && !outside && state.maxrange.is_some() {
+                            state.no_progress_ticks = state.no_progress_ticks.saturating_add(1);
+                        } else {
+                            state.no_progress_ticks = 0;
+                        }
+                    } else {
+                        state.no_progress_ticks = 0;
+                    }
                 }
-                if state.elapsed_ticks >= EVADE_GIVE_UP_TICKS && !state.gave_up {
+                // An outward route advances 1-2 tiles per tick
+                // (PathingEntity.ts:135-152). Allow every fallback ring one
+                // fresh try plus two movement observations, but never count
+                // accepted walks that leave the bot on its own tile as progress.
+                let stalled =
+                    i32::from(state.no_progress_ticks) >= state.flee_distance.saturating_add(2);
+                if (stalled || state.elapsed_ticks >= EVADE_GIVE_UP_TICKS) && !state.gave_up {
                     state.gave_up = true;
                     if self.acting_kind == RandomKind::Evade {
                         self.acting = false;
@@ -765,6 +787,8 @@ impl Guardian {
             outside_ticks: 0,
             missing_ticks: 0,
             elapsed_ticks: 0,
+            furthest_distance: snap.tile().map_or(0, |(x, z, _)| cheb((x, z), start_tile)),
+            no_progress_ticks: 0,
             gave_up: false,
             flee_target: None,
             fallback_distance: None,

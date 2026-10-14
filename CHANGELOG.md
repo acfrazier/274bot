@@ -21,9 +21,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   including hits that miss. Before, it could walk straight back to its
   fishing or gathering spot between hits, next to the attacker. It runs far
   enough that the attacker gives up chasing, which now also outruns a Swarm,
-  and normally returns only once the attacker has gone. If escape fails,
-  it waits at most 1,002 game ticks before letting the script continue,
-  without walking back toward the attacker.
+  and normally returns only once the attacker has gone. If the bot becomes
+  boxed in while still being attacked, it stops trying within about 13 seconds.
+  It then stops walking and lets the script resume, including eating.
+  Only an attacker out of sight or no longer attacking can keep the script
+  paused for up to about 10 minutes. After either limit, the bot does not
+  walk back toward the attacker.
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
 - When a chopped tree becomes an Ent, the Guardian stops chopping and waits
@@ -59,19 +62,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ### Fixed during development
 
-- The random-event Guardian remembers an attacker's first scene position,
+- The random-event Guardian remembers where an attacker first appeared,
   before its delayed attack starts. It keeps fleeing if a Tree spirit still
   targets the bot after the first escape.
-- The Guardian waits for a visible event attacker to despawn before returning.
-  Its flee route also clears the NPC's wandering range so its cleanup timer
-  can finish.
+- The escape route goes far enough to let an attacker stop chasing and leave.
+  A visible attacker normally prevents the bot from returning too soon.
 - When an attacker leaves view, the bot continues toward its escape target.
-  Outside chase range, 22 stationary game ticks without the attacker end
-  the wait, even if the route stops short. All escape attempts stop after
-  1,002 game ticks, based on a normal event's 1,000-tick lifetime plus two
-  processing phases. This limit also covers a blocked escape from an angry
-  Strange plant, whose lifetime extends when it changes form. The script
-  then continues without a return walk.
+  If the bot stops beyond the attacker's reach, it returns after about
+  13 seconds without seeing the attacker, even if the route stopped short.
+- A failed escape no longer prevents the script from eating for several
+  minutes while an attacker keeps hitting a boxed-in bot. After the bot
+  stops trying, the same attacker cannot immediately pause the script again.
 - Ordinary monsters with random-event names no longer trigger event handling.
   A former attacker no longer hides a newly detected event.
 - The Guardian uses visible player targeting to avoid claiming another

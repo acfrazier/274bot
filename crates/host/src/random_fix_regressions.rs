@@ -260,10 +260,10 @@ fn guardian_r2_missing_swarm_continues_flee_and_finishes_cleanup() {
     assert_eq!(driver.walks.last(), Some(&(0, 0)));
 }
 
-/// Even an impossible blocked route cannot freeze the script past the
-/// content NPC's 1000-tick lifetime plus two observation phases.
+/// A disengaged attacker retains the normal spawn-lifetime budget even if
+/// no route is possible. Active attacks have a separate shorter bound.
 #[test]
-fn guardian_r2_blocked_attacker_gives_up_without_return_or_reacquisition() {
+fn guardian_r2_disengaged_attacker_gives_up_without_return_or_reacquisition() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -278,6 +278,9 @@ fn guardian_r2_blocked_attacker_gives_up_without_return_or_reacquisition() {
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
     for elapsed in 0..=2_000 {
+        if elapsed == 1 {
+            c.npc[0].as_mut().expect("troll").entity.face_entity = -1;
+        }
         tick_at(&mut c, &mut snap);
         let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
         assert_eq!(status.kind, Some(RandomKind::Evade));
@@ -347,4 +350,97 @@ fn guardian_r2_visible_former_attacker_does_not_mask_strange_box() {
     let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
     assert_eq!(status.kind, Some(RandomKind::Box));
     assert!(status.ours && status.hold);
+}
+
+/// A nearest route can be accepted while ending on the boxed-in bot's tile.
+/// Repeated walk acceptance is not distance progress, and must not suppress
+/// retaliation or script eating for the full missing-attacker lifetime.
+fn replay_boxed_targeting_attacker(type_id: usize, name: &str, radius: i32, bound: u16) {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -radius, 0);
+    plant_npc_typed_with_op(&mut c, 0, type_id, name, 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver {
+        reach: Some(((0, 0), radius)),
+        ..Default::default()
+    };
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    set_flee_npc(&mut c, -radius + 1, 0);
+    let mut attempts_at_release = None;
+    for elapsed in 1..=2_000 {
+        // More host frames must neither consume fresh ticks nor retry walks.
+        let attempts = driver.walks.len();
+        for _ in 0..3 {
+            let repaint =
+                guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+            assert_eq!(repaint.hold, elapsed <= bound, "repaint at {elapsed}");
+            assert_eq!(driver.walks.len(), attempts, "no walk on repaint");
+        }
+        plant_positive_hit(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(status.kind, Some(RandomKind::Evade));
+        assert_eq!(status.hold, elapsed < bound, "{name} elapsed={elapsed}");
+        assert_eq!(status.ours, elapsed < bound, "{name} elapsed={elapsed}");
+        if elapsed == bound {
+            assert_eq!(driver.walks.len(), attempts, "release sends no further walk");
+            attempts_at_release = Some(attempts);
+            assert!(
+                !driver.sent_walks.is_empty(),
+                "the boxed route must accept nearest walks before release"
+            );
+        }
+        if let Some(attempts) = attempts_at_release {
+            assert_eq!(driver.walks.len(), attempts, "no walk or reacquisition after release");
+        }
+    }
+}
+
+#[test]
+fn guardian_r3_boxed_targeting_swarm_releases_after_21_fresh_ticks() {
+    replay_boxed_targeting_attacker(411, "Swarm", 10, 21);
+}
+
+#[test]
+fn guardian_r3_boxed_targeting_tree_spirit_releases_after_9_fresh_ticks() {
+    replay_boxed_targeting_attacker(438, "Tree spirit", 5, 9);
+}
+
+#[test]
+fn guardian_r3_only_new_furthest_distance_resets_engaged_budget() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -1, 0);
+    plant_npc_typed_with_op(&mut c, 0, 438, "Tree spirit", 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    for elapsed in 0..=16 {
+        // Eight stalled ticks, then genuine outward progress buys a new
+        // budget. Retreating and regaining old ground cannot reset it.
+        let distance = match elapsed {
+            8 | 10 | 12 | 14 | 16 => 2,
+            _ => 1,
+        };
+        set_flee_player(&mut c, -distance, 0, true);
+        tick_at(&mut c, &mut snap);
+        assert!(
+            guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold,
+            "progress at tick 8 must preserve the hold at {elapsed}"
+        );
+    }
+    tick_at(&mut c, &mut snap);
+    let attempts = driver.walks.len();
+    let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert!(!status.hold && !status.ours, "nine ticks without a new maximum releases");
+    assert_eq!(driver.walks.len(), attempts, "give-up sends no walk");
 }

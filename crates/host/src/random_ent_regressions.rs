@@ -230,6 +230,35 @@ fn ent_stale_visible_slot_expires_after_60_ticks_without_reacquiring() {
     assert_eq!(drv.walks.len(), 1, "the expired slot must not send another stop");
 }
 
+/// Before targeting arrives, the five-tile fallback can claim a nearby Ent.
+/// It still stops chopping once and releases after at most 60 fresh ticks.
+/// This is a pass-before coverage guard, not a new production Ent fix.
+#[test]
+fn ent_nearby_without_target_uses_bounded_proximity_fallback() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    set_flee_npc(&mut c, 5, 0);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    for elapsed in 0..=120 {
+        tick_at(&mut c, &mut snap);
+        assert_eq!(snap.local_player().expect("local player").player.actor.face_entity, -1);
+        assert!(snap.npcs()[0].target.is_none(), "no NPC targeting information");
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.hold, elapsed < 60, "fallback elapsed={elapsed}");
+        let repaint = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(repaint.hold, status.hold, "repaint cannot consume a fresh tick");
+        assert_eq!(drv.walks, vec![(-1, 0)], "one stop, no reacquisition");
+        assert!(snap.inventory().iter().any(|item| item.def.id == 1351));
+    }
+}
+
 
 /// A refused stop walk retries only on fresh game ticks: non-fresh passes
 /// still publish the hold without resending, and a sent stop never resends.

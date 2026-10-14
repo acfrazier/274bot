@@ -573,6 +573,9 @@ struct FakeDriver {
     walk_ok: bool,
     walk_nearest_ok: bool,
     route_origin: Option<(i32, i32)>,
+    /// Boxed-in route model: nearest can end one tile short of its target.
+    reach: Option<((i32, i32), i32)>,
+    sent_walks: Vec<(i32, i32)>,
     out: NoopOut,
 }
 
@@ -586,6 +589,8 @@ impl Default for FakeDriver {
             walk_ok: true,
             walk_nearest_ok: true,
             route_origin: Some((0, 0)),
+            reach: None,
+            sent_walks: Vec::new(),
             out: NoopOut,
         }
     }
@@ -615,11 +620,17 @@ impl Driver for FakeDriver {
     ) -> bool {
         self.walks.push((dx, dz));
         self.walk_nearest.push(try_nearest);
-        if try_nearest {
+        let allowed = if try_nearest {
             self.walk_nearest_ok
         } else {
             self.walk_ok
+        } && self.reach.is_none_or(|(origin, radius)| {
+            cheb((dx, dz), origin) <= radius + i32::from(try_nearest)
+        });
+        if allowed {
+            self.sent_walks.push((dx, dz));
         }
+        allowed
     }
     fn local_route(&self) -> Option<(i32, i32)> {
         self.route_origin
@@ -1727,17 +1738,13 @@ fn blocked_flee_exhausts_nearest_and_closer_rings_without_hiding_attacker() {
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
 
-    let mut last = RandomStatus::default();
-    for tick in 1..=60 {
+    for elapsed in 0..60 {
         tick_at(&mut c, &mut snap);
-        last = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
-        assert_eq!(last.kind, Some(RandomKind::Evade));
-        assert!(
-            last.hold,
-            "a blocked flee cannot release an attacker at tick {tick}"
-        );
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert_eq!(status.kind, Some(RandomKind::Evade));
+        assert_eq!(status.hold, elapsed < 9, "blocked elapsed={elapsed}");
+        assert_eq!(status.ours, elapsed < 9, "blocked elapsed={elapsed}");
     }
-    assert!(last.ours && last.hold);
     assert_eq!(drv.walk_nearest.first(), Some(&false));
     let nearest_targets: Vec<_> = drv
         .walks
