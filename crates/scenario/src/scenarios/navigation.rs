@@ -1044,7 +1044,8 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
             // chat, and no proof reads them, so the toll is checked as the coins
             // reaching zero. Upstream's `speed 300` is not ported (the harness keeps
             // the 600ms engine speed), and its `--expect-unreachable` baseline is
-            // not ported (it needs a fail-closed route mode the harness lacks).
+            // not ported: that mode passes only when the route fails (upstream
+            // `shantay-pass-route-test.ts:348-351`), which inverts this cell's oracle.
             Step {
                 name: "clear the backpack, give the toll coins, and teleport to the desert start",
                 kind: StepKind::Perform {

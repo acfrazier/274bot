@@ -37,10 +37,11 @@ fn flour_watch(name: &'static str, arm: Proof) -> Step {
 ///   `Quests.status('Murder Mystery') === 'inProgress'`. Ours is the same
 ///   `setvar`/`getvar` pair with a `FreshChat` receipt before and after relog.
 ///   No in-progress quest proof exists (`QuestDone` is completion-only).
-/// - Seed: `~clearinv`, `givebank pot_empty 30`, then tele to the stand south of the
-///   open Seers booth (2724,3494). Upstream's `seedItemsToBank` teleports to the bank
-///   before Start; ours opens that booth from the adjacent tile because the opener
-///   refuses a booth it cannot operate from (3 tiles away at the bank tile).
+/// - Seed: `~clearinv`, `givebank pot_empty 30`, then tele to the stand (2724,3493),
+///   two tiles in z from the Seers bank tile (2725,3491). Upstream's `seedItemsToBank`
+///   teleports onto the bank tile itself (`tutorial/harness.ts:439`); ours opens the
+///   nearest booth with `open_nearest_booth` (`api/src/interact.rs:688`), which refuses
+///   a booth it cannot operate from (`api/tests/interact.rs:1885`).
 /// - Oracle: upstream's `page.evaluate` counts become `ItemId`/`BankItemId`
 ///   proofs at the same counts. Its pause/resume snapshots become pre-Start
 ///   checks, and the restock gate becomes `ItemId pot_empty 2` after the flour
