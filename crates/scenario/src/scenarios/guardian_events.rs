@@ -77,10 +77,11 @@ const FISHING_INJECT: &[ScriptSettingInject] = &[
 ];
 
 /// Draynor's oak grove east of the bank (`gatherer_live.rs`
-/// `DRAYNOR_OAK_BANK_START`), seven tiles from the nearest oak. The ent cell chops oaks: a normal tree falls
-/// with its first log, so right after the first XP the tree beside the bot
-/// is often a stump, which has no ent type (live round 1). An oak survives
-/// a log with probability 7/8 (`woodcutting.dbrow`).
+/// `DRAYNOR_OAK_BANK_START`), seven tiles from the nearest oak. The ent cell
+/// chops oaks: a normal tree always falls with its first log, so right after
+/// the first XP the tree beside the bot is often a stump, which has no ent
+/// type (live round 1). An oak falls with a log only one time in eight
+/// (`skill_woodcutting/scripts/woodcut.rs2:133-149`).
 pub(crate) const DRAYNOR_OAK_START: WorldTile = WorldTile {
     x: 3095,
     z: 3243,
