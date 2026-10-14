@@ -300,34 +300,30 @@ class ModelSource extends Linkable2 {
     getTempModel(): Model | null;
 }
 /** Called when a zone packet lands; the next locs() rebuilds from the live scene. */
-export function invalidateLocSnapshots(): void;
+export function invalidateLocSnapshots(): never;
 /** Releases the client; later reads return empty state. */
-export function detach(): void;
+export function detach(): never;
 export type ModalCloseObservation = {
     readonly session: symbol;
     readonly generation: number;
 };
 /** Whether the login snapshot has populated every skill exposed by this client. */
-export function activeStatsReady(baseLevels: ArrayLike<number>): boolean;
+export function activeStatsReady(baseLevels?: ArrayLike<number>): never;
 /** Whether every active stat was received during this exact login session. */
-export function currentLoginStatsReady(baseLevels: ArrayLike<number>, seenGenerations: ArrayLike<number>, sessionGeneration: number): boolean;
+export function currentLoginStatsReady(baseLevels?: ArrayLike<number>, seenGenerations?: ArrayLike<number>, sessionGeneration?: number): never;
 /**
  * Object/NPC vertical extent for hulls. RS model space: minY = max(-vertexY)
  * (height above origin), same as ClientNpc.height. maxY is below-origin only.
  */
-export function locHullHeight(model: {
+export function locHullHeight(model?: {
     minY: number;
     maxY: number;
-} | null | undefined, fallback?: number): number;
+} | null | undefined, fallback?: number): never;
 /**
  * Walls/scenery often store a static `Model` as ModelSource, and Model returns null from getTempModel().
  * Why: bare ModelSource.minY defaults to 1000, so never read extents off the source itself.
  */
-export function resolveLocModelExtents(src: ModelSource | null | undefined): {
-    minY: number;
-    maxY: number;
-    radius: number;
-} | null;
+export function resolveLocModelExtents(src?: ModelSource | null | undefined): never;
 export interface WorldTile {
     x: number;
     z: number;
@@ -382,8 +378,8 @@ export interface ModalButton {
     /** A `buttontype=pause` button resumes a suspended script instead of firing `if_button`. */
     pause: boolean;
 }
-export function attach(client: unknown): string[];
-export function setPacketListener(cb: ((ptype: number) => void) | null): void;
+export function attach(client?: unknown): never;
+export function setPacketListener(cb?: ((ptype: number) => void) | null): never;
 /** One obj definition, flattened for bot code that may not import client internals. */
 export interface ObjRecord {
     id: number;
@@ -399,7 +395,7 @@ export interface ObjRecord {
     stackVariant?: boolean;
 }
 /** Test seam; the live client only fills this table once, at login. */
-export function resetObjCatalog(): void;
+export function resetObjCatalog(): never;
 export const reader: {
     ingame(): boolean;
     sceneState(): number;
@@ -489,19 +485,16 @@ export const actions: {
     clickSideTab(tab: number): boolean;
     closeModal(): boolean;
 };
-export const WELCOME_SCREEN = 5993;
-export function readRetaliateControls(): {
-    onComId: number;
-    offComId: number;
-} | null;
-export function readModalButtons(rootComId: number): ModalButton[];
+export const WELCOME_SCREEN: never;
+export function readRetaliateControls(): never;
+export function readModalButtons(rootComId?: number): never;
 /** Read each select button together with the style text rendered beside it. */
-export function readSelectButtonLabelsByVarp(rootComId: number, varp: number): SelectButtonLabel[];
+export function readSelectButtonLabelsByVarp(rootComId?: number, varp?: number): never;
 /**
  * Cycles-remaining threshold that keeps the combat window at {@link COMBAT_WINDOW_MS}.
  * Why: deltime can be zero during random-event teleports and scene rebuilds, and dividing by it would NaN the window and crash handlers.
  */
-export function combatShowingThreshold(deltimeMs: number): number;
+export function combatShowingThreshold(deltimeMs?: number): never;
 interface PostedSceneEntity {
     index: number;
     id: number;
@@ -647,8 +640,6 @@ export const CASKET_IDS: {};
 }
 
 declare module '*api/ai/clues/data/toolAcquire.js' {
-import Tile from '*geometry/Tile.js';
-import { NpcStop } from '*api/ai/quests/exec/primitives.js';
 export const SPADE_NAME = "Spade";
 export const TRIO: readonly [
     "Sextant",
@@ -656,7 +647,7 @@ export const TRIO: readonly [
     "Chart"
 ];
 export function trailKit(scrollId: number | null): string[];
-export const SPADE_SPAWNS: Tile[];
+export const SPADE_SPAWNS: never;
 type CoordTool = 'sextant' | 'watch' | 'chart';
 export interface HeldTrio {
     sextant: boolean;
@@ -664,10 +655,10 @@ export interface HeldTrio {
     chart: boolean;
 }
 export function nextCoordTool(held: HeldTrio): CoordTool | null;
-export const PROFESSOR: NpcStop;
-export const MURPHY: NpcStop;
-export const KOJO: NpcStop;
-export const KOJO_EXIT: Tile;
+export const PROFESSOR: never;
+export const MURPHY: never;
+export const KOJO: never;
+export const KOJO_EXIT: never;
 export function extraItemShop(name?: string): never;
 export function gateItemShop(name?: string): never;
 
@@ -767,13 +758,10 @@ export const MURDER_TILE: {
     readonly SALESMAN: Tile;
     readonly ARHEIN: Tile;
 };
-export const ARHEIN: {
-    npc: string;
-    anchor: Tile;
-};
-export const GUARD_START: NpcStop;
-export const GUARD_HANDIN: NpcStop;
-export const SALESMAN: NpcStop;
+export const ARHEIN: never;
+export const GUARD_START: never;
+export const GUARD_HANDIN: never;
+export const SALESMAN: never;
 export interface LocStop {
     id: number;
     name: string;
@@ -791,21 +779,14 @@ export interface Suspect {
     /** What they claim they bought the poison for. */
     poison: LocStop;
 }
-export const SUSPECTS: readonly Suspect[];
+export const SUSPECTS: never;
 /** The 2 whose clothes match the thread, then the rest as a fallback. */
-export function suspectOrder(thread: number): readonly Suspect[];
-/** Every object the guard's evidence check or a barrel's own gate counts, in the bank as well as the pack. */
-export const MURDER_EVIDENCE: readonly {
-    id: number;
-    name: string;
-}[];
+export function suspectOrder(thread?: number): never;
+export const MURDER_EVIDENCE: never;
 
 }
 
 declare module '*api/ai/quests/engine/QuestEngine.js' {
-import Tile from "*geometry/Tile.js";
-/** Spending money a quest keeps in the pack unless its module names another figure. */
-export const COIN_FLOAT = 1000;
 type QueueStatus = 'DONE' | 'RUNNING' | 'READY' | 'PARKED' | 'BLOCKED' | 'UNKNOWN';
 interface QueueRow {
     id: string;
@@ -813,6 +794,7 @@ interface QueueRow {
     status: QueueStatus;
     reasons: string[];
 }
+export const COIN_FLOAT: never;
 /** What the engine needs from whatever script is driving it. */
 export interface QuestHost {
     log(msg: string): void;
@@ -826,10 +808,8 @@ export interface QuestHost {
     /** Why: the engine only reports it's out of work; stopping the run is the script's call. */
     finish(reason: string): void;
 }
-export const PROVISION_BANK: Tile;
-export const QuestEngine: {
-    readonly [key: string]: never;
-};
+export const PROVISION_BANK: never;
+export const QuestEngine: never;
 
 }
 
@@ -1398,9 +1378,14 @@ export const CANT_REACH: RegExp;
 /** The op reached the loc and the server refused the side it came from; retry from a different tile. */
 export const WRONG_SIDE: RegExp;
 export const GameMessages: {
+    record(text: string): never;
     mark(): number;
     since(mark: number): GameMessage[];
     sawSince(mark: number, pattern: RegExp): boolean;
+    firstSince(mark: number, pattern: RegExp): never;
+    /** Newest-first slice of the ring (for death / failure dumps). */
+    recent(limit?: number): never;
+    reset(): never;
 };
 
 }
@@ -4347,9 +4332,9 @@ export function entNpcOnTile(npcs: readonly {
     z: number;
     level: number;
 }): boolean;
-export const WOODCUTTING_LOCATIONS: WoodcuttingLocation[];
-export const WOODCUTTING_LOCATION_OPTIONS: string[];
-export function resolveWoodcuttingLocation(setting: string, startTile: WorldTile): WoodcuttingLocation | null;
+export const WOODCUTTING_LOCATIONS: never;
+export const WOODCUTTING_LOCATION_OPTIONS: never;
+export function resolveWoodcuttingLocation(setting?: string, startTile?: WorldTile): never;
 
 }
 
@@ -4725,7 +4710,31 @@ export interface PaintFillOptions extends PaintListOptions {
     reserve?: number;
 }
 export class PaintFrame {
-    constructor(ctx: CanvasRenderingContext2D, opts: PaintOptions);
+    constructor(ctx: CanvasRenderingContext2D, opts?: PaintOptions);
+    title(text: string): void;
+    tabs(id: string, names: string[]): string;
+    cols(): number;
+    rowsLeft(): number;
+    text(line: string, color?: string): void;
+    row(...cols: string[]): void;
+    cells(cells: PaintCell[]): void;
+    wrap(text: string, color?: string, indent?: number): void;
+    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): number;
+    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): number;
+    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): number;
+    bar(label: string, fraction: number, color?: string): void;
+    buttons(items: {
+        id: string;
+        label: string;
+    }[]): string | null;
+    select(id: string, label: string, options: string[], current: string): string | null;
+    stepper(id: string, label: string, options: string[], current: string): string | null;
+    strip(id: string, tabs: string[], status: string, brand: string): string;
+    rail(id: string, names: string[]): string;
+    statGrid(rows: PaintCell[][], columns?: number): void;
+    footer(text: string): void;
+    gap(px?: number): void;
+    end(): void;
 }
 /**
  * Immediate-mode overlay HUD of tabs, buttons and bars, redrawn every frame from
@@ -4754,46 +4763,40 @@ export interface Region extends Rect {
     kind: 'panel' | 'widget' | 'scroll';
 }
 export type Dock = 'chatbox' | 'topleft' | Rect;
-export function resolveDock(dock: Dock): Rect;
-export function toCanvasPoint(clientX: number, clientY: number, rect: {
+export function resolveDock(dock?: Dock): never;
+export function toCanvasPoint(clientX?: number, clientY?: number, rect?: {
     left: number;
     top: number;
     width: number;
     height: number;
-}): {
-    x: number;
-    y: number;
-};
+}): never;
 /** Wrap an option index; -1 moves back, +1 moves forward, and unknown values start at 0. */
-export function cycleOption(options: readonly string[], current: string, delta: number): string;
-export function hitRegion(regions: readonly Region[], x: number, y: number): Region | null;
+export function cycleOption(options?: readonly string[], current?: string, delta?: number): never;
+export function hitRegion(regions?: readonly Region[], x?: number, y?: number): never;
 export class PaintState {
+    constructor();
+    publishRegions(regions?: Region[]): never;
+    pointerDown(x?: number, y?: number): never;
+    pointerMove(x?: number, y?: number): never;
+    pointerIsInside(x?: number, y?: number): never;
+    consumeClick(id?: string): never;
+    wheel(x?: number, y?: number, delta?: number): never;
+    consumeWheel(id?: string): never;
+    isHovered(rect?: Rect): never;
+    get(key?: string, fallback?: string): never;
+    set(key?: string, value?: string): never;
+    reset(): never;
 }
-export const paintState: {
-    publishRegions(regions: Region[]): void;
-    pointerDown(x: number, y: number): boolean;
-    pointerMove(x: number, y: number): boolean;
-    pointerIsInside(x: number, y: number): boolean;
-    consumeClick(id: string): boolean;
-    /** Queue a wheel notch for the region under the cursor; true means the canvas should consume it. */
-    wheel(x: number, y: number, delta: number): boolean;
-    /** Take the pending notches for a region; a paint applies them once. */
-    consumeWheel(id: string): number;
-    isHovered(rect: Rect): boolean;
-    get(key: string, fallback: string): string;
-    set(key: string, value: string): void;
-    reset(): void;
-};
+export const paintState: never;
 /** Monospace characters that fit a panel `w` px wide with `pad` px of gutter each side. */
-export function paintCols(w: number, pad: number, charW: number): number;
+export function paintCols(w?: number, pad?: number, charW?: number): never;
 /** Wrap text to `cols`, indenting continuation lines by `indent` spaces. */
 export function wrapText(text: string, cols: number, indent?: number): string[];
 /** Pixel widths for weighted columns sharing `total` px. */
-export function cellWidths(total: number, weights: readonly number[]): number[];
+export function cellWidths(total?: number, weights?: readonly number[]): never;
 /** Rows needed to lay `len` entries `columns` across. */
-export function gridRows(len: number, columns: number): number;
-/** Rows a single wheel notch moves a scrollable list. */
-export const WHEEL_ROWS = 3;
+export function gridRows(len?: number, columns?: number): never;
+export const WHEEL_ROWS: never;
 export interface ListScrollState {
     offset: number;
     /** True once the user has scrolled, which detaches the list from `focus`. */
@@ -4805,17 +4808,17 @@ export interface ListScrollState {
  * Scroll position for an immediate-mode list.
  * Wheel notches detach the list from `focus`; a new `focus` row re-attaches it.
  */
-export function listScroll(len: number, rows: number, state: ListScrollState, wheel: number, focus: number): ListScrollState;
+export function listScroll(len?: number, rows?: number, state?: ListScrollState, wheel?: number, focus?: number): never;
 export function fmtDuration(mins: number): string;
 /** Compact skill labels for chatbox paint rows. */
 export function paintSkillShort(skill: string): string;
 /** Clip to `cols` characters with a trailing ellipsis, keeping leading spaces so padded columns stay aligned. */
-export function clipText(text: string, cols: number): string;
+export function clipText(text?: string, cols?: number): never;
 /** Truncate paint text with an ellipsis (chatbox rows are tight). */
-export function paintClip(text: string, max?: number): string;
+export function paintClip(text?: string, max?: number): never;
 export function fmtXpHr(gained: number, mins: number): string;
 /** Gathering script title accent colours. */
-export function gatherPaintAccent(kind: 'fish' | 'mine' | 'wc' | 'other'): string;
+export function gatherPaintAccent(kind?: 'fish' | 'mine' | 'wc' | 'other'): never;
 export interface Slot {
     x: number;
     w: number;
@@ -4826,11 +4829,11 @@ export interface StripSegments {
     brand: Slot;
 }
 /** Title-row slots: tabs from the left, brand hard right, status filling the gap. */
-export function stripSegments(w: number, tabWidths: readonly number[], brandWidth: number, pad: number): StripSegments;
+export function stripSegments(w?: number, tabWidths?: readonly number[], brandWidth?: number, pad?: number): never;
 /** Even vertical slices of the rail, never shorter than a pixel. */
-export function railRows(h: number, count: number): RailRow[];
+export function railRows(h?: number, count?: number): never;
 /** Equal columns filling the body to the right of the rail. */
-export function statColumns(panelW: number, railW: number, pad: number, columns: number): Slot[];
+export function statColumns(panelW?: number, railW?: number, pad?: number, columns?: number): never;
 
 }
 
@@ -4869,14 +4872,11 @@ export interface RunPolicyOverride {
     runAuto?: boolean;
     energyMin?: number;
 }
-export function resolveRunPolicy(over: RunPolicyOverride | null | undefined, globals: {
+export function resolveRunPolicy(over?: RunPolicyOverride | null | undefined, globals?: {
     runAuto: boolean;
     energyMin: number;
-}): {
-    runAuto: boolean;
-    energyMin: number;
-};
-export function shouldEnableRun(s: RunState): boolean;
+}): never;
+export function shouldEnableRun(s?: RunState): never;
 export const RunManager: {
     /** Last call wins as a whole snapshot. `null` returns to Global. Cleared when a script starts or stops. */
     override(policy: RunPolicyOverride | null): void;
@@ -4886,12 +4886,12 @@ export const RunManager: {
 
 declare module '*runtime/ScriptRunner.js' {
 import { PaintFrame } from "*paint/Paint.js";
-export function loopReadyOrDetached(): boolean;
+export function loopReadyOrDetached(): never;
 /**
  * Never let a blank reason read as "the script stopped for no reason".
  * Why: a missing reason is a caller bug, but throwing out of `stop()` would wedge the run in `running`, which broke every harness calling `runner.stop()` from page context.
  */
-export function stopReasonOf(reason: string): string;
+export function stopReasonOf(reason?: string): never;
 export const ScriptRunner: {
     paintControls(p: PaintFrame): void;
     /**
@@ -4932,7 +4932,7 @@ export interface SettingDef {
     csvToggle?: string;
 }
 /** Return an option's display label without changing its persisted value. */
-export function settingOptionLabel(def: SettingDef, value: string): string;
+export function settingOptionLabel(def?: SettingDef, value?: string): never;
 export type SettingsSchema = Record<string, SettingDef>;
 export class SettingsBag {
     values: Record<string, unknown>;
@@ -4944,24 +4944,15 @@ export class SettingsBag {
     tile(key: string, fallback?: undefined): Tile | null;
     tile<F extends ___adapter_ClientAdapter_js.WorldTile | null>(key: string, fallback: F): Tile | F;
 }
-/** Account-wide settings, shown under the panel "Global settings" button and stored under the `Global` namespace. */
-export const GLOBAL_SETTINGS_CORE: Record<string, SettingDef>;
-/** World-walk and path paint settings, shown under the "Nav settings" button but still stored under `Global` so URL and storage keys stay stable. */
-export const NAV_SETTINGS: Record<string, SettingDef>;
-/** Full Global storage schema = core + nav (URL / SettingsStore.globalBag). */
-export const GLOBAL_SETTINGS: Record<string, SettingDef>;
-/**
- * Settings for the tile map picker's own Settings modal, absent from Global settings.
- * Why: the storage namespace is {@link MAP_PICKER_SETTINGS_NS} and the URL form is `?MapPicker.showBasemap=false`.
- */
-export const MAP_PICKER_SETTINGS_NS = "MapPicker";
-export const MAP_PICKER_SETTINGS: Record<string, SettingDef>;
-/** Player-defined loadouts. Storage only; the Loadout panel owns editing, so this never appears in a settings modal. */
-export const LOADOUT_SETTINGS_NS = "Loadouts";
-export const LOADOUT_SETTINGS: Record<string, SettingDef>;
-/** Player-defined order books. Storage only; the order book panel owns editing, so this never appears in a settings modal. */
-export const PRICE_BOOK_SETTINGS_NS = "PriceBooks";
-export const PRICE_BOOK_SETTINGS: Record<string, SettingDef>;
+export const GLOBAL_SETTINGS_CORE: never;
+export const NAV_SETTINGS: never;
+export const GLOBAL_SETTINGS: never;
+export const MAP_PICKER_SETTINGS_NS: never;
+export const MAP_PICKER_SETTINGS: never;
+export const LOADOUT_SETTINGS_NS: never;
+export const LOADOUT_SETTINGS: never;
+export const PRICE_BOOK_SETTINGS_NS: never;
+export const PRICE_BOOK_SETTINGS: never;
 export const SettingsStore: {
     saved(name: string, key: string): string | undefined;
     displayString(name: string, key: string, def: SettingDef): string;

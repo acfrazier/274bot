@@ -280,6 +280,200 @@ export default class T extends LoopingBot {
     );
 }
 
+fn compat_overlay_entries(workspace: &std::path::Path) -> Vec<serde_json::Value> {
+    let root = workspace.join("crates/script/compat-js");
+    [
+        "overlay.json",
+        "overlay-native.json",
+        "overlay-not-impl.json",
+        "overlay-scene.json",
+    ]
+    .into_iter()
+    .flat_map(|name| {
+        serde_json::from_str::<Vec<serde_json::Value>>(
+            &std::fs::read_to_string(root.join(name)).expect("read compatibility overlay"),
+        )
+        .expect("parse compatibility overlay")
+    })
+    .collect()
+}
+
+fn assert_overlay_citations(workspace: &std::path::Path, entries: &[serde_json::Value]) {
+    for entry in entries {
+        let id = entry["id"].as_str().expect("overlay id");
+        let runtime = entry["runtime"].as_str().expect("overlay runtime citation");
+        let (path, line) = runtime.rsplit_once(':').expect("runtime line number");
+        let line = line.parse::<usize>().expect("numeric runtime line");
+        let source = std::fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read {runtime} for {id}: {error}"));
+        let target = source
+            .lines()
+            .nth(line.checked_sub(1).expect("one-based runtime line"))
+            .unwrap_or_else(|| panic!("runtime line out of range: {runtime} ({id})"));
+        assert!(
+            !target.trim().is_empty(),
+            "blank runtime citation: {runtime} ({id})"
+        );
+
+        let selector = entry["selector"].as_str().expect("overlay selector");
+        let declaration = entry["declaration"].as_str().unwrap_or_default();
+        let type_only = ["export interface ", "interface ", "export type ", "type "]
+            .iter()
+            .any(|prefix| declaration.trim_start().starts_with(prefix));
+        if !selector.starts_with('$') && !type_only {
+            let symbol = selector.rsplit('.').next().expect("selector symbol");
+            assert!(
+                target.contains(symbol),
+                "runtime citation {runtime} for {id} does not name selector {selector}: {target:?}"
+            );
+        }
+    }
+}
+
+fn unconditional_refusal_exports(source: &str) -> Vec<(String, bool)> {
+    let lines: Vec<_> = source.lines().collect();
+    let mut refusals = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(declaration) = trimmed.strip_prefix("export const ") {
+            if let Some((name, initializer)) = declaration.split_once('=') {
+                if initializer.trim_start().starts_with("notImplValue(") {
+                    refusals.push((name.trim().to_owned(), true));
+                }
+            }
+        }
+
+        let function = trimmed
+            .strip_prefix("export async function ")
+            .or_else(|| trimmed.strip_prefix("export function "));
+        let Some(signature) = function else {
+            continue;
+        };
+        let Some((name, _)) = signature.split_once('(') else {
+            continue;
+        };
+        let mut body = String::new();
+        let mut depth = 0_usize;
+        let mut opened = false;
+        'scan: for row in lines.iter().skip(index) {
+            for character in row.chars() {
+                if !opened {
+                    if character == '{' {
+                        opened = true;
+                        depth = 1;
+                    }
+                    continue;
+                }
+                match character {
+                    '{' => {
+                        depth += 1;
+                        body.push(character);
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break 'scan;
+                        }
+                        body.push(character);
+                    }
+                    _ => body.push(character),
+                }
+            }
+            if opened {
+                body.push('\n');
+            }
+        }
+        let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+        if opened
+            && depth == 0
+            && compact.starts_with("thrownotImpl(")
+            && compact.ends_with(");")
+            && compact.matches(';').count() == 1
+        {
+            refusals.push((name.trim().to_owned(), false));
+        }
+    }
+    refusals
+}
+
+fn collect_javascript_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read shim directory") {
+        let entry = entry.expect("read shim directory entry");
+        let path = entry.path();
+        if entry.file_type().expect("shim entry type").is_dir() {
+            collect_javascript_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "js") {
+            files.push(path);
+        }
+    }
+}
+
+#[test]
+fn overlay_runtime_citations_are_current() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entries = compat_overlay_entries(&workspace);
+    assert_overlay_citations(&workspace, &entries);
+}
+
+#[test]
+fn unconditional_refusals_have_never_overlays() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entries = compat_overlay_entries(&workspace);
+    let mut files = Vec::new();
+    collect_javascript_files(&workspace.join("crates/script/src/shim"), &mut files);
+    files.sort();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("read shim source");
+        let relative = file
+            .strip_prefix(&workspace)
+            .expect("shim path under workspace")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if relative.ends_with("/declared_surface.js") {
+            assert!(
+                entries.iter().any(|entry| {
+                    entry["selector"] == "$barrel" && entry["operation"] == "runtime-values"
+                }),
+                "generated barrel refusals lack their group overlay"
+            );
+            continue;
+        }
+        for (symbol, is_value) in unconditional_refusal_exports(&source) {
+            let matching = entries.iter().filter(|entry| {
+                let Some(runtime) = entry["runtime"].as_str() else {
+                    return false;
+                };
+                let Some((path, _)) = runtime.rsplit_once(':') else {
+                    return false;
+                };
+                let selector = entry["selector"].as_str().unwrap_or_default();
+                path == relative && selector.rsplit('.').next() == Some(symbol.as_str())
+            });
+            if is_value {
+                let never_declaration = format!("export const {symbol}: never;");
+                assert!(
+                    matching.into_iter().any(|entry| {
+                        entry["declaration"].as_str().is_some_and(|declaration| {
+                            declaration
+                                .lines()
+                                .any(|line| line.trim() == never_declaration)
+                        })
+                    }),
+                    "refused value {relative}:{symbol} is not declared as never"
+                );
+            } else {
+                assert!(
+                    matching
+                        .into_iter()
+                        .any(|entry| entry["operation"] == "not-impl"),
+                    "refused function {relative}:{symbol} lacks a not-impl overlay"
+                );
+            }
+        }
+    }
+}
+
 /// Every not-impl overlay citation points to a throwing native refusal, and
 /// every named member still throws that refusal when imported from Load.
 #[test]

@@ -18,6 +18,7 @@ use deno_ast::swc::ast::*;
 use deno_ast::{MediaType, ParseParams, ParsedSource, ProgramRef};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone)]
 pub struct CompatSurface {
@@ -2396,7 +2397,7 @@ pub fn drift_against_shim(authored: &AuthoredSurface, shim: &CompatSurface) -> V
             drifts.push(format!("missing module {key}"));
             continue;
         };
-        compare_module(sm, am, &mut drifts);
+        compare_module(sm, am, preserved_overlay_members(), &mut drifts);
     }
 
     for am in &authored.modules {
@@ -2451,6 +2452,36 @@ fn wildcard_spec(spec: &str) -> String {
         spec.to_string()
     }
 }
+/// Declaration-only members are allowed only where an overlay explicitly
+/// preserves an upstream public class surface.
+fn preserved_overlay_members() -> &'static [(String, String)] {
+    static MEMBERS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
+        [
+            include_str!("../compat-js/overlay.json"),
+            include_str!("../compat-js/overlay-native.json"),
+            include_str!("../compat-js/overlay-not-impl.json"),
+            include_str!("../compat-js/overlay-scene.json"),
+        ]
+        .into_iter()
+        .flat_map(|source| {
+            serde_json::from_str::<Vec<serde_json::Value>>(source)
+                .expect("parse compatibility overlay")
+        })
+        .filter_map(|entry| {
+            (entry["preserveMembers"].as_bool() == Some(true)).then(|| {
+                (
+                    format!("*{}", entry["module"].as_str().expect("overlay module")),
+                    entry["selector"]
+                        .as_str()
+                        .expect("overlay selector")
+                        .to_owned(),
+                )
+            })
+        })
+        .collect()
+    });
+    MEMBERS.as_slice()
+}
 
 fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatExport {
     let mut resolved = exp.clone();
@@ -2485,7 +2516,12 @@ fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatEx
     resolved
 }
 
-fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec<String>) {
+fn compare_module(
+    shim: &ShimModule,
+    authored: &AuthoredModule,
+    preserved_members: &[(String, String)],
+    drifts: &mut Vec<String>,
+) {
     let label = wildcard_spec(&authored.specifier);
     let shim_types: Vec<_> = shim.exports.iter().chain(&shim.privates).collect();
     let declaration_types: Vec<_> = authored.exports.iter().chain(&authored.privates).collect();
@@ -2507,6 +2543,7 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
             &label,
             &inherited_export(exp, &shim_types),
             &inherited_export(dts, &declaration_types),
+            preserved_members,
             drifts,
         );
     }
@@ -2551,7 +2588,13 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
     }
 }
 
-fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: &mut Vec<String>) {
+fn compare_export(
+    label: &str,
+    shim: &CompatExport,
+    dts: &CompatExport,
+    preserved_members: &[(String, String)],
+    drifts: &mut Vec<String>,
+) {
     match (shim, dts) {
         (
             CompatExport::Function {
@@ -2602,7 +2645,7 @@ fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: 
                 members: dmembers, ..
             },
         ) => {
-            compare_members(label, name, members, dmembers, drifts);
+            compare_members(label, name, members, dmembers, preserved_members, drifts);
         }
         (CompatExport::Value { name }, _) => {
             if export_ident(dts) != name.as_str() {
@@ -2655,8 +2698,12 @@ fn compare_members(
     owner: &str,
     shim: &[Member],
     dts: &[Member],
+    preserved_members: &[(String, String)],
     drifts: &mut Vec<String>,
 ) {
+    let allow_extra = preserved_members
+        .iter()
+        .any(|(module, member)| module == label && member == owner);
     for m in shim {
         let Some(d) = dts.iter().find(|x| x.name == m.name) else {
             // A JS class has an implicit zero-argument constructor when its
@@ -2687,7 +2734,7 @@ fn compare_members(
         }
     }
     for d in dts {
-        if !shim.iter().any(|m| m.name == d.name) {
+        if !allow_extra && !shim.iter().any(|m| m.name == d.name) {
             drifts.push(format!("{label} {owner} extra authored member {}", d.name));
         }
     }

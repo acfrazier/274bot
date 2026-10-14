@@ -48,19 +48,91 @@ export function clipText(cols, text) {
     throw notImpl('clipText');
 }
 
-export const paintCols = notImplValue('paintCols');
-export const cellWidths = notImplValue('cellWidths');
-export const gridRows = notImplValue('gridRows');
-export const listScroll = notImplValue('listScroll');
-export const paintClip = notImplValue('paintClip');
-export const gatherPaintAccent = notImplValue('gatherPaintAccent');
-export const stripSegments = notImplValue('stripSegments');
-export const railRows = notImplValue('railRows');
-export const statColumns = notImplValue('statColumns');
+export function paintCols(w, pad, charW) {
+    throw notImpl('paintCols');
+}
+
+export function cellWidths(total, weights) {
+    throw notImpl('cellWidths');
+}
+
+export function gridRows(len, columns) {
+    throw notImpl('gridRows');
+}
+
+export function listScroll(len, rows, state, wheel, focus) {
+    throw notImpl('listScroll');
+}
+
+export function paintClip(text, max = 52) {
+    throw notImpl('paintClip');
+}
+
+export function gatherPaintAccent(kind) {
+    throw notImpl('gatherPaintAccent');
+}
+
+export function stripSegments(w, tabWidths, brandWidth, pad) {
+    throw notImpl('stripSegments');
+}
+
+export function railRows(h, count) {
+    throw notImpl('railRows');
+}
+
+export function statColumns(panelW, railW, pad, columns) {
+    throw notImpl('statColumns');
+}
+
 export class PaintState {
     constructor() {
         throw notImpl('PaintState');
     }
+
+    publishRegions(regions) {
+        throw notImpl('PaintState.publishRegions');
+    }
+
+    pointerDown(x, y) {
+        throw notImpl('PaintState.pointerDown');
+    }
+
+    pointerMove(x, y) {
+        throw notImpl('PaintState.pointerMove');
+    }
+
+    pointerIsInside(x, y) {
+        throw notImpl('PaintState.pointerIsInside');
+    }
+
+    consumeClick(id) {
+        throw notImpl('PaintState.consumeClick');
+    }
+
+    wheel(x, y, delta) {
+        throw notImpl('PaintState.wheel');
+    }
+
+    consumeWheel(id) {
+        throw notImpl('PaintState.consumeWheel');
+    }
+
+    isHovered(rect) {
+        throw notImpl('PaintState.isHovered');
+    }
+
+    get(key, fallback) {
+        throw notImpl('PaintState.get');
+    }
+
+    set(key, value) {
+        throw notImpl('PaintState.set');
+    }
+
+    reset() {
+        throw notImpl('PaintState.reset');
+    }
 }
+
 export const paintState = notImplValue('paintState');
 export const WHEEL_ROWS = notImplValue('WHEEL_ROWS');

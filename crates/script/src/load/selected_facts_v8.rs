@@ -2,10 +2,27 @@
 //! This is isolate-local calculation, not an isolate-to-host transport.
 
 use crate::supply_v2;
+use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
+use std::cell::RefCell;
+use std::sync::{Arc, Weak};
 
 const PENDING: &str = "__pending__";
+
+struct CachedObjRecords {
+    data: Weak<SelectedGameData>,
+    rows: v8::Global<v8::Array>,
+}
+
+thread_local! {
+    static OBJ_RECORDS: RefCell<Option<CachedObjRecords>> = const { RefCell::new(None) };
+}
+
+pub(super) fn reset_obj_records_cache() {
+    let stale = OBJ_RECORDS.with(|cache| cache.borrow_mut().take());
+    drop(stale);
+}
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
@@ -47,6 +64,7 @@ fn run_selected_facts<'s>(
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "obj-catalog" => obj_catalog(scope),
+        "obj-records" => obj_records(scope),
         "random-event-casket" => random_event_casket(scope),
         "autocast-component" => autocast_component(scope, args.get(1)),
         "item-tradeable" => item_tradeable(scope, args.get(1)),
@@ -78,10 +96,7 @@ fn run_selected_facts<'s>(
 fn random_event_casket<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let id = supply_v2::selected_data()
-        .as_deref()
-        .and_then(|data| api::content::random_event_casket_id(Some(data)))
-        .unwrap_or(-1);
+    let id = supply_v2::random_event_casket_id().unwrap_or(-1);
     Ok(v8::Integer::new(scope, id).into())
 }
 fn autocast_component<'s>(
@@ -248,6 +263,63 @@ fn cert_link<'s>(
         Some(n) => Ok(v8::Integer::new(scope, n).into()),
         None => Ok(v8::null(scope).into()),
     }
+}
+
+fn obj_records_cache<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: &Arc<SelectedGameData>,
+) -> Result<v8::Local<'s, v8::Array>, String> {
+    OBJ_RECORDS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let matches = cache
+            .as_ref()
+            .and_then(|cached| cached.data.upgrade())
+            .is_some_and(|cached| Arc::ptr_eq(&cached, data));
+        if !matches {
+            let mut items: Vec<_> = crate::market_catalog::records(data.items()).collect();
+            items.sort_unstable_by_key(|(item, _)| item.id);
+            let length = i32::try_from(items.len())
+                .map_err(|_| "selected facts object-record count".to_string())?;
+            let rows = v8::Array::new(scope, length);
+            for (index, (item, name)) in items.into_iter().enumerate() {
+                let row = v8::Object::new(scope);
+                set_i32(scope, row, "id", item.id);
+                let name = v8_str(scope, name)?;
+                set_key(scope, row, "name", name);
+                set_i32(scope, row, "cost", item.cost);
+                set_bool(scope, row, "stackable", item.stackable);
+                set_bool(scope, row, "members", item.members);
+                set_bool(
+                    scope,
+                    row,
+                    "equippable",
+                    crate::market_catalog::equippable(item),
+                );
+                set_i32(scope, row, "certlink", item.certificate_link);
+                set_i32(scope, row, "certtemplate", item.certificate_template);
+                set_bool(scope, row, "stackVariant", item.stack_variant);
+                rows.set_index(scope, index as u32, row.into())
+                    .ok_or_else(|| "selected facts object-record row".to_string())?;
+            }
+            *cache = Some(CachedObjRecords {
+                data: Arc::downgrade(data),
+                rows: v8::Global::new(scope, rows),
+            });
+        }
+        let rows = &cache
+            .as_ref()
+            .expect("object records cache initialized")
+            .rows;
+        Ok(v8::Local::new(scope, rows))
+    })
+}
+
+fn obj_records<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(data) = supply_v2::selected_data() else {
+        reset_obj_records_cache();
+        return Ok(v8::Array::new(scope, 0).into());
+    };
+    Ok(obj_records_cache(scope, &data)?.into())
 }
 
 /// Frozen `buildCatalog` minus the cert maps: `byId` holds every named obj
