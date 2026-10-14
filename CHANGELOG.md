@@ -43,7 +43,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
 - Paladin and Hero pickpocket leashes now cover their 289 roaming areas.
   Quest-only mining rocks stay out of the regular ore options.
-  Public TypeScript declarations cover script completion hooks, task labels and
+- Public TypeScript declarations cover script completion hooks, task labels and
   current task names, and the supported `InvItem.noted` flag.
 
 ### Not in this release
@@ -60,9 +60,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
 - Chatbox: `GameMessages.record`, `reset`, `firstSince` and `recent` remain
   unavailable. `mark`, `since` and `sawSince` read the host-backed chat
   snapshot, not a mutable message ring.
-- Paint: direct `PaintFrame` construction, `PaintState`, `paintState` and the
-  unimplemented layout and hit-testing helpers remain unavailable; the mutable
-  paint-state family is deferred to the compat rearchitecture.
+- Paint: direct `PaintFrame` construction, `PaintState`, `paintState`, the
+  frame layout helpers (`cols`, `wrap`, `list`, `fill`, `grid`, `stepper`) and
+  hit-testing helpers remain unavailable; the mutable paint-state family is
+  deferred to the compat rearchitecture.
 - Client adapter: snapshot invalidation, attach/detach, packet listeners,
   object-catalog reset, loc-model extents, readiness checks, retaliation and
   modal-control reads, combat-showing threshold and `WELCOME_SCREEN` remain
