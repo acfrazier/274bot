@@ -5305,6 +5305,9 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
 /// ✕ deletes the vault row only. Load all is MultiBox-only.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
+        if session.profile_import_open || !session.profile_import.is_fresh() {
+            session.close_profile_import();
+        }
         return;
     }
     // An opener asked for Profiles, or a leave prompt was staged from
@@ -5339,8 +5342,23 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if multibox && ui.button_with_size("Load all", [w, 0.0]) {
                 session.load_all();
             }
-            if ui.button_with_size("New profile", [w, 0.0]) {
+            // New profile and Import share one row, so the Profiles window
+            // keeps its height (its controls must fit a 1024×768 desktop).
+            let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+            if ui.button_with_size("New profile", [bw, 0.0]) {
                 session.begin_edit_profile(None);
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            {
+                let _open = ui.begin_disabled_with_cond(session.profile_import_open);
+                if ui.button_with_size("Import from rs2b0t…", [bw, 0.0]) {
+                    session.profile_import_open = true;
+                }
+            }
+            if session.profile_import_open {
+                profile_import_section(ui, session, right);
             }
             ui.spacing();
             ui.text_colored(ACCENT, "Vault profiles");
@@ -5509,6 +5527,143 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         open = !session.request_close_profiles();
     }
     session.wall.chooser_open = session.wall.chooser_open && open;
+}
+
+const IMPORT_DELETE_POPUP: &str = "Delete the rs2b0t export file?";
+
+/// The rs2b0t profile import inside Profiles (vault unlocked): the export
+/// file's path, then a preview with the existing-profile choice (nothing is
+/// written until Import), then the report and the optional deletion of the
+/// export file. The flow is frontend-core's, shared with the TUI.
+fn profile_import_section(ui: &Ui, session: &mut Session, right: f32) {
+    use frontend_core::rs2b0t_import::{ConflictPolicy, Stage, PROFILE_FILE_NAME};
+    ui.spacing();
+    ui.separator();
+    ui.text_colored(ACCENT, "Import rs2b0t profiles");
+    let w = on_screen_avail(ui, right);
+    let stage = session.profile_import.stage();
+    let mut changed = false;
+    match stage {
+        Stage::Path => {
+            ui.text_wrapped(format!(
+                "Path of the {PROFILE_FILE_NAME} file rs2b0t exported (its Settings → export). \
+                 The preview lists every account and setting before anything is written."
+            ));
+            ui.set_next_item_width(w);
+            let entered = ui
+                .input_text("##rs2b0t-import-path", session.profile_import.path_mut())
+                .hint(PROFILE_FILE_NAME)
+                .enter_returns_true(true)
+                .build();
+            let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+            if ui.button_with_size("Preview", [bw, 0.0]) || entered {
+                // Script names map through the catalog: register it from its
+                // known root first (no folder prompt).
+                session.fill_rs2b0t_cards_once();
+                session
+                    .profile_import
+                    .preview(&session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Cancel##rs2b0t-import", [bw, 0.0]) {
+                session.close_profile_import();
+                return;
+            }
+        }
+        Stage::Preview => {
+            ui.text_disabled("Existing profiles:");
+            let policy = session.profile_import.policy();
+            let mut next = policy;
+            if ui.radio_button("Skip (keep them)", policy == ConflictPolicy::Skip) {
+                next = ConflictPolicy::Skip;
+            }
+            ui.same_line();
+            if ui.radio_button("Overwrite", policy == ConflictPolicy::Overwrite) {
+                next = ConflictPolicy::Overwrite;
+            }
+            if next != policy {
+                session
+                    .profile_import
+                    .set_policy(&session.core, &session.scripts, next);
+                changed = true;
+            }
+        }
+        Stage::Report => {
+            if !session.profile_import_settled {
+                session.refresh_profile_import();
+            }
+        }
+    }
+    if let Some(error) = session.profile_import.error() {
+        ui.text_colored(ERROR, error);
+    }
+    if stage != Stage::Path {
+        let height = scale_px(ui, 260.0);
+        ui.child_window("##rs2b0t-import-lines")
+            .size([0.0, height])
+            .build(ui, || {
+                for line in &session.profile_import_lines {
+                    ui.text_wrapped(line);
+                }
+            });
+    }
+    let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+    match stage {
+        Stage::Path => {}
+        Stage::Preview => {
+            if ui.button_with_size("Import", [bw, 0.0]) {
+                session
+                    .profile_import
+                    .confirm(&mut session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Back##rs2b0t-import", [bw, 0.0]) {
+                session.profile_import.back();
+                changed = true;
+            }
+        }
+        Stage::Report => {
+            if session.profile_import.can_delete(&session.core) {
+                if ui.button_with_size("Delete export file…", [bw, 0.0]) {
+                    session.import_delete_understood = false;
+                    ui.open_popup(IMPORT_DELETE_POPUP);
+                }
+                if !stack {
+                    gap_line(ui);
+                }
+            }
+            if ui.button_with_size("Done##rs2b0t-import", [bw, 0.0]) {
+                session.close_profile_import();
+                return;
+            }
+            let body = match session.profile_import.export_path() {
+                Some(path) => format!(
+                    "Delete {}? It holds your rs2b0t passwords in plain text. This cannot be undone.",
+                    path.display()
+                ),
+                None => "Delete the export file?".into(),
+            };
+            if scary_confirm_popup(
+                ui,
+                IMPORT_DELETE_POPUP,
+                &body,
+                "Delete",
+                &mut session.import_delete_understood,
+            ) {
+                session.profile_import.confirm_delete(&session.core);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        session.refresh_profile_import();
+    }
 }
 
 fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {

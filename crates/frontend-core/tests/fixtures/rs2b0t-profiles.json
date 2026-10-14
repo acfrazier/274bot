@@ -1,0 +1,49 @@
+{
+  "kind": "rs2b0t-multibox-profiles",
+  "v": 1,
+  "profiles": [
+    {
+      "username": "alice",
+      "password": "fake-pass-alice",
+      "tab": "Combat",
+      "world": 2
+    },
+    {
+      "username": "bob",
+      "password": "fake-pass-bob"
+    }
+  ],
+  "tabs": [
+    "Combat"
+  ],
+  "activeTab": "Main",
+  "storage": {
+    "alice": {
+      "selectedScript": "CowKiller",
+      "rendererEnabled": "0",
+      "creds": "{\"username\":\"alice\",\"password\":\"fake-pass-alice\"}",
+      "set:CowKiller:leashRadius": "20",
+      "set:CowKiller:combatStyle": "MELEE",
+      "set:CowKiller:buryBones": "yes",
+      "set:CowKiller:location": "Somewhere else",
+      "set:CowKiller:notASetting": "1",
+      "set:Global:lampSkill": "attack",
+      "set:Global:clueDuelPartner": "bob",
+      "set:Global:runAuto": "false",
+      "set:Global:navTeleports": "true",
+      "set:MapPicker:showBasemap": "false",
+      "set:Loadouts:sets": "[]"
+    },
+    "bob": {
+      "selectedScript": "MyPrivateBot",
+      "set:MyPrivateBot:speed": "3",
+      "set:Woodcutter:treeName": "oak",
+      "set:Woodcutter:leashRadius": "400",
+      "set:Global:useMageBank": "true",
+      "set:Global:someFutureSetting": "x"
+    },
+    "carol": {
+      "selectedScript": "Woodcutter"
+    }
+  }
+}

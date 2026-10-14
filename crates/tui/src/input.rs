@@ -386,6 +386,9 @@ impl TuiApp {
                 self.loadouts_state.worn_scratch.clear();
                 self.loadouts_state.carry_scratch.clear();
             }
+            Command::ImportProfiles => self.open_modal(Modal::ProfileImport(
+                crate::profile_import::ImportView::default(),
+            )),
             Command::ManualWalk => self.open_modal(Modal::Manual),
             Command::DismissNotice => return AppAction::AckBackground,
             Command::ScriptBrowse | Command::ScriptLoad | Command::ImportCatalog => {

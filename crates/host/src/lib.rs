@@ -35,8 +35,8 @@ pub use capacity::{
 #[cfg(feature = "test-support")]
 pub use capacity::{force_off_cpu_measure, ServiceDelays};
 pub use random::{
-    detect, CooldownMap, DetectedRandom, Guardian, GuardianLiveContext, RandomClaim, RandomKind,
-    RandomStatus,
+    detect, is_lamp_skill, CooldownMap, DetectedRandom, Guardian, GuardianLiveContext, RandomClaim,
+    RandomKind, RandomStatus,
 };
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{

@@ -1022,6 +1022,14 @@ pub struct Session {
     /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
     pub pending_profile_delete: Option<String>,
     pub delete_understood: bool,
+    /// The rs2b0t profile import in the Profiles window: whether it is
+    /// open, its flow (shared with the TUI), the text it shows (rebuilt on
+    /// each step and while its writes settle) and the delete-file confirm.
+    pub profile_import_open: bool,
+    pub profile_import: frontend_core::rs2b0t_import::ProfileImport,
+    pub profile_import_lines: Vec<String>,
+    pub profile_import_settled: bool,
+    pub import_delete_understood: bool,
     /// Live-harness overlay: the scenario's `NavSettings` for this session
     /// without writing prefs. `None` = operator `ui.nav`.
     pub nav_overlay: Option<NavSettings>,
@@ -1442,6 +1450,11 @@ impl Session {
             pending_edit_switch: None,
             window_focus: None,
             chooser_save: frontend_core::ProfileFormSave::default(),
+            profile_import_open: false,
+            profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
+            profile_import_lines: Vec::new(),
+            profile_import_settled: false,
+            import_delete_understood: false,
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
@@ -5334,12 +5347,6 @@ fn warn_stress50_debug() {
             "panel-play: stress50 is a release RAM watch — run with cargo run --release -p panel --bin panel-play -- --live stress50"
         );
     }
-}
-
-/// Fresh uid for a profile with no existing vault entry: one past the max
-/// (host-play assigns uids from the same 274M base range).
-fn fresh_uid(vault: &Vault) -> i32 {
-    vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
 /// Detach the picker's nav world only after the play's slot threads are

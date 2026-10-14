@@ -229,6 +229,8 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// One step of the rs2b0t profile import; the binary owns the flow.
+    ProfileImport(crate::profile_import::ImportAction),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
     /// A key for the loadouts popup: the binary owns the store.
