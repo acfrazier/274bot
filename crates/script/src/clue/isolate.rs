@@ -696,6 +696,23 @@ enum Tool {
     Chart,
 }
 
+impl Tool {
+    fn first_missing(held: [bool; 3]) -> Option<Self> {
+        [Self::Sextant, Self::Watch, Self::Chart]
+            .into_iter()
+            .zip(held)
+            .find_map(|(tool, has)| (!has).then_some(tool))
+    }
+
+    const fn api_name(self) -> &'static str {
+        match self {
+            Self::Sextant => "sextant",
+            Self::Watch => "watch",
+            Self::Chart => "chart",
+        }
+    }
+}
+
 /// The live trio-acquire intercept on the identified clue row: which tool the
 /// posted pack was short of, which giver of that tool's own chain this token is
 /// working, and whether that stop's chat has been posted open. Session state on
@@ -2039,6 +2056,8 @@ pub(crate) fn on_stop() {
 /// `next_native`.
 pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
+        "trailKit" => acquire::trail_kit(input.get("scrollId")),
+        "nextCoordTool" => acquire::next_coord_tool(input.get("held")),
         "begin" => {
             let input = hydrate(input);
             RUNTIME.with(|rt| rt.borrow_mut().begin(selected, &input))

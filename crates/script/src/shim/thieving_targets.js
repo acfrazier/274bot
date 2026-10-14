@@ -34,7 +34,7 @@ export function requiredThieving(target) {
     return level;
 }
 
-export const HOSTILE_NAMES = [];
+export const HOSTILE_NAMES = globalThis.__rs2b0t_selected_facts('hostile-attacker-names');
 
 function callOrValue(c, key) {
     if (c == null) return undefined;

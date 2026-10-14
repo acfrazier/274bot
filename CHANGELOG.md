@@ -62,10 +62,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
   as soon as the bank's item list has arrived; it does not add rs2b0t's extra
   short pause.
+- `parseBankStrategy('Loot count')` now returns the declared `items` strategy
+  rather than `loot`.
+- A script that imports an unsupported rs2b0t value now loads; using that value
+  stops the script with a named `not impl` message instead of a missing-export
+  error at Start.
 - When a catalog script uses an rs2b0t API member this version doesn't
   provide, Start now names the member without saying the catalog is newer
   than this version. Some members of the older API are also missing, so that
   claim could be wrong.
+- Jive Dragons, Jive Demons and Jive KBD imports now pass, and their loot
+  checks know which held items stack, including noted, poisoned and
+  untradeable items. CowKiller uses its supported locations and bank choices.
+- Script authors can call combat and bank helpers such as `facingPlayer`,
+  `resolveCombatStyle` and `resolveBankOpenRoute`.
+- Firemaking supports `parseBurnMode`, `findBurnLane`, spot selection and
+  tree-log helpers.
+- Hunting scripts can use `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
+  `chasesTarget`. Food checks, ranged plans, trade/shop batching, clue-distance,
+  door-walking and mining helpers are also available.
+- Tool helpers keep Attack gates (`toolAttackLevel`, `toolsNeedingEquip`)
+  separate from held-tool selection (`bestHeldToolNames`,
+  `surplusHeldToolNames`). Axe requirements use the upstream level-1 default,
+  and ranged plans honor caller-selected potion choices.
+- Clue and dialog helpers include `pickByLine`, `isUnderground`, `needsHop`,
+  `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
+- Paladin and Hero pickpocket leashes now cover their 289 roaming areas.
+  Quest-only mining rocks stay out of the regular ore options.
+- Public TypeScript declarations cover script completion hooks, task labels and
+  current task names, and the supported `InvItem.noted` flag.
 
 ### Panel
 
@@ -79,9 +104,40 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ### Not in this release
 
-- `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` aren't
-  available yet. A script that calls one of them stops with a `not impl`
-  message naming it.
+- Banking: `purgePackAtBank`, `withdrawCoins`, `bankPace`, `bankPaceTicks`,
+  live `bankSort.sortBank` and walk-cost selectors remain unavailable.
+- Inventory: `backpackSnapshots` and `backpackCapacity` remain unavailable.
+- Woodcutting: script-specific camp data (`WOODCUTTING_LOCATIONS`,
+  `WOODCUTTING_LOCATION_OPTIONS`, `resolveWoodcuttingLocation`) still needs a
+  verified native location catalog.
+- Shop and market: `buildCatalog`, `searchCatalog`, `resolveByName` and
+  `resetLiveCatalog` remain unavailable.
+- Combat: `Fight.hasChaseTarget` remains unavailable.
+- Chatbox: `GameMessages.record`, `reset`, `firstSince` and `recent` remain
+  unavailable. `mark`, `since` and `sawSince` read the host-backed chat
+  snapshot, not a mutable message ring.
+- Paint: direct `PaintFrame` construction, `PaintState`, `paintState`, the
+  frame layout helpers (`cols`, `wrap`, `list`, `fill`, `grid`, `stepper`) and
+  hit-testing helpers remain unavailable; the mutable paint-state family is
+  deferred to the compat rearchitecture.
+- Client adapter: snapshot invalidation, attach/detach, packet listeners,
+  object-catalog reset, loc-model extents, readiness checks, retaliation and
+  modal-control reads, combat-showing threshold and `WELCOME_SCREEN` remain
+  unavailable.
+- Runtime: settings catalogs, `settingOptionLabel`, run-policy helpers,
+  runner lifecycle helpers and `BotHostImpl` remain unavailable.
+- Quest and clue data: murder/suspect tables, clue-visit locations and quest
+  coin/bank rules lack a verified native content source. Their exports remain
+  declared, but using them fails with a named error.
+- Quest, clue and duel behavior: `trailWalkOpts`, `extraItemShop`,
+  `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain
+  unavailable.
+- Bot and pacing helpers: `resolveLoopCadence`, `BranchTask`, `LeafTask` and
+  `stableClosedPoll` remain unavailable; rs2b0t timing is not carried forward.
+- Input: target-use and spell-target methods (`useItemOnLoc`, `useItemOnNpc`,
+  `useItemOnObj`, `useItemOnItem`, `castOnNpc`, `castOnLoc`, `castOnItem`) and
+  `continueDialog` still refuse pending native interaction support.
+- A script that calls one of these stops with a `not impl` message naming it.
 - Fight and Ignore in the random-event Policies control can be chosen but
   aren't available yet; a saved Fight or Ignore is treated as Flee.
 - Running from an angry Strange plant doesn't cure its poison.

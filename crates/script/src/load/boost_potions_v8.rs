@@ -7,10 +7,12 @@
 //! where the frozen loop does and returning the caller's own objects.
 
 use super::callback_v8::{
-    self as cb, call, call_method, get, not_impl, number, Callback, Flow, ForOf, JsResult,
+    self as cb, array_length, call, call_method, get, has_index, not_impl, number, Callback, Flow,
+    ForOf, JsResult, Poll,
 };
 use crate::boost_potions::{
-    boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT, EMPTY_VIAL,
+    boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT,
+    EMPTY_VIAL, RANGING_POTION, SUPER_SET,
 };
 use rustyscript::Runtime;
 
@@ -39,6 +41,7 @@ fn run<'s>(
             Ok(v8::Boolean::new(scope, faded).into())
         }
         "plannedPotions" => planned_potions(scope, args.get(1), args.get(2)),
+        "rangingPlan" => ranging_plan(scope, args.get(1), args.get(2)),
         "potionToSip" => potion_to_sip(scope, args.get(1)),
         _ => Err(not_impl(scope, "boostPotions")),
     }
@@ -49,30 +52,47 @@ fn strings<'s>(scope: &mut v8::HandleScope<'s>, items: &[String]) -> v8::Local<'
     v8::Array::new_with_elements(scope, &values).into()
 }
 
+fn potion_row<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    potion: &BoostPotion,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let skill = cb::string(scope, potion.skill);
+    let short = cb::string(scope, potion.short);
+    let flask = cb::string(scope, &potion.flask());
+    let doses = strings(scope, &potion.doses());
+    cb::object(
+        scope,
+        &[
+            ("skill", skill),
+            ("short", short),
+            ("flask", flask),
+            ("doses", doses),
+        ],
+    )
+}
+
 /// The exported descriptor rows, the floor and the drained flask name.
 fn table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let mut rows = Vec::with_capacity(BOOST_POTIONS.len());
-    for potion in BOOST_POTIONS {
-        let skill = cb::string(scope, potion.skill);
-        let short = cb::string(scope, potion.short);
-        let flask = cb::string(scope, &potion.flask());
-        let doses = strings(scope, &potion.doses());
-        rows.push(cb::object(
-            scope,
-            &[
-                ("skill", skill),
-                ("short", short),
-                ("flask", flask),
-                ("doses", doses),
-            ],
-        )?);
+    let mut rows = Vec::with_capacity(SUPER_SET.len());
+    for potion in SUPER_SET {
+        rows.push(potion_row(scope, potion)?);
     }
-    let potions = v8::Array::new_with_elements(scope, &rows).into();
+    let ranging_potion = potion_row(scope, &RANGING_POTION)?;
+    let potions = v8::Array::new_with_elements(scope, &rows[..BOOST_POTIONS.len()]).into();
+    let super_defence = rows[BOOST_POTIONS.len()];
+    let super_set = v8::Array::new_with_elements(scope, &rows).into();
     let floor = cb::num(scope, BOOST_FLOOR);
     let vial = cb::string(scope, EMPTY_VIAL);
     cb::object(
         scope,
-        &[("potions", potions), ("floor", floor), ("empty_vial", vial)],
+        &[
+            ("potions", potions),
+            ("super_defence", super_defence),
+            ("super_set", super_set),
+            ("ranging_potion", ranging_potion),
+            ("floor", floor),
+            ("empty_vial", vial),
+        ],
     )
 }
 
@@ -98,35 +118,62 @@ fn faded<'s>(
     })
 }
 
-/// Frozen `plannedPotions(carry)`: `BOOST_POTIONS.map(potion => planFor(potion, carry))`.
-/// `descriptors` is the shim's exported `BOOST_POTIONS`, so each plan carries
-/// the exported descriptor object itself.
+/// Frozen `plannedPotions(carry, potions = BOOST_POTIONS)`: map each supplied
+/// descriptor to a plan, preserving its identity and array holes.
 fn planned_potions<'s>(
     scope: &mut v8::HandleScope<'s>,
     carry: v8::Local<'s, v8::Value>,
     descriptors: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let mut plans = Vec::with_capacity(BOOST_POTIONS.len());
-    for (index, potion) in BOOST_POTIONS.iter().enumerate() {
-        let descriptor = cb::get_index(scope, descriptors, index as u32)?;
-        plans.push(plan_for(scope, potion, descriptor, carry)?);
+    let length = array_length(scope, descriptors)?;
+    let plans = v8::Array::new(scope, length as i32);
+    let poll = Poll::default();
+    for index in 0..length {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = planned_iteration(scope, &poll, descriptors, carry, plans, index);
+        cb::iteration(scope, flow)?;
     }
-    Ok(v8::Array::new_with_elements(scope, &plans).into())
+    Ok(plans.into())
 }
 
-/// Frozen `planFor(potion, carry)`: the first carried entry one of whose dose
-/// forms equals `entry.item.trim().toLowerCase()` — the item is re-read per
-/// dose comparison, as the frozen `find` callback does — else the table flask.
+fn planned_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    poll: &Poll,
+    descriptors: v8::Local<'s, v8::Value>,
+    carry: v8::Local<'s, v8::Value>,
+    plans: v8::Local<'s, v8::Array>,
+    index: u32,
+) -> JsResult<'s, Flow<'s>> {
+    poll.check(scope)?;
+    if !has_index(scope, descriptors, index)? {
+        return Ok(Flow::Continue(None));
+    }
+    let descriptor = cb::get_index(scope, descriptors, index)?;
+    let plan = plan_for(scope, descriptor, carry)?;
+    cb::catching(scope, |s| plans.set_index(s, index, plan))?;
+    Ok(Flow::Continue(None))
+}
+
+fn ranging_plan<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    descriptor: v8::Local<'s, v8::Value>,
+    carry: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    plan_for(scope, descriptor, carry)
+}
+
+/// Frozen `planFor(potion, carry)`: the first carried entry whose trimmed,
+/// lowercased item matches one of the descriptor's lowercased dose names;
+/// otherwise return the descriptor's flask.
 fn plan_for<'s>(
     scope: &mut v8::HandleScope<'s>,
-    potion: &BoostPotion,
     descriptor: v8::Local<'s, v8::Value>,
     carry: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let entries = ForOf::open(scope, carry, "carry")?;
     let planned = loop {
         let scope = &mut v8::EscapableHandleScope::new(scope);
-        let flow = plan_iteration(scope, &entries, potion, descriptor);
+        let flow = plan_iteration(scope, &entries, descriptor);
         if let Flow::Break(planned) = cb::iteration(scope, flow)? {
             break planned;
         }
@@ -134,7 +181,7 @@ fn plan_for<'s>(
     if let Some(planned) = planned {
         return Ok(planned);
     }
-    let flask = cb::string(scope, &potion.flask());
+    let flask = get(scope, descriptor, "flask")?;
     let want = cb::num(scope, DEFAULT_WANT as f64);
     cb::object(
         scope,
@@ -146,20 +193,18 @@ fn plan_for<'s>(
 fn plan_iteration<'s>(
     scope: &mut v8::HandleScope<'s>,
     entries: &ForOf<'s>,
-    potion: &BoostPotion,
     descriptor: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, Flow<'s>> {
     let Some(entry) = entries.step(scope)? else {
         return Ok(Flow::Break(None));
     };
-    let matched = matching_dose(scope, potion, entry);
+    let matched = matching_dose(scope, descriptor, entry);
     let Some(flask) = entries.body(scope, matched)? else {
         return Ok(Flow::Continue(None));
     };
     let want = get(scope, entry, "qty");
     let want = entries.body(scope, want)?;
     entries.close(scope)?;
-    let flask = cb::string(scope, &flask);
     let plan = cb::object(
         scope,
         &[("potion", descriptor), ("flask", flask), ("want", want)],
@@ -167,27 +212,49 @@ fn plan_iteration<'s>(
     Ok(Flow::Break(Some(plan)))
 }
 
+/// Frozen `potion.doses.find(d => ...)`, reading the caller's dose values.
 fn matching_dose<'s>(
     scope: &mut v8::HandleScope<'s>,
-    potion: &BoostPotion,
+    descriptor: v8::Local<'s, v8::Value>,
     entry: v8::Local<'s, v8::Value>,
-) -> JsResult<'s, Option<String>> {
-    for dose in potion.doses() {
-        let item = get(scope, entry, "item")?;
-        let trimmed = call_method(scope, item, "trim", &[], "entry.item.trim")?;
-        let key = call_method(
-            scope,
-            trimmed,
-            "toLowerCase",
-            &[],
-            "entry.item.trim(...).toLowerCase",
-        )?;
-        let wanted = cb::string(scope, &dose.to_lowercase());
-        if wanted.strict_equals(key) {
-            return Ok(Some(dose));
+) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
+    let doses = get(scope, descriptor, "doses")?;
+    let length = array_length(scope, doses)?;
+    let poll = Poll::default();
+    for index in 0..length {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = matching_dose_iteration(scope, &poll, doses, entry, index);
+        if let Flow::Break(matched) = cb::iteration(scope, flow)? {
+            return Ok(matched);
         }
     }
     Ok(None)
+}
+
+fn matching_dose_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    poll: &Poll,
+    doses: v8::Local<'s, v8::Value>,
+    entry: v8::Local<'s, v8::Value>,
+    index: u32,
+) -> JsResult<'s, Flow<'s>> {
+    poll.check(scope)?;
+    let dose = cb::get_index(scope, doses, index)?;
+    let wanted = call_method(scope, dose, "toLowerCase", &[], "dose.toLowerCase")?;
+    let item = get(scope, entry, "item")?;
+    let trimmed = call_method(scope, item, "trim", &[], "entry.item.trim")?;
+    let key = call_method(
+        scope,
+        trimmed,
+        "toLowerCase",
+        &[],
+        "entry.item.trim(...).toLowerCase",
+    )?;
+    if wanted.strict_equals(key) {
+        Ok(Flow::Break(Some(dose)))
+    } else {
+        Ok(Flow::Continue(None))
+    }
 }
 
 /// Frozen `potionToSip(s)`:
