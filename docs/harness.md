@@ -134,6 +134,109 @@ blank `HOME` remains explicit.
   scenario's deadline; zero and non-integer values are rejected), per-scenario
   deadlines with a short terminal grace elsewhere. A cell that cannot finish
   inside its bound fails instead of burning the shared engine.
+- **Random-event Guardian cells are the one exception** (operator decision
+  2026-10-14): after the activity's first XP they summon one random event
+  through the engine's own random-event machinery. A random event always
+  appears beside the player, so how it was triggered must not matter to the
+  host. See "Random-event Guardian cells" below.
+
+## Engine test patches
+
+Some cells need a test-only cheat that the stock 289 engine or content lacks.
+The patches, what each adds and how to apply them are in
+[`tools/engine-patches/289/README.md`](../tools/engine-patches/289/README.md).
+A cell that needs a patch the engine lacks ends with outcome `UNAVAILABLE`
+in its evidence JSON, and its message names the patch file. It is never a
+plain FAIL, and it still exits non-zero.
+
+`0001-engine-givebank-cheat.patch` (`::givebank`, engine) is needed by these
+scenario cells, besides the `host-play` live tests that seed a bank:
+
+<!-- engine-patch-cells:0001 -->
+`aio_teleport`, `aio_teleport_falador`, `aio_teleport_no_staff`, `alcher`,
+`alcher_custom`, `alcher_custom_alias`, `alcher_custom_name`,
+`alcher_defaults`, `alcher_dwarven_mine`, `alcher_fire_battlestaff`,
+`alcher_large_batch`, `alcher_low`, `alcher_ordered`, `alcher_swarm_drain`,
+`auto_fighter_bank`, `auto_fighter_food_override`, `auto_fighter_targets`,
+`bank_fletcher`, `bank_fletcher_cut_string`, `bank_fletcher_headless`,
+`bank_fletcher_shafts`, `bank_fletcher_string`, `bone_burier`,
+`bone_burier_v2_js`, `bone_burier_v2_ts`, `brimhaven_moss_inspect_v1`,
+`chaos_druid_bank`, `cook_bot`, `cook_bot_lobster`, `fire_giant_bank`,
+`fire_giant_bank_prepared`, `fire_giant_camelot_prepared`, `flax_aio_spin`,
+`flax_spinner`, `flour_collector`, `gem_cutter`, `gem_cutter_named`,
+`green_dragon_bank`, `green_dragon_bank_default_prepared`,
+`green_dragon_bank_prepared`, `green_dragon_tele`, `herb_cleaner`,
+`herb_cleaner_empty_bank`, `herb_cleaner_named`, `hill_giant_bank`,
+`hill_giant_bank_prepared`, `hill_giant_loot_deposit`, `jive_chests`,
+`jive_crafting`, `jive_demons`, `jive_dragons`, `jive_dragons_black_range`,
+`jive_dragons_potion_restock`, `jive_enchanter`, `jive_kbd`, `jive_kq_four`,
+`moss_giant_bank`, `moss_giant_bank_start`, `moss_giant_dart`, `mule_crafter`,
+`potion_maker`, `potion_maker_named`, `quester_queue`, `ranging_guild_bank`,
+`ranging_guild_full`, `rune_crafter`, `rune_crafter_earth`, `smelter_bot`,
+`smelter_bot_steel`, `superheater`, `superheater_fire_battlestaff`,
+`superheater_mithril`, `superheater_silver_low_natures`, `superheater_steel`,
+`tanner_bot`, `tanner_bot_hard`, `thiever_diagonal_door_trap`, `vial_filler`,
+`vial_filler_east`
+<!-- /engine-patch-cells -->
+
+`0002-content-skill-macro-event-cheat.patch` (`::skill_macro_event`,
+content) is needed by:
+
+<!-- engine-patch-cells:0002 -->
+`guardian_skill_big_fish`, `guardian_skill_ent`, `guardian_skill_gas`,
+`guardian_skill_lost_axe`, `guardian_skill_lost_pickaxe`,
+`guardian_skill_river_troll`, `guardian_skill_rock_golem`,
+`guardian_skill_shade`, `guardian_skill_tree_spirit`,
+`guardian_skill_watchman`, `guardian_skill_whirlpool`, `guardian_skill_zombie`
+<!-- /engine-patch-cells -->
+
+The scenario crate's `every_engine_patch_user_is_documented` test keeps
+these lists in step with what the cells send.
+
+## Random-event Guardian cells
+
+`guardian_event_*` (the eight general events, `::macro_event 1`–`8`) and
+`guardian_skill_*` (the twelve skill events, `::skill_macro_event 1`–`12`)
+check that the host Guardian handles every random event while a low-level
+account (combat level 3, 10 Hitpoints) does real work: the Gatherer fishing at
+Catherby (general events and the fishing events), mining at Varrock East or
+chopping at Draynor, and the catalog BoneBurier and Thiever cards at
+Lumbridge for the prayer and thieving events. Each cell seeds only the
+account's own skill and tool, waits for the activity's first XP, then sends
+the one trigger (again only after the content's busy reply). It never adds an
+NPC itself.
+
+The oracle (`crates/scenario/src/random_episode.rs`) judges the Guardian's
+documented behaviour for the event's class from the host hold and the
+snapshot:
+
+- **Evade** (Swarm, River troll, Rock Golem, Tree spirit, Shade, Zombie,
+  Watchman): the hold rises within five ticks of the attacker targeting the
+  bot; the bot gets past the attacker's content `maxrange + 1` from its start
+  tile; it never moves back toward the start while the attacker still targets
+  it; and the hold is not released before the escape.
+- **Dialogue** (Genie, Drunken Dwarf, Mysterious Old Man): the Guardian
+  engages the NPC, the NPC leaves, and the reward arrives. For the Genie, the
+  lamp is also rubbed (lamp auto, Strength).
+- **Strange plant**: the fruit is picked. **Strange box**: the box is opened
+  and consumed. **Mime and Maze**: the bot is held while trapped and comes
+  back.
+- **Lost pickaxe and axe, big fish**: the lost tool is back in the pack or
+  hand.
+- **Whirlpool, gas rock, ent** have no documented Guardian act: the bot must
+  survive them and keep its tool.
+
+Every cell also fails on a death or on the content's failed-event teleport.
+It passes only when the hold is released and the activity earns fresh XP
+after the event. The terminal evidence carries a `random_event` receipt
+(ticks, tiles, hold edges, attacker start and range, escape distance).
+
+```sh
+ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \
+  isohome target/release/tui-play --profile local-289 \
+  --nav-pack <bake-r2-a.navpack> --nav-flags <bake-r2-a.navflags> \
+  --catalog <rs2b0t> --live script_guardian_skill_river_troll
+```
 
 ## Running a scenario
 
