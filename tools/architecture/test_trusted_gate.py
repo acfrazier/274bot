@@ -1715,6 +1715,32 @@ else:
                         self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), result.stdout)
         print("GOOD §26 syscall attacks are killed in both modes; prepare keeps only local sockets")
 
+    def test_seccomp_killed_probe_has_zero_core_limit(self) -> None:
+        work, payload = self._write_probe_script(
+            "no-core-dump",
+            "import ctypes, os, resource\n"
+            "limit = resource.getrlimit(resource.RLIMIT_CORE)\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    ctypes.CDLL(None).prctl(15, b'F0R5NoCore', 0, 0, 0)\n"
+            "    ctypes.CDLL(None).syscall(321, 0, 0, 0)\n"
+            "    os._exit(0)\n"
+            "_, status = os.waitpid(child, 0)\n"
+            "print(limit, os.WIFSIGNALED(status), os.WTERMSIG(status),"
+            " os.WCOREDUMP(status), flush=True)\n",
+        )
+        for deny_sockets in (True, False):
+            with self.subTest(deny_sockets=deny_sockets):
+                result = gate._isolated_probe(
+                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                )
+                # A piped core_pattern can set WCOREDUMP with a zero limit;
+                # the host storage check is recorded separately.
+                self.assertEqual(
+                    (result.returncode, result.stdout.strip()), (0, "(0, 0) True 31 True"),
+                    result.stdout,
+                )
+
     def test_probe_filter_answers_sched_yield_with_zero_in_every_configuration(self) -> None:
         # The one no-op rule: sched_yield returns 0 and errno 0 instead of killing.
         work, payload = self._write_probe_script(
