@@ -78,9 +78,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   deferred to the compat rearchitecture. Walk-cost bank selectors
   (`nearestWalkableBank`, `nearestWalkableBankAsync`, `bankCostForFinder`,
   `bankCostForNavigator`) also remain unavailable.
+- Script-specific woodcutting camp data (`WOODCUTTING_LOCATIONS`,
+  `WOODCUTTING_LOCATION_OPTIONS` and `resolveWoodcuttingLocation`) remain
+  unavailable pending a verified native location catalog.
 - Shop and market: `buildCatalog`, `searchCatalog`, `resolveByName` and
   `resetLiveCatalog` remain unavailable.
 - Combat: `Fight.hasChaseTarget` remains unavailable.
+- Chatbox: `GameMessages.record` remains unavailable; `mark`, `since` and
+  `sawSince` read the host-backed chat snapshot, not a mutable ring.
+- Paint: `PaintState` and `paintState` remain unavailable; the mutable paint
+  state family is deferred to the compat rearchitecture.
 - Quest, clue and duel behavior: `trailWalkOpts`, `extraItemShop`,
   `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain unavailable.
 - Bot and pacing helpers: `resolveLoopCadence`, `BranchTask`, `LeafTask` and
