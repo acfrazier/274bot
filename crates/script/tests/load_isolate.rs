@@ -5415,13 +5415,21 @@ export default class T extends LoopingBot {
 fn isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
-import { COMMON_BANK_LOOT, RANDOM_EVENT_CASKET_ID, matchesCommonBankLoot, depositMatcher } from '../../api/bank/Banking.js';
+import { COMMON_BANK_LOOT, RANDOM_EVENT_CASKET_ID, matchesCommonBankLoot, depositMatcher, isDisposableGatherJunk, shouldBankNow } from '../../api/bank/Banking.js';
+import { isDisposableGatherJunk as bankRulesDisposable, shouldBankNow as bankRulesShouldBankNow } from '../../api/bank/bankRules.js';
+import { shouldBankNow as publicShouldBankNow } from '@rs2b0t/api';
 export default class T extends LoopingBot {
     loop() {
         let calls = 0;
         const ownTrue = depositMatcher(() => { calls += 1; return true; }, true);
         const ownFalse = depositMatcher(() => { calls += 1; return false; }, false);
         const includeCommon = depositMatcher(() => false, true);
+        let undefined_state_throws = false;
+        try {
+            shouldBankNow('items', undefined);
+        } catch (error) {
+            undefined_state_throws = error instanceof TypeError;
+        }
         globalThis.__common = {
             names: COMMON_BANK_LOOT.slice(),
             sapphire: matchesCommonBankLoot('Uncut sapphire'),
@@ -5430,6 +5438,27 @@ export default class T extends LoopingBot {
             own: ownTrue('Rune scimitar', 1333),
             excluded: ownFalse('Uncut ruby', 1621),
             included: includeCommon('Uncut ruby', 1621),
+            disposableCasket: isDisposableGatherJunk('Mystery box', RANDOM_EVENT_CASKET_ID),
+            disposableFlier: bankRulesDisposable('  fLiEr  ', -1),
+            disposablePie: isDisposableGatherJunk('Half a redberry pie'),
+            disposableTool: bankRulesDisposable('Rune axe', -1),
+            bankAtItems: shouldBankNow('items', {
+                lootCount: 15, itemsThreshold: 15, minutesSinceLastBank: 0, minutesThreshold: 10,
+            }),
+            bankNoLoot: bankRulesShouldBankNow('time', {
+                lootCount: 0, itemsThreshold: 15, minutesSinceLastBank: 10, minutesThreshold: 10,
+            }),
+            publicBankEither: publicShouldBankNow('either', {
+                lootCount: 1, itemsThreshold: 15, minutesSinceLastBank: 10, minutesThreshold: 10,
+            }),
+            bankMissingThresholds: shouldBankNow('items', { lootCount: 5 }),
+            bankStringCount: shouldBankNow('items', {
+                lootCount: '20', itemsThreshold: 15, minutesSinceLastBank: 0, minutesThreshold: 10,
+            }),
+            bankLabelFalse: shouldBankNow('Loot count', {
+                lootCount: 20, itemsThreshold: 15, minutesSinceLastBank: 0, minutesThreshold: 10,
+            }),
+            undefinedStateThrows: undefined_state_throws,
             calls,
         };
         Bank.depositAllMatching(depositMatcher(() => false, true));
@@ -5463,6 +5492,18 @@ export default class T extends LoopingBot {
     assert_eq!(value["own"], true);
     assert_eq!(value["excluded"], false);
     assert_eq!(value["included"], true);
+    assert_eq!(value["disposableCasket"], true);
+    assert_eq!(value["disposableFlier"], true);
+    assert_eq!(value["disposablePie"], true);
+    assert_eq!(value["disposableTool"], false);
+    assert_eq!(value["bankAtItems"], true);
+    assert_eq!(value["bankNoLoot"], false);
+    assert_eq!(value["publicBankEither"], true);
+
+    assert_eq!(value["bankMissingThresholds"], false);
+    assert_eq!(value["bankStringCount"], true);
+    assert_eq!(value["bankLabelFalse"], false);
+    assert_eq!(value["undefinedStateThrows"], true);
     assert_eq!(
         value["calls"], 2,
         "own=true short-circuits the Rust common arm"
@@ -5471,6 +5512,118 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![deposit_all(405, 0, 0)],
         "the observed id reaches the Rust predicate even when its name is unrelated"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_not_implemented_exports_load_and_name_each_call() {
+    let src = r#"
+import { purgePackAtBank, withdrawCoins, bankPace, bankPaceTicks } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        const failures = [];
+        for (const [name, invoke] of [
+            ['purgePackAtBank', () => purgePackAtBank()],
+            ['withdrawCoins', () => withdrawCoins()],
+            ['bankPace', () => bankPace()],
+            ['bankPaceTicks', () => bankPaceTicks()],
+        ]) {
+            try {
+                await invoke();
+                failures.push(`${name}: resolved`);
+            } catch (error) {
+                failures.push(error.message);
+            }
+        }
+        globalThis.__notImplemented = failures;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let failures: serde_json::Value = iso.probe("__notImplemented").unwrap();
+    let failures = failures.as_array().expect("all deferred calls were caught");
+    assert_eq!(failures.len(), 4);
+    for (member, failure) in [
+        "purgePackAtBank",
+        "withdrawCoins",
+        "bankPace",
+        "bankPaceTicks",
+    ]
+    .into_iter()
+    .zip(failures)
+    {
+        assert!(
+            failure
+                .as_str()
+                .is_some_and(|message| message.starts_with(&format!("not impl: {member}"))),
+            "{member} failure: {failure}"
+        );
+    }
+    iso.join();
+}
+
+#[test]
+fn isolate_wait_bank_ready_adapts_existing_bank_wait() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+import { Execution } from '../../api/execution/Execution.js';
+import { waitBankReady } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__closed === undefined) {
+            globalThis.__closed = await waitBankReady();
+            return;
+        }
+        if (globalThis.__closedDuringWait === undefined) {
+            globalThis.__closedDuringWait = await waitBankReady();
+            return;
+        }
+        if (globalThis.__neverArrived === undefined) {
+            globalThis.__readyBeforeTimeout = Bank.ready();
+            const delayUntil = Execution.delayUntil;
+            Execution.delayUntil = async () => false;
+            try {
+                globalThis.__neverArrived = await waitBankReady((message) => {
+                    globalThis.__waitLog = message;
+                });
+            } finally {
+                Execution.delayUntil = delayUntil;
+            }
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__closed").unwrap(), false);
+
+    snap.bank_open = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+
+    snap.bank_open = false;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__closedDuringWait").unwrap(), false);
+
+    // Model the existing wait's timeout outcome without spending its
+    // five-second wall-clock bound; the open bank still has no item list.
+    snap.bank_open = true;
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("__readyBeforeTimeout").unwrap(), false);
+    assert_eq!(iso.probe("__neverArrived").unwrap(), true);
+    assert_eq!(
+        iso.probe("__waitLog").unwrap(),
+        "bank: opened but the item list never arrived"
     );
     iso.join();
 }

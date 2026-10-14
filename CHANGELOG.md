@@ -14,6 +14,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   "dialogue interrupted by combat" and can be retried, and script
   dialogues (`driveDialog` / `talkThrough`) report failure the same way.
 
+### Scripts
+
+- Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
+  `waitBankReady`. The junk check covers gems, strange fruit, beer, kebabs,
+  the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
+  as soon as the bank's item list has arrived; it does not add rs2b0t's extra
+  short pause.
+- When a catalog script uses an rs2b0t API member this version doesn't
+  provide, Start now names the member without saying the catalog is newer
+  than this version. Some members of the older API are also missing, so that
+  claim could be wrong.
+
+### Not in this release
+
+- `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` aren't
+  available yet. A script that calls one of them stops with a `not impl`
+  message naming it.
+
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 
 ### Scripts

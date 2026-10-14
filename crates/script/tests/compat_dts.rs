@@ -443,10 +443,34 @@ fn tsc_generated_bank_tree_resolves_sibling_imports() {
     fs::write(
         &consumer,
         r#"
-import { Banking, PERIODIC_BANK_SETTINGS, depositAllExcept } from "./api/bank/Banking.js";
+import {
+  Banking,
+  PERIODIC_BANK_SETTINGS,
+  depositAllExcept,
+  isDisposableGatherJunk,
+  shouldBankNow,
+  waitBankReady,
+} from "./api/bank/Banking.js";
+import {
+  type BankTriggerState,
+  isDisposableGatherJunk as bankRulesDisposable,
+  shouldBankNow as bankRulesShouldBankNow,
+} from "./api/bank/bankRules.js";
 
 void Banking.open();
 void depositAllExcept(["junk"]);
+const state: BankTriggerState = {
+  lootCount: 15,
+  minutesSinceLastBank: 0,
+  itemsThreshold: 15,
+  minutesThreshold: 10,
+};
+const bankNow: boolean = shouldBankNow("items", state);
+const bankRulesNow: boolean = bankRulesShouldBankNow("either", state);
+const junk: boolean = isDisposableGatherJunk("Flier");
+const bankRulesJunk: boolean = bankRulesDisposable("Uncut sapphire");
+const bankReady: Promise<boolean> = waitBankReady();
+void [bankNow, bankRulesNow, junk, bankRulesJunk, bankReady];
 const settings: typeof PERIODIC_BANK_SETTINGS = PERIODIC_BANK_SETTINGS;
 void settings;
 // @ts-expect-error periodic bank settings are structured data, not a number

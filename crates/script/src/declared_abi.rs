@@ -453,8 +453,9 @@ const REEXPORTS: &[Reexport] = &[
             "PERIODIC_BANK_SETTINGS",
             "RANDOM_EVENT_CASKET_ID",
             "parseBankStrategy",
+            "shouldBankNow",
         ],
-        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy } from '../../api/bank/Banking.js';",
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
     },
     Reexport {
         names: &["reader"],
