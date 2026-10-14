@@ -2246,9 +2246,7 @@ def _seam_records(
                     if resolved is not None:
                         return resolved
 
-        if segments[0] not in {"crate", "self", "super"}:
-            if module_path in seen_globs and module_globs.get(module_path):
-                return ("ambiguous", module_path, segments[0])
+        if segments[0] not in {"crate", "self", "super"} and module_path not in seen_globs:
             glob_matches: set[tuple[str, Any, str | None]] = set()
             unknown_glob = False
             for glob_target in module_globs.get(module_path, []):
