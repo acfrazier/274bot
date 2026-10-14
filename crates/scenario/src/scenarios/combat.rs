@@ -63,7 +63,7 @@ const ROCK_CRAB_SPOT: WorldTile = WorldTile {
     z: 3726,
     level: 0,
 };
-const SEERS_BANK: WorldTile = WorldTile {
+pub(super) const SEERS_BANK: WorldTile = WorldTile {
     x: 2725,
     z: 3491,
     level: 0,

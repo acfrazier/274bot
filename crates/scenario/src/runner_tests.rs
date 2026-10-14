@@ -3119,14 +3119,14 @@ fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
     runner.set_scene_settle(Duration::ZERO);
     runner.tick(&mut c);
     assert!(
-        runner.fresh_tutorial_baseline.is_some(),
+        runner.fresh_chat_baseline.is_some(),
         "the step-start snapshot must latch a baseline"
     );
     c.ingame = false;
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     runner.tick(&mut c);
     assert_eq!(
-        runner.fresh_tutorial_baseline, None,
+        runner.fresh_chat_baseline, None,
         "leaving the session clears the step-local tutorial baseline"
     );
 }

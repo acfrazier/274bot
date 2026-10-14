@@ -9582,7 +9582,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
             !n.nsew_labels && !n.component_flood,
             "{name} must not force NSEW / flood"
         );
-        if name == "nav_door" || name == "nav_shantay" {
+        if matches!(name, "nav_door" | "nav_shantay" | "nav_mage_arena_bank") {
             assert!(
                 n.engine_speed_ms.is_none(),
                 "{name} keeps Engine A at 600ms without sending ::speed"
@@ -9596,7 +9596,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
 #[test]
 fn nav_shantay_walks_exactly_through_both_henge_branches() {
     let s = get("nav_shantay").expect("nav_shantay");
-    assert_eq!(s.steps.len(), 4);
+    assert_eq!(s.steps.len(), 9);
     for (index, expected) in [
         (
             1,
@@ -9629,6 +9629,147 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
+    // Upstream tail (shantay-pass-route-test): the Varrock walk from the
+    // desert start with 10 coins must latch the crossing-tile watcher and
+    // end inside the Varrock radius, with the toll paid.
+    let StepKind::Walk { dest } = &s.steps[6].kind else {
+        panic!("tail step 6 must be the Varrock WalkTo");
+    };
+    assert_eq!(
+        *dest,
+        WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0
+        }
+    );
+    assert!(matches!(
+        s.steps[6].wait.arm,
+        Proof::VisitedWithin {
+            min_x: 3300,
+            max_x: 3306,
+            min_z: 3118,
+            max_z: 3122,
+            level: 0
+        }
+    ));
+    assert!(matches!(
+        s.steps[5].wait.arm,
+        Proof::ItemId { count: 10, .. }
+    ));
+    assert!(matches!(
+        s.steps[8].wait.arm,
+        Proof::ItemIdAtMost { count: 0, .. }
+    ));
+}
+
+#[test]
+fn nav_mage_arena_bank_walks_the_wilderness_lever_then_banks_with_gundai() {
+    let s = get("nav_mage_arena_bank").expect("nav_mage_arena_bank is registered");
+    assert_eq!(s.steps.len(), 9);
+    assert_eq!(s.seed.profiles, vec![("test", "test")]);
+    assert!(s.seed.mainland);
+    assert!(matches!(s.proof, Proof::BankOpen));
+    assert!(s.settings.nav.allow_teleports && s.settings.nav.allow_wilderness);
+    assert!(
+        s.settings.nav.engine_speed_ms.is_none(),
+        "the mage route keeps Engine A at 600ms without ::speed"
+    );
+    assert_eq!(s.settings.deadline, Duration::from_secs(600));
+    let index = |name: &str| {
+        s.steps
+            .iter()
+            .position(|step| step.name.starts_with(name))
+            .unwrap_or_else(|| panic!("step {name:?} missing"))
+    };
+    // Wield before the walk: the webs need a worn slash weapon (upstream).
+    assert!(index("wield the rune scimitar") < index("walk to the Mage Arena cellar"));
+    assert!(index("teleport outside Ardougne") < index("walk to the Mage Arena cellar"));
+    let walk = &s.steps[index("walk to the Mage Arena cellar")];
+    let StepKind::Walk { dest } = &walk.kind else {
+        panic!("the cellar step must be a nav Walk");
+    };
+    assert_eq!(
+        *dest,
+        WorldTile {
+            x: 2542,
+            z: 4714,
+            level: 0
+        }
+    );
+    // Upstream's Wilderness-lever sighting: lever (3154,3924) +/-8, Chebyshev.
+    assert!(matches!(
+        walk.wait.arm,
+        Proof::VisitedWithin {
+            min_x: 3146,
+            max_x: 3162,
+            min_z: 3916,
+            max_z: 3932,
+            level: 0
+        }
+    ));
+    assert_eq!(walk.wait.budget_ticks, 800);
+    assert!(matches!(
+        s.steps[s.steps.len() - 1].wait.arm,
+        Proof::BankOpen
+    ));
+    assert!(names().contains(&"nav_mage_arena_bank"));
+}
+
+#[test]
+fn flour_collector_seeds_thirty_pots_then_proves_both_loads_at_seers() {
+    let s = get("flour_collector").expect("flour_collector is registered");
+    assert_eq!(s.settings.start_script, Some("FlourCollector"));
+    assert!(s.settings.require_mainland_base);
+    assert_eq!(s.settings.deadline, Duration::from_secs(480));
+    assert!(matches!(s.proof, Proof::ItemId { id: 1933, count: 1 }));
+    // Upstream's quest gate: a fresh post-relog `getvar murderquest 1` reply.
+    let quest = s
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("set Murder Mystery"))
+        .expect("quest gate step");
+    assert!(matches!(
+        s.steps[quest].wait.arm,
+        Proof::FreshChat {
+            needle: "get murderquest: 1"
+        }
+    ));
+    // Upstream's seed: 30 empty pots banked at Seers, none in the pack or bank as flour.
+    assert!(
+        s.steps.iter().any(|step| matches!(
+            step.wait.arm,
+            Proof::BankItemId {
+                id: 1931,
+                count: 30
+            }
+        )),
+        "the exact 30-pot seed must be proven in the bank before Start"
+    );
+    // Upstream's per-load counts: 28 pots withdrawn and filled, 2 restocked.
+    for expected in [
+        Proof::ItemId {
+            id: 1931,
+            count: 28,
+        },
+        Proof::ItemId {
+            id: 1933,
+            count: 28,
+        },
+        Proof::BankItemId {
+            id: 1933,
+            count: 28,
+        },
+        Proof::ItemId { id: 1931, count: 2 },
+    ] {
+        assert!(
+            s.steps
+                .iter()
+                .any(|step| step.wait.arm.name() == expected.name()),
+            "missing step proof {}",
+            expected.name()
+        );
+    }
 }
 
 #[test]
