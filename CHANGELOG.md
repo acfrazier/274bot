@@ -15,6 +15,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   of logs, and the many others that stop when they run out of supplies —
   now end cleanly with their reason in the log instead of failing with
   "requestFinish is not a function".
+- Catalog combat scripts that group or customize their Loadout setting
+  (ArdyFighter, ChaosDruidKiller, FireGiant, GreenDragon, HillGiant,
+  JiveDemons, JiveDragons, JiveKBD, MossGiant and RockCrab) now show a
+  working Loadout picker in the panel and TUI and check your saved loadout
+  before Start, instead of showing an uneditable `unsupported type` row or
+  starting and failing when no loadouts exist.
+- Opening a shop (rs2b0t `Shop.open`, used for JiveKQ's Shantay pass and
+  by other shop scripts) now sends one Trade click and waits for the
+  measured walk to the shopkeeper plus a margin before clicking again. Each
+  wait is capped at about 70 seconds. Before, it clicked again after 3
+  seconds, and on a longer walk that second click could close the shop as it
+  opened, so the purchase failed. When the bot can't measure the walk, it
+  uses the full wait. A shopkeeper behind a closed door is walked to first.
+  A shop that doesn't open still gets up to three Trade clicks, and "I can't reach that!" ends a click at once. Quester shop
+  purchases follow the same rule, and their buy steps no longer give up
+  after 10 seconds.
+- Known limit: being attacked while a shop or bank window is open closes
+  the window on every hit, even a miss, and the bot doesn't react to
+  attackers yet.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 

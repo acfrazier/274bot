@@ -549,3 +549,274 @@ export default class Herblore {}
         ["Eye of newt", "Unicorn horn"]
     );
 }
+
+#[test]
+fn setting_def_spread_matches_bare_constant_plus_overridden_keys() {
+    let bare_src = r#"
+export const SETTINGS = {
+    loadout: LOADOUT_SETTING,
+};
+"#;
+    let group_spread_src = r#"
+export const SETTINGS = {
+    loadout: { ...LOADOUT_SETTING, group: 'Food & healing' },
+};
+"#;
+    let help_spread_src = r#"
+export const SETTINGS = {
+    loadout: { ...LOADOUT_SETTING, help: 'gear to wear, defined in the Loadouts panel; its food is ignored, this bot eats what it steals from the Baker\'s stall' },
+};
+"#;
+    let bare = setting(&settings_schema_from_source(bare_src), "loadout").clone();
+    let group_spread = setting(&settings_schema_from_source(group_spread_src), "loadout").clone();
+    let mut expected_group = bare.clone();
+    expected_group.group = Some("Food & healing".into());
+    assert_eq!(group_spread, expected_group);
+
+    let help_spread = setting(&settings_schema_from_source(help_spread_src), "loadout").clone();
+    let mut expected_help = bare;
+    expected_help.help = Some(
+        "gear to wear, defined in the Loadouts panel; its food is ignored, this bot eats what it steals from the Baker's stall"
+            .into(),
+    );
+    assert_eq!(help_spread, expected_help);
+}
+
+#[test]
+fn setting_def_spread_override_order_follows_js_object_spread_semantics() {
+    let src = r#"
+export const BASE_NUM = {
+    type: 'number',
+    default: 10,
+    min: 1,
+    max: 50,
+    label: 'Base label',
+    help: 'Base help',
+};
+export const SECOND_OVERRIDE = {
+    default: 20,
+    max: 100,
+    group: 'From second spread',
+};
+export const SETTINGS = {
+    spreadWinsOverEarlierKey: {
+        label: 'Overwritten by spread',
+        group: 'Survives because BASE_NUM has no group',
+        ...BASE_NUM,
+    },
+    laterKeyWinsOverSpread: {
+        ...BASE_NUM,
+        label: 'Explicit label wins',
+        default: 25,
+        max: 99,
+    },
+    chainedSpreadsAndKeys: {
+        min: 0,
+        ...BASE_NUM,
+        min: 5,
+        ...SECOND_OVERRIDE,
+        help: 'Final help wins',
+    },
+};
+"#;
+    let schema = try_settings_schema_from_source(src).expect("valid spreads parse");
+    let first = setting(&schema, "spreadWinsOverEarlierKey");
+    assert_eq!(first.ty, "number");
+    assert_eq!(first.default.as_deref(), Some("10"));
+    assert_eq!(first.min.as_deref(), Some("1"));
+    assert_eq!(first.max.as_deref(), Some("50"));
+    assert_eq!(first.label.as_deref(), Some("Base label"));
+    assert_eq!(first.help.as_deref(), Some("Base help"));
+    assert_eq!(
+        first.group.as_deref(),
+        Some("Survives because BASE_NUM has no group")
+    );
+
+    let second = setting(&schema, "laterKeyWinsOverSpread");
+    assert_eq!(second.ty, "number");
+    assert_eq!(second.default.as_deref(), Some("25"));
+    assert_eq!(second.min.as_deref(), Some("1"));
+    assert_eq!(second.max.as_deref(), Some("99"));
+    assert_eq!(second.label.as_deref(), Some("Explicit label wins"));
+    assert_eq!(second.help.as_deref(), Some("Base help"));
+
+    let chained = setting(&schema, "chainedSpreadsAndKeys");
+    assert_eq!(chained.ty, "number");
+    assert_eq!(chained.default.as_deref(), Some("20"));
+    assert_eq!(chained.min.as_deref(), Some("5"));
+    assert_eq!(chained.max.as_deref(), Some("100"));
+    assert_eq!(chained.label.as_deref(), Some("Base label"));
+    assert_eq!(chained.group.as_deref(), Some("From second spread"));
+    assert_eq!(chained.help.as_deref(), Some("Final help wins"));
+}
+
+#[test]
+fn unresolvable_setting_def_spread_refuses_naming_the_setting_and_never_emits_untyped() {
+    for (label, src) in [
+        (
+            "unknown ident",
+            r#"
+export const SETTINGS = {
+    before: { type: 'boolean', default: true },
+    loadout: { ...UNKNOWN_SETTING_CONST, group: 'Food & healing' },
+    after: { type: 'boolean', default: false },
+};
+"#,
+        ),
+        (
+            "call expression spread",
+            r#"
+export const SETTINGS = {
+    loadout: { ...makeLoadoutSetting(), group: 'Food & healing' },
+};
+"#,
+        ),
+        (
+            "cyclic setting spread",
+            r#"
+export const CYCLE_A = { ...CYCLE_B, group: 'A' };
+export const CYCLE_B = { ...CYCLE_A, type: 'string' };
+export const SETTINGS = {
+    loadout: { ...CYCLE_A },
+};
+"#,
+        ),
+        (
+            "schema-level spread inside setting def",
+            r#"
+export const SETTINGS = {
+    loadout: { ...PERIODIC_BANK_SETTINGS, group: 'Banking' },
+};
+"#,
+        ),
+    ] {
+        let err =
+            try_settings_schema_from_source(src).expect_err(&format!("{label} must fail closed"));
+        assert!(
+            err.contains("loadout"),
+            "{label}: refusal must name the setting, got {err:?}"
+        );
+        let fallback = settings_schema_from_source(src);
+        assert!(
+            fallback.iter().all(|def| !def.ty.is_empty()),
+            "{label}: must never emit an untyped setting: {fallback:?}"
+        );
+        assert!(
+            fallback.is_empty(),
+            "{label}: failed schema must not publish partial settings: {fallback:?}"
+        );
+    }
+}
+
+#[test]
+fn rock_crab_catalog_shaped_fixture_expands_loadout_spread_and_populates_bag() {
+    let src = r#"
+import { LOADOUT_SETTING } from '../../api/loadout/loadoutSetting.js';
+import { PERIODIC_BANK_SETTINGS } from '../../api/bank/Banking.js';
+import { CUSTOM_RANGED_SETTINGS } from '../../api/combat/rangedSettings.js';
+
+const SHOW_MAGE = { key: 'combatStyle', anyOf: ['mage'] };
+const SHOW_RANGE = { key: 'combatStyle', anyOf: ['range'] };
+const AMMO_OPTIONS = ['Bronze arrow', 'Iron arrow'];
+
+export const SETTINGS: SettingsSchema = {
+    combatStyle: { type: 'string', default: 'melee', options: ['melee', 'mage', 'range'], label: 'Combat style' },
+    staff: { type: 'string', default: 'Staff of air', options: STAFFS, label: 'Staff', group: 'Combat', showIf: SHOW_MAGE },
+    bow: { type: 'string', default: 'Maple shortbow', options: [...ROCK_CRAB_RANGED_WEAPONS, 'Other'], label: 'Ranged weapon', group: 'Combat', showIf: SHOW_RANGE },
+    ammo: { type: 'string', default: 'Bronze arrow', options: [...AMMO_OPTIONS, 'Other'], label: 'Bow ammo', group: 'Combat', showIf: SHOW_RANGE },
+    ...CUSTOM_RANGED_SETTINGS,
+    loadout: { ...LOADOUT_SETTING, group: 'Food & healing' },
+    foodWithdraw: { type: 'number', default: 20, min: 1, max: 27, label: 'Food to withdraw per bank run', group: 'Food & healing' },
+    ...Object.fromEntries(Object.entries(PERIODIC_BANK_SETTINGS).map(([key, def]) => [key, { ...def, group: 'Banking & loot' }])),
+    solveClues: { type: 'boolean', default: true, label: 'Solve easy clues', group: 'Clues' }
+};
+"#;
+    let schema = try_settings_schema_from_source(src).expect("RockCrab schema parses");
+    let loadout = setting(&schema, "loadout");
+    assert_eq!(loadout.ty, "string");
+    assert_eq!(loadout.default.as_deref(), Some(""));
+    assert_eq!(loadout.label.as_deref(), Some("Loadout"));
+    assert_eq!(loadout.options_from.as_deref(), Some("loadouts"));
+    assert_eq!(loadout.group.as_deref(), Some("Food & healing"));
+    assert!(loadout.help.as_deref().unwrap_or("").contains("loadout"));
+
+    let bag = crate::merge_bag(&schema, &serde_json::Map::new(), None);
+    assert_eq!(
+        bag.get("loadout"),
+        Some(&serde_json::json!("")),
+        "default bag must carry loadout='' so pre-Start loadout validation runs"
+    );
+    let empty_loadouts: [crate::Loadout; 0] = [];
+    let err = crate::loadouts_store::resolve_script_loadout_setting(
+        &empty_loadouts,
+        bag.get("loadout").and_then(|v| v.as_str()),
+    )
+    .expect_err("empty loadouts store must refuse before Start");
+    assert!(
+        err.to_string().contains("no loadouts exist"),
+        "unexpected error: {err}"
+    );
+}
+#[test]
+fn nested_metadata_cannot_supply_outer_setting_fields() {
+    let missing_type = "const BASE = { metadata: { type: 'string', default: '' } }; export const SETTINGS = { loadout: { ...BASE, group: 'Food' } };";
+    let error = try_settings_schema_from_source(missing_type)
+        .expect_err("nested type must not satisfy the setting's required outer type");
+    assert!(
+        error.contains("loadout") && error.contains("missing setting type"),
+        "{error}"
+    );
+
+    let nested_fields = r#"
+export const SETTINGS = {
+    choice: {
+        type: 'string',
+        metadata: {
+            default: '',
+            label: 'Nested label',
+            group: 'Nested group',
+            help: 'Nested help',
+            min: 1,
+            options: ['nested'],
+            optionsFrom: 'loadouts'
+        }
+    }
+};
+"#;
+    let schema = try_settings_schema_from_source(nested_fields).expect("outer type is present");
+    let choice = setting(&schema, "choice");
+    assert_eq!(choice.default, None);
+    assert_eq!(choice.label, None);
+    assert_eq!(choice.group, None);
+    assert_eq!(choice.help, None);
+    assert_eq!(choice.min, None);
+    assert!(choice.options.is_empty());
+    assert_eq!(choice.options_from, None);
+}
+
+#[test]
+fn nested_default_label_cannot_override_the_outer_label() {
+    let src = "const BASE = { type: 'tile', default: { x: 1, z: 2, level: 0, label: 'Nested' } }; export const SETTINGS = { stand: { ...BASE, label: 'Actual stand' } };";
+    let schema = try_settings_schema_from_source(src).expect("setting parses");
+    let stand = setting(&schema, "stand");
+    assert_eq!(stand.label.as_deref(), Some("Actual stand"));
+    assert_eq!(
+        stand.default, None,
+        "an unsupported object default must not leak one of its nested strings"
+    );
+}
+
+#[test]
+fn a_later_spread_replaces_nested_setting_properties_shallowly() {
+    let src = r#"
+const BASE = { type: 'string', default: '', showIf: { key: 'mode', anyOf: ['x'] } };
+const LATER = { showIf: { key: 'other', equals: 'y' } };
+export const SETTINGS = { choice: { ...BASE, ...LATER } };
+"#;
+    let schema = try_settings_schema_from_source(src).expect("setting parses");
+    assert_eq!(
+        setting(&schema, "choice").show_if.as_deref(),
+        Some("{ key: 'other', equals: 'y' }"),
+        "the later nested object replaces the earlier value instead of merging"
+    );
+}

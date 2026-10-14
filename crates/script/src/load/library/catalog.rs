@@ -22,6 +22,22 @@ impl JsLibrary {
         crate::rs2b0t_registry::insert_shop_db_from_root(sources, root);
     }
 
+    fn registry_sources(
+        root: &Path,
+        cards: &[crate::rs2b0t_registry::RegistryCard],
+    ) -> HashMap<String, String> {
+        let mut sources = HashMap::new();
+        for card in cards {
+            let Some(path) = script_file_path(root, &card.rel_path) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(path) {
+                sources.insert(card.rel_path.clone(), text);
+            }
+        }
+        sources
+    }
+
     /// Fill the library from the `$RS2B0T` catalog: statically parse
     /// `root/src/bot/scripts/index.ts` and register each script as a card
     /// under its register name (which may differ from the folder). Sources
@@ -36,15 +52,7 @@ impl JsLibrary {
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let registry_cards = parse_registry_with_sources(&index_ts, &HashMap::new())
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
-        let mut sources = HashMap::new();
-        for reg in &registry_cards {
-            let Some(path) = script_file_path(root, &reg.rel_path) else {
-                continue;
-            };
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                sources.insert(reg.rel_path.clone(), text);
-            }
-        }
+        let mut sources = Self::registry_sources(root, &registry_cards);
         Self::complete_catalog_sources(&mut sources, root);
         let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
@@ -129,8 +137,47 @@ impl JsLibrary {
                 self.note_card_outcome(&last);
             }
         }
+        self.catalog_root = Some(root.to_path_buf());
         let _ = persist_rs2b0t_root_at(root, path_file);
         Ok(n)
+    }
+
+    pub(crate) fn resolve_catalog_settings_schema(
+        &self,
+        name: &str,
+        card_path: &Path,
+        candidate_origin: &str,
+    ) -> Result<Vec<crate::rs2b0t_registry::SettingDef>, String> {
+        let root = self
+            .catalog_root
+            .as_deref()
+            .ok_or_else(|| format!("catalog {name}: registry root is unavailable"))?;
+        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let index_ts = std::fs::read_to_string(&index)
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let registry_cards = parse_registry_with_sources(&index_ts, &HashMap::new())
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let registered = registry_cards
+            .iter()
+            .find(|card| card.name == name)
+            .ok_or_else(|| format!("catalog {name}: registry entry no longer exists"))?;
+        let registered_path = script_file_path(root, &registered.rel_path)
+            .ok_or_else(|| format!("catalog {name}: registry source path is invalid"))?;
+        if registered_path != card_path {
+            return Err(format!(
+                "catalog {name}: registry source path changed; refresh the catalog before preparing"
+            ));
+        }
+
+        let mut sources = Self::registry_sources(root, &registry_cards);
+        sources.insert(registered.rel_path.clone(), candidate_origin.to_string());
+        Self::complete_catalog_sources(&mut sources, root);
+        let card = parse_registry_with_sources(&index_ts, &sources)
+            .map_err(|e| format!("catalog {name}: {e}"))?
+            .into_iter()
+            .find(|card| card.name == name)
+            .ok_or_else(|| format!("catalog {name}: registry entry no longer resolves"))?;
+        Ok(card.settings_schema)
     }
     /// Diff `$RS2B0T` against registered catalog cards without clearing them.
     /// Does not rewrite the persisted catalog path.
