@@ -12912,14 +12912,38 @@ fn jive_terminal_proofs_are_not_their_own_seed() {
             .steps
             .iter()
             .any(|step| matches!(step.wait.arm, Proof::BankItemId { id: 379, count: 35 })),
-        "restock watches the exact 35-lobster bank outcome"
+        "restock watches the bank reach at least 35 lobsters"
+    );
+    let noted_gone = restock
+        .steps
+        .iter()
+        .position(|step| matches!(step.wait.arm, Proof::ItemIdAtMost { id: 380, count: 0 }))
+        .expect("restock watches the noted lobsters leave the pack");
+    let bank_at_most = restock
+        .steps
+        .iter()
+        .position(|step| {
+            matches!(
+                step.wait.arm,
+                Proof::BankItemIdAtMost { id: 379, count: 35 }
+            )
+        })
+        .expect("restock re-reads the bank at at most 35 lobsters");
+    assert!(
+        bank_at_most > noted_gone,
+        "the at-most bank check runs after the withdraw watches, pinning exactly 35"
     );
     let demons = get("jive_demons").expect("jive_demons");
     assert!(
-        demons
+        !demons
             .steps
             .iter()
-            .any(|step| matches!(step.wait.arm, Proof::BankItemIdAny { count: 1, .. })),
-        "demons gate on a banked item from the content drop set"
+            .any(|step| matches!(step.wait.arm, Proof::BankItemIdAny { .. })),
+        "demons must not gate on a chance drop: only Ashes are guaranteed"
+    );
+    assert_eq!(
+        demons.proof,
+        Proof::StatXpGain { id: 4, min: 1 },
+        "demons' function proof is Ranged XP from the fight"
     );
 }
