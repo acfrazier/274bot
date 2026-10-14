@@ -50,7 +50,10 @@ the order of `branches.conf`:
    (accounts are minted as `nt<token>_<i>`). Each cell enforces its own scenario
    deadline inside `tui-play`; the runner only adds an outer cap
    (`NIGHTLY_CELL_CAP_S`, default 3600 s) for a process that never reaches a
-   terminal state.
+   terminal state. A paired proof (two driven slots) refuses to start without
+   the pair witness and says so (`… only qualifies under the pair core gate`);
+   the runner then starts it again with `--pair-core` and records
+   `"gate": "--pair-core"` in its row.
 6. Stops the engine, copies its log, and writes `summary.json`, `summary.md` and
    then `DONE`.
 
