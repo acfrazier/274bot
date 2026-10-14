@@ -237,6 +237,20 @@ jobs:
           dpkg-deb -x "$sandbox_dir/bubblewrap.deb" "$sandbox_dir"
           echo "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71  $sandbox_dir/usr/bin/bwrap" | sha256sum --check -
           test "$("$sandbox_dir/usr/bin/bwrap" --version)" = "bubblewrap 0.9.0"
+          profile_file="$RUNNER_TEMP/f0-pinned-bwrap.apparmor"
+          cat > "$profile_file" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile f0-pinned-bwrap "$sandbox_dir/usr/bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$profile_file"
+          "$sandbox_dir/usr/bin/bwrap" \
+            --unshare-user --unshare-pid --unshare-ipc --unshare-net \
+            --new-session --die-with-parent --clearenv \
+            --ro-bind / / --proc /proc --dev /dev --tmpfs /tmp \
+            -- /bin/true
           echo "$sandbox_dir/usr/bin" >> "$GITHUB_PATH"
       - name: Install pinned flatc
         env:
