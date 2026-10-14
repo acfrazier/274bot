@@ -20,8 +20,8 @@ pub const COMMON_BANK_LOOT: &[&str] = &[
     "kebab",
 ];
 
-/// Selected random-event fishing casket id, or no identity without selected
-/// game data.
+/// Selected random-event casket id from game data, or `None` when no revision
+/// is selected. R289 `content/pack/obj.pack:406` records `405=casket`.
 pub fn random_event_casket_id(data: Option<&crate::game_data::SelectedGameData>) -> Option<i32> {
     data.and_then(|data| data.item_by_alias("casket"))
         .map(|item| item.id)

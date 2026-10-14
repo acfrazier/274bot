@@ -19,6 +19,10 @@ export function isFoodItem(name, foodName) {
     return foodForms(foodName).includes(String(name ?? '').toLowerCase());
 }
 
+export function isEdibleFood(item, foodName) {
+    return globalThis.__rs2b0t_food_is_edible(item, foodName);
+}
+
 export function foodCount(items, foodName) {
     if (!Array.isArray(items)) return 0;
     if (items.length === 0) return 0;

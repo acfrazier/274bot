@@ -54,3 +54,23 @@ export function notedId(_cat, id) {
 export function unnotedId(_cat, id) {
     return selected('unnotedId', facts('cert-link', id, 'unnoted')) ?? id;
 }
+
+export function worthStocking(name) {
+    return facts('worth-stocking', name);
+}
+
+export function buildCatalog() {
+    throw notImpl('buildCatalog');
+}
+
+export function searchCatalog() {
+    throw notImpl('searchCatalog');
+}
+
+export function resolveByName() {
+    throw notImpl('resolveByName');
+}
+
+export function resetLiveCatalog() {
+    throw notImpl('resetLiveCatalog');
+}

@@ -675,3 +675,23 @@ impl<'s> ForOf<'s> {
         }
     }
 }
+pub(crate) fn array_length<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    array: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, u32> {
+    let length = get(scope, array, "length")?;
+    let length = number(scope, length)?;
+    Ok(if length.is_nan() || length <= 0.0 {
+        0
+    } else {
+        length.min(f64::from(u32::MAX)) as u32
+    })
+}
+
+pub(crate) fn has_index<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    array: v8::Local<'s, v8::Value>,
+    index: u32,
+) -> JsResult<'s, bool> {
+    catching(scope, |s| array.to_object(s)?.has_index(s, index))
+}

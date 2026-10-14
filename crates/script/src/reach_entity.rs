@@ -49,6 +49,17 @@ struct Tile {
     level: i32,
 }
 
+/// Frozen `isUnderground` / `needsHop` (`primitives.ts:51-56`), shared with
+/// the native walk-hops tile rule below.
+const UNDERGROUND_Z_MIN: f64 = 5_000.0;
+
+pub(crate) fn is_underground_z(z: f64) -> bool {
+    z >= UNDERGROUND_Z_MIN
+}
+
+pub(crate) fn needs_hop_z(here_z: f64, anchor_z: f64) -> bool {
+    is_underground_z(here_z) != is_underground_z(anchor_z)
+}
 impl Tile {
     fn world(self) -> WorldTile {
         WorldTile {
@@ -74,7 +85,7 @@ impl Tile {
 
     /// Frozen `isUnderground`.
     fn underground(self) -> bool {
-        self.z >= 5000
+        is_underground_z(f64::from(self.z))
     }
 }
 

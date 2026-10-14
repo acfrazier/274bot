@@ -1,6 +1,21 @@
 // Thin reader/actions (ClientAdapter shape). Scene views read the posted
 // snapshot; missing members throw `not impl` — never a fake value.
-import { snap, queue, proxy, optionalText, notImpl } from '../shim/_kernel.js';
+import { snap, queue, proxy, optionalText, notImpl, notImplValue } from '../shim/_kernel.js';
+
+export function invalidateLocSnapshots() { throw notImpl('invalidateLocSnapshots'); }
+export function detach() { throw notImpl('detach'); }
+export function activeStatsReady(baseLevels) { throw notImpl('activeStatsReady'); }
+export function currentLoginStatsReady(baseLevels, seenGenerations, sessionGeneration) { throw notImpl('currentLoginStatsReady'); }
+export function locHullHeight(model) { throw notImpl('locHullHeight'); }
+export function resolveLocModelExtents(src) { throw notImpl('resolveLocModelExtents'); }
+export function attach(client) { throw notImpl('attach'); }
+export function setPacketListener(cb) { throw notImpl('setPacketListener'); }
+export function resetObjCatalog() { throw notImpl('resetObjCatalog'); }
+export function readRetaliateControls() { throw notImpl('readRetaliateControls'); }
+export function readModalButtons(rootComId) { throw notImpl('readModalButtons'); }
+export function readSelectButtonLabelsByVarp(rootComId, varp) { throw notImpl('readSelectButtonLabelsByVarp'); }
+export function combatShowingThreshold(deltimeMs) { throw notImpl('combatShowingThreshold'); }
+export const WELCOME_SCREEN = notImplValue('WELCOME_SCREEN');
 
 const host = () => globalThis.__rs2b0t_host || {};
 
@@ -225,6 +240,10 @@ export const reader = proxy('reader', {
         );
         return row ? row.component_id : -1;
     },
+    objCatalog() {
+        return globalThis.__rs2b0t_selected_facts('obj-records');
+    },
+
     bankComId() {
         throw notImpl('reader.bankComId');
     },
