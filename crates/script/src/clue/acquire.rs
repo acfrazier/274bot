@@ -67,18 +67,48 @@ pub(super) fn trio_plan<'a>(
 /// than Digging without it. The display names are corroboration and never a
 /// second identity: the join is the id.
 pub(super) fn first_missing_tool(selected: &SelectedGameData, input: &Value) -> Option<Tool> {
-    for (tool, alias) in [Tool::Sextant, Tool::Watch, Tool::Chart]
-        .into_iter()
-        .zip(TRIO_ITEMS)
-    {
-        let held = selected
+    let held = TRIO_ITEMS.map(|alias| {
+        selected
             .item_by_alias(alias)
-            .is_some_and(|item| pack_holds(input, item.id));
-        if !held {
-            return Some(tool);
-        }
+            .is_some_and(|item| pack_holds(input, item.id))
+    });
+    Tool::first_missing(held)
+}
+
+/// Frozen `trailKit` (`toolAcquire.ts:8-13`); `cluedb.ts:83` is this revision's
+/// only row with an extra item.
+pub(super) fn trail_kit(scroll_id: Option<&Value>) -> Value {
+    if matches!(scroll_id, Some(Value::Null)) {
+        return serde_json::json!([]);
     }
-    None
+    let items: &[&str] = if scroll_id
+        .and_then(Value::as_f64)
+        .is_some_and(|id| id == 2_811.0)
+    {
+        &["Spade", "Sextant", "Watch", "Chart", "Rope"]
+    } else {
+        &["Spade", "Sextant", "Watch", "Chart"]
+    };
+    serde_json::json!(items)
+}
+
+pub(super) fn next_coord_tool(held: Option<&Value>) -> Value {
+    let held = [
+        js_truthy(held.and_then(|value| value.get("sextant"))),
+        js_truthy(held.and_then(|value| value.get("watch"))),
+        js_truthy(held.and_then(|value| value.get("chart"))),
+    ];
+    Tool::first_missing(held).map_or(Value::Null, |tool| serde_json::json!(tool.api_name()))
+}
+
+fn js_truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|number| number != 0.0),
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
+    }
 }
 
 /// Whether this call's posted pack page holds `id`: a posted row of the

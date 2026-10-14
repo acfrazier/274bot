@@ -21,9 +21,9 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     Ok(())
 }
 
-fn selected_facts_callback(
-    scope: &mut v8::HandleScope,
-    args: v8::FunctionCallbackArguments,
+fn selected_facts_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
     match run_selected_facts(scope, &args) {
@@ -35,7 +35,7 @@ fn selected_facts_callback(
 
 fn run_selected_facts<'s>(
     scope: &mut v8::HandleScope<'s>,
-    args: &v8::FunctionCallbackArguments,
+    args: &v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let op = js_to_string(scope, args.get(0))?;
     match op.as_str() {
@@ -49,14 +49,36 @@ fn run_selected_facts<'s>(
         "obj-catalog" => obj_catalog(scope),
         "item-tradeable" => item_tradeable(scope, args.get(1)),
         "item-name" => item_name(scope, args.get(1), args.get(2)),
-        "cow-locations" => cow_locations(scope),
-        "cow-nearest" => cow_nearest(scope, args.get(1)),
+        "cow-locations" => cow_locations(scope, args.get(1)),
+        "cow-resolve" => cow_resolve(scope, args.get(1), args.get(2), args.get(3)),
+        "cow-nearest" => cow_nearest(scope, args.get(1), args.get(2)),
+        "cow-loot-tile" => cow_loot_tile(scope, args.get(1), args.get(2), args.get(3)),
+        "cow-needs-toll" => cow_needs_toll(scope, args.get(1), args.get(2)),
+        "cow-bank-destination" => {
+            cow_bank_destination(scope, args.get(1), args.get(2), args.get(3))
+        }
+        "cow-bootstrap-toll" => {
+            cow_bootstrap_toll(scope, args.get(1), args.get(2), args.get(3), args.get(4))
+        }
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         "required-thieving" => required_thieving(scope, args.get(1)),
+        "hostile-attacker-names" => hostile_attacker_names(scope),
         "thieving-ready" => thieving_ready(scope, args.get(1), args.get(2)),
         "gas-rock-ids" => gas_rock_ids(scope),
+        "mining-rock-data" => mining_rock_data(scope),
+        "rock-tier-by-id" => selected_rock_tier_by_id(scope, args.get(1)),
+        "resolve-rock-ids" => selected_resolve_rock_ids(scope, args.get(1)),
+        "worth-stocking" => worth_stocking(scope, args.get(1)),
         _ => Err("invalid selected facts op".into()),
     }
+}
+
+fn worth_stocking<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    name: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let name = js_to_string(scope, name)?;
+    Ok(v8::Boolean::new(scope, crate::market_catalog::worth_stocking(&name)).into())
 }
 
 fn item_db<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -301,55 +323,317 @@ fn item_name<'s>(
     }
 }
 
-fn cow_locations<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+fn cow_locations<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let banks = CowBankTiles {
+        al_kharid: tile_instance(scope, tile_constructor, crate::content::AL_KHARID_BANK)?,
+        draynor: cow_bank_tile_value(
+            scope,
+            tile_constructor,
+            "Draynor",
+            crate::content::DRAYNOR_BANK,
+        )?,
+        falador_east: cow_bank_tile_value(
+            scope,
+            tile_constructor,
+            "Falador East",
+            crate::content::FALADOR_EAST_BANK,
+        )?,
+        ardougne_west: cow_bank_tile_value(
+            scope,
+            tile_constructor,
+            "Ardougne West",
+            crate::content::ARDOUGNE_WEST_BANK,
+        )?,
+    };
     let array = v8::Array::new(
         scope,
         i32::try_from(crate::content::COW_FIELDS.len()).unwrap_or(i32::MAX),
     );
     for (index, field) in crate::content::COW_FIELDS.iter().enumerate() {
-        let row = cow_field(scope, field)?;
+        let row = cow_field(scope, field, tile_constructor, &banks)?;
         array
             .set_index(scope, index as u32, row)
             .ok_or_else(|| "selected facts cow array".to_string())?;
     }
+    let options = v8::Array::new(
+        scope,
+        i32::try_from(crate::content::COW_FIELDS.len() + 2).unwrap_or(i32::MAX),
+    );
+    for (index, option) in std::iter::once("Auto")
+        .chain(crate::content::COW_FIELDS.iter().map(|field| field.name))
+        .chain(std::iter::once("Start tile"))
+        .enumerate()
+    {
+        let option = v8_str(scope, option)?;
+        options
+            .set_index(scope, index as u32, option)
+            .ok_or_else(|| "selected facts cow options".to_string())?;
+    }
     let facts = v8::Object::new(scope);
     set_key(scope, facts, "locations", array.into());
-    let bank = tile(
-        scope,
-        crate::content::AL_KHARID_BANK.x,
-        crate::content::AL_KHARID_BANK.z,
-        crate::content::AL_KHARID_BANK.level,
-    );
-    set_key(scope, facts, "alKharidBank", bank.into());
+    set_key(scope, facts, "options", options.into());
+    set_key(scope, facts, "alKharidBank", banks.al_kharid);
+    set_key(scope, facts, "draynorBank", banks.draynor);
+    set_key(scope, facts, "faladorEastBank", banks.falador_east);
+    set_key(scope, facts, "ardougneWestBank", banks.ardougne_west);
+    let target = v8::Integer::new(scope, crate::content::COW_TOLL_COIN_TARGET);
+    set_key(scope, facts, "tollCoinTarget", target.into());
     Ok(facts.into())
+}
+
+fn cow_resolve<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    setting: v8::Local<'s, v8::Value>,
+    start: v8::Local<'s, v8::Value>,
+    locations: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let setting = js_to_string(scope, setting)?;
+    let start = if setting.trim().eq_ignore_ascii_case("auto") {
+        js_tile(scope, start)?
+    } else {
+        None
+    };
+    match crate::content::resolve_cow_field(&setting, start) {
+        Some(field) => cow_location_value(scope, locations, field),
+        None => Ok(v8::null(scope).into()),
+    }
 }
 
 fn cow_nearest<'s>(
     scope: &mut v8::HandleScope<'s>,
-    tile: v8::Local<v8::Value>,
+    tile: v8::Local<'s, v8::Value>,
+    locations: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(from) = js_tile(scope, tile)? else {
         return Ok(v8::null(scope).into());
     };
     match crate::content::nearest_cow_field(from) {
-        Some(field) => cow_field(scope, field),
+        Some(field) => cow_location_value(scope, locations, field),
         None => Ok(v8::null(scope).into()),
     }
+}
+
+fn cow_loot_tile<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    anchor: v8::Local<'s, v8::Value>,
+    leash_radius: v8::Local<'s, v8::Value>,
+    tile: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(anchor) = js_tile(scope, anchor)? else {
+        return Ok(v8::Boolean::new(scope, false).into());
+    };
+    let leash_radius = leash_radius
+        .number_value(scope)
+        .ok_or_else(|| PENDING.to_string())?;
+    let Some(tile) = js_tile(scope, tile)? else {
+        return Ok(v8::Boolean::new(scope, false).into());
+    };
+    let allowed = crate::content::is_cow_field_loot_tile(anchor, leash_radius, tile);
+    Ok(v8::Boolean::new(scope, allowed).into())
+}
+
+fn cow_needs_toll<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    location: v8::Local<'s, v8::Value>,
+    enabled: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if !super::callback_v8::truthy(scope, enabled) {
+        return Ok(enabled);
+    }
+    let uses_toll = cow_location_uses_al_kharid_toll(scope, location)?;
+    let needs = crate::content::needs_cow_toll_coins(uses_toll, true);
+    Ok(v8::Boolean::new(scope, needs).into())
+}
+
+fn cow_bank_destination<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    location: v8::Local<'s, v8::Value>,
+    toll_enabled: v8::Local<'s, v8::Value>,
+    al_kharid_bank: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if super::callback_v8::truthy(scope, toll_enabled) {
+        let uses_toll = cow_location_uses_al_kharid_toll(scope, location)?;
+        if let Some(destination) = crate::content::cow_bank_destination(uses_toll, true, None) {
+            let row = v8::Object::new(scope);
+            let name = v8_str(scope, destination.name)?;
+            set_key(scope, row, "name", name);
+            set_key(scope, row, "tile", al_kharid_bank);
+            return Ok(row.into());
+        }
+    }
+    if location.is_null() || location.is_undefined() {
+        return Ok(v8::null(scope).into());
+    }
+    let destination = cow_object_property(scope, location, "bankDestination")?;
+    if destination.is_null() || destination.is_undefined() {
+        Ok(v8::null(scope).into())
+    } else {
+        Ok(destination)
+    }
+}
+
+fn cow_bootstrap_toll<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    location: v8::Local<'s, v8::Value>,
+    start: v8::Local<'s, v8::Value>,
+    coins: v8::Local<'s, v8::Value>,
+    enabled: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if !super::callback_v8::truthy(scope, enabled) {
+        return Ok(enabled);
+    }
+    let uses_toll = cow_location_uses_al_kharid_toll(scope, location)?;
+    if !crate::content::needs_cow_toll_coins(uses_toll, true) {
+        return Ok(v8::Boolean::new(scope, false).into());
+    }
+    let coins = coins
+        .number_value(scope)
+        .ok_or_else(|| PENDING.to_string())?;
+    if coins.partial_cmp(&f64::from(crate::content::COW_TOLL_COIN_TARGET))
+        != Some(std::cmp::Ordering::Less)
+    {
+        return Ok(v8::Boolean::new(scope, false).into());
+    }
+    let Some(start) = js_tile(scope, start)? else {
+        return Ok(v8::Boolean::new(scope, false).into());
+    };
+    let bootstrap = crate::content::should_bootstrap_cow_toll_coins(uses_toll, start, coins, true);
+    Ok(v8::Boolean::new(scope, bootstrap).into())
+}
+
+fn cow_location_uses_al_kharid_toll<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    location: v8::Local<'s, v8::Value>,
+) -> Result<bool, String> {
+    if location.is_null() || location.is_undefined() {
+        return Ok(false);
+    }
+    Ok(cow_object_property(scope, location, "usesAlKharidToll")?.is_true())
+}
+
+fn cow_object_property<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Value>,
+    key: &str,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let object = target.to_object(scope).ok_or_else(|| PENDING.to_string())?;
+    let key = v8::String::new(scope, key).ok_or_else(|| "selected facts string".to_string())?;
+    object
+        .get(scope, key.into())
+        .ok_or_else(|| PENDING.to_string())
+}
+
+fn cow_location_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    locations: v8::Local<'s, v8::Value>,
+    field: &crate::content::CowField,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let locations = v8::Local::<v8::Array>::try_from(locations)
+        .map_err(|_| "selected facts cow locations".to_string())?;
+    let index = crate::content::COW_FIELDS
+        .iter()
+        .position(|candidate| candidate.name == field.name)
+        .ok_or_else(|| "selected facts cow location index".to_string())?;
+    locations
+        .get_index(scope, index as u32)
+        .ok_or_else(|| PENDING.to_string())
+}
+
+struct CowBankTiles<'s> {
+    al_kharid: v8::Local<'s, v8::Value>,
+    draynor: v8::Local<'s, v8::Value>,
+    falador_east: v8::Local<'s, v8::Value>,
+    ardougne_west: v8::Local<'s, v8::Value>,
+}
+
+impl<'s> CowBankTiles<'s> {
+    fn get(&self, name: &str) -> Option<v8::Local<'s, v8::Value>> {
+        match name {
+            "Al Kharid" => Some(self.al_kharid),
+            "Draynor" => Some(self.draynor),
+            "Falador East" => Some(self.falador_east),
+            "Ardougne West" => Some(self.ardougne_west),
+            _ => None,
+        }
+    }
+}
+
+fn cow_bank_tile_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    name: &str,
+    fallback: WorldTile,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let tile = crate::bank_select::bank_tile(name).unwrap_or(fallback);
+    tile_instance(scope, tile_constructor, tile)
+}
+
+fn cow_bank_destination_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    destination: crate::content::CowBankDestination,
+    banks: &CowBankTiles<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let row = v8::Object::new(scope);
+    let name = v8_str(scope, destination.name)?;
+    set_key(scope, row, "name", name);
+    let tile = banks
+        .get(destination.name)
+        .ok_or_else(|| "selected facts cow bank destination".to_string())?;
+    set_key(scope, row, "tile", tile);
+    Ok(row.into())
 }
 
 fn cow_field<'s>(
     scope: &mut v8::HandleScope<'s>,
     field: &crate::content::CowField,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    banks: &CowBankTiles<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let row = v8::Object::new(scope);
     let name = v8_str(scope, field.name)?;
     set_key(scope, row, "name", name);
-    set_i32(scope, row, "x", field.x);
-    set_i32(scope, row, "z", field.z);
-    set_i32(scope, row, "level", field.level);
-    let toll = v8::Boolean::new(scope, crate::content::cow_uses_al_kharid_toll(field));
-    set_key(scope, row, "usesAlKharidToll", toll.into());
+    let anchor = tile_instance(
+        scope,
+        tile_constructor,
+        WorldTile {
+            x: field.x,
+            z: field.z,
+            level: field.level,
+        },
+    )?;
+    set_key(scope, row, "anchor", anchor);
+    set_bool(
+        scope,
+        row,
+        "usesAlKharidToll",
+        crate::content::cow_uses_al_kharid_toll(field),
+    );
+    if let Some(destination) = field.bank_destination {
+        let destination = cow_bank_destination_value(scope, destination, banks)?;
+        set_key(scope, row, "bankDestination", destination);
+    }
     Ok(row.into())
+}
+
+fn tile_instance<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    tile: WorldTile,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let constructor = v8::Local::<v8::Function>::try_from(tile_constructor)
+        .map_err(|_| "selected facts Tile constructor".to_string())?;
+    let args = [
+        v8::Integer::new(scope, tile.x).into(),
+        v8::Integer::new(scope, tile.z).into(),
+        v8::Integer::new(scope, tile.level).into(),
+    ];
+    constructor
+        .new_instance(scope, &args)
+        .map(Into::into)
+        .ok_or_else(|| PENDING.to_string())
 }
 
 fn pickpocket_spot<'s>(
@@ -439,6 +723,90 @@ fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8:
     Ok(set.into())
 }
 
+fn mining_rock_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let data = v8::Object::new(scope);
+    let rock_types = v8::Object::new(scope);
+    for (name, ids) in api::gather_methods::ROCK_TYPE_IDS.iter() {
+        let ids = int_array(scope, ids)?;
+        set_key(scope, rock_types, name, ids);
+    }
+    let quest_rock_types = v8::Object::new(scope);
+    for (name, ids) in api::gather_methods::QUEST_ROCK_TYPE_IDS.iter() {
+        let ids = int_array(scope, ids)?;
+        set_key(scope, quest_rock_types, name, ids);
+    }
+    let options = static_string_array(scope, api::gather_methods::rock_type_order())?;
+    let order = static_string_array(scope, api::gather_methods::rock_type_order())?;
+    set_key(scope, data, "rockOptions", options);
+    set_key(scope, data, "rockTypes", rock_types.into());
+    set_key(scope, data, "questRockTypes", quest_rock_types.into());
+    set_key(scope, data, "rockTierOrder", order);
+    let broken_pickaxe = v8_str(scope, api::gather_methods::BROKEN_PICKAXE)?;
+    set_i32(
+        scope,
+        data,
+        "gasRockTicks",
+        api::gather_methods::GAS_ROCK_TICKS,
+    );
+    set_key(scope, data, "brokenPickaxe", broken_pickaxe);
+    Ok(data.into())
+}
+
+fn selected_rock_tier_by_id<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    id: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let tier = js_i32(scope, id)?
+        .map(api::gather_methods::rock_tier_by_id)
+        .unwrap_or(-1);
+    Ok(v8::Integer::new(scope, tier).into())
+}
+
+fn selected_resolve_rock_ids<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    names: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let names = v8::Local::<v8::Array>::try_from(names)
+        .map_err(|_| "resolveRockIds names must be an array".to_string())?;
+    let set = v8::Set::new(scope);
+    for index in 0..names.length() {
+        let name = names
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        if !name.is_string() {
+            return Err("resolveRockIds names must contain strings".into());
+        }
+        let name = name
+            .to_string(scope)
+            .ok_or_else(|| PENDING.to_string())?
+            .to_rust_string_lossy(scope);
+        if let Some(ids) = api::gather_methods::rock_ids_for_name(&name) {
+            for id in ids {
+                let id = v8::Integer::new(scope, *id);
+                set.add(scope, id.into())
+                    .ok_or_else(|| "selected facts resolved rock ids".to_string())?;
+            }
+        }
+    }
+    Ok(set.into())
+}
+
+fn int_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    values: &[i32],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let array = v8::Array::new(scope, i32::try_from(values.len()).unwrap_or(i32::MAX));
+    for (index, value) in values.iter().enumerate() {
+        let value = v8::Integer::new(scope, *value);
+        array
+            .set_index(scope, index as u32, value.into())
+            .ok_or_else(|| "selected facts integer array".to_string())?;
+    }
+    Ok(array.into())
+}
+
 fn string_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     values: &[String],
@@ -449,6 +817,20 @@ fn string_array<'s>(
         array
             .set_index(scope, index as u32, value)
             .ok_or_else(|| "selected facts string array".to_string())?;
+    }
+    Ok(array.into())
+}
+
+fn static_string_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    values: impl ExactSizeIterator<Item = &'static str>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let array = v8::Array::new(scope, i32::try_from(values.len()).unwrap_or(i32::MAX));
+    for (index, value) in values.enumerate() {
+        let value = v8_str(scope, value)?;
+        array
+            .set_index(scope, index as u32, value)
+            .ok_or_else(|| "selected facts static string array".to_string())?;
     }
     Ok(array.into())
 }
@@ -471,19 +853,6 @@ fn int_pairs<'s>(
             .ok_or_else(|| "selected facts pair array".to_string())?;
     }
     Ok(array.into())
-}
-
-fn tile<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    x: i32,
-    z: i32,
-    level: i32,
-) -> v8::Local<'s, v8::Object> {
-    let row = v8::Object::new(scope);
-    set_i32(scope, row, "x", x);
-    set_i32(scope, row, "z", z);
-    set_i32(scope, row, "level", level);
-    row
 }
 
 fn set_i32(scope: &mut v8::HandleScope, row: v8::Local<v8::Object>, key: &str, value: i32) {
@@ -577,4 +946,18 @@ fn throw_error(scope: &mut v8::HandleScope, message: &str) {
         let exception = v8::Exception::error(scope, message);
         scope.throw_exception(exception);
     }
+}
+
+fn hostile_attacker_names<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let names = crate::content::HOSTILE_ATTACKER_NAMES;
+    let array = v8::Array::new(scope, i32::try_from(names.len()).unwrap_or(i32::MAX));
+    for (index, name) in names.iter().enumerate() {
+        let name = v8_str(scope, name)?;
+        array
+            .set_index(scope, index as u32, name)
+            .ok_or_else(|| "selected facts hostile names array".to_string())?;
+    }
+    Ok(array.into())
 }

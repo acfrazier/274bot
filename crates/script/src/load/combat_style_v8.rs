@@ -37,7 +37,12 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_attack_clock_new", clock_new)?;
     cb::install(runtime, "__rs2b0t_attack_clock_observe", clock_observe)?;
     cb::install(runtime, "__rs2b0t_attack_clock_attacked", clock_attacked)?;
-    cb::install(runtime, "__rs2b0t_attack_clock_reset", clock_reset)
+    cb::install(runtime, "__rs2b0t_attack_clock_reset", clock_reset)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_combat_style_controller",
+        combat_style_controller,
+    )
 }
 
 /// A JS number argument as the frozen clock compares it (`!==` / `===`): a
@@ -311,4 +316,121 @@ fn rune_withdraw_list<'s>(
         rows.push(cb::object(scope, &[("rune", rune), ("count", count)])?);
     }
     Ok(v8::Array::new_with_elements(scope, &rows).into())
+}
+
+fn combat_style_controller<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = run_combat_style_controller(scope, &args);
+    cb::finish(scope, rv, result);
+}
+
+fn run_combat_style_controller<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let op = args.get(0).to_rust_string_lossy(scope);
+    let backend = args.get(1);
+    let resolution = controller_resolution(scope, backend, args.get(2))?;
+    match op.as_str() {
+        "resolution" => Ok(resolution),
+        "mode" => {
+            if resolution.is_null_or_undefined() {
+                Ok(v8::null(scope).into())
+            } else {
+                cb::get(scope, resolution, "mode")
+            }
+        }
+        "has" => {
+            if resolution.is_null_or_undefined() {
+                return Ok(v8::Boolean::new(scope, false).into());
+            }
+            let mode = cb::get(scope, resolution, "mode")?;
+            let current = cb::call_method(scope, backend, "currentMode", &[], "currentMode")?;
+            Ok(v8::Boolean::new(scope, current.strict_equals(mode)).into())
+        }
+        "set" => {
+            if resolution.is_null_or_undefined() {
+                return Ok(v8::Boolean::new(scope, false).into());
+            }
+            let mode = cb::get(scope, resolution, "mode")?;
+            cb::call_method(scope, backend, "selectMode", &[mode], "selectMode")
+        }
+        _ => Err(not_impl(scope, "CombatStyleController")),
+    }
+}
+
+fn controller_resolution<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    backend: v8::Local<'s, v8::Value>,
+    style: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let offered = cb::call_method(scope, backend, "offeredModes", &[], "offeredModes")?;
+    if offered.is_null() {
+        return Ok(v8::null(scope).into());
+    }
+    let offered = controller_modes(scope, offered)?;
+    let style = if style.is_string() {
+        style.to_rust_string_lossy(scope)
+    } else {
+        String::new()
+    };
+    let resolution = super::bindings::resolve_combat_style_modes(&style, &offered);
+    let Some(requested) = resolution
+        .get("requested")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some(effective) = resolution
+        .get("effective")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some(mode) = resolution.get("mode").and_then(serde_json::Value::as_f64) else {
+        return Ok(v8::null(scope).into());
+    };
+    let requested = cb::string(scope, requested);
+    let effective = cb::string(scope, effective);
+    let mode = cb::num(scope, mode);
+    cb::object(
+        scope,
+        &[
+            ("requested", requested),
+            ("effective", effective),
+            ("mode", mode),
+        ],
+    )
+}
+
+fn controller_modes<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    offered: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, serde_json::Value> {
+    let Ok(rows) = v8::Local::<v8::Array>::try_from(offered) else {
+        return Ok(serde_json::Value::Null);
+    };
+    let mut modes = Vec::with_capacity(rows.length() as usize);
+    for index in 0..rows.length() {
+        let row = cb::get_index(scope, offered, index)?;
+        let label = cb::get(scope, row, "label")?;
+        let label = if label.is_string() {
+            serde_json::Value::String(label.to_rust_string_lossy(scope))
+        } else {
+            serde_json::Value::Null
+        };
+        let mode = cb::get(scope, row, "mode")?;
+        let mode = if mode.is_number() {
+            mode.number_value(scope)
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
+        modes.push(serde_json::json!({ "mode": mode, "label": label }));
+    }
+    Ok(serde_json::Value::Array(modes))
 }

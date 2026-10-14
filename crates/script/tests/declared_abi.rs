@@ -228,34 +228,35 @@ fn regen_js_declared_abi() {
     );
 }
 
-/// A declared name no shim module owns must throw `not impl` on any use — a
-/// string conversion, a member read, an iteration — never answer a fake
-/// value or `[object Object]` / `NaN`.
+/// Declared symbols without a shim implementation throw on use instead of
+/// returning fake values. An unimplemented callable must name the member.
 #[test]
-fn declared_value_stubs_throw_on_use() {
+fn declared_stubs_throw_on_use() {
     use script::load::{LoadIsolate, LoadShape};
 
     let src = r#"
 import * as api from '@rs2b0t/api';
+import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
-        const use = (fn) => {
+    async loop() {
+        const use = async (fn) => {
             try {
-                fn();
+                await fn();
                 return 'no-throw';
             } catch (e) {
                 return String(e.message || e);
             }
         };
-        globalThis.__probe = [
+        globalThis.__probe = await Promise.all([
             use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
             use(() => api.FISHING_LOCATIONS.length),
             use(() => api.MAP_SQUARE + 1),
             use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
-        ];
-    }
+            use(() => bankPace()),
+        ]);
+}
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
@@ -264,7 +265,7 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").expect("probe __probe");
     iso.join();
     let rows = probe.as_array().cloned().unwrap_or_default();
-    assert_eq!(rows.len(), 6, "every stub use must be probed: {probe:?}");
+    assert_eq!(rows.len(), 7, "every stub use must be probed: {probe:?}");
     for (i, row) in rows.iter().enumerate() {
         let text = row.as_str().unwrap_or("");
         assert!(
@@ -272,6 +273,11 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
+    let bank_pace = rows[6].as_str().unwrap_or("");
+    assert!(
+        bank_pace.contains("not impl: bankPace"),
+        "unimplemented call must name bankPace, got {bank_pace:?}"
+    );
 }
 
 /// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the

@@ -14,8 +14,20 @@ import {
     parseMuleMode, muleGathererHandoffActive,
 } from '../../api/trade/PartnerTrade.js';
 
-let matching;
-try { countOfferMatching([], () => true); } catch (e) { matching = String(e.message); }
+const matching = countOfferMatching(
+    [{ name: 'Raw shrimp', count: 3 }, { name: 'Logs', count: 4 }],
+    name => name.toLowerCase().startsWith('raw ')
+);
+const emptyMatching = countOfferMatching([], () => true);
+const mutableItems = [{ name: 'Raw shrimp', count: 3 }];
+let appended = false;
+const mutationCount = countOfferMatching(mutableItems, () => {
+    if (!appended) {
+        appended = true;
+        mutableItems.push({ name: 'Raw salmon', count: 7 });
+    }
+    return true;
+});
 globalThis.__probe = {
     stab: bestMeleeWeapon(['Rune scimitar', 'Rune longsword'], { attack: 40, preferStab: true }),
     refused: bestMeleeWeapon(['Rune scimitar', 'Rune sword'], { attack: 40, preferStab: false, unusable: new Set(['Rune scimitar']) }),
@@ -33,6 +45,8 @@ globalThis.__probe = {
     mode: parseMuleMode(' Mule '),
     handoff: muleGathererHandoffActive('gatherer', ['Alice'], false),
     matching,
+    emptyMatching,
+    mutationCount,
 };
 export default class T extends LoopingBot { async loop() {} }
 "#;
@@ -65,9 +79,8 @@ export default class T extends LoopingBot { async loop() {} }
     assert_eq!(v["giver"], "offer");
     assert_eq!(v["mode"], "mule");
     assert_eq!(v["handoff"], true);
-    assert_eq!(
-        v["matching"],
-        "not impl: PartnerTrade.countOfferMatching: caller match predicate per offer slot"
-    );
+    assert_eq!(v["matching"], 3);
+    assert_eq!(v["emptyMatching"], 0);
+    assert_eq!(v["mutationCount"], 3);
     iso.join();
 }

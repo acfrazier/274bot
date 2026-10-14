@@ -20,10 +20,50 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
   as soon as the bank's item list has arrived; it does not add rs2b0t's extra
   short pause.
+- `parseBankStrategy('Loot count')` now returns the declared `items` strategy
+  rather than `loot`.
 - When a catalog script uses an rs2b0t API member this version doesn't
   provide, Start now names the member without saying the catalog is newer
   than this version. Some members of the older API are also missing, so that
   claim could be wrong.
+
+- Scripts can import every frozen rs2b0t value export from the served API
+  modules, plus `paintLogic.wrapText`. An unimplemented callable now
+  fails at call time with a named `not impl` error instead of a missing-export
+  error at Start. Rust-backed adapters cover `retaliateOnFromVarp`,
+  `facingPlayer`, `parseInterfaceCombatStyle`, `resolveCombatStyle`,
+  `CombatStyleController` (`resolution`, `mode`, `has` and `set`),
+  `rangingPlan`, `bankDistance`, `wrapText`, `pickByLine`, `isUnderground`,
+  `needsHop`, `nextCoordTool`, `cakeStallData.classifySteal`,
+  `cakeStallData.shouldReset`, `PartnerTrade.countOfferMatching`,
+  `parseTradePartnerHeader`, `suspectOrder`, `bankSortRules.CATEGORY_ORDER`,
+  `bankSortRules.categoryOf` and `bankSortRules.isUnmatched`. Firemaking
+  helpers `parseBurnMode`, `logsForTree`, `firemakingLevelForLogs`,
+  `resolveFireSpot`, `nearestFireSpot`, `expandLocalFirePlot`, `runWest`,
+  `shouldBurnFullLoad` and `findBurnLane` now use the native fire helper.
+  Hunting sites also export `ENCLAVE_TARGET_OPTIONS` and `enclaveTargets`.
+  Thieving targets use the frozen `HOSTILE_NAMES` constant. `plannedPotions` honors caller-
+  selected descriptor sets, axe tier levels match the API's level-1 default,
+  and API constants retain their frozen values. The Ardougne Paladin and Hero
+  target leashes now cover their 289 roam envelopes.
+- Native helpers now cover held-tool keep/surplus selection (`toolAttackLevel`,
+  `toolsNeedingEquip`), bank-open route decisions, trade-screen state, shop-op
+  batching, `worthStocking` and the clue `tilesTo` distance query.
+- Mining rock data now provides native-backed `ROCK_TYPES`, `QUEST_ROCK_TYPES`,
+  `ROCK_OPTIONS`, `ROCK_TIER_ORDER`, `rockTierById` and `resolveRockIds`;
+  quest-only rocks remain outside the regular ore options.
+
+- CowKiller's data module now exposes its full location and bank constants,
+  plus native-backed `isCowFieldLootTile`, `resolveCowLocation`,
+  `nearestCowLocation`, `needsTollCoins`, `cowBankDestination` and
+  `shouldBootstrapTollCoins` helpers.
+- Door-walking helpers (`faceSteps`, `openedNeighbour`, `farSide`,
+  `isOpenableObstacle`, `openOp`, `closeOp` and `towardDest`) now use
+  native-backed compat exports instead of missing or refusing at call time.
+- Script declarations now match rs2b0t `2de6bb2397ceb9ffd05f2354f67dde328e324531`,
+  including the `script.finish` event, `AbstractBot.delegated`,
+  `requestFinish` and `bindFinish`, `Task.label`, `TaskBot.activeTaskName`,
+  and the already-supported `InvItem.noted` flag.
 
 ### Not in this release
 
@@ -32,6 +72,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   built-in Gatherer for woodcutting, mining and fishing; EssMiner stays dimmed
   until the Gatherer covers it. A script that calls one of these helpers stops
   with a `not impl` message naming it.
+
+- Inventory: `backpackSnapshots` and `backpackCapacity` remain unavailable.
+- Banking: `bankSort.sortBank` remains unavailable; live bank sorting is
+  deferred to the compat rearchitecture. Walk-cost bank selectors
+  (`nearestWalkableBank`, `nearestWalkableBankAsync`, `bankCostForFinder`,
+  `bankCostForNavigator`) also remain unavailable.
+- Shop and market: `buildCatalog`, `searchCatalog`, `resolveByName` and
+  `resetLiveCatalog` remain unavailable.
+- Combat: `Fight.hasChaseTarget` remains unavailable.
+- Quest, clue and duel behavior: `trailWalkOpts`, `extraItemShop`,
+  `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain unavailable.
+- Bot and pacing helpers: `resolveLoopCadence`, `BranchTask`, `LeafTask` and
+  `stableClosedPoll` remain unavailable; rs2b0t timing is not carried forward.
+
+- `Input` target-use and spell-target methods (`useItemOnLoc`, `useItemOnNpc`,
+  `useItemOnObj`, `useItemOnItem`, `castOnNpc`, `castOnLoc` and `castOnItem`)
+  and `continueDialog` still refuse; they need native interaction support and
+  are deferred to the compat rearchitecture.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 

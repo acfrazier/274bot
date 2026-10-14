@@ -6,14 +6,15 @@ import { Bank } from './Bank.js';
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 
+export const NEARBY_BANK_RADIUS = globalThis.__rs2b0t_resolve_bank_open_route('nearbyRadius');
+
 // Rust owns the published list and predicate. These are thin mappings so
 // catalog callers keep their names and optional observed object id.
 export const COMMON_BANK_LOOT = Object.freeze(
     (globalThis.__rs2b0t_host?.content?.common_bank_loot || []).slice(),
 );
 
-export const RANDOM_EVENT_CASKET_ID =
-    globalThis.__rs2b0t_host?.content?.random_event_casket_id ?? -1;
+export const RANDOM_EVENT_CASKET_ID = 405;
 
 export function matchesCommonBankLoot(name, id = -1) {
     return globalThis.rustyscript.functions.__rs2b0t_matches_common_bank_loot(
@@ -168,4 +169,7 @@ export async function bankPace() {
 
 export function bankPaceTicks() {
     throw notImpl('bankPaceTicks', 'randomized pacing is not carried');
+}
+export function resolveBankOpenRoute(input) {
+    return globalThis.__rs2b0t_resolve_bank_open_route(input);
 }

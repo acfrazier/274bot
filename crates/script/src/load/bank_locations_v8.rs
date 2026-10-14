@@ -9,6 +9,32 @@ use rustyscript::Runtime;
 use serde::Deserialize;
 use serde_json::json;
 
+const NEARBY_BANK_RADIUS: f64 = 14.0;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenRouteInput {
+    #[serde(default)]
+    bank_open: Option<bool>,
+    #[serde(default)]
+    here: Option<FromTile>,
+    #[serde(default)]
+    stand: Option<FromTile>,
+    #[serde(default)]
+    nearby_booth_dist: Option<f64>,
+    #[serde(default)]
+    nearest: Option<OpenRouteBank>,
+    #[serde(default)]
+    prefer_nearby: Option<bool>,
+    #[serde(default)]
+    nearby_radius: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct OpenRouteBank {
+    tile: FromTile,
+}
+
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_bank_locations", catalog)?;
     callback_v8::install(runtime, "__rs2b0t_bank_unlocked", unlocked)?;
@@ -16,7 +42,18 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_nearest_bank", nearest)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_banks", ranked)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_usable_bank", usable)?;
+    callback_v8::install(runtime, "__rs2b0t_bank_distance", bank_distance)?;
+    callback_v8::install(
+        runtime,
+        "__rs2b0t_resolve_bank_open_route",
+        resolve_bank_open_route,
+    )?;
     callback_v8::install(runtime, "__rs2b0t_cook_locations", cook_catalog)?;
+    callback_v8::install(
+        runtime,
+        "__rs2b0t_nearest_cook_surface",
+        nearest_cook_surface,
+    )?;
     callback_v8::install(runtime, "__rs2b0t_resolve_cook_location", resolve_cook)
 }
 
@@ -90,6 +127,87 @@ fn locked_at<'s>(
             .map_err(|e| callback_v8::type_error(scope, &format!("locked bank result: {e}")))
     })();
     callback_v8::finish(scope, rv, result);
+}
+
+/// Frozen `bankDistance` and pure `resolveBankOpenRoute` share Euclidean x/z
+/// distance, independent of plane.
+fn bank_distance<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let from = origin(scope, args.get(0))?;
+        let bank = origin(scope, args.get(1))?;
+        Ok(v8::Number::new(scope, bank_distance_value(&from, &bank)).into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn bank_distance_value(from: &WorldTile, bank: &WorldTile) -> f64 {
+    let dx = f64::from(bank.x) - f64::from(from.x);
+    let dz = f64::from(bank.z) - f64::from(from.z);
+    dx.hypot(dz)
+}
+
+fn from_tile(tile: &FromTile) -> WorldTile {
+    WorldTile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    }
+}
+
+fn resolve_bank_open_route<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let input = args.get(0);
+        if input.is_string() && input.to_rust_string_lossy(scope) == "nearbyRadius" {
+            return Ok(v8::Number::new(scope, NEARBY_BANK_RADIUS).into());
+        }
+        let input = serde_v8::from_v8::<OpenRouteInput>(scope, input)
+            .map_err(|e| callback_v8::type_error(scope, &format!("bank route input: {e}")))?;
+        serde_v8::to_v8(scope, select_open_route(&input))
+            .map_err(|e| callback_v8::type_error(scope, &format!("bank route result: {e}")))
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn select_open_route(input: &OpenRouteInput) -> &'static str {
+    if input.bank_open.unwrap_or(false) {
+        return "already-open";
+    }
+    let prefer_nearby = input.prefer_nearby != Some(false);
+    let radius = input.nearby_radius.unwrap_or(NEARBY_BANK_RADIUS);
+    if prefer_nearby
+        && input
+            .nearby_booth_dist
+            .is_some_and(|distance| distance <= radius)
+    {
+        return "scene-booth";
+    }
+    if prefer_nearby {
+        if let (Some(here), Some(nearest)) = (input.here.as_ref(), input.nearest.as_ref()) {
+            let here = from_tile(here);
+            if bank_distance_value(&here, &from_tile(&nearest.tile)) <= radius {
+                let preset_is_far = match input.stand.as_ref() {
+                    Some(stand) => bank_distance_value(&here, &from_tile(stand)) > radius,
+                    None => true,
+                };
+                if preset_is_far {
+                    return "local-bank";
+                }
+            }
+        }
+    }
+    if input.stand.is_some() {
+        "preset-stand"
+    } else {
+        "nearest-fallback"
+    }
 }
 
 fn nearest<'s>(
@@ -197,6 +315,43 @@ fn cook_catalog<'s>(
         .collect();
     let result = serde_v8::to_v8(scope, rows)
         .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
+    callback_v8::finish(scope, rv, result);
+}
+
+fn nearest_cook_surface<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let Some(data) = crate::supply_v2::selected_data() else {
+            return Ok(v8::null(scope).into());
+        };
+        let surfaces = data.cook_surfaces();
+        if surfaces.is_empty() {
+            return Ok(v8::null(scope).into());
+        }
+        let origin = origin(scope, args.get(0))?;
+        let max_cheb = args.get(1);
+        let max_cheb = if max_cheb.is_undefined() {
+            f64::from(api::cook_locations::MAX_SURFACE_CHEB)
+        } else {
+            callback_v8::number(scope, max_cheb)?
+        };
+        let Some(surface) = cook_locations::nearest_surface(origin, surfaces, max_cheb) else {
+            return Ok(v8::null(scope).into());
+        };
+        let value = json!({
+            "x": surface.x,
+            "z": surface.z,
+            "level": surface.level,
+            "name": surface.name,
+            "debugname": surface.debugname,
+            "kind": surface.kind.as_str(),
+        });
+        serde_v8::to_v8(scope, value)
+            .map_err(|e| callback_v8::type_error(scope, &format!("cook surface: {e}")))
+    })();
     callback_v8::finish(scope, rv, result);
 }
 

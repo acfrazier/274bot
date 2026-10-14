@@ -14,6 +14,14 @@ function capacity() {
     return typeof snap().inv_size === 'number' ? snap().inv_size : 0;
 }
 
+
+export function backpackSnapshots() {
+    throw notImpl('backpackSnapshots');
+}
+
+export function backpackCapacity() {
+    throw notImpl('backpackCapacity');
+}
 function useOnKind(target) {
     const cn = target?.constructor?.name;
     if (cn === 'Npc') return 'npc';
