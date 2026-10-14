@@ -447,3 +447,285 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
         ],
     )
 }
+
+pub(crate) const UNICORN_HORN_ID: i32 = 237;
+pub(crate) const FUR_ID: i32 = 948;
+/// The south-east Varrock wood between the catalog's Bear camp
+/// (3296,3347) and Unicorn camp (3284,3352)
+/// (`AccountLeveler/trainingCamps.ts`, `AccountLeveler/combat.ts`):
+/// both populations wander the same open wood inside one leash.
+const VARROCK_BEAR_UNICORN: WorldTile = WorldTile {
+    x: 3290,
+    z: 3350,
+    level: 0,
+};
+/// Seed + Start ~25s, then per cycle two 25-HP kills with looting
+/// (~45s) and a Varrock East round trip (~150 tiles, ~100s). Two
+/// cycles plus resumed combat reach ~360s; the shared 420s pattern
+/// (herblore eggs) covers the second trip. 1050 dirties at the combat
+/// cells' ~2.5/second allowance keeps the wall deadline controlling.
+const AUTO_FIGHTER_TARGETS_DEADLINE: Duration = Duration::from_secs(420);
+const AUTO_FIGHTER_TARGETS_WATCH_TICKS: u32 = 1050;
+/// AutoFighter's schema carries the shared `loadout` setting, and Start
+/// resolves it before `onStart`; with no loadout rows the resolution
+/// fails (`loadouts_store::resolve_script_loadout`). Post the Trout
+/// row every other combat card posts, named explicitly in the ported
+/// cells' injects. Blank settings resolve to this first row, so the
+/// older AutoFighter cells start from it unchanged.
+pub(crate) const AUTO_FIGHTER_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario AutoFighter food",
+    carry: &[("Trout", AUTO_FIGHTER_FOOD as u32)],
+}];
+pub(crate) const CAKE_ID: i32 = 1891;
+/// Trout the food-override cell carries onto the field; the script must
+/// not count them as food when its setting names Cake.
+const FOOD_OVERRIDE_PACK_TROUT: i32 = 5;
+const FOOD_OVERRIDE_CAKE_WITHDRAW: i32 = 3;
+const FOOD_OVERRIDE_BANK_CAKE: i32 = 20;
+
+const AUTO_FIGHTER_TARGETS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario AutoFighter food"),
+    },
+    ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Trout"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_BANK_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Bear, Unicorn"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "leashRadius",
+        value: ScriptInjectValue::Num(16.0),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("Auto"),
+    },
+    ScriptSettingInject {
+        id: "bankAtLootSlots",
+        value: ScriptInjectValue::Num(2.0),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Unicorn horn", "Fur"]),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
+/// Ported from rs2b0t `e2e/autofighter-targets-loot-live.ts` @2de6bb23
+/// (`targetsAndHerbs`).
+/// Changed: the `npcadd` arena (two spawned Chickens, two spawned
+/// Rats) becomes the real south-east Varrock wood, where the Bear and
+/// Unicorn populations wander the same open ground inside one leash,
+/// with targets `Bear, Unicorn` (Rat drops nothing:
+/// `drop tables/scripts/rat.rs2`, so a Rat kill has no loot gate).
+/// Changed: the seeded ground-herb item-ID gates become banked-loot
+/// kill gates on unconditional content drops — `bear.rs2` always
+/// drops `fur` (and `raw_bear_meat`), `unicorn.rs2` always drops
+/// `unicorn_horn` (both in `content/scripts/drop tables/scripts/`).
+/// Dropped: the herb avoid-list assertion; it has no real-content
+/// gate without placing the herbs it acts on.
+pub(crate) fn auto_fighter_targets_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "auto_fighter_targets",
+        "AutoFighter",
+        VARROCK_BEAR_UNICORN,
+        8,
+        "trout",
+        TROUT_ID,
+        AUTO_FIGHTER_FOOD,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[],
+        &[UNICORN_HORN_ID, FUR_ID],
+        AUTO_FIGHTER_TARGETS_INJECT,
+        0,
+        "trout",
+        20,
+        &[
+            (
+                "watch a Unicorn kill's Unicorn horn enter a fresh Varrock bank",
+                Proof::BankItemId {
+                    id: UNICORN_HORN_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch a Bear kill's Fur enter a fresh Varrock bank",
+                Proof::BankItemId {
+                    id: FUR_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the BankRun restock Trout to its declared ten",
+                Proof::ItemId {
+                    id: TROUT_ID,
+                    count: AUTO_FIGHTER_BANK_RESTOCK,
+                },
+            ),
+            ("watch the loot BankRun close the booth", Proof::BankClosed),
+            (
+                "watch return to the Varrock wood anchor after banking",
+                Proof::ArrivedNear {
+                    x: VARROCK_BEAR_UNICORN.x,
+                    z: VARROCK_BEAR_UNICORN.z,
+                    level: VARROCK_BEAR_UNICORN.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    apply_combat_qualification_budget(
+        &mut scenario,
+        AUTO_FIGHTER_TARGETS_DEADLINE,
+        AUTO_FIGHTER_TARGETS_WATCH_TICKS,
+    );
+    scenario
+}
+
+const AUTO_FIGHTER_FOOD_OVERRIDE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario AutoFighter food"),
+    },
+    ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Cake"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(FOOD_OVERRIDE_CAKE_WITHDRAW as f64),
+    },
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "leashRadius",
+        value: ScriptInjectValue::Num(14.0),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("Auto"),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["clue scroll"]),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
+/// Ported from rs2b0t `e2e/autofighter-targets-loot-live.ts` @2de6bb23
+/// (`foodOverride`).
+/// Changed: the `BankRun triggered: out of food` runner-log gate
+/// becomes the withdrawal itself — no Cake is seeded in the pack, so
+/// three held Cake could only come from the bank trip it names.
+/// Kept: five Trout in the pack, twenty Cake in the bank, food `Cake`
+/// withdraw 3 at the real Ardougne Guards, loot `clue scroll` as a
+/// setting only (a tertiary drop is chance and is never gated).
+pub(crate) fn auto_fighter_food_override_scenario() -> Scenario {
+    combat_bank_scenario(
+        "auto_fighter_food_override",
+        "AutoFighter",
+        ARDOUGNE_GUARD,
+        8,
+        "trout",
+        TROUT_ID,
+        FOOD_OVERRIDE_PACK_TROUT,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[],
+        &[CAKE_ID],
+        AUTO_FIGHTER_FOOD_OVERRIDE_INJECT,
+        0,
+        "cake",
+        FOOD_OVERRIDE_BANK_CAKE,
+        &[
+            (
+                "watch the BankRun withdraw three Cake past the pack Trout",
+                Proof::ItemId {
+                    id: CAKE_ID,
+                    count: FOOD_OVERRIDE_CAKE_WITHDRAW,
+                },
+            ),
+            ("watch the food BankRun close the booth", Proof::BankClosed),
+            (
+                "watch return to the Guard anchor after the food trip",
+                Proof::ArrivedNear {
+                    x: ARDOUGNE_GUARD.x,
+                    z: ARDOUGNE_GUARD.z,
+                    level: ARDOUGNE_GUARD.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the food return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
