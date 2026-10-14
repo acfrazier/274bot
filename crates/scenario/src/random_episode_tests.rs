@@ -147,6 +147,7 @@ fn evade_that_flees_past_chase_range_and_resumes_passes() {
     assert_eq!(receipt["escape"]["distance"], 17);
     assert_eq!(receipt["attacker"]["start"], json!([100, 101]));
     assert!(receipt["hold_rise"].is_number() && receipt["hold_fall"].is_number());
+    assert_eq!(receipt["returned_inside_range"], 40);
 }
 
 #[test]

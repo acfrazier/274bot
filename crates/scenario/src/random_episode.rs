@@ -348,6 +348,7 @@ pub struct RandomEventEpisode {
     first_target: Option<u32>,
     max_distance: i32,
     escape: Option<(u32, i32)>,
+    returned: Option<u32>,
     targeted_ticks: u32,
     // NPC presence (evade / dialog / pick).
     npc_seen: Option<u32>,
@@ -390,6 +391,7 @@ impl RandomEventEpisode {
             first_target: None,
             max_distance: 0,
             escape: None,
+            returned: None,
             targeted_ticks: 0,
             npc_seen: None,
             absent_ticks: 0,
@@ -859,6 +861,20 @@ impl RandomEventEpisode {
                 )));
             }
         }
+        // Observation only: the bot coming back inside the chase range after
+        // the escape, and whether the attacker was still there.
+        if self.escape.is_some()
+            && self.returned.is_none()
+            && !outside_chase_range((x, z), attacker.start, maxrange)
+        {
+            self.returned = Some(frame.tick);
+            let present = frame.npcs.iter().any(|n| n.index == attacker.index);
+            self.note(
+                frame,
+                "returned_inside_range",
+                json!({"attacker_present": present, "attacker_targeting": targeting}),
+            );
+        }
         let disengaged = self.npc_gone.is_some() || !targeting;
         self.resolve_when(
             frame,
@@ -928,6 +944,7 @@ impl RandomEventEpisode {
             "targeted_ticks": self.targeted_ticks,
             "max_distance": self.max_distance,
             "escape": self.escape.map(|(tick, distance)| json!({"tick": tick, "distance": distance})),
+            "returned_inside_range": self.returned,
             "npc_gone": self.npc_gone,
             "reward": self.reward,
             "trap": {"entered": self.trap_entered, "left": self.trap_left, "held": self.trap_hold},
