@@ -3130,3 +3130,99 @@ fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
         "leaving the session clears the step-local tutorial baseline"
     );
 }
+
+fn visited_within_scenario() -> Scenario {
+    let watch = |name: &'static str, min: i32, max: i32| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: wait(
+            Proof::VisitedWithin {
+                min_x: min,
+                max_x: max,
+                min_z: min,
+                max_z: max,
+                level: 0,
+            },
+            200,
+        ),
+    };
+    Scenario {
+        name: "visited-within",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            watch("visit the first box", 3218, 3222),
+            watch("visit the second box", 3228, 3232),
+        ],
+        proof: Proof::IngameScene2,
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+#[test]
+fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
+    let tile = |x: i32, z: i32| WorldTile { x, z, level: 0 };
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::with_world(visited_within_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    // One tile short of the box (min_x - 1) must not latch.
+    set_world_tile(&mut c, tile(3217, 3220));
+    runner.tick(&mut c);
+    tick_dirty(&mut runner, &mut c, false);
+    assert!(!runner.visited_within, "min_x - 1 must not latch");
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { step: 0, .. }),
+        "an outside tile must not advance the step: {:?}",
+        runner.status()
+    );
+    // One tile past the box (max_x + 1) must not latch either.
+    set_world_tile(&mut c, tile(3223, 3220));
+    tick_dirty(&mut runner, &mut c, false);
+    assert!(!runner.visited_within, "max_x + 1 must not latch");
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { step: 0, .. }),
+        "an outside tile must not advance the step: {:?}",
+        runner.status()
+    );
+
+    // A correct receipt passes: the inclusive min corner latches and
+    // the step advances.
+    set_world_tile(&mut c, tile(3218, 3218));
+    for _ in 0..5 {
+        if matches!(runner.status(), RunnerStatus::Running { step: 1, .. }) {
+            break;
+        }
+        tick_dirty(&mut runner, &mut c, false);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { step: 1, .. }),
+        "an inside tile must latch and advance to the next step: {:?}",
+        runner.status()
+    );
+    assert!(
+        !runner.visited_within,
+        "a later step starts with the visited latch clear"
+    );
+    tick_dirty(&mut runner, &mut c, false);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { step: 1, .. }),
+        "the first box's latch must not satisfy the second step: {:?}",
+        runner.status()
+    );
+
+    // Standing in the second box latches the second step and passes.
+    set_world_tile(&mut c, tile(3230, 3230));
+    for _ in 0..8 {
+        if runner.status() == RunnerStatus::Passed {
+            break;
+        }
+        tick_dirty(&mut runner, &mut c, false);
+    }
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}

@@ -1506,9 +1506,8 @@ impl ScenarioRunner {
         else {
             return;
         };
-        if self.snapshot.tile().is_some_and(|(tx, tz, tl)| {
-            tl == level && (min_x..=max_x).contains(&tx) && (min_z..=max_z).contains(&tz)
-        }) {
+        if crate::proof::visited_within_contains(&self.snapshot, min_x, max_x, min_z, max_z, level)
+        {
             self.visited_within = true;
         }
     }
