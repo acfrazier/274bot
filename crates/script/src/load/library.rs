@@ -538,7 +538,7 @@ impl JsLibrary {
                 let user_diagnostic = missing_compat_api_export(card.source, &diagnostic)
                     .map(|export| {
                         format!(
-                            "This script needs a newer rs2b0t API than this build supports (frozen at commit 00d39a17e0; missing export: {export})."
+                            "This script imports compatibility API member '{export}', which this build does not provide."
                         )
                     })
                     .unwrap_or_else(|| diagnostic.clone());
