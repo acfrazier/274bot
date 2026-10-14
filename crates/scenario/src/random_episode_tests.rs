@@ -61,6 +61,7 @@ fn frame(tick: u32, x: i32, z: i32, hold: bool) -> Frame {
         npcs: Vec::new(),
         held: vec![(HARPOON, 1)],
         fruit: false,
+        modal: false,
     }
 }
 

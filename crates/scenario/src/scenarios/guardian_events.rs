@@ -76,6 +76,40 @@ const FISHING_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+/// Draynor's oak grove east of the bank (`gatherer_live.rs`
+/// `DRAYNOR_OAK_BANK_START`), seven tiles from the nearest oak. The ent cell chops oaks: a normal tree falls
+/// with its first log, so right after the first XP the tree beside the bot
+/// is often a stump, which has no ent type (live round 1). An oak survives
+/// a log with probability 7/8 (`woodcutting.dbrow`).
+pub(crate) const DRAYNOR_OAK_START: WorldTile = WorldTile {
+    x: 3095,
+    z: 3243,
+    level: 0,
+};
+
+const OAK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "skill",
+        value: ScriptInjectValue::Str("Woodcutting"),
+    },
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Start"),
+    },
+    ScriptSettingInject {
+        id: "woodcuttingResources",
+        value: ScriptInjectValue::StrList(&["oak"]),
+    },
+    ScriptSettingInject {
+        id: "radius",
+        value: ScriptInjectValue::Num(12.0),
+    },
+    ScriptSettingInject {
+        id: "disposition",
+        value: ScriptInjectValue::Str("Power"),
+    },
+];
+
 const MINING_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "skill",
@@ -99,8 +133,14 @@ const MINING_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// ThievingBot's default target (`ThievingBot.ts:41`), no banking, no loot.
+/// ThievingBot's default target (`ThievingBot.ts:41`), no banking, no loot,
+/// and the food loadout the card requires before it starts (round 1: "The
+/// saved loadout setting \"\" cannot select a loadout").
 const THIEVING_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Guardian food"),
+    },
     ScriptSettingInject {
         id: "target",
         value: ScriptInjectValue::Str("Man"),
@@ -115,12 +155,20 @@ const THIEVING_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+/// Posted at catalog Start: the Thiever's food, as the `thiever` cell does.
+const THIEVING_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Guardian food",
+    carry: &[("Lobster", 1)],
+}];
+const LOBSTER_ID: i32 = 379;
+
 /// The real activity a cell runs while its event arrives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Activity {
     Fishing,
     Mining,
     Woodcutting,
+    OakWoodcutting,
     Prayer,
     Thieving,
 }
@@ -130,7 +178,7 @@ impl Activity {
         match self {
             Self::Fishing => FISHING_STAT,
             Self::Mining => MINING_STAT,
-            Self::Woodcutting => WOODCUTTING_STAT,
+            Self::Woodcutting | Self::OakWoodcutting => WOODCUTTING_STAT,
             Self::Prayer => PRAYER_STAT,
             Self::Thieving => THIEVING_STAT,
         }
@@ -138,7 +186,7 @@ impl Activity {
 
     const fn start_script(self) -> &'static str {
         match self {
-            Self::Fishing | Self::Mining | Self::Woodcutting => "Gatherer",
+            Self::Fishing | Self::Mining | Self::Woodcutting | Self::OakWoodcutting => "Gatherer",
             Self::Prayer => "BoneBurier",
             Self::Thieving => "Thiever",
         }
@@ -149,6 +197,7 @@ impl Activity {
             Self::Fishing => Some(FISHING_INJECT),
             Self::Mining => Some(MINING_INJECT),
             Self::Woodcutting => Some(GATHERER_START_INJECT),
+            Self::OakWoodcutting => Some(OAK_INJECT),
             Self::Prayer => None,
             Self::Thieving => Some(THIEVING_INJECT),
         }
@@ -159,6 +208,7 @@ impl Activity {
             Self::Fishing => CATHERBY_HARPOON_START,
             Self::Mining => VARROCK_EAST_MINE_START,
             Self::Woodcutting => GATHERER_START,
+            Self::OakWoodcutting => DRAYNOR_OAK_START,
             Self::Prayer | Self::Thieving => MAINLAND_LANDING,
         }
     }
@@ -171,8 +221,9 @@ impl Activity {
             Self::Fishing => &["setstat fishing 76", "give harpoon 1"],
             Self::Mining => &["setstat mining 1", "give bronze_pickaxe 1"],
             Self::Woodcutting => &["setstat woodcutting 1", "give bronze_axe 1"],
+            Self::OakWoodcutting => &["setstat woodcutting 15", "give bronze_axe 1"],
             Self::Prayer => &["give bones 28"],
-            Self::Thieving => &["setstat thieving 1", "give bread 5"],
+            Self::Thieving => &["setstat thieving 1", "give lobster 5"],
         };
         cheats.iter().all(|cmd| cheat(client, cmd).is_sent())
     }
@@ -181,10 +232,9 @@ impl Activity {
         match self {
             Self::Fishing => HARPOON_ID,
             Self::Mining => BRONZE_PICKAXE_ID,
-            Self::Woodcutting => BRONZE_AXE_ID,
+            Self::Woodcutting | Self::OakWoodcutting => BRONZE_AXE_ID,
             Self::Prayer => BONES_ID,
-            // Bread (2309): the Thiever's food.
-            Self::Thieving => 2309,
+            Self::Thieving => LOBSTER_ID,
         }
     }
 
@@ -192,7 +242,7 @@ impl Activity {
     const fn wielded_tool(self) -> Option<i32> {
         match self {
             Self::Mining => Some(BRONZE_PICKAXE_ID),
-            Self::Woodcutting => Some(BRONZE_AXE_ID),
+            Self::Woodcutting | Self::OakWoodcutting => Some(BRONZE_AXE_ID),
             _ => None,
         }
     }
@@ -326,6 +376,7 @@ pub(crate) fn guardian_event_cell(
             deadline: Duration::from_secs(180 + budget as u64 / 2),
             start_script: Some(activity.start_script()),
             script_settings_inject: activity.inject(),
+            fixture_loadouts: (activity == Activity::Thieving).then_some(THIEVING_LOADOUTS),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -460,7 +511,7 @@ pub(crate) const GUARDIAN_EVENT_CELLS: &[(&str, Activity, &str, Trigger, Oracle)
     ),
     (
         "guardian_skill_ent",
-        Activity::Woodcutting,
+        Activity::OakWoodcutting,
         "ent",
         Trigger::Skill(8),
         Oracle::Endure {
