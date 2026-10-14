@@ -619,10 +619,14 @@ const DRAGON_LOOT: &[&str] = &[
 /// loot, banktrip) become worn-bow, Ranged XP (a blue dragon's 105 HP at
 /// the content 0.4 XP/damage ranged rate is 42 XP, `skill_combat/scripts/
 /// combat.rs2` `give_combat_experience`), pack then banked Dragon bones
-/// (the guaranteed drop). Bank timing: the pack is seeded with upstream's
-/// 20 food but `foodReserve` is pinned to 20 instead of upstream's 4, so
-/// the full-pack bank trip fires after the guaranteed bones+hide fills
-/// instead of upstream's post-Start starve cheat emptying the pack; the
+/// (the guaranteed drop). Bank timing: with `combatStyle` range at a site
+/// without a ranged threat, the script keeps no food back from slot-freeing
+/// (`JiveDragons.ts:431-433` `slotFoodReserve()` is 0 unless the bot is too
+/// hurt to loot, so upstream's `foodReserve` 4 is kept) and banks only once
+/// the pack is full and the food is spent (`:1074-1086`). The pack's ~22
+/// non-kit slots fill at two drops a kill, about 11 blue kills before the
+/// trip; the live receipt `REFREEZE-MERGE-023/live` measured ~138 server
+/// ticks a kill. The
 /// bankCommonJunk/solveClues/buryBones/leaveVia settings are upstream's.
 pub(crate) fn jive_dragons_scenario() -> Scenario {
     let mut cmds = stat_cmds(DRAGON_LEVELS);
@@ -727,11 +731,11 @@ pub(crate) fn jive_dragons_scenario() -> Scenario {
                 id: DRAGON_BONES_ID,
                 count: 1,
             },
-            1800,
+            3000,
         ),
     ]);
-    // Two 105-HP kills at 85 Ranged to fill the pack, the Falador teleport
-    // and the deposit, with route margin.
+    // About 11 kills at ~138 server ticks each (~15 min), the Falador
+    // teleport and the deposit, plus seeding, the walk-in and margin.
     jive_scenario(
         "jive_dragons",
         "JiveDragons",
@@ -740,7 +744,7 @@ pub(crate) fn jive_dragons_scenario() -> Scenario {
             id: RANGED_STAT,
             min: 42,
         },
-        Duration::from_secs(1200),
+        Duration::from_secs(1800),
         JIVE_DRAGONS_BLUE_INJECT,
         combat_fixture_loadouts("GreenDragon"),
     )
@@ -758,7 +762,7 @@ const JIVE_DRAGONS_BLUE_INJECT: &[ScriptSettingInject] = &[
     inj_bool("rangingPotion", true),
     inj_num("foodWithdraw", 20.0),
     inj_num("panicHp", 30.0),
-    inj_num("foodReserve", 20.0),
+    inj_num("foodReserve", 4.0),
     inj_num("healTo", 90.0),
     inj_num("teleStock", 2.0),
     inj_bool("buryBones", false),

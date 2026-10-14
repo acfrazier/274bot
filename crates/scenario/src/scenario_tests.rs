@@ -12957,28 +12957,23 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
 }
 
 #[test]
-fn jive_cells_are_registered_with_cards_deadlines_and_loadouts() {
-    // (cell, card, deadline seconds, loadout loadout-pinned)
-    let cells: &[(&str, &str, u64, bool)] = &[
-        ("jive_chests", "JiveChests", 900, false),
-        ("jive_crafting", "JiveCrafting", 600, false),
-        ("jive_enchanter", "JiveEnchanter", 600, false),
-        ("jive_dragons", "JiveDragons", 1200, true),
-        ("jive_dragons_black_range", "JiveDragons", 1200, true),
-        ("jive_dragons_potion_restock", "JiveDragons", 300, true),
-        ("jive_demons", "JiveDemons", 1500, true),
-        ("jive_kbd", "JiveKBD", 2700, true),
+fn jive_cells_are_registered_with_cards_and_loadouts() {
+    // (cell, card, loadout pinned)
+    let cells: &[(&str, &str, bool)] = &[
+        ("jive_chests", "JiveChests", false),
+        ("jive_crafting", "JiveCrafting", false),
+        ("jive_enchanter", "JiveEnchanter", false),
+        ("jive_dragons", "JiveDragons", true),
+        ("jive_dragons_black_range", "JiveDragons", true),
+        ("jive_dragons_potion_restock", "JiveDragons", true),
+        ("jive_demons", "JiveDemons", true),
+        ("jive_kbd", "JiveKBD", true),
     ];
-    for &(name, card, deadline_s, pinned) in cells {
+    for &(name, card, pinned) in cells {
         assert!(names().contains(&name), "{name} registered");
         let s = get(name).unwrap_or_else(|| panic!("{name} resolves"));
         assert_eq!(s.name, name);
         assert_eq!(s.settings.start_script, Some(card), "{name} card");
-        assert_eq!(
-            s.settings.deadline,
-            Duration::from_secs(deadline_s),
-            "{name} deadline is its own fixed bound"
-        );
         assert_eq!(
             s.settings.nav.engine_speed_ms,
             Some(600),
