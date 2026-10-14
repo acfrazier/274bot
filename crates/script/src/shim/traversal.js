@@ -4,6 +4,9 @@ import { Sustain } from '../sustain/Sustain.js';
 const whole = (value) => (typeof value === 'number' ? { value: Math.floor(value) } : null);
 const count = (value) => (Array.isArray(value) ? value.length : 0);
 
+export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };
+export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };
+
 // Frozen Traversal.walkTo(dest, WalkOptions): Rust owns the walk, the
 // option defaults and refusals, the Sustain pumps, the boat-fare recovery
 // and the one re-walk (`walk-to`). The shim only coerces options.
@@ -96,9 +99,9 @@ export const Traversal = proxy('Traversal', {
         throw notImpl('Traversal.requestRepath');
     },
     get pureWalk() {
-        return { useTeleportCatalog: false, policy: { useTeleports: false } };
+        return NAV_PURE_WALK;
     },
     get withTeles() {
-        return { useTeleportCatalog: true, policy: { useTeleports: true } };
+        return NAV_WITH_TELES;
     },
 });

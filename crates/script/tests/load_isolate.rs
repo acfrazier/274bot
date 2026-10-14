@@ -7979,10 +7979,10 @@ export default class T extends LoopingBot {
         loot.iter().any(|value| value == "uncut"),
         "COMMON_BANK_LOOT must mirror the Rust-owned policy table: {loot:?}"
     );
-    let hostile = parsed["hostile"].as_array().expect("HOSTILE_NAMES");
-    assert!(
-        hostile.is_empty(),
-        "HOSTILE_NAMES must not ship a hostility policy table: {hostile:?}"
+    assert_eq!(
+        parsed["hostile"],
+        serde_json::json!(["Guard", "Knight of Ardougne", "Paladin", "Hero"]),
+        "HOSTILE_NAMES must match the frozen upstream constant"
     );
     assert_eq!(
         parsed["stealOk"],

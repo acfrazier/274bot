@@ -77,7 +77,7 @@ function extractItemCategories(contentRoot: string): Map<string, string | null> 
     return byAlias;
 }
 /** One published item row, in the writer's decoded shape. Read under the checks below. */
-type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; category: string | null; tradeable: boolean; stack_variant: boolean };
+type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; worn_model: boolean; category: string | null; tradeable: boolean; stack_variant: boolean };
 /** One published talk_key step spawn. `plane` is the scene plane, never `level`. */
 type PublishedTalkKeySpawn = { x: number; z: number; plane: number };
 /** One published talk_key talk step. */
@@ -118,7 +118,7 @@ function isPublishedCombatSpell(value: unknown): value is PublishedCombatSpell {
             && 'count' in rune && typeof rune.count === 'number' && Number.isInteger(rune.count));
 }
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
-assertEqual(manifest.schema_version, 4, 'manifest schema');
+assertEqual(manifest.schema_version, 5, 'manifest schema');
 const results = [];
 const publishedTrioGivers = new Map<number, PublishedTrioGivers>();
 const publishedSiteIds = new Map<number, string[]>();
@@ -172,7 +172,7 @@ async function verifyDebugArtifact(revision: number, manifestRow: any, pin: { en
 
 async function verifyRevision(revision: number) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
-    assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
+    assertEqual(payload.schema_version, 5, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
     const spec = revisions.find((each) => each.revision === revision)!;
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
@@ -407,6 +407,7 @@ async function verifyRevision(revision: number) {
     const categoryNames = new Set(parsePack(fs.readFileSync(path.join(pin.contentRoot, 'pack/category.pack'), 'utf8')).keys());
     for (const item of payload.items as PublishedItemRow[]) {
         const expected = item.alias === null ? null : (contentCategories.get(item.alias) ?? null);
+        if (typeof item.worn_model !== 'boolean') throw new Error(`${revision}: item ${item.alias} (${item.id}) has no boolean worn_model`);
         assertEqual(item.category ?? null, expected, `${revision} item ${item.alias} (${item.id}) category`);
         if (item.category !== null && !categoryNames.has(item.category)) throw new Error(`${revision}: item ${item.alias} category ${item.category} absent from pack/category.pack`);
     }

@@ -14,6 +14,14 @@ function capacity() {
     return typeof snap().inv_size === 'number' ? snap().inv_size : 0;
 }
 
+
+export function backpackSnapshots() {
+    throw notImpl('backpackSnapshots');
+}
+
+export function backpackCapacity() {
+    throw notImpl('backpackCapacity');
+}
 function useOnKind(target) {
     const cn = target?.constructor?.name;
     if (cn === 'Npc') return 'npc';
@@ -24,67 +32,76 @@ function useOnKind(target) {
 }
 
 function held(row) {
-    const hasIdentity =
-        Number.isInteger(row.id) && Number.isInteger(row.slot) && row.slot >= 0;
-    const sourceIdentity = {
-        source_item_id: hasIdentity ? row.id : null,
-        source_item_slot: hasIdentity ? row.slot : null,
-    };
-    return {
-        name: row.name,
-        count: row.count,
-        id: row.id ?? 0,
-        slot: row.slot ?? 0,
-        noted: row.noted === true,
-        cert: row.cert ?? -1,
-        [inventoryIdentity]: hasIdentity ? { id: row.id, slot: row.slot } : null,
-        interact(action) {
-            queue({ op: 'held', name: row.name, action: String(action) });
+    return new InvItem(row);
+}
+
+const inventoryRow = Symbol('inventoryRow');
+
+export class InvItem {
+    constructor(row) {
+        const hasIdentity =
+            Number.isInteger(row.id) && Number.isInteger(row.slot) && row.slot >= 0;
+        this.name = row.name;
+        this.count = row.count;
+        this.id = row.id ?? 0;
+        this.slot = row.slot ?? 0;
+        this.noted = row.noted === true;
+        this.cert = row.cert ?? -1;
+        this[inventoryIdentity] = hasIdentity ? { id: row.id, slot: row.slot } : null;
+        this[inventoryRow] = row;
+    }
+
+    actions() {
+        const row = this[inventoryRow];
+        return Array.isArray(row.ops) ? row.ops.slice() : [];
+    }
+
+    interact(action) {
+        queue({ op: 'held', name: this.name, action: String(action) });
+        return true;
+    }
+
+    useOn(target) {
+        if (!target) return false;
+        if (target.name && !target.snap) {
+            const targetIdentity = target[inventoryIdentity];
+            queue({
+                op: 'use-on',
+                name: this.name,
+                kind: 'inv',
+                target_name: target.name,
+                source_item_id: this[inventoryIdentity]?.id ?? null,
+                source_item_slot: this[inventoryIdentity]?.slot ?? null,
+                target_item_id: targetIdentity?.id ?? null,
+                target_item_slot: targetIdentity?.slot ?? null,
+                x: 0,
+                z: 0,
+                level: 0,
+                index: null,
+            });
             return true;
-        },
-        actions() {
-            return Array.isArray(row.ops) ? row.ops.slice() : [];
-        },
-        useOn(target) {
-            if (!target) return false;
-            if (target.name && !target.snap) {
-                const targetIdentity = target[inventoryIdentity];
-                queue({
-                    op: 'use-on',
-                    name: row.name,
-                    kind: 'inv',
-                    target_name: target.name,
-                    ...sourceIdentity,
-                    target_item_id: targetIdentity?.id ?? null,
-                    target_item_slot: targetIdentity?.slot ?? null,
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                    index: null,
-                });
-                return true;
-            }
-            if (target.name && target.snap) {
-                const kind = useOnKind(target);
-                queue({
-                    op: 'use-on',
-                    name: row.name,
-                    kind,
-                    target_name: target.name ?? target.snap.name ?? null,
-                    ...sourceIdentity,
-                    x: target.snap?.x ?? 0,
-                    z: target.snap?.z ?? 0,
-                    level: target.snap?.level ?? 0,
-                    index:
-                        kind === 'npc'
-                            ? (target.snap?.index ?? target.index ?? null)
-                            : null,
-                });
-                return true;
-            }
-            return false;
-        },
-    };
+        }
+        if (target.name && target.snap) {
+            const kind = useOnKind(target);
+            queue({
+                op: 'use-on',
+                name: this.name,
+                kind,
+                target_name: target.name ?? target.snap.name ?? null,
+                source_item_id: this[inventoryIdentity]?.id ?? null,
+                source_item_slot: this[inventoryIdentity]?.slot ?? null,
+                x: target.snap?.x ?? 0,
+                z: target.snap?.z ?? 0,
+                level: target.snap?.level ?? 0,
+                index:
+                    kind === 'npc'
+                        ? (target.snap?.index ?? target.index ?? null)
+                        : null,
+            });
+            return true;
+        }
+        return false;
+    }
 }
 
 export const Inventory = new Proxy(

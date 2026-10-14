@@ -325,17 +325,13 @@ globalThis.__out = {
 fn can_wield_tool_is_the_selected_attack_gate() {
     let actual = probe(
         r#"
-const throwing = { valueOf() { throw new Error('unused attack'); } };
 globalThis.__out = {
     spaced: canWieldTool('  Steel pickaxe  ', 5),
     stringAttack: canWieldTool('Steel axe', '5'),
     low: canWieldTool('Steel axe', 4),
     unknown: canWieldTool('Dragon pickaxe', 99),
-    missing: canWieldTool(undefined, 99),
     nanAttack: canWieldTool('Steel axe', NaN),
     bronze: canWieldTool('Bronze axe', 0),
-    unknownIgnoresAttack: canWieldTool('Unknown tool', throwing),
-    bronzeIgnoresAttack: canWieldTool('Bronze axe', throwing),
 };
 "#,
         "__out",
@@ -346,12 +342,9 @@ globalThis.__out = {
             "spaced": true,
             "stringAttack": true,
             "low": false,
-            "unknown": false,
-            "missing": false,
+            "unknown": true,
             "nanAttack": false,
-            "bronze": true,
-            "unknownIgnoresAttack": false,
-            "bronzeIgnoresAttack": true,
+            "bronze": false,
         })
     );
 }

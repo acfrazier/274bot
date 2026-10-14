@@ -534,6 +534,106 @@ pub(crate) fn pick_preferred(options: &[String], prefer: &[String]) -> Option<us
             .filter(|&index| !options[index].is_empty())
     })
 }
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LineRule {
+    when_line: String,
+    choose: String,
+}
+
+/// Frozen `pickByLine` (`primitives.ts:36-49`): the longest matching spoken
+/// fragment wins, then its answer is resolved against the posted options.
+pub(crate) fn pick_by_line(
+    lines: &[String],
+    options: &[String],
+    rules: &[LineRule],
+) -> Option<usize> {
+    let said = flatten_spoken_lines(lines);
+    if said.is_empty() {
+        return None;
+    }
+    let mut hit: Option<(&LineRule, usize)> = None;
+    for rule in rules {
+        let needle = rule.when_line.to_lowercase();
+        if !said.contains(&needle) {
+            continue;
+        }
+        let length = rule.when_line.encode_utf16().count();
+        if hit.as_ref().is_none_or(|(_, longest)| length > *longest) {
+            hit = Some((rule, length));
+        }
+    }
+    let (hit, _) = hit?;
+    let answer = hit.choose.to_lowercase();
+    options
+        .iter()
+        .position(|option| option.to_lowercase().contains(&answer))
+}
+
+fn flatten_spoken_lines(lines: &[String]) -> String {
+    let mut flattened = String::new();
+    let mut pending_space = false;
+    for line in lines {
+        if !flattened.is_empty() {
+            pending_space = true;
+        }
+        let bytes = line.as_bytes();
+        let mut offset = 0;
+        while offset < bytes.len() {
+            if bytes.get(offset..offset + 5).is_some_and(|tag| {
+                tag[0] == b'@' && tag[4] == b'@' && tag[1..4].iter().all(u8::is_ascii_alphanumeric)
+            }) {
+                pending_space = true;
+                offset += 5;
+                continue;
+            }
+            let character = line[offset..]
+                .chars()
+                .next()
+                .expect("offset remains at a UTF-8 boundary");
+            if character == '|' || character.is_whitespace() {
+                pending_space = true;
+                offset += character.len_utf8();
+                continue;
+            }
+            if pending_space && !flattened.is_empty() {
+                flattened.push(' ');
+            }
+            pending_space = false;
+            flattened.extend(character.to_lowercase());
+            offset += character.len_utf8();
+        }
+    }
+    flattened
+}
+
+#[cfg(test)]
+mod pure_helper_tests {
+    use super::*;
+
+    #[test]
+    fn pick_by_line_normalizes_tags_and_prefers_longest_fragment() {
+        let lines = vec!["@dbl@Cur|tanath...".to_string()];
+        let options = vec![
+            "Cur.".to_string(),
+            "Ar.".to_string(),
+            "Bidith.".to_string(),
+            "Tanath.".to_string(),
+            "Gor.".to_string(),
+        ];
+        let rules = vec![
+            LineRule {
+                when_line: "ar cur".into(),
+                choose: "Gor.".into(),
+            },
+            LineRule {
+                when_line: "cur tanath".into(),
+                choose: "Bidith.".into(),
+            },
+        ];
+        assert_eq!(pick_by_line(&lines, &options, &rules), Some(2));
+    }
+}
 
 fn choose_option(options: &[String], prefer: &[String]) -> (i32, Option<String>) {
     if let Some(index) = pick_preferred(options, prefer) {
@@ -835,5 +935,34 @@ mod tests {
                 "closed chat with in_combat={in_combat}"
             );
         }
+    }
+
+    #[test]
+    fn caller_gap_ms_controls_quiet_wait() {
+        let observation = obs(Vec::new());
+        post(&observation);
+        assert_eq!(
+            machine::start(
+                "dialog",
+                json!({ "kind": "drive", "gapMs": 0 }),
+                Vec::new(),
+                0,
+            ),
+            Started::Settled(Outcome::Done(json!(true)))
+        );
+
+        let drive = running(machine::start(
+            "dialog",
+            json!({ "kind": "drive", "gapMs": 12_000 }),
+            Vec::new(),
+            0,
+        ));
+        assert_eq!(machine::take(drive), Take::Pending);
+        machine::tests::expire_deadlines();
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(drive),
+            Take::Settled(Outcome::Done(json!(true)))
+        );
     }
 }

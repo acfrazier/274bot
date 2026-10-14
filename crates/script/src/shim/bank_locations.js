@@ -1,5 +1,5 @@
 import Tile from '../../geometry/Tile.js';
-import { runMachine } from '../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../shim/_kernel.js';
 
 function tileBank(bank) {
     return bank ? {
@@ -42,6 +42,10 @@ export function bankUnlocked(bank) {
     });
 }
 
+export function lockedBankAt(tile) {
+    return tileBank(globalThis.__rs2b0t_locked_bank_at(tile));
+}
+
 /** Air ranking is synchronous; only the reachable selector asks the worker. */
 export function nearestBank(here) {
     return tileBank(globalThis.__rs2b0t_nearest_bank(here));
@@ -58,4 +62,24 @@ export function nearestUsableBank(here, usable) {
 export async function nearestBankReachable(here, _navigator) {
     const out = await runMachine('bank_select', { from: here, allow_wilderness: true });
     return tileBank(out.kind === 'done' ? out.value : null);
+}
+
+export function nearestWalkableBank() {
+    throw notImpl('nearestWalkableBank');
+}
+
+export async function nearestWalkableBankAsync() {
+    throw notImpl('nearestWalkableBankAsync');
+}
+
+export function bankCostForFinder() {
+    throw notImpl('bankCostForFinder');
+}
+
+export function bankCostForNavigator() {
+    throw notImpl('bankCostForNavigator');
+}
+
+export function bankDistance(from, bank) {
+    return globalThis.__rs2b0t_bank_distance(from, bank);
 }
