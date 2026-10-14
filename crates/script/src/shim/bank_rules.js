@@ -8,3 +8,5 @@ export {
     shouldBankNow,
     isDisposableGatherJunk,
 } from './Banking.js';
+
+export { RANDOM_EVENT_CASKET_ID } from './Banking.js';

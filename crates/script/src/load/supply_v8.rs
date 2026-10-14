@@ -41,7 +41,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         "__rs2b0t_should_eat_to_use_food",
         should_eat_to_use_food,
     )?;
-    callback_v8::install(runtime, "__rs2b0t_eat_at_hp_threshold", eat_at_hp_threshold)
+    callback_v8::install(runtime, "__rs2b0t_eat_at_hp_threshold", eat_at_hp_threshold)?;
+    callback_v8::install(runtime, "__rs2b0t_food_is_edible", food_is_edible)
 }
 
 /// JS `Math.max(a, b)`: NaN wins, and `+0` beats `-0`.
@@ -227,6 +228,38 @@ fn run_food_count_v1(
     ))
 }
 
+fn food_is_edible(
+    scope: &mut v8::HandleScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let item = args.get(0);
+        if item.is_null_or_undefined() {
+            return Err("invalid-args".to_string());
+        }
+        let noted = item_noted(scope, item)?;
+        if noted {
+            return Ok(false);
+        }
+        let item = InvItemName {
+            name: item_name(scope, item)?,
+            noted,
+        };
+        let food_name = js_to_string(scope, args.get(1))?;
+        Ok(food_policy::is_edible_food(
+            supply_v2::selected_data().as_deref(),
+            &item,
+            &food_name,
+        ))
+    })();
+    match result {
+        Ok(edible) => rv.set(v8::Boolean::new(scope, edible).into()),
+        Err(err) if err == PENDING => {}
+        Err(err) => throw_error(scope, &err),
+    }
+}
+
 fn run_supply_v2<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &v8::FunctionCallbackArguments,
@@ -379,6 +412,7 @@ fn parse_v1_items(
         }
         out.push(InvItemName {
             name: item_name(scope, item)?,
+            noted: item_noted(scope, item)?,
         });
     }
     Ok(out)
@@ -403,9 +437,21 @@ fn parse_v2_items(
         }
         out.push(InvItemName {
             name: item_name(scope, item)?,
+            noted: item_noted(scope, item)?,
         });
     }
     Ok(out)
+}
+
+fn item_noted(scope: &mut v8::HandleScope, item: v8::Local<v8::Value>) -> Result<bool, String> {
+    let Some(obj) = item.to_object(scope) else {
+        return Ok(false);
+    };
+    let key = v8::String::new(scope, "noted").ok_or_else(|| "string".to_string())?;
+    let Some(noted) = obj.get(scope, key.into()) else {
+        return Err(PENDING.into());
+    };
+    Ok(noted.boolean_value(scope))
 }
 
 fn item_name(

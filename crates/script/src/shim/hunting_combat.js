@@ -7,6 +7,8 @@
 import { notImpl, runMachine } from '../../../shim/_kernel.js';
 import { Sustain } from '../../sustain/Sustain.js';
 
+const logic = (name, ...args) => globalThis.__rs2b0t_hunt_logic(name, ...args);
+
 function hunt(op, family, a, b) {
     const fn = globalThis.__rs2b0t_hunt;
     if (typeof fn !== 'function') throw notImpl('hunt');
@@ -88,6 +90,10 @@ export function anchorFor(site, style, index) {
     return site.safespots[Math.min(index, site.safespots.length - 1)] ?? site.meleeAnchor;
 }
 
+export function chasesTarget(site, style) {
+    return logic('chasesTarget', style, site.key, site.fireAtRange);
+}
+
 class HuntTask {
     constructor(family, host, site) {
         this.family = family;
@@ -127,6 +133,10 @@ export class Fight extends HuntTask {
 
     blocksLoot() {
         return hunt('blocksLoot', this.family, this.token, this.hooks) === true;
+    }
+
+    hasChaseTarget() {
+        throw notImpl('Fight.hasChaseTarget');
     }
 }
 

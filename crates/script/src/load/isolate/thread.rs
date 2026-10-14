@@ -126,6 +126,14 @@ impl Drop for MachinesStop {
     }
 }
 
+/// Drops cached V8 object rows before their Runtime is destroyed.
+struct ObjRecordsStop;
+impl Drop for ObjRecordsStop {
+    fn drop(&mut self) {
+        super::super::selected_facts_v8::reset_obj_records_cache();
+    }
+}
+
 /// Counts actual Runtime ownership, not merely live JoinHandles.
 struct RuntimeLifetime;
 
@@ -192,6 +200,7 @@ pub(super) fn isolate_main(
     // Declared after `runtime`, so a failed wire (whose module code may
     // have started a machine) drops the rows before the isolate.
     let _machines = MachinesStop;
+    let _obj_records = ObjRecordsStop;
     crate::machine::set_walking_publication(walking_ownership);
     #[cfg(feature = "memory-profile")]
     counters

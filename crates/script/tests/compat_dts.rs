@@ -1,7 +1,7 @@
 // Compat (JS API v1) declarations — generated declarations gated against the live shim.
 use script::compat_dts::{
     check_compat_dts_drift, collect_compat_surface_from, compat_dts_path, drift_against_shim,
-    load_authored_dts, load_authored_dts_from, shim_source_pairs,
+    load_authored_dts, load_authored_dts_from, shim_source_pairs, CompatExport, Member, MemberKind,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -116,15 +116,64 @@ fn authored_tree_preserves_header_and_sibling_imports() {
 fn compat_dts_is_fresh() {
     check_compat_dts_drift().unwrap_or_else(|e| panic!("{e}"));
 }
+fn paint_frame_members(authored: &mut script::compat_dts::AuthoredSurface) -> &mut Vec<Member> {
+    let module = authored
+        .modules
+        .iter_mut()
+        .find(|module| module.specifier.ends_with("paint/Paint.js"))
+        .expect("authored Paint declaration module");
+    module
+        .exports
+        .iter_mut()
+        .find_map(|export| match export {
+            CompatExport::Class { name, members, .. } if name == "PaintFrame" => Some(members),
+            _ => None,
+        })
+        .expect("authored PaintFrame declaration")
+}
+
+#[test]
+fn preserve_members_rejects_an_unbacked_extra_member() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    paint_frame_members(&mut authored).push(Member {
+        name: "unbackedProbe".to_string(),
+        kind: MemberKind::Method,
+        params: Vec::new(),
+        is_async: false,
+        allows_non_promise: true,
+        is_static: false,
+    });
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("PaintFrame extra authored member unbackedProbe")),
+        "preserveMembers must not waive unbacked methods: {drifts:?}"
+    );
+}
+
+#[test]
+fn preserve_members_rejects_an_emptied_class() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    paint_frame_members(&mut authored).clear();
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("PaintFrame missing member constructor")),
+        "an emptied preserveMembers class must fail the drift guard: {drifts:?}"
+    );
+}
 
 /// Re-run the frozen emitter and named runtime overlay without rewriting index.d.ts.
-/// The integration owner runs this with RS2B0T pointing at the frozen 00d39a17e0 source.
+/// The integration owner runs this with RS2B0T pointing at the frozen
+/// rs2b0t revision 2de6bb2397ceb9ffd05f2354f67dde328e324531 source.
 #[test]
 #[ignore = "requires RS2B0T set to the frozen rs2b0t source"]
 fn generator_check_matches_frozen_emit_and_overlay() {
     let rs2b0t = std::env::var_os("RS2B0T").unwrap_or_else(|| {
         panic!(
-            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 00d39a17e0 source before \
+            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 2de6bb2397ceb9ffd05f2354f67dde328e324531 source before \
              running `cargo test -p script --test compat_dts -- --include-ignored`"
         )
     });
@@ -155,8 +204,8 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[test]
 #[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
 fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
-    let rs2b0t =
-        std::env::var_os("RS2B0T").expect("set RS2B0T to the frozen rs2b0t 00d39a17e0 source");
+    let rs2b0t = std::env::var_os("RS2B0T")
+        .expect("set RS2B0T to the frozen rs2b0t 2de6bb2397ceb9ffd05f2354f67dde328e324531 source");
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let scratch = unique_temp_path("runtime-extension");
     let crate_copy = scratch.join("crate");
@@ -302,7 +351,7 @@ export const Gatherer: {
         .to_string();
     assert_ne!(
         actual_wrong_commit,
-        "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"
+        "2de6bb2397ceb9ffd05f2354f67dde328e324531"
     );
     let rejected = Command::new("node")
         .arg("generate.cjs")
@@ -317,7 +366,7 @@ export const Gatherer: {
     );
     assert!(
         stderr.contains(
-            "RS2B0T revision check failed: expected 00d39a17e0 (00d39a17e056df6c5e461f3f2cfd3598ff9720b6)"
+            "RS2B0T revision check failed: expected 2de6bb2397 (2de6bb2397ceb9ffd05f2354f67dde328e324531)"
         ),
         "wrong-revision failure must have the stable prefix: {stderr}"
     );

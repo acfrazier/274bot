@@ -114,6 +114,13 @@ fn run<'s>(
             let skill = js_string_arg(scope, args.get(1));
             js_string(scope, paint_skill_short(&skill))
         }
+        "wrapText" => {
+            let text = js_string_arg(scope, args.get(1));
+            let cols = js_f64(scope, args.get(2), 0.0);
+            let indent = js_f64(scope, args.get(3), 0.0);
+            let lines = wrap_text(&text, cols, indent);
+            js_string_array_value(scope, &lines)
+        }
         "xpAtLevel" => {
             let level = js_f64(scope, args.get(1), 0.0);
             Ok(v8::Number::new(scope, xp_at_level(level)).into())
@@ -530,6 +537,92 @@ fn fmt_duration(mins: f64) -> String {
     format!("{hours}:{minutes}:{seconds}")
 }
 
+/// Frozen `wrapText` from `paint/paintLogic.ts:155-188`.
+fn wrap_text(text: &str, cols: f64, indent: f64) -> Vec<String> {
+    if cols <= 0.0 || cols.is_nan() {
+        return Vec::new();
+    }
+    let max_cols = text.chars().count().saturating_add(1);
+    let cols = if cols.is_finite() {
+        (cols.floor() as usize).min(max_cols)
+    } else {
+        max_cols
+    };
+    if cols == 0 {
+        return Vec::new();
+    }
+    let pad_len = if indent.is_nan() {
+        0
+    } else {
+        indent.min(cols.saturating_sub(1) as f64).max(0.0).trunc() as usize
+    };
+    let pad = " ".repeat(pad_len);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut line_len = 0;
+
+    for mut word in text.split_whitespace() {
+        let mut word_len = word.chars().count();
+        while word_len > wrap_room(lines.is_empty(), cols, pad_len) {
+            flush_wrap_line(&mut lines, &mut line, &mut line_len, &pad);
+            let take = wrap_room(lines.is_empty(), cols, pad_len);
+            let split_at = word
+                .char_indices()
+                .nth(take)
+                .map_or(word.len(), |(index, _)| index);
+            let (part, rest) = word.split_at(split_at);
+            let mut wrapped = String::with_capacity(pad.len() + part.len());
+            if !lines.is_empty() {
+                wrapped.push_str(&pad);
+            }
+            wrapped.push_str(part);
+            lines.push(wrapped);
+            word = rest;
+            word_len = word.chars().count();
+        }
+
+        let room = wrap_room(lines.is_empty(), cols, pad_len);
+        if line_len == 0 {
+            line.push_str(word);
+            line_len = word_len;
+        } else if line_len + 1 + word_len <= room {
+            line.push(' ');
+            line.push_str(word);
+            line_len += 1 + word_len;
+        } else {
+            flush_wrap_line(&mut lines, &mut line, &mut line_len, &pad);
+            line.push_str(word);
+            line_len = word_len;
+        }
+    }
+    flush_wrap_line(&mut lines, &mut line, &mut line_len, &pad);
+    lines
+}
+
+fn wrap_room(first_line: bool, cols: usize, pad_len: usize) -> usize {
+    if first_line {
+        cols
+    } else {
+        cols - pad_len
+    }
+}
+
+fn flush_wrap_line(lines: &mut Vec<String>, line: &mut String, line_len: &mut usize, pad: &str) {
+    if line.is_empty() {
+        return;
+    }
+    if lines.is_empty() {
+        lines.push(std::mem::take(line));
+    } else {
+        let mut wrapped = String::with_capacity(pad.len() + line.len());
+        wrapped.push_str(pad);
+        wrapped.push_str(line);
+        lines.push(wrapped);
+        line.clear();
+    }
+    *line_len = 0;
+}
+
 /// `String(Math.floor(x)).padStart(2, '0')`.
 fn pad2(x: f64) -> String {
     let text = js_number(x);
@@ -833,13 +926,13 @@ fn js_string<'s>(
         .ok_or_else(|| "v8 string alloc failed".to_string())
 }
 
-fn js_string_array_value<'s>(
+fn js_string_array_value<'s, S: AsRef<str>>(
     scope: &mut v8::HandleScope<'s>,
-    lines: &[&str],
+    lines: &[S],
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, lines.len() as i32);
     for (i, line) in lines.iter().enumerate() {
-        let value = js_string(scope, line)?;
+        let value = js_string(scope, line.as_ref())?;
         arr.set_index(scope, i as u32, value)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

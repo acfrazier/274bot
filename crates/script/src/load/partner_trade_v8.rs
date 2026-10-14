@@ -20,9 +20,9 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     Ok(())
 }
 
-fn partner_trade_callback(
-    scope: &mut v8::HandleScope,
-    args: v8::FunctionCallbackArguments,
+fn partner_trade_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
     match run(scope, &args) {
@@ -34,7 +34,7 @@ fn partner_trade_callback(
 
 fn run<'s>(
     scope: &mut v8::HandleScope<'s>,
-    args: &v8::FunctionCallbackArguments,
+    args: &v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let export = args.get(0).to_rust_string_lossy(scope);
     let value: v8::Local<v8::Value> = match export.as_str() {
@@ -46,6 +46,23 @@ fn run<'s>(
         "parsePartnerList" => {
             let raw = js_string(scope, args.get(1))?;
             string_array_value(scope, &pt::parse_partner_list(&raw))?
+        }
+        "parseTradePartnerHeader" => {
+            let header = js_string(scope, args.get(1))?;
+            match pt::parse_trade_partner_header(&header) {
+                Some(name) => v8_str(scope, &name)?,
+                None => v8::null(scope).into(),
+            }
+        }
+        "tradeScreenState" => {
+            let snapshot = args.get(1);
+            let offer_open = field(scope, snapshot, "trade_offer_open")?.is_true();
+            let confirm_open = if offer_open {
+                false
+            } else {
+                field(scope, snapshot, "trade_confirm_open")?.is_true()
+            };
+            v8_str(scope, pt::trade_screen_state(offer_open, confirm_open))?
         }
         "namesMatch" => {
             let a = js_string(scope, args.get(1))?;
@@ -62,6 +79,7 @@ fn run<'s>(
             let item_name = js_string(scope, args.get(2))?;
             v8::Number::new(scope, pt::count_offer_by_name(&items, &item_name)).into()
         }
+        "countOfferMatching" => count_offer_matching(scope, args.get(1), args.get(2))?,
         "decideReceiverOfferScreen" => receiver_decision(scope, args.get(1))?,
         "decideGiverOfferScreen" => {
             let slots = number(scope, args.get(1));
@@ -153,6 +171,59 @@ fn offer_slots(
         out.push(OfferSlot { name, count });
     }
     Ok(out)
+}
+
+fn count_offer_matching<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    items: v8::Local<'s, v8::Value>,
+    predicate: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Ok(items) = v8::Local::<v8::Array>::try_from(items) else {
+        let message = v8::String::new(scope, "items.filter is not a function").ok_or("string")?;
+        let exception = v8::Exception::type_error(scope, message);
+        scope.throw_exception(exception);
+        return Err(PENDING.to_string());
+    };
+    let Ok(predicate) = v8::Local::<v8::Function>::try_from(predicate) else {
+        let message = v8::String::new(scope, "match is not a function").ok_or("string")?;
+        let exception = v8::Exception::type_error(scope, message);
+        scope.throw_exception(exception);
+        return Err(PENDING.to_string());
+    };
+
+    let mut total = 0.0;
+    let receiver = v8::undefined(scope).into();
+    let length = items.length();
+    for index in 0..length {
+        let present = items
+            .has_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        if !present {
+            continue;
+        }
+        let slot = items
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        let name = field(scope, slot, "name")?;
+        if name.is_null_or_undefined() {
+            continue;
+        }
+        let Some(matches) = predicate.call(scope, receiver, &[name]) else {
+            return Err(PENDING.to_string());
+        };
+        if !matches.boolean_value(scope) {
+            continue;
+        }
+        let count = field(scope, slot, "count")?;
+        let count = number(scope, count);
+        total += if count.is_nan() {
+            f64::NAN
+        } else {
+            count.max(1.0)
+        };
+    }
+
+    Ok(v8::Number::new(scope, total).into())
 }
 
 fn array_len(value: v8::Local<v8::Value>) -> usize {

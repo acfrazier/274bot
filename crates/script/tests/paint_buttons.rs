@@ -350,7 +350,7 @@ export default class T extends LoopingBot {
     assert!(
         err.as_str()
             .unwrap_or("")
-            .contains("not impl: Paint.stepper"),
+            .contains("not impl: PaintFrame.stepper"),
         "unused widgets stay missing, got {err:?}"
     );
     iso.join();

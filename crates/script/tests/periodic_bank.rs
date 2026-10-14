@@ -416,7 +416,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
 }
 
 #[test]
-fn either_label_and_shim_loot_token_both_trigger() {
+fn either_label_and_loot_count_label_both_trigger() {
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 import { parseBankStrategy } from '../../api/bank/Banking.js';
@@ -444,7 +444,7 @@ export default class T extends TaskBot {
     snap.nearest_booth = Some(seers_booth());
     post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
-    assert_eq!(iso.probe("__shim").unwrap(), "loot");
+    assert_eq!(iso.probe("__shim").unwrap(), "items");
     assert!(matches!(
         iso.drain_interacts().as_slice(),
         [InteractReq::OpenBooth { .. }]

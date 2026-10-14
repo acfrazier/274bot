@@ -787,6 +787,7 @@ mod tests {
             "wear_position": -1,
             "wear_position_2": -1,
             "wear_position_3": -1,
+            "worn_model": false,
             "tradeable": true,
             "stack_variant": false
         })
@@ -907,7 +908,7 @@ mod tests {
         }
         let item_rows = items;
         let data = json!({
-            "schema_version":4,
+            "schema_version":5,
             "revision":289,
             "provenance":{
                 "cache_identity":{"cache_id":"test"},
