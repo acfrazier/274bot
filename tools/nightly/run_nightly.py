@@ -54,6 +54,7 @@ CATALOG_RS = Path("crates/scenario/src/catalog.rs")
 RECEIPT_START = re.compile(r'\{"scenario":"')
 ANSI = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[()][0-9A-Za-z]|[=>78DEHMc])")
 FAILURE_HINT = re.compile(r"(FAIL|panicked|error|Error|refus|timed out|deadline)")
+PAIR_GATE_REFUSAL = "only qualifies under the pair core gate"
 
 _stop = threading.Event()
 _children: set[subprocess.Popen] = set()
@@ -259,6 +260,7 @@ class CellResult:
     first_failure: str | None = None
     exit_code: int | None = None
     reason: str | None = None
+    gate: str | None = None  # "--pair-core" when the cell ran under the pair witness
     started: str | None = None
     receipt: dict | None = field(default=None, repr=False)
 
@@ -312,9 +314,10 @@ def tui_env(home: Path, tmp: Path, evidence: Path) -> dict:
     }
 
 
-def tui_cmd(tui_play: Path, cell: str) -> list[str]:
-    return [str(tui_play), "--profile", PROFILE, "--engine", str(ENGINE_RUN / "engine"),
-            "--catalog", str(CATALOG), "--live", f"script_{cell}"]
+def tui_cmd(tui_play: Path, cell: str, gate: str | None = None) -> list[str]:
+    cmd = [str(tui_play), "--profile", PROFILE, "--engine", str(ENGINE_RUN / "engine"),
+           "--catalog", str(CATALOG), "--live", f"script_{cell}"]
+    return cmd + [gate] if gate else cmd
 
 
 def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: int) -> tuple[int, bool, str]:
@@ -378,18 +381,29 @@ def run_cell(cell: str, tui_play: Path, run_dir: Path, work: Path, base: CellRes
         return write_cell(cell_dir, result)
     home = work / cell / "home"
     tmp = work / cell / "tmp"
-    home.mkdir(parents=True)
-    tmp.mkdir(parents=True)
-    cmd = tui_cmd(tui_play, cell)
-    (cell_dir / "command.txt").write_text(" ".join(cmd) + "\n")
     started = time.monotonic()
     result.started = dt.datetime.now(TIMEZONE).isoformat(timespec="seconds")
-    exit_code, timed_out, tty_text = run_tui(
-        cmd, tui_env(home, tmp, cell_dir / "evidence"), work / cell, cell_dir / "stderr.log", CELL_CAP_S)
+    gate = None
+    while True:
+        shutil.rmtree(work / cell, ignore_errors=True)
+        home.mkdir(parents=True)
+        tmp.mkdir(parents=True)
+        cmd = tui_cmd(tui_play, cell, gate)
+        (cell_dir / "command.txt").write_text(" ".join(cmd) + "\n")
+        exit_code, timed_out, tty_text = run_tui(
+            cmd, tui_env(home, tmp, cell_dir / "evidence"), work / cell, cell_dir / "stderr.log",
+            CELL_CAP_S)
+        stderr_text = (cell_dir / "stderr.log").read_text(errors="replace")
+        # A paired proof refuses to start without the pair witness and says so;
+        # run it again under that gate (the same flag a person would pass).
+        if gate is None and exit_code != 0 and PAIR_GATE_REFUSAL in stderr_text:
+            gate = "--pair-core"
+            continue
+        break
+    result.gate = gate
     result.wall_s = round(time.monotonic() - started, 1)
     result.exit_code = exit_code
     (cell_dir / "tty.log").write_text(tty_text)
-    stderr_text = (cell_dir / "stderr.log").read_text(errors="replace")
     # Logs the frontend writes under its (throwaway) HOME.
     session_text = ""
     bot_dir = home / ".274bot"
@@ -472,6 +486,8 @@ def write_summary(run_dir: Path, meta: dict, results: list[CellResult]) -> None:
            "|---|---|---:|---:|---|---|"]
     for result in sorted(results, key=lambda r: (ORDER.index(r.result), r.cell)):
         note = result.first_failure or result.reason or ""
+        if result.gate:
+            note = f"[{result.gate}] {note}".strip()
         note = note.replace("|", "\\|").replace("\n", " ")
         md.append(f"| `{result.cell}` | {result.result} | {result.ticks if result.ticks is not None else ''}"
                   f" | {fmt_s(result.wall_s) if result.wall_s is not None else ''} | {note} | `{result.commit}` |")
