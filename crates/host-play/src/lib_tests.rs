@@ -23612,8 +23612,20 @@ fn load_ignored_randoms_decline_only_listed_events() {
     let mut g = Guardian::new();
     let mut drv = GuardRec::default();
     let mut snap = GameSnapshot::new();
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("revision 289 selected content is embedded");
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    let status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
     assert_eq!(status.kind, Some(api::random::RandomKind::Evade));
     assert_eq!(status.name.as_deref(), Some("swarm"));
     assert!(

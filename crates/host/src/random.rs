@@ -518,10 +518,10 @@ fn outside_chase_range(player: (i32, i32), start: (i32, i32), maxrange: i32) -> 
     dx.max(dz) > stop || (dx == stop && dz == stop)
 }
 
-/// First direction points away from the player relative to the latched NPC
-/// tile; ties prefer a cardinal path and otherwise retain compass order.
+/// The first direction points away from the latched NPC tile, through the
+/// player. Ties prefer a cardinal path and otherwise retain compass order.
 fn flee_direction_index(from: (i32, i32), player: (i32, i32)) -> usize {
-    let (dx, dz) = ((from.0 - player.0) as i64, (from.1 - player.1) as i64);
+    let (dx, dz) = ((player.0 - from.0) as i64, (player.1 - from.1) as i64);
     let mut best = 0;
     let mut best_score = i64::MIN;
     let mut best_cardinal = false;
@@ -537,7 +537,7 @@ fn flee_direction_index(from: (i32, i32), player: (i32, i32)) -> usize {
     best
 }
 
-/// Exactly one flee ring, beginning in the direction away from the player.
+/// Exactly one flee ring, beginning away from the NPC and through the player.
 /// The fixed compass rotation keeps the iterator allocation-free.
 fn flee_candidates_away(
     from: (i32, i32),
