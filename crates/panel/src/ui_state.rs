@@ -57,7 +57,7 @@ pub struct PanelUiState {
     #[serde(default)]
     pub background_bots_ack: bool,
     /// The operator pressed "Don't show again" on the render-all warning.
-    /// Absent = ask every time. "Only render selected" itself is never saved.
+    /// Absent = ask every time. "Only render focused" itself is never saved.
     #[serde(default)]
     pub render_all_warning_ack: bool,
     /// "sidecar 50 fps": unfocused wall members at 50 fps. Absent = off.

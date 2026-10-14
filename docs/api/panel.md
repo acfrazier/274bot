@@ -219,12 +219,12 @@ extra rasters (`wall_open = false`); every slot keeps running.
 A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
 **Login all** / **Logout all**, then **Start all** / **Stop all** (script
 bulk — separate from login bulk; see [script.md](script.md)), an
-**only render selected** checkbox, one
+**only render focused** checkbox, one
 tile per wall member, **Profiles…**, and the 1 Hz resource card. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
 body focuses the member. The dot is error **red**, then ingame **amber**,
-then FIFO-queue **warn**, else grey. **only render selected** mirrors
+then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
 member paints. Unchecking it opens a **Render all wall members?** confirm:

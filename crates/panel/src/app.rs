@@ -4404,7 +4404,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_wrapped("all rail/grid members; all-or-nothing");
     let current = session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
-    if ui.checkbox("only render selected", &mut only) {
+    if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(session, only);
     }
     let live = session.scenario.lock().unwrap().is_some();
@@ -4513,13 +4513,13 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
 }
 
-/// Apply an "only render selected" checkbox change: re-checking on is
+/// Apply an "only render focused" checkbox change: re-checking on is
 /// immediate; unchecking keeps the safe default and opens the scary
 /// confirm instead, unless the operator saved "Don't show again" (`acked`),
 /// when it applies at once. Returns `(new_only_render_selected, open_warn)`.
 pub fn apply_only_render_selected(current: bool, checked: bool, acked: bool) -> (bool, bool) {
     if checked && !current {
-        // user just checked "only render selected" — apply immediately
+        // user just checked "only render focused" — apply immediately
         return (true, false);
     }
     if !checked && current {
@@ -4532,7 +4532,7 @@ pub fn apply_only_render_selected(current: bool, checked: bool, acked: bool) -> 
     (current, false)
 }
 
-/// The "only render selected" checkbox was clicked to `checked`. The policy
+/// The "only render focused" checkbox was clicked to `checked`. The policy
 /// flips every wall member's draw state, so the slots are kicked and parked
 /// threads apply the change within a frame (slot threads read it every frame).
 fn only_render_selected_clicked(session: &mut Session, checked: bool) {
@@ -4574,7 +4574,7 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     }
     let current = state.session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
-    if ui.checkbox("only render selected", &mut only) {
+    if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(&mut state.session, only);
     }
 }
@@ -4657,7 +4657,7 @@ pub fn status_value_visible(label: &str, value: &str) -> bool {
     !matches!(label, "walk" | "queue" | "modals") || !matches!(value.trim(), "" | "—" | "-1")
 }
 
-/// Scary confirm before "only render selected" can be unchecked: OK and
+/// Scary confirm before "only render focused" can be unchecked: OK and
 /// "Don't show again" stay disabled until "I understand" is ticked. Both
 /// write `only_render_selected = false`; "Don't show again" also saves the
 /// acknowledgement so the box unchecks at once from then on. Cancel keeps the

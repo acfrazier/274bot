@@ -3831,7 +3831,7 @@ impl Session {
 
     /// Confirm the render-all warning: wall members draw from now on. With
     /// `remember`, also save "Don't show again", after which unchecking
-    /// "only render selected" applies at once. Without it the choice lasts
+    /// "only render focused" applies at once. Without it the choice lasts
     /// this launch only.
     pub fn confirm_render_all(&mut self, remember: bool) {
         self.focus.lock().unwrap().only_render_selected = false;
