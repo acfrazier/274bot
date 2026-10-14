@@ -5300,11 +5300,45 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
     });
 }
 
+/// The Profiles editor pane's narrowest width. The edit form is laid out
+/// for the 330 px docked panel, so its content width there (`PANEL_WIDTH`
+/// less the window's 8 px padding on each side) is the narrowest it reads
+/// at.
+const PROFILES_EDITOR_MIN_W: f32 = PANEL_WIDTH - 16.0;
+/// The profile list's narrowest width beside the editor: a short name and
+/// its Edit and ✕.
+const PROFILES_LIST_MIN_W: f32 = 180.0;
+/// The draggable divider between the list and the editor pane.
+const PROFILES_DIVIDER: f32 = 8.0;
+/// From this content width (314 + 8 + 180 = 502 logical px) the list and
+/// the editor pane sit side by side; narrower, as in the 330 px dock, the
+/// editor sits under the list.
+const PROFILES_SIDE_BY_SIDE_W: f32 = PROFILES_EDITOR_MIN_W + PROFILES_DIVIDER + PROFILES_LIST_MIN_W;
+/// The least height a Profiles region keeps.
+const PROFILES_REGION_MIN_H: f32 = 72.0;
+/// One profile row.
+const PROFILE_ROW_H: f32 = 24.0;
+
+/// What the operator did in the profile list this frame.
+#[derive(Default)]
+struct ListPick {
+    picked: Option<String>,
+    removed: Option<String>,
+    edit: Option<String>,
+}
+
 /// Profile picker (single-bot and MultiBox). Click a row to focus it
-/// (and load onto the wall while MultiBox is on); Edit opens user/pass;
-/// ✕ deletes the vault row only. Load all is MultiBox-only.
+/// (and load onto the wall while MultiBox is on); Edit opens the form;
+/// ✕ deletes the vault row only. Load all is MultiBox-only. The list and
+/// the editor pane (the edit form or the rs2b0t import, one at a time)
+/// each scroll on their own, side by side when the window is wide enough
+/// ([`PROFILES_SIDE_BY_SIDE_W`]) and stacked otherwise, with a draggable
+/// divider between them; Close stays at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
+        if session.profile_import_open || !session.profile_import.is_fresh() {
+            session.close_profile_import();
+        }
         return;
     }
     // An opener asked for Profiles, or a leave prompt was staged from
@@ -5329,145 +5363,23 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
-            let names: Vec<String> = session.core.vault()
-                .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-                .unwrap_or_default();
-            let w = on_screen_avail(ui, right);
-            let focused = session.focused_name();
-            let members = session.core.members().to_vec();
-            let multibox = session.multibox;
-            if multibox && ui.button_with_size("Load all", [w, 0.0]) {
-                session.load_all();
-            }
-            if ui.button_with_size("New profile", [w, 0.0]) {
-                session.begin_edit_profile(None);
-            }
-            ui.spacing();
-            ui.text_colored(ACCENT, "Vault profiles");
-            let mut picked: Option<String> = None;
-            let mut removed: Option<String> = None;
-            let mut edit: Option<String> = None;
-            if names.is_empty() {
-                ui.text_disabled("vault is empty — New profile then Save");
-            } else {
-                const ROW_H: f32 = 24.0;
-                let viewport_h = ui.main_viewport().work_size()[1] / ui_scale(ui);
-                // Leave room for the edit form when it is open; the list has
-                // its own scroll region, so a long vault remains usable.
-                let max_list = if session.chooser_edit.is_some() {
-                    220.0
-                } else {
-                    (viewport_h - 280.0).clamp(120.0, 360.0)
-                };
-                let need = (names.len() as f32) * ROW_H + 8.0;
-                let list_h = scale_px(ui, need.min(max_list));
-                ui.child_window("##profiles-list")
-                    .size([0.0, list_h])
-                    .build(ui, || {
-                        for name in &names {
-                            let selected = if multibox {
-                                members.iter().any(|m| m == name)
-                            } else {
-                                focused.as_deref() == Some(name.as_str())
-                            };
-                            // A profile whose first save is still being
-                            // written is not selectable, editable or
-                            // deletable until the write settles.
-                            let saving = session.core.profile_saving(name);
-                            let _saving = saving.then(|| ui.begin_disabled());
-                            let (p, r, e) = chooser_row(ui, name, selected, right);
-                            if saving {
-                                continue;
-                            }
-                            if e {
-                                edit = Some(name.clone());
-                            } else if r {
-                                removed = Some(name.clone());
-                            } else if p {
-                                picked = Some(name.clone());
-                            }
-                        }
-                    });
-            }
-            if let Some(name) = edit {
-                session.begin_edit_profile(Some(&name));
-            } else if let Some(name) = removed {
-                session.delete_understood = false;
-                session.pending_profile_delete = Some(name);
-                ui.open_popup(PROFILE_DELETE_POPUP);
-            } else if let Some(name) = picked {
-                // Row pick is pure focus (a wall load in MultiBox): the
-                // picker and any open edit form stay exactly as they are.
-                session.pick_profile(&name);
-            }
-            if session.chooser_edit.is_some() {
-                ui.spacing();
-                ui.separator();
-                {
-                    let edit = session.chooser_edit.as_deref().unwrap_or("");
-                    if edit.is_empty() {
-                        ui.text_colored(ACCENT, "New profile");
-                    } else {
-                        ui.text_colored(ACCENT, "Editing");
-                        ui.same_line();
-                        ui.text_colored(ACCENT, edit);
-                    }
+                profiles_toolbar(ui, session, right);
+                let footer = profiles_footer_height(ui, session);
+                let region_h = (ui.content_region_avail()[1] - footer)
+                    .max(scale_px(ui, PROFILES_REGION_MIN_H));
+                let pick = profiles_regions(ui, session, right, region_h);
+                if let Some(name) = pick.edit {
+                    session.begin_edit_profile(Some(&name));
+                } else if let Some(name) = pick.removed {
+                    session.delete_understood = false;
+                    session.pending_profile_delete = Some(name);
+                    ui.open_popup(PROFILE_DELETE_POPUP);
+                } else if let Some(name) = pick.picked {
+                    // Row pick is pure focus (a wall load in MultiBox): the
+                    // picker and the editor pane stay exactly as they are.
+                    session.pick_profile(&name);
                 }
-                // One id scope per opened target: a text field still active
-                // from the previous target cannot write its edit buffer into
-                // this one's fields.
-                let _form = ui.push_id(session.chooser_form);
-                ui.text_disabled("user");
-                if ui
-                    .input_text("##cred-user", &mut session.cred_user)
-                    .hint("username")
-                    .build()
-                {
-                    session.note_chooser_edited();
-                }
-                ui.text_disabled("pass");
-                if ui
-                    .input_text("##cred-pass", &mut session.cred_pass)
-                    .password(true)
-                    .hint("password")
-                    .build()
-                {
-                    session.note_chooser_edited();
-                }
-                slot_capture_section(ui, session);
-                slot_random_section(ui, session);
-                slot_clue_section(ui, session);
-                // Save's outcome, next to Save: a refusal or a write that
-                // failed after it was queued (nothing was written; the
-                // banner is hidden while Profiles is open) or, once the
-                // write is durable, `Saved <name>.`.
-                match session.chooser_save.notice() {
-                    Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
-                    Some(notice) => {
-                        if let Some(reason) = notice.error() {
-                            ui.text_colored(ERROR, reason);
-                            ui.text_disabled(frontend_core::NOTHING_SAVED);
-                        }
-                    }
-                    None => {}
-                }
-                let avail = on_screen_avail(ui, right);
-                let (bw, stack) = scaled_button_row_layout(ui, avail, 2);
-                // One Save at a time: the form follows a rename or a new
-                // profile only once its write is durable.
-                let saving = session.form_saving().then(|| ui.begin_disabled());
-                if ui.button_with_size("Save", [bw, 0.0]) {
-                    session.save_credentials();
-                }
-                drop(saving);
-                if !stack {
-                    gap_line(ui);
-                }
-                if ui.button_with_size("Cancel", [bw, 0.0]) {
-                    session.request_cancel_edit();
-                }
-            }
-            edit_switch_popup(ui, session);
+                edit_switch_popup(ui, session);
             }
             ui.spacing();
             if let Some(record) = session.core.saves_in_flight().last() {
@@ -5509,6 +5421,480 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         open = !session.request_close_profiles();
     }
     session.wall.chooser_open = session.wall.chooser_open && open;
+}
+
+/// Load all (MultiBox), then New profile and Import on one row. While an
+/// import's writes are being saved the editor pane keeps its report, so
+/// New profile waits.
+fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
+    let w = on_screen_avail(ui, right);
+    if session.multibox && ui.button_with_size("Load all", [w, 0.0]) {
+        session.load_all();
+    }
+    let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+    let writing = session.import_writing();
+    {
+        let _waits = ui.begin_disabled_with_cond(writing);
+        if ui.button_with_size("New profile", [bw, 0.0]) {
+            session.begin_edit_profile(None);
+        }
+    }
+    if !stack {
+        gap_line(ui);
+    }
+    {
+        let _open = ui.begin_disabled_with_cond(session.profile_import_open);
+        if ui.button_with_size("Import from rs2b0t…", [bw, 0.0]) {
+            session.request_open_import();
+        }
+    }
+    if writing {
+        ui.text_disabled("Editing waits until the import's writes are saved.");
+    }
+}
+
+/// The height under the split regions: the spacing, the saving line and
+/// Close.
+fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
+    let spacing = ui.clone_style().item_spacing()[1];
+    let saving = if session.core.saves_in_flight().is_empty() {
+        0.0
+    } else {
+        ui.text_line_height_with_spacing()
+    };
+    spacing + saving + ui.frame_height_with_spacing()
+}
+
+/// The profile list and, when the form or the import is open, the editor
+/// pane, in `region_h`: side by side from [`PROFILES_SIDE_BY_SIDE_W`],
+/// stacked below it. Returns what the list was asked to do.
+fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -> ListPick {
+    let w = on_screen_avail(ui, right);
+    if session.chooser_edit.is_none() && !session.profile_import_open {
+        return profile_list(ui, session, right, [w, region_h]);
+    }
+    let divider = scale_px(ui, PROFILES_DIVIDER);
+    if w >= scale_px(ui, PROFILES_SIDE_BY_SIDE_W) {
+        let list_w = (w * session.profiles_split[0])
+            .clamp(
+                scale_px(ui, PROFILES_LIST_MIN_W),
+                w - divider - scale_px(ui, PROFILES_EDITOR_MIN_W),
+            )
+            .floor();
+        let pick = profile_list(ui, session, right, [list_w, region_h]);
+        ui.same_line_with_spacing(0.0, 0.0);
+        if let Some(dx) = profiles_divider(ui, "##profiles-divider-x", [divider, region_h], true) {
+            session.profiles_split[0] = ((list_w + dx) / w).clamp(0.0, 1.0);
+        }
+        ui.same_line_with_spacing(0.0, 0.0);
+        ui.group(|| profiles_editor(ui, session, [w - list_w - divider, region_h]));
+        pick
+    } else {
+        // The list and the divider are each followed by item spacing.
+        let gaps = 2.0 * ui.clone_style().item_spacing()[1];
+        let min_h = scale_px(ui, PROFILES_REGION_MIN_H);
+        let max_list = (region_h - divider - gaps - min_h).max(min_h);
+        let list_h = (region_h * session.profiles_split[1])
+            .clamp(min_h, max_list)
+            .min(profile_list_height(ui, session))
+            .floor();
+        let pick = profile_list(ui, session, right, [w, list_h]);
+        if let Some(dy) = profiles_divider(ui, "##profiles-divider-y", [w, divider], false) {
+            session.profiles_split[1] = ((list_h + dy) / region_h).clamp(0.0, 1.0);
+        }
+        profiles_editor(
+            ui,
+            session,
+            [w, (region_h - list_h - divider - gaps).max(min_h)],
+        );
+        pick
+    }
+}
+
+/// The height the whole profile list needs: its heading and every row.
+fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
+    let rows = session
+        .core
+        .vault()
+        .map_or(0, |v| v.profiles().count())
+        .max(1);
+    ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
+}
+
+/// A draggable divider of `size` between the list and the editor pane
+/// (`vertical`: a column between them side by side). Returns how far it
+/// was dragged this frame.
+fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option<f32> {
+    let min = ui.cursor_screen_pos();
+    ui.invisible_button(id, size);
+    let hovered = ui.is_item_hovered();
+    let active = ui.is_item_active();
+    if hovered || active {
+        ui.set_mouse_cursor(Some(if vertical {
+            dear_imgui_rs::MouseCursor::ResizeEW
+        } else {
+            dear_imgui_rs::MouseCursor::ResizeNS
+        }));
+    }
+    let colour = if hovered || active { ACCENT } else { TEXT_DIM };
+    let draw = ui.get_window_draw_list();
+    if vertical {
+        let x = (min[0] + size[0] * 0.5).floor();
+        draw.add_line([x, min[1]], [x, min[1] + size[1]], colour)
+            .build();
+    } else {
+        let y = (min[1] + size[1] * 0.5).floor();
+        draw.add_line([min[0], y], [min[0] + size[0], y], colour)
+            .build();
+    }
+    let delta = ui.io().mouse_delta()[usize::from(!vertical)];
+    (active && delta != 0.0).then_some(delta)
+}
+
+/// The profile list in its own scrolling region of `size`.
+fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
+    let names: Vec<String> = session
+        .core
+        .vault()
+        .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+        .unwrap_or_default();
+    let focused = session.focused_name();
+    let members = session.core.members();
+    let multibox = session.multibox;
+    // The editor pane keeps an import's report while its writes are saved.
+    let edit_waits = session.import_writing();
+    let mut pick = ListPick::default();
+    ui.child_window("##profiles-list")
+        .size(size)
+        .child_flags(ChildFlags::NAV_FLATTENED)
+        .build(ui, || {
+            ui.text_colored(ACCENT, "Vault profiles");
+            if names.is_empty() {
+                ui.text_disabled("vault is empty — New profile then Save");
+                return;
+            }
+            for name in &names {
+                let selected = if multibox {
+                    members.iter().any(|m| m == name)
+                } else {
+                    focused.as_deref() == Some(name.as_str())
+                };
+                // A profile whose first save is still being written is not
+                // selectable, editable or deletable until the write settles.
+                let saving = session.core.profile_saving(name);
+                let _saving = saving.then(|| ui.begin_disabled());
+                let (p, r, e) = chooser_row(ui, name, selected, right, edit_waits);
+                if saving {
+                    continue;
+                }
+                if e {
+                    pick.edit = Some(name.clone());
+                } else if r {
+                    pick.removed = Some(name.clone());
+                } else if p {
+                    pick.picked = Some(name.clone());
+                }
+            }
+        });
+    pick
+}
+
+/// The editor pane in `size`: the edit form or the rs2b0t import. Its body
+/// scrolls on its own; its buttons (and the form's save notice) stay under
+/// it.
+fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
+    let [w, h] = size;
+    let min_h = scale_px(ui, PROFILES_REGION_MIN_H) * 0.5;
+    // The body is followed by item spacing, then the buttons.
+    let h = h - ui.clone_style().item_spacing()[1];
+    if session.profile_import_open {
+        let bar = profile_import_bar_height(ui, w);
+        let mut preview = false;
+        ui.child_window("##profiles-editor")
+            .size([w, (h - bar).max(min_h)])
+            .child_flags(ChildFlags::NAV_FLATTENED)
+            .build(ui, || preview = profile_import_body(ui, session));
+        profile_import_bar(ui, session, w, preview);
+    } else if session.chooser_edit.is_some() {
+        let bar = profile_form_bar_height(ui, session, w);
+        ui.child_window("##profiles-editor")
+            .size([w, (h - bar).max(min_h)])
+            .child_flags(ChildFlags::NAV_FLATTENED)
+            .build(ui, || profile_form_body(ui, session));
+        profile_form_bar(ui, session, w);
+    }
+}
+
+/// The edit form's fields, in the editor pane.
+fn profile_form_body(ui: &Ui, session: &mut Session) {
+    {
+        let edit = session.chooser_edit.as_deref().unwrap_or("");
+        if edit.is_empty() {
+            ui.text_colored(ACCENT, "New profile");
+        } else {
+            ui.text_colored(ACCENT, "Editing");
+            ui.same_line();
+            ui.text_colored(ACCENT, edit);
+        }
+    }
+    // One id scope per opened target: a text field still active from the
+    // previous target cannot write its edit buffer into this one's fields.
+    let _form = ui.push_id(session.chooser_form);
+    ui.text_disabled("user");
+    if ui
+        .input_text("##cred-user", &mut session.cred_user)
+        .hint("username")
+        .build()
+    {
+        session.note_chooser_edited();
+    }
+    ui.text_disabled("pass");
+    if ui
+        .input_text("##cred-pass", &mut session.cred_pass)
+        .password(true)
+        .hint("password")
+        .build()
+    {
+        session.note_chooser_edited();
+    }
+    slot_capture_section(ui, session);
+    slot_random_section(ui, session);
+    slot_clue_section(ui, session);
+}
+
+/// The height of one wrapped block of `text` at `width`, with its spacing.
+fn wrapped_height(ui: &Ui, text: &str, width: f32) -> f32 {
+    ui.current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, width.max(1.0), text)[1]
+        + ui.clone_style().item_spacing()[1]
+}
+
+/// The rows a two-button bar of `width` takes.
+fn button_rows(ui: &Ui, width: f32) -> f32 {
+    let (_, stack) = scaled_button_row_layout(ui, width, 2);
+    if stack {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
+    let notice = match session.chooser_save.notice() {
+        Some(FormNotice::Saved(saved)) => wrapped_height(ui, saved, width),
+        Some(notice) => notice.error().map_or(0.0, |reason| {
+            wrapped_height(ui, reason, width)
+                + wrapped_height(ui, frontend_core::NOTHING_SAVED, width)
+        }),
+        None => 0.0,
+    };
+    notice + button_rows(ui, width) * ui.frame_height_with_spacing()
+}
+
+/// Save's outcome and Save / Cancel, under the form's body.
+fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
+    let _form = ui.push_id(session.chooser_form);
+    // Save's outcome, next to Save: a refusal or a write that failed after
+    // it was queued (nothing was written; the banner is hidden while
+    // Profiles is open) or, once the write is durable, `Saved <name>.`.
+    match session.chooser_save.notice() {
+        Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
+        Some(notice) => {
+            if let Some(reason) = notice.error() {
+                ui.text_colored(ERROR, reason);
+                ui.text_disabled(frontend_core::NOTHING_SAVED);
+            }
+        }
+        None => {}
+    }
+    let (bw, stack) = scaled_button_row_layout(ui, width, 2);
+    // One Save at a time: the form follows a rename or a new profile only
+    // once its write is durable.
+    let saving = session.form_saving().then(|| ui.begin_disabled());
+    if ui.button_with_size("Save", [bw, 0.0]) {
+        session.save_credentials();
+    }
+    drop(saving);
+    if !stack {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Cancel", [bw, 0.0]) {
+        session.request_cancel_edit();
+    }
+}
+
+const IMPORT_DELETE_POPUP: &str = "Delete the rs2b0t export file?";
+
+/// The rs2b0t profile import in the editor pane (vault unlocked): the
+/// export file's path, then a preview with the choices (nothing is written
+/// until Import), then the report while the writes are saved and after.
+/// The flow is frontend-core's, shared with the TUI. Returns whether Enter
+/// asked for the preview.
+fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
+    use frontend_core::rs2b0t_import::{ConflictPolicy, Stage, PROFILE_FILE_NAME};
+    ui.text_colored(ACCENT, "Import rs2b0t profiles");
+    let stage = session.profile_import.stage();
+    let mut entered = false;
+    match stage {
+        Stage::Path => {
+            ui.text_wrapped(format!(
+                "Path of the {PROFILE_FILE_NAME} file rs2b0t exported (its Settings → export). \
+                 The preview lists every account and setting before anything is written."
+            ));
+            ui.set_next_item_width(-1.0);
+            entered = ui
+                .input_text("##rs2b0t-import-path", session.profile_import.path_mut())
+                .hint(PROFILE_FILE_NAME)
+                .enter_returns_true(true)
+                .build();
+        }
+        Stage::Preview => {
+            ui.text_disabled("Existing profiles:");
+            let policy = session.profile_import.policy();
+            let mut next = policy;
+            // The two choices share a line when it fits them.
+            let style = ui.clone_style();
+            let radio = |label: &str| {
+                ui.frame_height()
+                    + style.item_inner_spacing()[0]
+                    + ui.current_font()
+                        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0]
+            };
+            let one_line = radio("Skip (keep them)") + style.item_spacing()[0] + radio("Overwrite")
+                <= ui.content_region_avail()[0];
+            if ui.radio_button("Skip (keep them)", policy == ConflictPolicy::Skip) {
+                next = ConflictPolicy::Skip;
+            }
+            if one_line {
+                ui.same_line();
+            }
+            if ui.radio_button("Overwrite", policy == ConflictPolicy::Overwrite) {
+                next = ConflictPolicy::Overwrite;
+            }
+            if next != policy {
+                session
+                    .profile_import
+                    .set_policy(&session.core, &session.scripts, next);
+                session.refresh_profile_import();
+            }
+            // The preview's lines say which accounts and why.
+            let unusable = session
+                .profile_import
+                .plan()
+                .map_or(0, |plan| plan.unusable());
+            if unusable > 0 {
+                let mut include = session.profile_import.include_unusable();
+                if ui.checkbox("Import unusable accounts", &mut include) {
+                    session.profile_import.set_include_unusable(
+                        &session.core,
+                        &session.scripts,
+                        include,
+                    );
+                    session.refresh_profile_import();
+                }
+            }
+        }
+        Stage::Report => {
+            if !session.profile_import_settled {
+                session.refresh_profile_import();
+            }
+        }
+    }
+    if let Some(error) = session.profile_import.error() {
+        ui.text_colored(ERROR, error);
+    }
+    if stage != Stage::Path {
+        ui.separator();
+        for line in &session.profile_import_lines {
+            ui.text_wrapped(line);
+        }
+    }
+    entered
+}
+
+fn profile_import_bar_height(ui: &Ui, width: f32) -> f32 {
+    button_rows(ui, width) * ui.frame_height_with_spacing()
+}
+
+/// The import's buttons under its body, and the delete-file confirm.
+fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool) {
+    use frontend_core::rs2b0t_import::Stage;
+    let (bw, stack) = scaled_button_row_layout(ui, width, 2);
+    let mut changed = false;
+    match session.profile_import.stage() {
+        Stage::Path => {
+            if ui.button_with_size("Preview", [bw, 0.0]) || entered {
+                // Script names map through the catalog: register it from its
+                // known root first (no folder prompt).
+                session.fill_rs2b0t_cards_once();
+                session
+                    .profile_import
+                    .preview(&session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Cancel##rs2b0t-import", [bw, 0.0]) {
+                session.close_profile_import();
+                return;
+            }
+        }
+        Stage::Preview => {
+            if ui.button_with_size("Import", [bw, 0.0]) {
+                session
+                    .profile_import
+                    .confirm(&mut session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Back##rs2b0t-import", [bw, 0.0]) {
+                session.profile_import.back();
+                changed = true;
+            }
+        }
+        Stage::Report => {
+            if session.profile_import.can_delete(&session.core) {
+                if ui.button_with_size("Delete export file…", [bw, 0.0]) {
+                    session.import_delete_understood = false;
+                    ui.open_popup(IMPORT_DELETE_POPUP);
+                }
+                if !stack {
+                    gap_line(ui);
+                }
+            }
+            {
+                // The report stays until its writes are saved.
+                let _saving = ui.begin_disabled_with_cond(session.import_writing());
+                if ui.button_with_size("Done##rs2b0t-import", [bw, 0.0]) {
+                    session.close_profile_import();
+                    return;
+                }
+            }
+            let body = match session.profile_import.export_path() {
+                Some(path) => format!(
+                    "Delete {}? It holds your rs2b0t passwords in plain text. This cannot be undone.",
+                    path.display()
+                ),
+                None => "Delete the export file?".into(),
+            };
+            if scary_confirm_popup(
+                ui,
+                IMPORT_DELETE_POPUP,
+                &body,
+                "Delete",
+                &mut session.import_delete_understood,
+            ) {
+                session.profile_import.confirm_delete(&session.core);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        session.refresh_profile_import();
+    }
 }
 
 fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
@@ -5737,8 +6123,15 @@ fn lamp_skill_presets() -> Vec<&'static str> {
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
 /// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
-/// on screen when the docked window runs past the display.
-fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, bool) {
+/// on screen when the docked window runs past the display. `edit_waits`
+/// disables Edit (an import's writes keep the editor pane).
+fn chooser_row(
+    ui: &Ui,
+    name: &str,
+    selected: bool,
+    right: f32,
+    edit_waits: bool,
+) -> (bool, bool, bool) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
@@ -5752,7 +6145,10 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, 
         .size([name_w, 0.0])
         .build();
     gap_line(ui);
-    let edit = ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0]);
+    let edit = {
+        let _waits = ui.begin_disabled_with_cond(edit_waits);
+        ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0])
+    };
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
     let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);

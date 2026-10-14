@@ -577,6 +577,12 @@ fn hazard_flee_candidates(
     tiles
 }
 
+/// Whether the lamp dialogue offers `skill` (case and surrounding space
+/// ignored): the values a profile's `lamp_skill` can usefully hold.
+pub fn is_lamp_skill(skill: &str) -> bool {
+    lamp_skill_button(skill).is_some()
+}
+
 /// xplamp.if button id for the vault `lamp_skill` (default `"strength"`
 /// → 2813). Unknown skills → `None` (fail-closed: no click).
 fn lamp_skill_button(skill: &str) -> Option<i32> {

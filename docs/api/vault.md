@@ -132,6 +132,108 @@ under `~/.274bot/`; `--vault PATH` overrides it. The built-ins use `vault`
 Profiles must name distinct vault files, so profiles never share
 storage implicitly.
 
+## Importing profiles from rs2b0t
+
+rs2b0t's Settings can export its unlocked profile vault, with each account's
+saved settings, as `rs2b0t-profiles.json`. 274bot imports that file: the
+panel's **Profiles** window has **Import from rs2b0t…**, and the TUI command
+palette has **Import rs2b0t profiles…**. Both need the vault unlocked, ask
+for the file's path, and show a preview before anything is written. Nothing
+is saved until you confirm. The shared flow is
+`frontend_core::rs2b0t_import`.
+
+The importer reads only rs2b0t's own export: kind
+`rs2b0t-multibox-profiles`, version 1. It refuses any other kind or version,
+or a malformed file, with a message that says why. Like rs2b0t, it accepts a
+file without the `storage` part. Errors never quote the file: a bad profile
+entry is named by its number, and a bad `kind` or `v` by the type of value
+found (for example "an object"), so a password in a damaged file never
+appears in one. The path must name a regular file (a FIFO, device or
+directory is refused before anything is read), and at most 16 MiB is read
+from it, whatever its size claimed.
+
+| rs2b0t | 274bot |
+| --- | --- |
+| username, password | a vault profile; the password goes only into the encrypted vault |
+| world (1–3) | the profile's world (`wN`), used when the server's world list offers it |
+| tab, tab list, active tab | not imported: 274bot has no profile tabs or groups |
+| selected script | the profile's script, when your registered rs2b0t catalog has a script of that name that can run; a dimmed or unknown script is reported |
+| script parameters (`set:<Script>:<key>`) | that script's per-profile parameters, read the way rs2b0t reads them: numbers and tile coordinates with JavaScript's `Number()` (so `0x10` is 16 and an empty value is 0), then limited to the parameter's range; options matched without case. A parameter the catalog script doesn't have, or a value rs2b0t would have replaced with the default, is reported |
+| Global `lampSkill` | genie lamp skill |
+| Global `clueDuelPartner` | clue duel partner |
+| `rendererEnabled` | `0` sets the profile's display to Off; `1` turns an Off display back on |
+| Global `bankCommonJunk`, `useZanarisBank`, `useMageBank` | not imported: in rs2b0t they are the account-wide default for scripts that have the same parameter; 274bot has no account-wide default, so set them in each script's parameters (the Gatherer has its own bank choices) |
+| Global `runAuto`, `runEnergyMin` | not imported: 274bot turns run back on by itself at 20% energy (scripts may change that); there is no per-account setting |
+| Global `navTeleports` | not imported: one app-wide switch in Nav config |
+| Global `navPathStallTicks`, `navPathDeviation` | not imported: no such setting |
+| Global `navCameraFollow` | not imported: app-wide panel Nav setting |
+| Global `showNavPath` and the `navPath*` drawing options | not imported: route drawing is one app-wide panel Nav setting in 274bot; `navPathSceneExpand` has no equivalent |
+| `MapPicker.*` | not imported: rs2b0t tile-map picker display |
+| `Loadouts.sets` | not imported: 274bot keeps one loadout list for all accounts |
+| `PriceBooks.books` | not imported: order books are not supported |
+| `creds` | not imported: rs2b0t's per-tab login copy (its value is never read or shown) |
+| stored settings of an account the file doesn't list | not imported |
+
+An account the 289 client cannot log in with is listed as unusable, with the
+reason, and is not imported unless you choose to import those accounts too:
+a username longer than 12 characters, an empty password or one longer than
+20 characters (the 289 server refuses these at login), or a line break or a
+character beyond Latin-1 in either (the login carries one byte per
+character). The import never shortens a credential, and never shows one.
+
+An account already in the vault is kept as it is unless you choose
+**Overwrite**. Overwrite keeps the profile's uid and every setting the export
+doesn't carry (memory mode, auto-login, random events, a world when the
+export has none, and the like). It writes the password, the world and each
+setting the export carries. A script's parameters are merged one by one: a
+parameter in the export replaces the profile's, every other parameter of
+that script stays, and a value the import refuses keeps the profile's own.
+The preview and the report say, for each parameter, its new value against
+the current one (`[new]`, `[unchanged]` or `[was …]`), list the parameters
+that stay, and give the current value a refused one keeps.
+
+Importing the same file again writes nothing. Skip leaves every account
+untouched, and with Overwrite each account already matches. The preview and
+the final report list every item that isn't imported, with the reason. Each
+profile the import writes logs one line (profile, create or overwrite,
+operation id, old → new). The log line says only whether the password was set
+or changed.
+
+No password from the export is shown in what the import writes out. When a
+file is previewed, every non-empty password in it is registered for log
+redaction (`api::hostlog::register_secret`), including the passwords of
+accounts the import skips (already in the vault, listed twice, unusable)
+and of a preview you never confirm. Every line of the preview and the
+report, every skipped item and its reason, and every refusal is redacted
+(`api::hostlog::redact`) when it is built, so a password that turns up in
+another field (a tab, the tab list, the active tab, a stored setting's name
+or value, a clue duel partner, another account's name) shows as `***`
+there. The panel and the TUI show copies of those lines, and every log
+message is redacted the same way. A log line's account column is not: it
+always names the account the line is about (the slot), so an account whose
+name equals some password shows that name there, in the panel's and the
+TUI's log views, in copied log lines and in the session log file. The data
+written to the vault is the file's, unchanged: a clue duel partner equal to
+some password is saved as it is. Like the vault's own passwords, a
+registered password stays registered until the process exits.
+
+An account counts as imported only when the import's own write of it is
+saved. The report says "not confirmed" for a write that a later save of the
+same profile replaced before it was saved, or whose result the session no
+longer knows, and lists every failure. The export file holds the passwords in
+plain text: only when every account you chose to import is confirmed saved
+does the report offer to delete the file, and it asks you to confirm. Loaded
+bots use an imported password and world at their next login, and imported
+script parameters at their next Start.
+
+The import holds the passwords in `vault::Secret`s. It reads the file into
+one buffer sized from the file's length and zeroes it after parsing, checks
+the JSON syntax before it builds any value tree, and zeroes every string
+value of that tree when it is dropped. It does not reach object keys, a
+value that a repeated key in the same object replaced, serde_json's own
+scratch buffer for strings with escapes, a buffer the read had to grow
+because the file grew meanwhile, or the log-redaction list described below.
+
 ## Secrets in memory
 
 `Profile.password` is a `vault::Secret` (also the panel's passphrase and

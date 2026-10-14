@@ -5,6 +5,40 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ## Unreleased
 
+### Profiles
+
+- You can now import your accounts from rs2b0t instead of typing each one
+  again. In rs2b0t, export your profiles from Settings (this writes
+  `rs2b0t-profiles.json`), then in 274bot choose **Import from rs2b0t…** in
+  the panel's Profiles window, or **Import rs2b0t profiles…** in the TUI
+  command palette, and give the file's path. The vault must be unlocked.
+  A preview lists every account and setting before anything is saved.
+  The import brings over each account's username, password (into the
+  encrypted vault) and world, its selected script and the script
+  parameters it saved (matched by script name in your rs2b0t script
+  catalog, so import the catalog first), and the rs2b0t Global settings
+  274bot keeps per account:
+  genie lamp skill and clue duel partner. rs2b0t's renderer-off setting
+  turns the profile's display off. Everything else, such as tabs, rs2b0t's
+  run-energy and route-drawing options, loadouts and order books, is listed
+  in the preview and the final report with the reason it isn't imported.
+  Accounts already in the vault are kept as they are unless you choose
+  Overwrite. Overwrite changes only what the export carries: a script
+  setting the export doesn't have, or one it can't read, keeps its current
+  value, and the preview shows each setting's old and new value. Importing
+  the same file again changes nothing. An account the game server would
+  refuse at login (a username over 12 characters, or an empty password or
+  one over 20 characters) is listed as unusable and isn't imported unless
+  you ask for it; its password is never shortened. The export file holds
+  your passwords in plain text: once every account you imported is
+  confirmed saved, 274bot offers to delete it (it asks you to confirm
+  first). If a save fails, the report says so and keeps the file. A
+  password from the file never appears in the text of the preview, the
+  report or a log message: where it turns up in another field, such as a
+  tab name or a clue duel partner, it shows as `***` (the vault still gets
+  the field's real value). The log's account column always shows the
+  account name, so an account named the same as a password shows it there.
+
 ### Quests and dialogues
 
 - A conversation closed by an attack is no longer counted as finished. An
@@ -72,6 +106,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   into the panel's text fields, including the vault password and profile
   fields. Before, the panel could only reach the X11 clipboard, which is
   empty while a Wayland window has focus, so nothing pasted.
+- The Profiles window shows the profile list and the editor side by side
+  when there is room, each scrolling on its own, with a divider you can
+  drag. In the narrow default dock the editor sits under the list, and
+  Close always stays in view.
 
 ### Not in this release
 
@@ -112,6 +150,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - Fight and Ignore in the random-event Policies control can be chosen but
   aren't available yet; a saved Fight or Ignore is treated as Flee.
 - Running from an angry Strange plant doesn't cure its poison.
+- The rs2b0t import doesn't bring over rs2b0t's profile tabs and groups,
+  its account-wide run, bank and walking settings (auto-run, run energy,
+  bank junk, the Zanaris and Mage Arena banks, teleports, route drawing),
+  loadouts, or order books. Scripts that 274bot hides or can't run, and
+  scripts it replaces with its own versions (such as Woodcutter or
+  CowKiller), aren't matched to a 274bot script either. The preview lists
+  each of these with the reason.
 
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 
