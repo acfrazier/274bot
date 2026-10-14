@@ -138,6 +138,10 @@ const REGISTRY: &[Entry] = &[
         "thiever_diagonal_door_trap",
         scenarios::thiever_diagonal_door_trap_scenario,
     ),
+    Entry::new(
+        "thiever_guard_no_bank",
+        scenarios::thiever_guard_no_bank_scenario,
+    ),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
     Entry::new(
@@ -177,6 +181,7 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("dart_fletcher", scenarios::dart_fletcher_scenario),
     Entry::new("dart_fletcher_iron", scenarios::dart_fletcher_iron_scenario),
+    Entry::new("dart_fletcher_rune", scenarios::dart_fletcher_rune_scenario),
     Entry::new("herb_cleaner", scenarios::herb_cleaner_scenario),
     Entry::new("herb_cleaner_named", scenarios::herb_cleaner_named_scenario),
     Entry::new(
@@ -235,6 +240,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("cook_bot_lobster", scenarios::cook_bot_lobster_scenario),
     Entry::new("smelter_bot", scenarios::smelter_bot_scenario),
     Entry::new("smelter_bot_steel", scenarios::smelter_bot_steel_scenario),
+    Entry::new(
+        "smelter_bot_furnace",
+        scenarios::smelter_bot_furnace_scenario,
+    ),
     Entry::new("flax_spinner", scenarios::flax_spinner_scenario),
     Entry::new("flax_aio", scenarios::flax_aio_scenario),
     Entry::new("flax_aio_pick", scenarios::flax_aio_pick_scenario),
@@ -263,6 +272,14 @@ const REGISTRY: &[Entry] = &[
     Entry::new("auto_fighter", scenarios::auto_fighter_scenario),
     Entry::new("auto_fighter_mage", scenarios::auto_fighter_mage_scenario),
     Entry::new("auto_fighter_range", scenarios::auto_fighter_range_scenario),
+    Entry::new(
+        "auto_fighter_targets",
+        scenarios::auto_fighter_targets_scenario,
+    ),
+    Entry::new(
+        "auto_fighter_food_override",
+        scenarios::auto_fighter_food_override_scenario,
+    ),
     Entry::new("rock_crab", scenarios::rock_crab_scenario),
     Entry::new("rock_crab_range", scenarios::rock_crab_range_scenario),
     Entry::new("green_dragon", scenarios::green_dragon_scenario),
