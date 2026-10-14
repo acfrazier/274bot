@@ -1,5 +1,7 @@
-use super::combat::BRASS_KEY_ID;
+use super::combat::{BRASS_KEY_ID, RUNE_SCIMITAR_ID};
 use super::pair::{follow_step, nav_kit_steps, tele_step};
+use super::production::{COINS_ID, MAGIC_STAT};
+use super::shop::{shop_buyout_open_npc_bank, GUNDAI_BANK_APPROACH};
 use crate::*;
 
 /// The `walk` scenario: log in `test`/`test`, mainland-hop into the
@@ -928,10 +930,29 @@ const SHANTAY_PASS_DEST: WorldTile = WorldTile {
     level: 0,
 };
 
+/// Upstream `shantay-pass-route-test` start, west of the Shantay pass
+/// (3246,3092); the tail reaches it with the same `tele` the upstream
+/// fixture uses.
+const SHANTAY_TOLL_START: WorldTile = WorldTile {
+    x: 3246,
+    z: 3092,
+    level: 0,
+};
+/// Upstream `shantay-pass-route-test` destination: Varrock (3213,3424),
+/// arrival radius 3.
+const SHANTAY_VARROCK: WorldTile = WorldTile {
+    x: 3213,
+    z: 3424,
+    level: 0,
+};
+
 /// The `nav_shantay` scenario exercises both henge branches with exact
 /// WalkTo arrival: from Irena, it walks to the Shantay bank chest with no
 /// pass, using the free desert exit; it then gets a pass and walks back to
 /// Irena through the paid branch. Both routes use the real loc and content.
+/// The tail then ports upstream `shantay-pass-route-test`: from the
+/// desert start with 10 coins and no pass, it walks to Varrock and must
+/// finish with the toll paid.
 pub(crate) fn nav_shantay_scenario() -> Scenario {
     Scenario {
         name: "nav_shantay",
@@ -1013,17 +1034,117 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                     budget_ticks: 600,
                 },
             },
+            // ported from rs2b0t e2e/shantay-pass-route-test.ts @2de6bb23:
+            // upstream fixture is the desert start with 10 coins only, an empty
+            // bank and no pass (`~clearbank` and `~clearinv worn` here). The walk
+            // is a plain Walk; walkResilient retries are the planner's job. The
+            // upstream crossing-tile watcher (x3300-3306, z3118-3122, level 0) is
+            // the walk's VisitedWithin latch. The "Go-through Shantay pass" and
+            // "Al Kharid toll gate: crossed" lines are bot `log` output, not game
+            // chat, and no proof reads them, so the toll is checked as the coins
+            // reaching zero. Upstream's `speed 300` is not ported (the harness keeps
+            // the 600ms engine speed), and its `--expect-unreachable` baseline is
+            // not ported (it needs a fail-closed route mode the harness lacks).
+            Step {
+                name: "clear the backpack, give the toll coins, and teleport to the desert start",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~clearinv");
+                        cheat(c, "~clearinv worn");
+                        cheat(c, "~clearbank");
+                        cheat(c, "give coins 10");
+                        cheat(
+                            c,
+                            &tele_args(
+                                SHANTAY_TOLL_START.level,
+                                SHANTAY_TOLL_START.x,
+                                SHANTAY_TOLL_START.z,
+                            ),
+                        );
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: SHANTAY_TOLL_START.x,
+                        z: SHANTAY_TOLL_START.z,
+                        level: 0,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            // The upstream fixture check before the walk: the toll coins are in
+            // the backpack. ItemId is a lower bound (>= 10); the cleared
+            // inventory and worn slots are the fixture's exact-stack part.
+            Step {
+                name: "the backpack holds the 10 toll coins before the walk",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::ItemId {
+                        id: COINS_ID,
+                        count: 10,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            Step {
+                name: "WalkTo Varrock through the Shantay Pass and the Al Kharid toll gate",
+                kind: StepKind::Walk {
+                    dest: SHANTAY_VARROCK,
+                },
+                wait: Wait {
+                    arm: Proof::VisitedWithin {
+                        min_x: 3300,
+                        max_x: 3306,
+                        min_z: 3118,
+                        max_z: 3122,
+                        level: 0,
+                    },
+                    budget_ticks: 800,
+                },
+            },
+            Step {
+                name: "the walk ended within the Varrock arrival radius",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: SHANTAY_VARROCK.x,
+                        z: SHANTAY_VARROCK.z,
+                        level: 0,
+                        radius: 3,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            Step {
+                name: "the Al Kharid toll took the 10 coins",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::ItemIdAtMost {
+                        id: COINS_ID,
+                        count: 0,
+                    },
+                    budget_ticks: 20,
+                },
+            },
         ],
-        proof: Proof::Arrived {
-            x: SHANTAY_DESERT_START.x,
-            z: SHANTAY_DESERT_START.z,
+        proof: Proof::ArrivedNear {
+            x: SHANTAY_VARROCK.x,
+            z: SHANTAY_VARROCK.z,
             level: 0,
+            radius: 3,
         },
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
             nav: nav_test_paints(),
-            deadline: Duration::from_secs(420),
+            deadline: Duration::from_secs(600),
             terminal_shot: Some("nav_shantay terminal"),
             ..Default::default()
         },
@@ -1391,6 +1512,218 @@ pub(crate) fn nav_paint_path_scenario() -> Scenario {
             nav: nav_test_paints().with_tick_ms(300),
             require_mainland_base: true,
             terminal_shot: Some("nav_paint_path terminal"),
+            ..Default::default()
+        },
+    }
+}
+
+/// Skills upstream `mage-bank-live.ts` raises to level 70 before the walk, in
+/// its order.
+const MAGE_BANK_SKILLS: [&str; 19] = [
+    "attack",
+    "strength",
+    "defence",
+    "ranged",
+    "magic",
+    "hitpoints",
+    "prayer",
+    "crafting",
+    "mining",
+    "smithing",
+    "fishing",
+    "cooking",
+    "firemaking",
+    "woodcutting",
+    "runecraft",
+    "herblore",
+    "agility",
+    "thieving",
+    "fletching",
+];
+const MAGE_BANK_LEVEL: i32 = 70;
+/// Outside Ardougne, a walk from the Ardougne lever (upstream `START`).
+const MAGE_START: WorldTile = WorldTile {
+    x: 2570,
+    z: 3320,
+    level: 0,
+};
+/// The cellar the ladder lands in; Gundai banks here (upstream `CELLAR`).
+const MAGE_CELLAR: WorldTile = WorldTile {
+    x: 2542,
+    z: 4714,
+    level: 0,
+};
+
+/// Wear an item the cell just gave, re-sending while the inventory view
+/// lags the give. `Interactions::wear` refuses `StaleTarget` until
+/// `snapshot.inventory()` lists the item, although `Proof::ItemId` (the flat
+/// `inv()` list) already holds; combat cells avoid this by seeding the
+/// weapon in the login fixture. Any other refusal is fatal.
+fn wear_given_item_step(name: &'static str, id: i32) -> Step {
+    Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(
+                move |c, snapshot| match Interactions::new(snapshot, c).wear(id) {
+                    SendResult::Sent { .. } => true,
+                    SendResult::Refused { reason, .. } => reason == SendReason::StaleTarget,
+                },
+            ),
+        },
+        wait: Wait {
+            arm: Proof::EquipmentId { id },
+            budget_ticks: 200,
+        },
+    }
+}
+
+/// `nav_mage_arena_bank`: from outside Ardougne, walk to Gundai's cellar
+/// through the Ardougne lever, the Wilderness lever, the slashable webs and
+/// the cellar ladder, then open the bank through Gundai's Talk-to.
+// ported from rs2b0t e2e/mage-bank-live.ts @2de6bb23:
+// - upstream's walkResilient policy (useTeleports, lever edges are teleport
+//   kind) becomes the router's allow_teleports, so the lever is a route edge.
+// - upstream's fail gates are `banked` and the Wilderness-lever sighting;
+//   the sighting becomes a per-tick VisitedWithin latch on the walk step
+//   (box = lever +/-8, as upstream), so a route that skips the lever fails.
+// - upstream's Ardougne-lever, webs, ladder and cellar sightings are log-only
+//   there; the cellar is gated here by ArrivedNear (radius 6, as upstream).
+// - the Gundai choose string is the repo's exact option text (shop_buyout_lundail),
+//   not upstream's prefix match.
+// - useMageBank is a host-play script preference; this cell runs no bank script.
+// - the 19 setstat cheats and the scimitar are the account's own seeded state;
+//   the scimitar is worn because the webs need a worn slash weapon.
+// - deadline 600s = upstream BUDGET_MS (walk, lever teleport, bank open).
+// - no ::speed: engine stays at 600ms (ScenarioNav::engine_speed_ms None).
+pub(crate) fn nav_mage_arena_bank_scenario() -> Scenario {
+    Scenario {
+        name: "nav_mage_arena_bank",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            // Upstream never verifies levels; magic is the arm because its
+            // index is pinned (MAGIC_STAT), and the cheats run in upstream order.
+            Step {
+                name: "set the upstream skills to level 70",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        for skill in MAGE_BANK_SKILLS {
+                            cheat(c, &format!("setstat {skill} {MAGE_BANK_LEVEL}"));
+                        }
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat {
+                        id: MAGIC_STAT,
+                        min: MAGE_BANK_LEVEL,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            // Drain the setstat level-up dialogs before the walk, as the combat
+            // cells do; the helper's name comes from its first use there.
+            drain_setstat_levelups_before_hostile_tele(),
+            Step {
+                name: "give the rune scimitar",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "give rune_scimitar 1");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ItemId {
+                        id: RUNE_SCIMITAR_ID,
+                        count: 1,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            // mainlandAccount's tele and setvar do not relog, so the side icons
+            // stay tutorial-locked; `Interactions::wear` reads snapshot.inventory(),
+            // which needs side tab 3 (as the jewellery hop at L855-866 does).
+            Step {
+                name: "relog so the inventory tab binds before the wield",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            wear_given_item_step(
+                "wield the rune scimitar (the webs need a worn slash weapon)",
+                RUNE_SCIMITAR_ID,
+            ),
+            Step {
+                name: "teleport outside Ardougne, where the walk begins",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, &tele_args(MAGE_START.level, MAGE_START.x, MAGE_START.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: MAGE_START.x,
+                        z: MAGE_START.z,
+                        level: 0,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            // The Wilderness lever box (3154,3924) with Chebyshev 8, as upstream.
+            Step {
+                name: "walk to the Mage Arena cellar through the levers, webs and ladder",
+                kind: StepKind::Walk { dest: MAGE_CELLAR },
+                wait: Wait {
+                    arm: Proof::VisitedWithin {
+                        min_x: 3146,
+                        max_x: 3162,
+                        min_z: 3916,
+                        max_z: 3932,
+                        level: 0,
+                    },
+                    budget_ticks: 800,
+                },
+            },
+            Step {
+                name: "the walk ended within the cellar arrival radius",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: MAGE_CELLAR.x,
+                        z: MAGE_CELLAR.z,
+                        level: 0,
+                        radius: 6,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            shop_buyout_open_npc_bank(
+                "open Gundai's bank through Talk-to in the cellar",
+                Proof::BankOpen,
+                "Gundai",
+                GUNDAI_BANK_APPROACH,
+                "Talk-to",
+                "Cool, I'd like to access my bank account please.",
+            ),
+        ],
+        proof: Proof::BankOpen,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav: ScenarioNav {
+                allow_teleports: true,
+                allow_wilderness: true,
+                ..nav_test_paints()
+            },
+            deadline: Duration::from_secs(600),
+            terminal_shot: Some("nav_mage_arena_bank terminal"),
             ..Default::default()
         },
     }

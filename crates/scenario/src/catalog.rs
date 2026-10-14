@@ -82,6 +82,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("nav_elkoy", scenarios::nav_elkoy_scenario),
     Entry::new("nav_tele", scenarios::nav_tele_scenario),
     Entry::new("nav_shantay", scenarios::nav_shantay_scenario),
+    Entry::new(
+        "nav_mage_arena_bank",
+        scenarios::nav_mage_arena_bank_scenario,
+    ),
     Entry::new("nav_brass_hut", scenarios::nav_brass_hut_scenario),
     Entry::new("nav_routes", scenarios::nav_routes_scenario),
     Entry::new("nav_paint_path", scenarios::nav_paint_path_scenario),
@@ -210,6 +214,7 @@ const REGISTRY: &[Entry] = &[
     Entry::new("potion_maker", scenarios::potion_maker_scenario),
     Entry::new("potion_maker_named", scenarios::potion_maker_named_scenario),
     Entry::new("tanner_bot", scenarios::tanner_bot_scenario),
+    Entry::new("flour_collector", scenarios::flour_collector_scenario),
     Entry::new("tanner_bot_hard", scenarios::tanner_bot_hard_scenario),
     Entry::new("rune_crafter", scenarios::rune_crafter_scenario),
     Entry::new("rune_crafter_earth", scenarios::rune_crafter_earth_scenario),

@@ -52,6 +52,8 @@ mod leather;
 pub(crate) use leather::*;
 mod firemaking;
 pub(crate) use firemaking::*;
+mod flour_collector;
+pub(crate) use flour_collector::*;
 
 pub(crate) const STRENGTH_STAT: i32 = 2;
 
