@@ -209,6 +209,11 @@ pub(crate) struct Frame {
     pub fruit: bool,
     /// A chat continue page or a main/chat modal is open.
     pub modal: bool,
+    /// Any NPC targeting the local player, `(name, Chebyshev distance)`, for
+    /// HP-drop trace rows.
+    pub targeting_npcs: Vec<(String, i32)>,
+    /// The NPC the local player itself targets (auto-retaliate), if any.
+    pub local_target: Option<String>,
 }
 
 impl Frame {
@@ -257,7 +262,30 @@ impl Frame {
             }
             .check(snap, names);
         let modals = snap.modals();
+        let here = snap.tile();
+        let targeting_npcs = snap
+            .npcs()
+            .iter()
+            .filter(|npc| {
+                self_slot >= 0
+                    && npc.target.is_some_and(|target| {
+                        target.kind == ActorKind::Player && target.index == self_slot as usize
+                    })
+            })
+            .map(|npc| {
+                let distance = here.map_or(-1, |(x, z, _)| cheb((x, z), (npc.tile.x, npc.tile.z)));
+                (npc.name.clone().unwrap_or_default(), distance)
+            })
+            .collect();
+        let local_target = snap
+            .local_player()
+            .and_then(|local| local.player.actor.target)
+            .filter(|target| target.kind == ActorKind::Npc)
+            .and_then(|target| snap.npcs().iter().find(|npc| npc.index == target.index))
+            .map(|npc| npc.name.clone().unwrap_or_default());
         Self {
+            targeting_npcs,
+            local_target,
             modal: snap.chat_continue_component_id() != -1
                 || modals.main != -1
                 || modals.chat != -1,
@@ -553,7 +581,16 @@ impl RandomEventEpisode {
             if let Some(last) = self.last.clone() {
                 if frame.hp != last.hp {
                     let attacker = self.attacker_fact(frame);
-                    self.note(frame, "hp", json!({"hp": frame.hp, "attacker": attacker}));
+                    self.note(
+                        frame,
+                        "hp",
+                        json!({
+                            "hp": frame.hp,
+                            "attacker": attacker,
+                            "targeting_npcs": frame.targeting_npcs,
+                            "local_target": frame.local_target,
+                        }),
+                    );
                 }
                 if frame.modal != last.modal {
                     let what = if frame.modal {
