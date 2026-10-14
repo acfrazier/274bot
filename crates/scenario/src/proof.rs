@@ -286,6 +286,22 @@ pub(crate) fn fresh_chat_contains(snap: &GameSnapshot, baseline: i32, needle: &s
         .any(|line| line.sequence > baseline && line.text.contains(needle))
 }
 
+/// Whether the snapshot's player tile stands inside the inclusive
+/// rectangle on `level`. Backs [`Proof::VisitedWithin`]; the runner
+/// latches it per step over observed ticks.
+pub(crate) fn visited_within_contains(
+    snap: &GameSnapshot,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    level: i32,
+) -> bool {
+    snap.tile().is_some_and(|(tx, tz, tl)| {
+        tl == level && (min_x..=max_x).contains(&tx) && (min_z..=max_z).contains(&tz)
+    })
+}
+
 impl Proof {
     /// The predicate's evidence name (also the JSON `predicate` field).
     pub fn name(&self) -> String {
@@ -2368,10 +2384,61 @@ mod tests {
     }
 
     #[test]
+    fn visited_within_contains_only_the_inclusive_box_on_the_level() {
+        let at = |x: i32, z: i32, level: i32| {
+            let mut s = GameSnapshot::new();
+            s.seed_tile(WorldTile { x, z, level });
+            super::visited_within_contains(&s, 3146, 3162, 3916, 3932, 0)
+        };
+        // A correct receipt passes: centre and both inclusive corners.
+        assert!(at(3154, 3924, 0), "centre of the box is visited");
+        assert!(at(3146, 3916, 0), "the min corner is inclusive");
+        assert!(at(3162, 3932, 0), "the max corner is inclusive");
+        // The named bad behaviours fail: one tile past each edge, and
+        // the right (x, z) on the wrong level.
+        assert!(!at(3145, 3924, 0), "min_x - 1 is outside");
+        assert!(!at(3163, 3924, 0), "max_x + 1 is outside");
+        assert!(!at(3154, 3915, 0), "min_z - 1 is outside");
+        assert!(!at(3154, 3933, 0), "max_z + 1 is outside");
+        assert!(
+            !at(3154, 3924, 1),
+            "inside (x, z) on another level is outside"
+        );
+        assert!(
+            !super::visited_within_contains(&GameSnapshot::new(), 3146, 3162, 3916, 3932, 0),
+            "no observed tile is outside"
+        );
+    }
+
+    #[test]
     fn bank_open_fails_closed_without_an_open_bank_window() {
         let s = GameSnapshot::new();
         assert!(!Proof::BankOpen.check(&s, None));
         assert_eq!(Proof::BankOpen.name(), "bank_open");
+    }
+
+    #[test]
+    fn bank_open_passes_only_a_loaded_bank_window_in_scene_2() {
+        // A correct receipt passes: ingame, scene 2, an open withdraw
+        // component whose contents have loaded.
+        let mut s = GameSnapshot::new();
+        s.seed_ingame(2);
+        s.seed_bank_observation(601, 1, Some(vec![]), vec![]);
+        assert!(Proof::BankOpen.check(&s, None), "a loaded open bank passes");
+        // The named bad behaviours fail: the component is open but its
+        // contents have not loaded, and a loaded bank outside scene 2.
+        s.seed_bank_observation(601, 1, None, vec![]);
+        assert!(
+            !Proof::BankOpen.check(&s, None),
+            "an open but unloaded bank fails"
+        );
+        let mut s = GameSnapshot::new();
+        s.seed_ingame(1);
+        s.seed_bank_observation(601, 1, Some(vec![]), vec![]);
+        assert!(
+            !Proof::BankOpen.check(&s, None),
+            "a loaded bank outside scene 2 fails"
+        );
     }
 
     #[test]
