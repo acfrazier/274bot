@@ -5,12 +5,13 @@
 //! 45 s cooldown writes, the trapped-kind hold and the rising-edge
 //! `on_random` knock live in [`Guardian`].
 mod guardian;
-pub use guardian::{Guardian, RandomStatus};
+pub use guardian::{Guardian, GuardianLiveContext, RandomStatus};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub mod maze;
 
+use api::game_data::SelectedGameData;
 use api::interact::{
     op_loc, press, walk, walk_nearest, ActionSpec, Driver, Interactions, OpTarget, SendResult,
     SCENE_READY,
@@ -19,7 +20,7 @@ use api::query::npc_by_index;
 use api::snapshot::{
     ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext, StatView,
 };
-use vault::ProfileSettings;
+use vault::{ProfileSettings, RandomEventPolicy};
 
 // The detect/claim contracts live in `api::random` so `script` can answer
 // the `on_random` knock without depending on `host` (the same types are
@@ -39,9 +40,8 @@ const DIALOG_NAMES: &[&str] = &[
     "frog",
 ];
 
-/// Hostile evade names: the 274 `antimacro.npc` macro guardians (their
-/// npc ids 391..443 match rs2b0t, verified against the Lost City pack).
-/// Detect is name-based per the guardian spec.
+/// Hostile event NPC names. The angry `strange plant` overlaps `PICK_NAME`
+/// and enters Evade only when its actual NPC ops include `Attack`.
 const EVADE_NAMES: &[&str] = &[
     "river troll",
     "swarm",
@@ -257,11 +257,14 @@ fn detect_scene(
         };
         let name = raw.to_lowercase();
         let ours = is_ours(npc, self_slot, display_name.as_deref());
-        // FACEENTITY / playerfollow is the ours tell for the dialog five
-        // (including drunken dwarf), not combat. Hostile names only here,
-        // and only once a positive active type-1 hit has landed (frozen
-        // takingDamage gate — ownership alone is not enough).
-        if ours && EVADE_NAMES.contains(&name.as_str()) && snap.taking_damage() {
+        // Hostile event actors are owned only when face_entity resolves to
+        // this local-player slot. The drunken dwarf stays in Dialog: its
+        // content resolves both its ordinary and angry phases with Talk-to.
+        if snap.ingame()
+            && snap.local_player().is_some()
+            && is_evade_npc(npc, &name)
+            && event_npc_targets_player(npc, self_slot)
+        {
             return Some(DetectedRandom {
                 kind: RandomKind::Evade,
                 name,
@@ -348,6 +351,15 @@ fn event_npc_targets_another_player(npc: &NpcView, self_slot: i32) -> bool {
         })
 }
 
+fn event_npc_targets_player(npc: &NpcView, self_slot: i32) -> bool {
+    self_slot >= 0
+        && npc.target
+            == Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: self_slot as usize,
+            })
+}
+
 /// The spec's hard owner: the NPC faces the local player, or its
 /// overhead text contains the local display name. No distance grab.
 fn is_ours(npc: &NpcView, self_slot: i32, display_name: Option<&str>) -> bool {
@@ -392,6 +404,17 @@ fn plant_offers_pick(npc: &NpcView) -> bool {
     })
 }
 
+fn plant_offers_attack(npc: &NpcView) -> bool {
+    npc.actions.iter().any(|action| {
+        action
+            .as_deref()
+            .is_some_and(|label| label.trim().eq_ignore_ascii_case("attack"))
+    }) && !plant_offers_pick(npc)
+}
+
+fn is_evade_npc(npc: &NpcView, name: &str) -> bool {
+    EVADE_NAMES.contains(&name) || (name == PICK_NAME && plant_offers_attack(npc))
+}
 /// Last-priority ownership probe candidate. A server-authenticated probe is
 /// safe only for a passive, featureless plant already within interaction
 /// range; all established random candidates (especially held box/lamp) win.
@@ -477,17 +500,55 @@ fn cheb(a: (i32, i32), b: (i32, i32)) -> i32 {
     (a.0 - b.0).abs().max((a.1 - b.1).abs())
 }
 
-/// rs2b0t `fleeCandidates`: compass rings around `from` at Chebyshev
-/// 12 → 4 stepping 2, farthest ring first (the first walkable candidate
-/// is the flee target).
-fn flee_candidates(from: (i32, i32)) -> Vec<(i32, i32)> {
-    let mut tiles = Vec::with_capacity(40);
-    for dist in [12, 10, 8, 6, 4] {
-        for (dx, dz) in FLEE_COMPASS {
-            tiles.push((from.0 + dx * dist, from.1 + dz * dist));
+/// Ordered compass choices at a content-derived Chebyshev distance. This
+/// iterator allocates nothing; the first walkable tile becomes the target.
+#[cfg(test)]
+fn flee_candidates(from: (i32, i32), distance: i32) -> impl Iterator<Item = (i32, i32)> {
+    FLEE_COMPASS
+        .into_iter()
+        .map(move |(dx, dz)| (from.0 + dx * distance, from.1 + dz * distance))
+}
+
+/// Engine chase stop: Chebyshev distance past maxrange+1, except the
+/// diagonal corner exactly at maxrange+1 (`Npc.ts:661-670`).
+fn outside_chase_range(player: (i32, i32), start: (i32, i32), maxrange: i32) -> bool {
+    let dx = (player.0 - start.0).abs();
+    let dz = (player.1 - start.1).abs();
+    let stop = maxrange.saturating_add(1);
+    dx.max(dz) > stop || (dx == stop && dz == stop)
+}
+
+/// The first direction points away from the latched NPC tile, through the
+/// player. Ties prefer a cardinal path and otherwise retain compass order.
+fn flee_direction_index(from: (i32, i32), player: (i32, i32)) -> usize {
+    let (dx, dz) = ((player.0 - from.0) as i64, (player.1 - from.1) as i64);
+    let mut best = 0;
+    let mut best_score = i64::MIN;
+    let mut best_cardinal = false;
+    for (index, (step_x, step_z)) in FLEE_COMPASS.iter().copied().enumerate() {
+        let score = dx * step_x as i64 + dz * step_z as i64;
+        let cardinal = step_x == 0 || step_z == 0;
+        if score > best_score || (score == best_score && cardinal && !best_cardinal) {
+            best = index;
+            best_score = score;
+            best_cardinal = cardinal;
         }
     }
-    tiles
+    best
+}
+
+/// Exactly one flee ring, beginning away from the NPC and through the player.
+/// The fixed compass rotation keeps the iterator allocation-free.
+fn flee_candidates_away(
+    from: (i32, i32),
+    player: (i32, i32),
+    distance: i32,
+) -> impl Iterator<Item = (i32, i32)> {
+    let first = flee_direction_index(from, player);
+    (0..FLEE_COMPASS.len()).map(move |offset| {
+        let (dx, dz) = FLEE_COMPASS[(first + offset) % FLEE_COMPASS.len()];
+        (from.0 + dx * distance, from.1 + dz * distance)
+    })
 }
 
 /// Hazard escape candidates are exactly one frozen four-tile ring around
