@@ -1239,6 +1239,8 @@ def _path_segments(node: dict[str, Any]) -> tuple[str, ...]:
         if child.get("kind") == "PATH":
             result.extend(_path_segments(child))
         elif child.get("kind") == "PATH_SEGMENT":
+            if not result and next(_leaf_tokens(child), None) == ("COLON2", "::"):
+                result.append("")
             name = _path_segment_name(child)
             if name is not None:
                 result.append(name)
@@ -2052,7 +2054,9 @@ def _seam_records(
                         public_uses[module_path].append((file_key, item))
                     for use_tree in _direct_children(item, "USE_TREE"):
                         for symbol, local_name in _use_tree_imports(use_tree):
-                            parts = tuple(part for part in symbol.split("::") if part)
+                            parts = (("",) if symbol.startswith("::") else ()) + tuple(
+                                part for part in symbol.split("::") if part
+                            )
                             if "*" in parts:
                                 if _is_public(item):
                                     module_issues[module_path].append(
@@ -2119,6 +2123,7 @@ def _seam_records(
         segments: tuple[str, ...],
         seen_imports: frozenset[tuple[tuple[str, ...], str]] = frozenset(),
         seen_paths: frozenset[tuple[tuple[str, ...], tuple[str, ...]]] = frozenset(),
+        seen_globs: frozenset[tuple[str, ...]] = frozenset(),
     ) -> tuple[str, Any, str | None] | None:
         state = (module_path, segments)
         if state in seen_paths:
@@ -2131,6 +2136,29 @@ def _seam_records(
             segments = segments[:-1]
             if not segments:
                 return ("module", module_path, None)
+        if segments[0] == "":
+            # In Rust 2018+, a leading :: starts at the extern prelude, not
+            # at this module.  Do not let local imports or definitions change
+            # the meaning of an absolute workspace or sysroot path.
+            absolute = segments[1:]
+            if not absolute:
+                return None
+            issue = workspace_issue(module_path, absolute[0])
+            if issue is not None:
+                return ("workspace_error", issue, None)
+            canonical = "::".join(absolute)
+            if canonical in TRUSTED_FOREIGN_TYPE_CLASSES:
+                return ("foreign", canonical, None)
+            if absolute[0] in workspace_crates:
+                crate_key = (
+                    () if absolute[0] == frontend_crate else load_workspace_crate(absolute[0])
+                )
+                if isinstance(crate_key, str):
+                    return ("workspace_error", crate_key, absolute[-1])
+                return resolve_path(crate_key, ("crate",) + absolute[1:], seen_imports, seen_paths, seen_globs)
+            if canonical in foreign_classes:
+                return ("foreign", canonical, None)
+            return None
         if (module_path, segments[0]) in ambiguous_type_items:
             return ("ambiguous", (module_path, segments[0]), segments[0])
         issue = workspace_issue(module_path, segments[0])
@@ -2148,6 +2176,7 @@ def _seam_records(
                         imported + segments[1:],
                         seen_imports | {import_key},
                         seen_paths,
+                        seen_globs,
                     )
                     for imported in sorted(imported_targets)
                 ]
@@ -2212,25 +2241,37 @@ def _seam_records(
                         target[split:],
                         seen_imports,
                         seen_paths,
+                        seen_globs,
                     )
                     if resolved is not None:
                         return resolved
 
-        if len(segments) == 1 and segments[0] not in {"crate", "self", "super"}:
+        if segments[0] not in {"crate", "self", "super"}:
+            if module_path in seen_globs and module_globs.get(module_path):
+                return ("ambiguous", module_path, segments[0])
             glob_matches: set[tuple[str, Any, str | None]] = set()
+            unknown_glob = False
             for glob_target in module_globs.get(module_path, []):
                 resolved = resolve_path(
                     module_path,
                     glob_target + segments,
                     seen_imports,
                     seen_paths,
+                    seen_globs | {module_path},
                 )
                 if resolved is not None:
                     glob_matches.add(resolved)
-            if len(glob_matches) == 1:
-                return next(iter(glob_matches))
-            if len(glob_matches) > 1:
+                else:
+                    glob_module = resolve_path(
+                        module_path, glob_target, seen_imports, seen_paths,
+                        seen_globs | {module_path},
+                    )
+                    if glob_module is None or glob_module[0] != "module":
+                        unknown_glob = True
+            if unknown_glob or len(glob_matches) > 1:
                 return ("ambiguous", tuple(sorted(glob_matches, key=repr)), segments[0])
+            if glob_matches:
+                return next(iter(glob_matches))
 
         canonical = "::".join(segments)
         # A built-in entry keeps precedence for its exact path.  Any other path
@@ -2243,7 +2284,7 @@ def _seam_records(
             )
             if isinstance(crate_key, str):
                 return ("workspace_error", crate_key, segments[-1])
-            return resolve_path(crate_key, ("crate",) + segments[1:], seen_imports, seen_paths)
+            return resolve_path(crate_key, ("crate",) + segments[1:], seen_imports, seen_paths, seen_globs)
         if canonical in foreign_classes:
             return ("foreign", canonical, None)
         return None
@@ -2252,7 +2293,9 @@ def _seam_records(
     def resolve_public_path(
         module_path: tuple[str, ...], symbol: str
     ) -> tuple[str, Any, str | None] | None:
-        segments = tuple(part for part in symbol.split("::") if part)
+        segments = (("",) if symbol.startswith("::") else ()) + tuple(
+            part for part in symbol.split("::") if part
+        )
         resolved = resolve_path(module_path, segments)
         if resolved is None:
             return None
@@ -2292,11 +2335,12 @@ def _seam_records(
                 return False
             followed.add(local_name)
             target = next(iter(imported)) + target[1:]
-        if target[0] in local_bindings.get(module_path, {}):
+        absolute = target[0] == ""
+        if not absolute and target[0] in local_bindings.get(module_path, {}):
             return False
-        if "::".join(target) in STD_LEAF_TYPE_PATHS:
+        if "::".join(target[1:] if absolute else target) in STD_LEAF_TYPE_PATHS:
             return True
-        if target != segments or len(target) != 1 or target[0] not in PRELUDE_LEAF_TYPE_NAMES:
+        if absolute or target != segments or len(target) != 1 or target[0] not in PRELUDE_LEAF_TYPE_NAMES:
             return False
         for glob_target in module_globs.get(module_path, []):
             glob_module = resolve_path(module_path, glob_target)
