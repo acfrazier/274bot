@@ -1030,6 +1030,9 @@ pub struct Session {
     pub profile_import_lines: Vec<String>,
     pub profile_import_settled: bool,
     pub import_delete_understood: bool,
+    /// Where the Profiles divider sits, as a fraction of the split region:
+    /// `[0]` the list's width side by side, `[1]` its height stacked.
+    pub profiles_split: [f32; 2],
     /// Live-harness overlay: the scenario's `NavSettings` for this session
     /// without writing prefs. `None` = operator `ui.nav`.
     pub nav_overlay: Option<NavSettings>,
@@ -1455,6 +1458,7 @@ impl Session {
             profile_import_lines: Vec::new(),
             profile_import_settled: false,
             import_delete_understood: false,
+            profiles_split: [0.4, 0.35],
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),

@@ -1782,6 +1782,9 @@ impl TuiSession {
                 flow.preview(&self.core, &self.scripts);
             }
             ImportAction::Policy(policy) => flow.set_policy(&self.core, &self.scripts, policy),
+            ImportAction::IncludeUnusable(include) => {
+                flow.set_include_unusable(&self.core, &self.scripts, include)
+            }
             ImportAction::Confirm => flow.confirm(&mut self.core, &self.scripts),
             ImportAction::Back => flow.back(),
             ImportAction::AskDelete => flow.ask_delete(),
@@ -1831,6 +1834,8 @@ impl TuiSession {
         };
         view.error = flow.error().map(str::to_owned);
         view.policy = flow.policy();
+        view.unusable = flow.plan().map_or(0, |plan| plan.unusable());
+        view.include_unusable = flow.include_unusable();
         view.settled = flow.settled(&self.core);
         view.can_delete = flow.can_delete(&self.core);
         view.delete_asked = flow.delete_asked();
