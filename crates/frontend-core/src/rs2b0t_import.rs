@@ -27,8 +27,10 @@
 //!   refusals), passes through [`api::hostlog::redact`] when it is built.
 //!   So a password that turns up again in any other field (a tab, a stored
 //!   key or value, a clue duel partner, even another account's name) shows
-//!   as `***` there, and in every copy the panel, the TUI and the log keep.
-//!   The values written into the vault are the file's, unchanged.
+//!   as `***` there, and in every copy the panel, the TUI and the log
+//!   message keep. The log line's account column (its slot) is not
+//!   redacted: it names the account, even one whose name equals a
+//!   password. The values written into the vault are the file's, unchanged.
 //! - Not covered (best effort, as [`Secret`] itself): object keys; a value
 //!   that a repeated key in the same object replaced (serde_json drops it
 //!   before this module sees the tree); serde_json's own scratch buffer
