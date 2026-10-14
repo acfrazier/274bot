@@ -41,14 +41,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   helpers `parseBurnMode`, `logsForTree`, `firemakingLevelForLogs`,
   `resolveFireSpot`, `nearestFireSpot`, `expandLocalFirePlot`, `runWest`,
   `shouldBurnFullLoad` and `findBurnLane` now use the native fire helper.
-  Hunting sites also export `ENCLAVE_TARGET_OPTIONS` and `enclaveTargets`.
-  Thieving targets use the frozen `HOSTILE_NAMES` constant. `plannedPotions` honors caller-
-  selected descriptor sets, axe tier levels match the API's level-1 default,
-  and API constants retain their frozen values. The Ardougne Paladin and Hero
-  target leashes now cover their 289 roam envelopes.
-- Native helpers now cover held-tool keep/surplus selection (`toolAttackLevel`,
-  `toolsNeedingEquip`), bank-open route decisions, trade-screen state, shop-op
-  batching, `worthStocking` and the clue `tilesTo` distance query.
+- Hunting adapters expose `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
+  `chasesTarget` through native helpers. Thieving targets use the frozen
+  `HOSTILE_NAMES` constant. `plannedPotions` honors caller-selected descriptor
+  sets, axe tier levels match the API's level-1 default, and API constants
+  retain their frozen values. The Ardougne Paladin and Hero target leashes now
+  cover their 289 roam envelopes.
+- Native helpers now cover food eligibility (`isEdibleFood`), held-tool
+  keep/surplus selection (`toolAttackLevel`, `toolsNeedingEquip`), bank-open
+  routing (`resolveBankOpenRoute`), trade-screen state, shop-op batching,
+  `worthStocking` and the clue `tilesTo` distance query.
 - Mining rock data now provides native-backed `ROCK_TYPES`, `QUEST_ROCK_TYPES`,
   `ROCK_OPTIONS`, `ROCK_TIER_ORDER`, `rockTierById` and `resolveRockIds`;
   quest-only rocks remain outside the regular ore options.
