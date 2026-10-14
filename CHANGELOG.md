@@ -68,6 +68,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - The "only render selected" checkbox is now called "only render focused".
   It always meant the bot shown in the Game pane, not the bots selected in
   the fleet list.
+- On Linux desktops running Wayland (such as KDE Plasma), Ctrl+V now pastes
+  into the panel's text fields, including the vault password and profile
+  fields. Before, the panel could only reach the X11 clipboard, which is
+  empty while a Wayland window has focus, so nothing pasted.
 
 ### Not in this release
 
