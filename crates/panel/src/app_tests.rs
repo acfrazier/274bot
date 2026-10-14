@@ -997,7 +997,7 @@ fn hop_label_px_writes_clamp_to_8_28() {
 
 #[test]
 fn apply_only_render_selected_warns_before_unchecking() {
-    // Checking "only render selected" on is immediate, no dialog.
+    // Checking "only render focused" on is immediate, no dialog.
     assert_eq!(
         apply_only_render_selected(false, true, false),
         (true, false)
@@ -5679,7 +5679,7 @@ fn open_render_all_warning(
 
 /// "Don't show again" is disabled until "I understand" is ticked, and then
 /// does what OK does and saves the acknowledgement: the next launch applies
-/// an unchecked "only render selected" at once, with no dialog.
+/// an unchecked "only render focused" at once, with no dialog.
 #[test]
 fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -5688,7 +5688,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let mut session = crate::session::Session::new();
     assert!(
         session.focus.lock().unwrap().only_render_selected,
-        "only render selected starts on"
+        "only render focused starts on"
     );
     let [understood, _ok, _cancel, dont_show] = open_render_all_warning(&mut ctx, &mut session);
 

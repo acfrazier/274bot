@@ -60,6 +60,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   than this version. Some members of the older API are also missing, so that
   claim could be wrong.
 
+### Panel
+
+- The "only render selected" checkbox is now called "only render focused".
+  It always meant the bot shown in the Game pane, not the bots selected in
+  the fleet list.
+
 ### Not in this release
 
 - `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` aren't
