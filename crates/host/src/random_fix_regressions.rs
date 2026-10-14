@@ -221,3 +221,130 @@ fn guardian_r1_lost_pickaxe_refused_send_does_not_abandon_recovery() {
         "restore the formerly worn tool"
     );
 }
+
+/// A partial Swarm route can end before the 19-tile flee ring, beyond the
+/// 15-tile NPC view. Keep walking; outside chase range the hostile cleanup
+/// (`macro_events.rs2:166-173`, `antimacro.npc:130`) still bounds the wait.
+#[test]
+fn guardian_r2_missing_swarm_continues_flee_and_finishes_cleanup() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_flee_npc(&mut c, 1, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    assert_eq!(driver.walks, vec![(-18, 0)]);
+
+    set_flee_player(&mut c, -16, 0, false);
+    clear_npcs(&mut c);
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    assert_eq!(
+        driver.walks,
+        vec![(-18, 0), (-18, 0)],
+        "finish the outward route even without the NPC in view"
+    );
+    // A refused/partial route need not reach the full wandering-clearance
+    // ring: missing outside chase range is bounded by 20+2 cleanup ticks.
+    for missing_tick in 2..=22 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(status.hold, missing_tick < 22);
+    }
+    assert_eq!(driver.walks.last(), Some(&(0, 0)));
+}
+
+/// Even an impossible blocked route cannot freeze the script past the
+/// content NPC's 1000-tick lifetime plus two observation phases.
+#[test]
+fn guardian_r2_blocked_attacker_gives_up_without_return_or_reacquisition() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver {
+        walk_ok: false,
+        walk_nearest_ok: false,
+        ..Default::default()
+    };
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    for elapsed in 0..=2_000 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(status.kind, Some(RandomKind::Evade));
+        assert_eq!(status.hold, elapsed < 1_002, "elapsed={elapsed}");
+        assert_eq!(status.ours, elapsed < 1_002, "elapsed={elapsed}");
+        if elapsed == 1_002 {
+            let sends = driver.walks.len();
+            // Neither repaint nor subsequent ticks may retake this actor.
+            let repeat = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+            assert!(!repeat.hold && !repeat.ours);
+            assert_eq!(driver.walks.len(), sends);
+        }
+    }
+    assert!(!driver.walks.contains(&(0, 0)), "give-up is not a walk back");
+}
+
+/// World zombie_unarmed (73) is not a macro event, even when it attacks us.
+/// `content/pack/npc.pack:74` versus macro zombies at :420-425.
+#[test]
+fn guardian_r2_world_zombie_73_never_starts_or_sustains_evade() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 73, "Zombie", 32768, None, "Attack");
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    for _ in 0..2 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold && !status.ours);
+    }
+    assert!(driver.walks.is_empty());
+
+    clear_npcs(&mut c);
+    plant_npc_typed_with_op(&mut c, 0, 419, "Zombie", 32768, None, "Attack");
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    // Reusing an event slot with a same-name world type must end ownership.
+    clear_npcs(&mut c);
+    plant_npc_typed_with_op(&mut c, 0, 73, "Zombie", 32768, None, "Attack");
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert_eq!(status.kind, None);
+    assert!(!status.hold && !status.ours);
+}
+
+#[test]
+fn guardian_r2_visible_former_attacker_does_not_mask_strange_box() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    c.npc[0].as_mut().expect("troll").entity.face_entity = -1;
+    plant_inv_named(&mut c, 3062, Some("Strange box"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert_eq!(status.kind, Some(RandomKind::Box));
+    assert!(status.ours && status.hold);
+}

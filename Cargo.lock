@@ -2386,8 +2386,6 @@ dependencies = [
  "libc",
  "num-bigint",
  "parking_lot",
- "script",
- "serde_json",
  "tungstenite",
  "vault",
  "windows-sys 0.59.0",

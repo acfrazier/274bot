@@ -21,25 +21,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   including hits that miss. Before, it could walk straight back to its
   fishing or gathering spot between hits, next to the attacker. It runs far
   enough that the attacker gives up chasing, which now also outruns a Swarm,
-  and returns only once the attacker has gone. A blocked escape does not
-  release a still-targeting attacker back to the script.
+  and normally returns only once the attacker has gone. If escape fails,
+  it waits at most 1,002 game ticks before letting the script continue,
+  without walking back toward the attacker.
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
 - When a chopped tree becomes an Ent, the Guardian stops chopping and waits
   for the tree to return before the Gatherer resumes. This prevents the Ent
   from breaking the axe.
 - Lost-tool recovery no longer abandons a pickaxe or axe after one refused
-  click. It waits for the next fresh snapshot and retries within the existing
-  recovery bound.
-
-### Fixed during development
-
-- The random-event Guardian remembers an attacker's first scene position,
-  before its delayed attack starts. A Tree spirit that still targets the bot
-  cannot disappear behind a completed-escape flag.
-- The Guardian waits for a visible attacker to despawn before returning.
-  Its flee route also clears the NPC's wandering range so the content's
-  despawn timer can finish.
+  click. It retries on the next game tick within the existing recovery
+  limit.
 
 ### Scripts
 
@@ -64,6 +56,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - Fight and Ignore in the random-event Policies control can be chosen but
   aren't available yet; a saved Fight or Ignore is treated as Flee.
 - Running from an angry Strange plant doesn't cure its poison.
+
+### Fixed during development
+
+- The random-event Guardian remembers an attacker's first scene position,
+  before its delayed attack starts. It keeps fleeing if a Tree spirit still
+  targets the bot after the first escape.
+- The Guardian waits for a visible event attacker to despawn before returning.
+  Its flee route also clears the NPC's wandering range so its cleanup timer
+  can finish.
+- When an attacker leaves view, the bot continues toward its escape target.
+  Outside chase range, 22 stationary game ticks without the attacker end
+  the wait, even if the route stops short. All escape attempts stop after
+  1,002 game ticks, based on a normal event's 1,000-tick lifetime plus two
+  processing phases. This limit also covers a blocked escape from an angry
+  Strange plant, whose lifetime extends when it changes form. The script
+  then continues without a return walk.
+- Ordinary monsters with random-event names no longer trigger event handling.
+  A former attacker no longer hides a newly detected event.
+- The Guardian uses visible player targeting to avoid claiming another
+  player's nearby Ent. Before that target is visible, a nearby Ent can still
+  be mistaken for this bot's event. All Ent waits end after 60 game ticks.
+- Without selected game content, the status still shows an identified event
+  attacker, but the Guardian does not guess a flee distance or pause the script.
 
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 
