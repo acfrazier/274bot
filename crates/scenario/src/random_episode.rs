@@ -76,7 +76,7 @@ const TELEPORT_TILES: i32 = 40;
 /// (`macro_event_gas.rs2`) and five whirlpool re-clicks.
 const ENDURE_TICKS: u32 = 30;
 /// Bounded trace of key events in the receipt.
-const MAX_TRACE: usize = 96;
+const MAX_TRACE: usize = 160;
 
 /// How the cell summons its event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +207,8 @@ pub(crate) struct Frame {
     /// Inventory plus equipment, `(id, count)`, summed per id.
     pub held: Vec<(i32, i32)>,
     pub fruit: bool,
+    /// A chat continue page or a main/chat modal is open.
+    pub modal: bool,
 }
 
 impl Frame {
@@ -254,7 +256,11 @@ impl Frame {
                 count: 1,
             }
             .check(snap, names);
+        let modals = snap.modals();
         Self {
+            modal: snap.chat_continue_component_id() != -1
+                || modals.main != -1
+                || modals.chat != -1,
             tick: snap.tick(),
             ready: snap.ingame() && snap.scene_state() == 2,
             tile: snap.tile(),
@@ -349,6 +355,7 @@ pub struct RandomEventEpisode {
     max_distance: i32,
     escape: Option<(u32, i32)>,
     returned: Option<u32>,
+    retargeted: bool,
     targeted_ticks: u32,
     // NPC presence (evade / dialog / pick).
     npc_seen: Option<u32>,
@@ -392,6 +399,7 @@ impl RandomEventEpisode {
             max_distance: 0,
             escape: None,
             returned: None,
+            retargeted: false,
             targeted_ticks: 0,
             npc_seen: None,
             absent_ticks: 0,
@@ -451,6 +459,23 @@ impl RandomEventEpisode {
         let tile = frame.tile.map(|(x, z, level)| json!([x, z, level]));
         self.trace
             .push(json!({"tick": frame.tick, "what": what, "tile": tile, "extra": extra}));
+    }
+
+    /// Where the latched attacker is, for HP-drop trace rows.
+    fn attacker_fact(&self, frame: &Frame) -> Value {
+        let Some(attacker) = self.attacker else {
+            return Value::Null;
+        };
+        let npc = frame.npcs.iter().find(|n| n.index == attacker.index);
+        let distance = frame
+            .tile
+            .zip(npc)
+            .map(|((x, z, _), npc)| cheb((x, z), npc.tile));
+        json!({
+            "present": npc.is_some(),
+            "targeting": npc.is_some_and(|n| n.targets_local),
+            "distance": distance,
+        })
     }
 
     /// The trigger command to send now, if any. Call before [`Self::observe`]
@@ -523,6 +548,22 @@ impl RandomEventEpisode {
         }
         if let Some(hp) = frame.hp {
             self.min_hp = Some(self.min_hp.map_or(hp, |min| min.min(hp)));
+        }
+        if self.send_tick.is_some() {
+            if let Some(last) = self.last.clone() {
+                if frame.hp != last.hp {
+                    let attacker = self.attacker_fact(frame);
+                    self.note(frame, "hp", json!({"hp": frame.hp, "attacker": attacker}));
+                }
+                if frame.modal != last.modal {
+                    let what = if frame.modal {
+                        "modal_open"
+                    } else {
+                        "modal_closed"
+                    };
+                    self.note(frame, what, Value::Null);
+                }
+            }
         }
 
         // Death and failed-event teleports fail at once, whatever the class.
@@ -823,6 +864,11 @@ impl RandomEventEpisode {
             .any(|n| n.index == attacker.index && n.targets_local);
         if targeting && fresh {
             self.targeted_ticks += 1;
+            if self.hold_fall.is_some() && !self.retargeted {
+                self.retargeted = true;
+                let hold = frame.hold;
+                self.note(frame, "retargeted_after_release", json!({"hold": hold}));
+            }
         }
         let first = self.first_target.unwrap_or(frame.tick);
         if self.hold_rise.is_none() && frame.tick.saturating_sub(first) > HOLD_RISE_TICKS {

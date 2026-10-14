@@ -80,7 +80,7 @@ fn the_fixtures_seed_only_the_accounts_own_state() {
         ("bronze_pickaxe", BRONZE_PICKAXE_ID),
         ("bronze_axe", BRONZE_AXE_ID),
         ("bones", BONES_ID),
-        ("bread", Activity::Thieving.seeded_item()),
+        ("lobster", Activity::Thieving.seeded_item()),
         ("kebab", KEBAB_ID),
         ("beer", BEER_ID),
     ] {
@@ -131,6 +131,7 @@ fn the_activity_stands_are_beside_real_resources() {
         ("fishing.rarefish.op3", CATHERBY_HARPOON_START, 8),
         ("mining.copper", VARROCK_EAST_MINE_START, 4),
         ("mining.tin", VARROCK_EAST_MINE_START, 4),
+        ("woodcutting.oak", DRAYNOR_OAK_START, 8),
     ] {
         let method_row = catalog
             .method(method)
