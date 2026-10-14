@@ -8,8 +8,7 @@
 //! budgets become one fixed deadline justified per cell.
 
 use super::combat::{
-    combat_fixture_loadouts, wear_combat_item_step, BLOOD_RUNE_ID, DRAGONFIRE_SHIELD_ID,
-    DRAGON_BONES_ID,
+    combat_fixture_loadouts, wear_combat_item_step, DRAGONFIRE_SHIELD_ID, DRAGON_BONES_ID,
 };
 use super::production::*;
 use crate::*;
@@ -194,11 +193,12 @@ fn jive_scenario(
 
 /// Ported from rs2b0t `e2e/jivechests-live.ts` @2de6bb23.
 /// Changed: upstream's `[chests] opened/banked` log milestones and exact
-/// 7-keys-a-trip log count become pack/bank item proofs; the always-drop
-/// is the script's own reward model (`JiveChests/logic.ts` `REWARDS[0]`
-/// is `Uncut dragonstone` on every open), so 7 banked dragonstones prove
-/// 7 opens banked. The junk-came-home log gate is not ported (a negative
-/// pack state at an arbitrary terminal instant is not a function proof).
+/// 7-keys-a-trip log count become pack/bank item proofs; the chest
+/// always adds an Uncut dragonstone before its random extra
+/// (`content/scripts/areas/area_taverly/scripts/crystal_chest.rs2:24`),
+/// so 7 banked dragonstones prove 7 opens banked. The junk-came-home
+/// log gate is not ported (a negative pack state at an arbitrary
+/// terminal instant is not a function proof).
 /// One banked trip is upstream's pass bar (`opens >= 7`, `trips >= 1`);
 /// the second withdrawal of 7 keys proves the loop closed.
 pub(crate) fn jive_chests_scenario() -> Scenario {
@@ -919,11 +919,16 @@ const JIVE_DRAGONS_BLACK_INJECT: &[ScriptSettingInject] = &[
 /// pack+bank through the page API; here the same end state is watched
 /// while the script runs (fresh three-dose supers held, partials gone
 /// from pack, exact 35 banked lobsters: 20 seeded plus 20 noted deposited
-/// minus 5 withdrawn). The `loadout` is the existing GreenDragon scenario
-/// food loadout: its carry names no potions, so the script's own fallback
-/// (one three-dose flask of each super) is the behaviour under test,
-/// exactly as upstream's blank loadout. The bank watch is armed first so
-/// it observes the script's own open bank session.
+/// minus 5 withdrawn, upstream's `assert.equal(result.foodBanked, 35)` at
+/// `jivedragons-potion-restock-live.ts:59`). The `loadout` is the
+/// existing GreenDragon scenario food loadout: its carry names no
+/// potions, so the script's own fallback (one three-dose flask of each
+/// super) is the behaviour under test, exactly as upstream's blank
+/// loadout. The `>= 35` bank watch is armed first so it observes the
+/// script's own open bank session; the closing `<= 35` watch re-reads
+/// that same open bank after the withdraw watches, so the pair pins the
+/// end count at exactly 35 (the `>=` watch alone already passes at the
+/// 40 the noted deposit makes, before the 5 are withdrawn).
 pub(crate) fn jive_dragons_potion_restock_scenario() -> Scenario {
     let bank = FALADOR_WEST_BANK;
     let mut cmds: Vec<String> = vec!["~clearinv".to_string(), "~clearbank".to_string()];
@@ -1071,6 +1076,14 @@ pub(crate) fn jive_dragons_potion_restock_scenario() -> Scenario {
             },
             150,
         ),
+        jive_watch(
+            "watch the open bank hold at most thirty-five lobsters after the withdraw",
+            Proof::BankItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 35,
+            },
+            150,
+        ),
     ]);
     // One at-booth restock: upstream allows its bank trip 60 s.
     jive_scenario(
@@ -1099,23 +1112,6 @@ const JIVE_DRAGONS_POTION_INJECT: &[ScriptSettingInject] = &[
     inj_str("leaveVia", "walk"),
 ];
 
-/// Content-defined black demon loot the cell gates on: the ids behind
-/// upstream's `LOOT` names (`jivedemons-live.ts`), minus Law rune (the
-/// seed bank itself holds 200, so it cannot prove a deposit) and Herb
-/// (the drop table's unidentified herbs are twelve ids for one name).
-/// Drop names per rs2b0t `src/bot/data/dropdb.ts` "Black Demon".
-const DEMON_LOOT_IDS: &[i32] = &[
-    COINS_ID,      // Coins
-    1113,          // Rune chainbody
-    1147,          // Rune med helm
-    BLOOD_RUNE_ID, // Blood rune
-    562,           // Chaos rune
-    1617,          // Uncut diamond
-    1619,          // Uncut ruby
-    1621,          // Uncut emerald
-    UNCUT_SAPPHIRE_ID,
-];
-
 /// Ported from rs2b0t `e2e/jivedemons-live.ts` @2de6bb23 (default style
 /// range, no banked key).
 /// Changed: started on the pocket safespot with the Dusty key and the
@@ -1124,10 +1120,12 @@ const DEMON_LOOT_IDS: &[i32] = &[
 /// carrying the key is what upstream's `--dusty` banked-key variant
 /// proves, and without a carried key or cast a cell started inside the
 /// pocket could never leave it. Upstream's kill/loot/banktrip counter
-/// milestones become Ranged XP and a banked item from the content drop
-/// set (a black demon's only guaranteed drop is Ashes, which the loot
-/// list deliberately excludes upstream too); its safespot-soak and
-/// starve gates are timing/post-Start-cheat oracles and are not ported.
+/// milestones become Ranged XP only: a black demon's only guaranteed
+/// drop is Ashes (`all.npc` `[black_demon]` `param=death_drop,ashes`;
+/// `black_demon.rs2` rolls the rest of the table), and upstream's loot
+/// list deliberately excludes Ashes, so no banked-loot watch can be a
+/// non-chance oracle for this cell. Its safespot-soak and starve
+/// gates are timing/post-Start-cheat oracles and are not ported.
 /// As in `jive_dragons`, `foodReserve` is pinned to the seeded 20 so the
 /// bank trip fires on loot fill within the deadline.
 pub(crate) fn jive_demons_scenario() -> Scenario {
@@ -1208,17 +1206,9 @@ pub(crate) fn jive_demons_scenario() -> Scenario {
             },
             900,
         ),
-        jive_watch(
-            "watch a demon drop from the content loot set reach the bank",
-            Proof::BankItemIdAny {
-                ids: DEMON_LOOT_IDS,
-                count: 1,
-            },
-            2700,
-        ),
     ]);
-    // Several 157-HP demon kills to fill the pack from the pocket, the
-    // Falador teleport and the deposit, with route margin.
+    // The port's 1500 s deadline, kept: seed, tele and the first demon
+    // fight fit well inside it, and no bank leg is gated (see above).
     jive_scenario(
         "jive_demons",
         "JiveDemons",
