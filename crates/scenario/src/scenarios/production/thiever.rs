@@ -151,24 +151,30 @@ const THIEVER_NO_BANK_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// Sustained Thieving XP the no-bank watch requires: eleven Guard
-/// successes (`pickpocket_guard` experience 468 tenths = 46.8 XP in
-/// `skill_thieving/configs/pickpocking/pickpocket.dbrow`).
-const THIEVER_NO_BANK_XP: i32 = 500;
+/// Sustained Thieving XP the no-bank watch requires: the fixed-window
+/// conversion of upstream's 25_000 XP/hr bar (`thievingbot-test.ts:19-20`
+/// `TARGET_XPH`, pass condition `:341-366`) over the 300 s post-Start
+/// watch: `25_000 * 300 / 3600 = 2083.3`, rounded up to 2084. At the
+/// Guard's content rate (`[pickpocket_guard]` experience 468 tenths =
+/// 46.8 XP in `skill_thieving/configs/pickpocking/pickpocket.dbrow:74`)
+/// that is at least 45 successes: 44 pay 2059.2 XP, 45 pay 2106 XP.
+const THIEVER_NO_BANK_XP: i32 = 2084;
 /// Runner dirty-snapshot increments, not engine ticks or wall seconds.
 /// The same ~2.5 dirties/second allowance as the 300s/750 combat
-/// qualification arm keeps the 300s wall deadline the controlling bound.
+/// qualification arm: this 750-dirty budget is the 300 s rate window
+/// the 2084 XP gate is priced against.
 const THIEVER_NO_BANK_WATCH_TICKS: u32 = 750;
-/// Eleven successes at the level-50 success roll (`success_chance`
-/// 50,240: floor(50*49/98)+floor(240*49/98)+1 = 146/256) take about
-/// twenty attempts; a failed attempt also pays the 8-tick stun. Forty
-/// attempts bound the tail at a few hundred engine ticks, so seed +
-/// Start + the steal chain fits 300s with room to spare.
-const THIEVER_NO_BANK_DEADLINE: Duration = Duration::from_secs(300);
+/// 420 s = the 300 s post-Start rate window plus 120 s for seed, login
+/// and Start, so seeding time is not counted against a script that
+/// only just meets 25k XP/hr. The watch budget above, not this
+/// scenario deadline, is the rate window.
+const THIEVER_NO_BANK_DEADLINE: Duration = Duration::from_secs(420);
 
 /// Ported from rs2b0t `e2e/thievingbot-test.ts` @2de6bb23.
 /// Changed: the wall-clock XP/hr >= 25k rate gate (after a 180s warmup)
-/// becomes a 500 Thieving XP gain inside the fixed 300s deadline.
+/// becomes 2084 Thieving XP inside the fixed 300s post-Start watch
+/// (25_000 * 300 / 3600, rounded up), under a 420s scenario deadline
+/// that keeps seed and login outside the rate window.
 /// Changed: `food`/`eatAtHp` session settings become the shared
 /// `thiever` fixture loadout, which names the same Lobster food.
 /// Kept: Ardougne Guards, a 22-Lobster pack, `banking=None`, loot off —
@@ -213,7 +219,7 @@ pub(crate) fn thiever_guard_no_bank_scenario() -> Scenario {
             steps.push(drain_advancestat());
             steps.push(start_catalog_step());
             steps.push(Step {
-                name: "watch sustained Guard pickpocketing: 500 Thieving XP, banking off",
+                name: "watch sustained Guard pickpocketing: 2084 Thieving XP, banking off",
                 kind: StepKind::Perform {
                     send: Box::new(|_, _| true),
                 },

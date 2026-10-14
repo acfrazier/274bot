@@ -12836,7 +12836,7 @@ fn e2e_port_conversions_register_converted_gates() {
 
     let thiever = get("thiever_guard_no_bank").expect("thiever_guard_no_bank");
     assert_eq!(thiever.settings.start_script, Some("Thiever"));
-    assert_eq!(thiever.settings.deadline, Duration::from_secs(300));
+    assert_eq!(thiever.settings.deadline, Duration::from_secs(420));
     let inject = settings_inject_map(thiever.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
     assert_eq!(inject.get("banking"), Some(&Value::String("None".into())));
@@ -12844,8 +12844,8 @@ fn e2e_port_conversions_register_converted_gates() {
     let watch = arms(&thiever, start(&thiever) + 1..);
     assert_eq!(
         watch,
-        vec![Proof::StatXpGain { id: 17, min: 500 }],
-        "rate gate converted to one sustained XP gate"
+        vec![Proof::StatXpGain { id: 17, min: 2084 }],
+        "25k XP/hr converted to one sustained XP gate over the 300s watch"
     );
     assert_eq!(thiever.proof, watch[0]);
 
