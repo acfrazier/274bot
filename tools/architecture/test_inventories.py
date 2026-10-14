@@ -1883,7 +1883,7 @@ pub struct FleetRow {
             "prelude name under an unindexed glob": (
                 "use other::*;\n",
                 "u64",
-                f"{VIEWS_PATH}::Uses: unresolved public seam field type u64",
+                f"{VIEWS_PATH}::Uses: ambiguous cfg/alternative seam field type u64",
             ),
             "crate-relative name": (
                 "",
