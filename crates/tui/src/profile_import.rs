@@ -14,7 +14,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 /// What the overlay shows. The binary rebuilds it from the flow after each
-/// action and while the import's writes settle.
+/// action and while the import's writes settle. `lines` and `error` are
+/// the flow's own, which it redacts as it builds them, so the derived
+/// `Debug` holds no export password.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportView {
     pub stage: Stage,

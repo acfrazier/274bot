@@ -18,17 +18,29 @@
 //! - The file is checked to be JSON before any value tree is built, so a
 //!   malformed file builds no partial tree. Once the tree exists, every
 //!   string value in it is zeroed when it is dropped.
+//! - Every non-empty password in the file is registered for log redaction
+//!   ([`api::hostlog::register_secret`]) as soon as the file parses, before
+//!   any preview text exists: also for an account the import then skips,
+//!   and when the import is never confirmed. Every string the importer
+//!   builds to show, or keeps in a type that derives `Debug` (preview and
+//!   report lines, [`Skipped`] items and reasons, per-parameter lines,
+//!   refusals), passes through [`api::hostlog::redact`] when it is built.
+//!   So a password that turns up again in any other field (a tab, a stored
+//!   key or value, a clue duel partner, even another account's name) shows
+//!   as `***` there, and in every copy the panel, the TUI and the log keep.
+//!   The values written into the vault are the file's, unchanged.
 //! - Not covered (best effort, as [`Secret`] itself): object keys; a value
 //!   that a repeated key in the same object replaced (serde_json drops it
 //!   before this module sees the tree); serde_json's own scratch buffer
 //!   for strings with escapes; a buffer the read had to grow because the
-//!   file grew while it was read; and the session's process-lifetime log
-//!   redaction list, which keeps a copy of every saved password so the log
-//!   never shows one.
+//!   file grew while it was read; and the process-lifetime log redaction
+//!   list, which keeps a copy of every password of every parsed file (and
+//!   of every saved password) so the log never shows one.
 //!
 //! [`ProfileImport`] is the flow the panel and the TUI both render: path,
 //! preview, confirm, report, and the optional deletion of the export file.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -360,7 +372,10 @@ pub fn read_profile_file(path: &Path) -> Result<ExportFile, ImportError> {
 
 /// Parse an rs2b0t profile export, with the checks of rs2b0t's
 /// `parseProfileFile`. No error quotes the file: entries are named by
-/// index, header values by their JSON type.
+/// index, header values by their JSON type. A file that parses has every
+/// password registered for log redaction before it is returned, so no
+/// text built from it later (preview, report, log line) can show one,
+/// whichever account it came from and whichever field repeats it.
 pub fn parse_profile_file(text: &str) -> Result<ExportFile, ImportError> {
     // Check the syntax first without building values, so a malformed file
     // never leaves a partly built tree (and its strings) unwiped.
@@ -397,6 +412,9 @@ pub fn parse_profile_file(text: &str) -> Result<ExportFile, ImportError> {
         .map(|(index, raw)| parse_account(index + 1, raw))
         .collect::<Result<Vec<_>, _>>()?;
     let storage = parse_storage(obj.get("storage"), &accounts)?;
+    for account in &accounts {
+        api::hostlog::register_secret(account.password.as_str());
+    }
     Ok(ExportFile {
         accounts,
         tabs,
@@ -597,7 +615,22 @@ impl ImportCatalog for script::JsLibrary {
     }
 }
 
-/// One rs2b0t item the import does not carry over, and why.
+/// `text` as the importer may show, log or keep it: every registered
+/// password ([`parse_profile_file`] registers the file's) replaced by
+/// [`api::hostlog::REDACTED`]. Applied where each displayed string is
+/// built, so every later copy is already clean. No copy when nothing
+/// matches.
+fn shown(text: String) -> String {
+    let redacted = match api::hostlog::redact(&text) {
+        Cow::Owned(clean) => Some(clean),
+        Cow::Borrowed(_) => None,
+    };
+    redacted.unwrap_or(text)
+}
+
+/// One rs2b0t item the import does not carry over, and why. Both strings
+/// are redacted when they are built: an item or reason can quote file
+/// text, and a password can sit in any field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
     pub item: String,
@@ -606,8 +639,8 @@ pub struct Skipped {
 
 fn skipped(item: impl Into<String>, reason: impl Into<String>) -> Skipped {
     Skipped {
-        item: item.into(),
-        reason: reason.into(),
+        item: shown(item.into()),
+        reason: shown(reason.into()),
     }
 }
 
@@ -717,14 +750,17 @@ impl Mapped {
     /// against the profile's settings `before` (an existing profile): per
     /// parameter, its new value against the current one; every other
     /// parameter of an imported card that stays; and, for a refused value,
-    /// the current value that stays.
+    /// the current value that stays. Every line is redacted as it is built.
     fn describe(mut self, before: Option<&ProfileSettings>) -> Described {
         let current = |card: &str, setting: &str| {
             before
                 .and_then(|s| s.script_settings.get(card))
                 .and_then(|bag| bag.get(setting))
         };
-        let mut imported = std::mem::take(&mut self.imported);
+        let mut imported: Vec<String> = std::mem::take(&mut self.imported)
+            .into_iter()
+            .map(shown)
+            .collect();
         for param in &self.params {
             let mut line = format!(
                 "{} = {}",
@@ -743,7 +779,7 @@ impl Mapped {
                     }
                 }
             }
-            imported.push(line);
+            imported.push(shown(line));
         }
         for refused in &self.refused {
             let Some(old) = current(&refused.card, &refused.setting) else {
@@ -755,6 +791,7 @@ impl Mapped {
                 "; the profile keeps its current value {}",
                 script::format_setting_value(old)
             );
+            skip.reason = shown(std::mem::take(&mut skip.reason));
         }
         let mut kept = Vec::new();
         if let Some(before) = before {
@@ -775,10 +812,10 @@ impl Mapped {
                         .chain(self.refused.iter().map(|r| (&r.card, &r.setting)))
                         .any(|(c, s)| c == card && s == key);
                     if !carried {
-                        kept.push(format!(
+                        kept.push(shown(format!(
                             "{script}.{key} = {} (not in the export)",
                             script::format_setting_value(value)
-                        ));
+                        )));
                     }
                 }
             }
@@ -906,7 +943,9 @@ impl ImportPlan {
         self.accounts.iter().any(|a| a.row.is_some())
     }
 
-    /// The preview text, shared by the panel and the TUI.
+    /// The preview text, shared by the panel and the TUI. Each line is
+    /// redacted whole: an account's name, or parts joined into one line,
+    /// can spell a password no single part held.
     pub fn lines(&self) -> Vec<String> {
         let mut out = vec![
             format!(
@@ -957,7 +996,7 @@ impl ImportPlan {
         }
         out.push(String::new());
         out.push(PLAINTEXT_WARNING.into());
-        out
+        out.into_iter().map(shown).collect()
     }
 }
 
@@ -1696,7 +1735,7 @@ pub fn apply_import<Io>(
                     );
                     entry.op = Some(op);
                 }
-                Err(error) => entry.refused = Some(error),
+                Err(error) => entry.refused = Some(shown(error)),
             }
         }
         entries.push(entry);
@@ -1781,7 +1820,7 @@ impl ImportRun {
                 }
                 Some(Outcome::Completed) => AccountResult::Overwritten,
                 Some(Outcome::Failed(error) | Outcome::Skipped(error)) => {
-                    AccountResult::Failed(error.clone())
+                    AccountResult::Failed(shown(error.clone()))
                 }
                 // A later write of the same profile in the same commit:
                 // whether that commit held this import's data is not known.
@@ -1823,7 +1862,8 @@ impl ImportRun {
         })
     }
 
-    /// The final report, shared by the panel and the TUI.
+    /// The final report, shared by the panel and the TUI; each line is
+    /// redacted whole, as the preview's.
     pub fn lines<Io>(&self, core: &OperatorSession<Io>) -> Vec<String> {
         let results = self.results(core);
         let count =
@@ -1867,7 +1907,7 @@ impl ImportRun {
             out.push("Not every account was confirmed saved, so the export file is not offered for deletion: keep it until they are.".into());
         }
         out.push("Loaded bots use an imported password and world at their next login, and imported script parameters at their next Start.".into());
-        out
+        out.into_iter().map(shown).collect()
     }
 }
 
@@ -1958,6 +1998,11 @@ impl ProfileImport {
         self.error.as_deref()
     }
 
+    /// Keep `message` as the refusal, redacted like every shown line.
+    fn refuse(&mut self, message: String) {
+        self.error = Some(shown(message));
+    }
+
     pub fn policy(&self) -> ConflictPolicy {
         self.choices.policy
     }
@@ -1978,13 +2023,13 @@ impl ProfileImport {
         self.file = None;
         let path = PathBuf::from(self.path.trim());
         if path.as_os_str().is_empty() {
-            self.error = Some(format!(
+            self.refuse(format!(
                 "Type the path of the {PROFILE_FILE_NAME} file rs2b0t exported."
             ));
             return;
         }
         let Some(vault) = core.vault() else {
-            self.error = Some(ImportError::VaultLocked.to_string());
+            self.refuse(ImportError::VaultLocked.to_string());
             return;
         };
         match read_profile_file(&path) {
@@ -1992,7 +2037,7 @@ impl ProfileImport {
                 self.plan = Some(plan_import(&file, vault, &scripts.js, self.choices));
                 self.file = Some((path, file));
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.refuse(error.to_string()),
         }
     }
 
@@ -2042,14 +2087,14 @@ impl ProfileImport {
         };
         self.plan = None;
         let Some(vault) = core.vault() else {
-            self.error = Some(ImportError::VaultLocked.to_string());
+            self.refuse(ImportError::VaultLocked.to_string());
             return;
         };
         let plan = plan_import(&file, vault, &scripts.js, self.choices);
         drop(file);
         match apply_import(core, plan) {
             Ok(run) => self.run = Some((path, run)),
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.refuse(error.to_string()),
         }
     }
 
@@ -2060,18 +2105,18 @@ impl ProfileImport {
         self.error = None;
     }
 
-    /// The report text (while writes settle and after).
+    /// The report text (while writes settle and after), every line redacted.
     pub fn report_lines<Io>(&self, core: &OperatorSession<Io>) -> Vec<String> {
         let Some((path, run)) = self.run.as_ref() else {
             return Vec::new();
         };
         let mut out = run.lines(core);
         match &self.deleted {
-            Some(deleted) => out.push(format!("Deleted {}.", deleted.display())),
+            Some(deleted) => out.push(shown(format!("Deleted {}.", deleted.display()))),
             None => {
-                out.push(PLAINTEXT_WARNING.into());
+                out.push(shown(PLAINTEXT_WARNING.into()));
                 if run.succeeded(core) && path.exists() {
-                    out.push(format!("You can delete {} now.", path.display()));
+                    out.push(shown(format!("You can delete {} now.", path.display())));
                 }
             }
         }
@@ -2135,7 +2180,7 @@ impl ProfileImport {
         };
         match delete_export_file(path) {
             Ok(()) => self.deleted = Some(path.clone()),
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.refuse(error.to_string()),
         }
     }
 }
