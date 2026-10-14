@@ -8,15 +8,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 ### Random-event guardian
 
 - Hostile event attackers keep Flee active through missed or zero-damage
-  attacks. The Guardian latches each NPC's first-seen tile, measures the
-  content-derived `maxrange + 2` flee target and chase-stop release from that
-  tile, and re-flees when a route stops before escape. A blocked outer ring
-  falls back to nearest-path and closer rings; after its bounded fresh-tick
-  window without escape, the Guardian releases the slot instead of holding
-  forever.
-- If a Swarm leaves NPC view while the player is fleeing, the
-  Guardian keeps the event latched for the bounded flee window and releases
-  without walking back into a possibly still-active attacker. Confirmed
+  attacks. Each flee target extends beyond the player on the side away from
+  the NPC's latched first-seen tile; the Guardian measures content-derived
+  `maxrange + 2` targets and chase-stop release from that tile and re-flees
+  when a route ends before escape. If selected content has no range, it warns
+  and leaves the event inert instead of holding the slot. A blocked outer
+  ring falls back to nearest-path and closer rings; after its bounded
+  fresh-tick window without escape, the Guardian releases the slot.
+- If a Swarm leaves NPC view while the player is fleeing, the Guardian keeps
+  the event latched and releases without walking back into a possibly
+  still-active attacker. It also ends the hold when the player has remained
+  outside chase range, instead of reporting a failed escape. After a bounded
+  failure, the finished event stays suppressed while the NPC is missing; a
+  different event or visible disengaged NPC clears the latch. Confirmed
   despawns or unlocks within view return to the pre-flee tile. Flee is the
   default policy, with a per-event Policies control in Panel and TUI.
 

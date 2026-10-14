@@ -2,13 +2,14 @@ use super::*;
 
 use api::hostlog::{Category, Level};
 const LOST_TOOL_BOUND_MS: u64 = 12_000;
-/// For the Swarm, `maxrange` 15 plus the `maxrange + 2` stop margin is 17
-/// tiles from the NPC start. Events spawn one tile from the player, so the
-/// longest route is 18; one 7-tick attack interval gives 25 fresh ticks
-/// (`content/scripts/macro events/scripts/macro_events.rs2:30-36`,
-/// `content/scripts/engine.rs2:77-78`,
-/// `content/scripts/macro events/configs/antimacro.npc:126,131`). The
-/// Dwarf's 10000 range is Dialog/Talk-to and is excluded
+/// The Swarm's `maxrange` 15 plus the `maxrange + 2` stop margin is 17 tiles
+/// from the NPC start. The shared spawner places it one tile from the player,
+/// so the first-choice route is 16 and fallback ring points are at most 18;
+/// one 7-tick attack interval gives the 25-fresh-tick bound
+/// (`content/scripts/macro events/configs/antimacro.npc:113-131`,
+/// `content/scripts/macro events/scripts/macro_events.rs2:30-36`,
+/// `content/scripts/engine.rs2:77-78`). The Dwarf's 10000 range is
+/// Dialog/Talk-to and is excluded
 /// (`content/scripts/macro events/configs/antimacro.npc:1385,1397`).
 const MAX_EVADE_TICKS: u32 = 25;
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
@@ -548,8 +549,8 @@ impl Guardian {
     /// targeting state rather than hit feedback, so zero damage does not clear it.
     /// Latch the NPC's first world tile so flee distance and the engine chase
     /// stop use the same origin (`Npc.ts:661-670`). Missing NPCs beyond the
-    /// 15-tile client view (`build.ts:57`) remain unknown only until the
-    /// bounded flee deadline.
+    /// 15-tile client view (`build.ts:57`) remain latched after release until
+    /// a different event appears or the NPC is visible and no longer engaged.
     fn refresh_evade(
         &mut self,
         snap: &GameSnapshot,
@@ -581,22 +582,15 @@ impl Guardian {
                 .is_some_and(|player| cheb(player, state.start_tile) > NPC_VIEW_RADIUS);
 
             if state.finished {
-                if same_actor && engaged {
+                if !other_event && engaged {
                     *ev = None;
                     self.evade = Some(state);
                     return;
                 }
-                if actor.is_none() && state.has_fled && beyond_view && !other_event {
-                    if fresh {
-                        state.ticks = state.ticks.saturating_add(1);
-                    }
-                    if state.ticks < MAX_EVADE_TICKS {
-                        *ev = None;
-                        self.evade = Some(state);
-                        return;
-                    }
-                    self.acting = false;
-                    self.flee_from = None;
+                if !other_event && actor.is_none() {
+                    *ev = None;
+                    self.evade = Some(state);
+                    return;
                 }
             } else if same_actor && engaged {
                 if fresh {
@@ -646,7 +640,23 @@ impl Guardian {
                 if fresh {
                     state.ticks = state.ticks.saturating_add(1);
                 }
-                if state.ticks >= MAX_EVADE_TICKS {
+                let outside = snap.tile().map(|(x, z, _)| (x, z)).is_some_and(|player| {
+                    state
+                        .maxrange
+                        .is_some_and(|range| outside_chase_range(player, state.start_tile, range))
+                });
+                if outside {
+                    if fresh {
+                        state.outside_ticks = state.outside_ticks.saturating_add(1);
+                    }
+                } else {
+                    state.outside_ticks = 0;
+                }
+                if state.outside_ticks > 1 {
+                    state.finished = true;
+                    state.flee_target = None;
+                    *ev = None;
+                } else if state.ticks >= MAX_EVADE_TICKS {
                     self.give_up_evade(&mut state);
                     *ev = None;
                 } else {
@@ -679,7 +689,7 @@ impl Guardian {
             .and_then(|id| i32::try_from(id).ok())
             .and_then(|id| game_data?.npc_name(id))
             .map(|row| row.maxrange);
-        self.evade = Some(EvadeState {
+        let state = EvadeState {
             index,
             npc_type: npc.r#type,
             name: event.name.clone(),
@@ -691,9 +701,19 @@ impl Guardian {
             fallback_distance: None,
             fallback_exhausted: false,
             has_fled: false,
-            finished: false,
+            finished: maxrange.is_none(),
             policy_logged: false,
-        });
+        };
+        if state.finished {
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "evade: no selected content range for {}; not fleeing",
+                state.name
+            );
+            *ev = None;
+        }
+        self.evade = Some(state);
     }
 
     /// A bounded flee failed: leave no host hold or walk-back latch behind.

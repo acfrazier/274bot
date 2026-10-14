@@ -1302,6 +1302,158 @@ fn guardian_tick_with_data(
         None,
     )
 }
+fn set_flee_player(c: &mut Client, x: i32, z: i32, moving: bool) {
+    let player = c.local_player.as_mut().expect("player");
+    player.entity.x = x * 128 + 64;
+    player.entity.z = z * 128 + 64;
+    player.route_x[0] = x;
+    player.route_z[0] = z;
+    player.entity.route_length = if moving { 1 } else { 0 };
+}
+
+fn set_flee_npc(c: &mut Client, x: i32, z: i32) {
+    let npc = c.npc[0].as_mut().expect("npc");
+    npc.entity.x = x * 128 + 64;
+    npc.entity.z = z * 128 + 64;
+}
+
+fn direct_route_tiles(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
+    let (mut x, mut z) = from;
+    let dx = (to.0 - x).abs();
+    let step_x = if x < to.0 { 1 } else { -1 };
+    let dz = -(to.1 - z).abs();
+    let step_z = if z < to.1 { 1 } else { -1 };
+    let mut error = dx + dz;
+    let mut tiles = vec![from];
+    while (x, z) != to {
+        let doubled_error = 2 * error;
+        if doubled_error >= dz {
+            error += dz;
+            x += step_x;
+        }
+        if doubled_error <= dx {
+            error += dx;
+            z += step_z;
+        }
+        tiles.push((x, z));
+    }
+    tiles
+}
+
+#[test]
+fn evade_flee_targets_escape_all_npc_offsets_without_crossing_them() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    let mut snap = GameSnapshot::new();
+    let settings = ProfileSettings::default();
+
+    for npc_x in -6..=6 {
+        for npc_z in -6..=6 {
+            if (npc_x, npc_z) == (0, 0) {
+                continue;
+            }
+            let start = (npc_x, npc_z);
+            set_flee_player(&mut c, 0, 0, false);
+            set_flee_npc(&mut c, npc_x, npc_z);
+            let mut guardian = Guardian::new();
+            let mut driver = FakeDriver::default();
+
+            tick_at(&mut c, &mut snap);
+            let first =
+                guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+            assert_eq!(first.kind, Some(RandomKind::Evade));
+            assert!(first.hold, "NPC start {start:?} must engage the Guardian");
+            let first_target = *driver.walks.first().expect("first flee target");
+            assert!(
+                cheb(start, first_target) > cheb(start, (0, 0)),
+                "first target {first_target:?} must be farther from {start:?} than player (0, 0)"
+            );
+            let first_route = direct_route_tiles((0, 0), first_target);
+            assert!(
+                !first_route.contains(&start),
+                "first route to {first_target:?} passes through NPC {start:?}"
+            );
+
+            let partial = *first_route.get(1).expect("flee route has a partial step");
+            set_flee_player(&mut c, partial.0, partial.1, false);
+            let current_npc = (
+                partial.0 + (start.0 - partial.0).signum(),
+                partial.1 + (start.1 - partial.1).signum(),
+            );
+            set_flee_npc(&mut c, current_npc.0, current_npc.1);
+            tick_at(&mut c, &mut snap);
+            let reflee =
+                guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+            assert_eq!(reflee.kind, Some(RandomKind::Evade));
+            assert!(
+                reflee.hold,
+                "partial flee from {start:?} must remain engaged"
+            );
+            let reflee_target = *driver.walks.last().expect("re-flee target");
+            assert_eq!(
+                driver.walks.len(),
+                2,
+                "partial route should re-flee from {start:?}"
+            );
+            assert!(
+                cheb(start, reflee_target) > cheb(start, partial),
+                "re-flee target {reflee_target:?} must be farther from {start:?} than player {partial:?}"
+            );
+            let reflee_route = direct_route_tiles(partial, reflee_target);
+            assert!(
+                !reflee_route.contains(&current_npc),
+                "re-flee route to {reflee_target:?} passes through chasing NPC {current_npc:?}"
+            );
+            assert!(
+                !reflee_route.contains(&start),
+                "re-flee route to {reflee_target:?} passes through latched NPC tile {start:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn evade_without_selected_content_finishes_without_action_or_hold() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    for tick in 0..40 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian.tick(&mut driver, &snap, &settings, 0, None);
+        assert_eq!(
+            status.kind, None,
+            "unknown range is not handled at tick {tick}"
+        );
+        assert!(
+            !status.ours && !status.hold,
+            "no-data Evade is inert at tick {tick}"
+        );
+    }
+    assert!(
+        driver.walks.is_empty(),
+        "unknown range must not issue a flee"
+    );
+    assert!(
+        !guardian.acting,
+        "unknown range must not claim the action latch"
+    );
+    let state = guardian
+        .evade
+        .as_ref()
+        .expect("finished no-data latch stays stored");
+    assert!(state.finished);
+    assert_eq!(state.maxrange, None);
+    assert_eq!(state.ticks, 1, "the finished latch does not restart or age");
+}
 
 #[test]
 fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
@@ -1326,16 +1478,16 @@ fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
     assert!(status.ours && status.hold);
     assert_eq!(
         drv.walks,
-        vec![(20, 0)],
+        vec![(-14, 0)],
         "the 17-tile flee is measured from the NPC's first-seen tile at (3, 0)"
     );
 
-    // Advance one route step per fresh tick; fourteen steps stay within the
-    // Swarm's start-relative chase range while covering two attack intervals.
+    // Keep moving west within the start-tile chase range through both
+    // seven-tick attack intervals.
     for tick in 1..=14 {
         let player = c.local_player.as_mut().expect("player");
         player.entity.route_length = 1;
-        player.route_x[0] = tick;
+        player.route_x[0] = -tick.min(12);
         player.route_z[0] = 0;
         c.loop_cycle += 30;
         if tick == 7 || tick == 14 {
@@ -1355,7 +1507,7 @@ fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
         assert!(status.hold, "the slot remains held at tick {tick}");
         assert_eq!(
             drv.walks,
-            vec![(20, 0)],
+            vec![(-14, 0)],
             "never walk back while the Swarm still targets the player (tick {tick})"
         );
         if tick == 7 || tick == 14 {
@@ -1534,7 +1686,7 @@ fn evade_re_flees_when_route_stops_next_to_targeting_npc() {
     let second = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(second.kind, Some(RandomKind::Evade));
     assert!(second.hold);
-    assert_eq!(drv.walks, vec![(0, -7), (-7, 0)]);
+    assert_eq!(drv.walks, vec![(0, -7), (7, 0)]);
 }
 
 #[test]
@@ -1600,18 +1752,14 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     tick_at(&mut c, &mut snap);
     let first = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(first.kind, Some(RandomKind::Evade));
-    assert_eq!(drv.walks, vec![(18, 0)]);
+    assert_eq!(drv.walks, vec![(-16, 0)]);
 
     // The shared spawner uses radius one (`macro_events.rs2:30-36`,
-    // `engine.rs2:77-78`); Swarm maxrange 15 (`antimacro.npc:126`) plus
-    // the +2 margin makes the 17-tile flee. From a player one tile from the
-    // NPC, the route is 18 and beyond its 15-tile view (`info.ts:310`).
-    // Missing NPCs must not trigger a walk-back.
-    let player = c.local_player.as_mut().expect("player");
-    player.entity.x = 18 * 128 + 64;
-    player.entity.z = 64;
-    player.route_x[0] = 18;
-    player.route_z[0] = 0;
+    // `engine.rs2:77-78`); Swarm maxrange 15 (`antimacro.npc:113-131`) plus
+    // the +2 margin makes a 17-tile flee. The first-choice route runs 16
+    // west from the player; use a 15-tile westward partial route here so it
+    // stays on the maxrange+1 boundary while outside NPC view.
+    set_flee_player(&mut c, -15, 0, false);
     clear_npcs(&mut c);
     let mut last = first;
     for tick in 2..=25 {
@@ -1629,7 +1777,7 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     );
     assert_eq!(
         drv.walks,
-        vec![(18, 0)],
+        vec![(-16, 0)],
         "never walk back to the unseen Swarm"
     );
 
@@ -1638,8 +1786,128 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     assert!(!after_bound.ours && !after_bound.hold);
     assert_eq!(
         drv.walks,
-        vec![(18, 0)],
+        vec![(-16, 0)],
         "the released latch does not oscillate"
+    );
+}
+
+#[test]
+fn swarm_missing_after_escape_releases_without_failed_escape() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_flee_npc(&mut c, 1, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let first = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert_eq!(first.kind, Some(RandomKind::Evade));
+    assert_eq!(driver.walks, vec![(-16, 0)]);
+
+    set_flee_player(&mut c, -16, 0, false);
+    clear_npcs(&mut c);
+    for tick in 2..=3 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        if tick == 2 {
+            assert_eq!(status.kind, Some(RandomKind::Evade));
+            assert!(status.hold);
+        } else {
+            assert_eq!(status.kind, None);
+            assert!(!status.hold);
+        }
+    }
+    let state = guardian
+        .evade
+        .as_ref()
+        .expect("completed escape stays latched while missing");
+    assert!(state.finished);
+    assert_eq!(state.outside_ticks, 2);
+    assert!(state.ticks < MAX_EVADE_TICKS);
+    assert!(
+        !state.fallback_exhausted,
+        "successful escape must not use the give-up path"
+    );
+    assert_eq!(driver.walks, vec![(-16, 0)]);
+}
+
+#[test]
+fn swarm_view_edge_flicker_stays_released_after_give_up() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_flee_npc(&mut c, 1, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let first = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert_eq!(first.kind, Some(RandomKind::Evade));
+    assert_eq!(driver.walks, vec![(-16, 0)]);
+    let swarm = c.npc[0].take().expect("Swarm");
+    set_flee_player(&mut c, -15, 0, true);
+
+    let mut release_tick = None;
+    let mut holds_after_give_up = 0;
+    for tick in 2..=60 {
+        if tick % 2 == 0 {
+            c.npc[0] = None;
+            c.npc_count = 0;
+        } else {
+            c.npc[0] = Some(swarm.clone());
+            c.npc_ids[0] = 0;
+            c.npc_count = 1;
+            set_flee_npc(&mut c, 0, 0);
+        }
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        if tick == 25 {
+            release_tick = Some(tick);
+        }
+        if tick >= 25 {
+            if status.hold {
+                holds_after_give_up += 1;
+            }
+            assert_eq!(
+                status.kind, None,
+                "released Swarm reappeared on tick {tick}"
+            );
+            assert!(
+                !status.ours,
+                "released Swarm became ours again on tick {tick}"
+            );
+        }
+    }
+    assert_eq!(release_tick, Some(25));
+    assert_eq!(holds_after_give_up, 0);
+    assert_eq!(driver.walks, vec![(-16, 0)]);
+    let state = guardian
+        .evade
+        .as_ref()
+        .expect("finished latch survives missing view ticks");
+    assert!(state.finished);
+    assert_eq!(state.ticks, MAX_EVADE_TICKS);
+
+    c.npc[0] = Some(swarm);
+    c.npc_ids[0] = 0;
+    c.npc_count = 1;
+    set_flee_npc(&mut c, 0, 0);
+    c.npc[0].as_mut().expect("visible Swarm").entity.face_entity = -1;
+    tick_at(&mut c, &mut snap);
+    let disengaged = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert!(!disengaged.hold);
+    assert!(
+        guardian.evade.is_none(),
+        "visible disengaged NPC drops the finished latch"
     );
 }
 
