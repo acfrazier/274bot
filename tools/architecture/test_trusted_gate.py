@@ -1745,8 +1745,6 @@ else:
 
     def test_probe_and_real_checker_child_inherit_same_core_limit(self) -> None:
         soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
-        if hard == 0:
-            self.skipTest("nonzero hard core limit required to distinguish the former child-only hook")
         work, payload = self._write_probe_script(
             "core-limit-parity",
             "import resource\nprint(resource.getrlimit(resource.RLIMIT_CORE))\n",
@@ -1759,20 +1757,31 @@ else:
             "    return [str(resource.getrlimit(resource.RLIMIT_CORE))]\n",
             encoding="utf-8",
         )
+        original_run = subprocess.run
+        child_hooks = []
+
+        def record_launch(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            child_hooks.append(kwargs.get("preexec_fn"))
+            return original_run(*args, **kwargs)
+
         try:
-            # The enclosing test run suppresses cores with a zero soft limit.
-            # A nonzero soft limit distinguishes inheritance from a probe-only
-            # pre-exec hard+soft zero without creating any killed child here.
-            resource.setrlimit(resource.RLIMIT_CORE, (1, hard))
+            # A nonzero soft limit distinguishes the old hook by observation
+            # when the host permits it; a hard-zero host still checks that no
+            # child-only pre-exec hook is installed.
+            if hard != 0:
+                resource.setrlimit(resource.RLIMIT_CORE, (1, hard))
             expected = str(resource.getrlimit(resource.RLIMIT_CORE))
-            real_checker_limit = gate.checker_findings(checker, "tree", root=self.root)
-            self.assertEqual(real_checker_limit, [expected])
-            for deny_sockets in (True, False):
-                with self.subTest(deny_sockets=deny_sockets):
-                    result = gate._isolated_probe(
-                        [sys.executable, str(payload)], work, deny_sockets=deny_sockets
-                    )
-                    self.assertEqual((result.returncode, result.stdout.strip()), (0, expected), result.stdout)
+            with mock.patch.object(gate.subprocess, "run", side_effect=record_launch):
+                real_checker_limit = gate.checker_findings(checker, "tree", root=self.root)
+                self.assertEqual(real_checker_limit, [expected])
+                for deny_sockets in (True, False):
+                    with self.subTest(deny_sockets=deny_sockets):
+                        result = gate._isolated_probe(
+                            [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                        )
+                        self.assertEqual((result.returncode, result.stdout.strip()), (0, expected), result.stdout)
+            self.assertTrue(child_hooks)
+            self.assertTrue(all(hook is None for hook in child_hooks), child_hooks)
         finally:
             resource.setrlimit(resource.RLIMIT_CORE, (soft, hard))
 
