@@ -241,7 +241,7 @@ export const reader = proxy('reader', {
         return row ? row.component_id : -1;
     },
     objCatalog() {
-        return globalThis.__rs2b0t_selected_facts('obj-catalog').items;
+        return globalThis.__rs2b0t_selected_facts('obj-records');
     },
 
     bankComId() {

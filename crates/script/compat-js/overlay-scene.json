@@ -61,7 +61,7 @@
     "module": "api/model/Npc.js",
     "selector": "Npc",
     "reason": "Npc stores any supplied row without validation, reads flat row fields, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc is a runtime re-export of that class (crates/script/src/shim/npcs.js:5-8,26-28,42-50,77-105; crates/script/src/shim/model_npc.js:1).",
-    "runtime": "crates/script/src/shim/npcs.js:6",
+    "runtime": "crates/script/src/shim/npcs.js:5",
     "declaration": "export declare class Npc<S extends Partial<NpcSnapshot> = NpcSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): NpcRowField<S, 'id'>; get level(): number; get index(): NpcRowField<S, 'index'>; get size(): number; get inCombat(): boolean; get health(): NpcRowField<S, 'health'>; targetsAnotherPlayer(): boolean; targetsMe(): boolean; networkOrigin(): Tile; tile(): Tile; networkTile(): Tile; distance(): number; actions(): string[]; valid(): boolean; interact(action: string): boolean; }"
   },
   {
@@ -93,7 +93,7 @@
     "module": "api/model/Player.js",
     "selector": "Player",
     "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-8,38-58; crates/script/src/shim/model_player.js:1).",
-    "runtime": "crates/script/src/shim/players.js:6",
+    "runtime": "crates/script/src/shim/players.js:5",
     "declaration": "export declare class Player<S extends Partial<PlayerSnapshot> = PlayerSnapshot> implements Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get index(): PlayerRowField<S, 'index'>; get inCombat(): boolean; get combatLevel(): number; targetsMe(): boolean; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }"
   },
   {
@@ -109,7 +109,7 @@
     "module": "api/inventory/Inventory.js",
     "selector": "InvItem",
     "reason": "Inventory emits row-backed InvItem instances with noted, copied actions, synchronous interactions, and the host-supported useOn targets.",
-    "runtime": "crates/script/src/shim/inventory.js:32",
+    "runtime": "crates/script/src/shim/inventory.js:40",
     "declaration": "export class InvItem { readonly name: string | null; readonly count: number; readonly id: number; readonly slot: number; readonly noted: boolean; readonly cert: number; constructor(snapshot: import('../../adapter/ClientAdapter.js').InvItemSnapshot); actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }"
   },
   {

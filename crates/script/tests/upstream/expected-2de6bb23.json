@@ -153,8 +153,8 @@
     },
     {
       "file": "api/ai/quests/driveDialogGap.test.ts",
-      "stage": "timeout",
-      "reason": "test run exceeded fixed deadline"
+      "stage": "excluded",
+      "reason": "Patches upstream ChatDialog and Execution.delayUntil internals, but driveDialog advances through the Rust dialog machine; this tests fixture patchability, not the shim ABI."
     },
     {
       "file": "api/ai/quests/exec/primitives.test.ts",
@@ -544,37 +544,37 @@
         {
           "name": " > GameMessages > mark starts at 0 and advances per record",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > sawSince only sees messages recorded after the mark",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > stateful patterns remain stable across repeated checks",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > identical repeated texts are distinct messages",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > ring caps at 64 but seq keeps climbing",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > CANT_REACH matches the live server line",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         },
         {
           "name": " > GameMessages > recent returns newest-first limited slice",
           "status": "fail",
-          "reason": "TypeError: GameMessages.reset is not a function"
+          "reason": "Error: not impl: GameMessages.reset"
         }
       ]
     },
@@ -1609,12 +1609,12 @@
         {
           "name": " > paintCols > counts whole monospace characters that fit inside the padding",
           "status": "fail",
-          "reason": "TypeError: paintCols is not a function"
+          "reason": "Error: not impl: paintCols"
         },
         {
           "name": " > paintCols > a panel narrower than its padding fits nothing",
           "status": "fail",
-          "reason": "TypeError: paintCols is not a function"
+          "reason": "Error: not impl: paintCols"
         },
         {
           "name": " > wrapText > packs whole words up to the column count",
@@ -1655,112 +1655,112 @@
         {
           "name": " > cellWidths > splits the total evenly when every cell weighs the same",
           "status": "fail",
-          "reason": "TypeError: cellWidths is not a function"
+          "reason": "Error: not impl: cellWidths"
         },
         {
           "name": " > cellWidths > a heavier cell takes proportionally more room",
           "status": "fail",
-          "reason": "TypeError: cellWidths is not a function"
+          "reason": "Error: not impl: cellWidths"
         },
         {
           "name": " > cellWidths > no cells take no room",
           "status": "fail",
-          "reason": "TypeError: cellWidths is not a function"
+          "reason": "Error: not impl: cellWidths"
         },
         {
           "name": " > gridRows > a queue laid two across needs half as many rows, rounded up",
           "status": "fail",
-          "reason": "TypeError: gridRows is not a function"
+          "reason": "Error: not impl: gridRows"
         },
         {
           "name": " > gridRows > one column is a plain list",
           "status": "fail",
-          "reason": "TypeError: gridRows is not a function"
+          "reason": "Error: not impl: gridRows"
         },
         {
           "name": " > gridRows > an empty grid has no rows",
           "status": "fail",
-          "reason": "TypeError: gridRows is not a function"
+          "reason": "Error: not impl: gridRows"
         },
         {
           "name": " > listScroll > a wheel notch moves several rows and hands the list to the user",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > scrolling stops at both ends",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > a list shorter than its window never scrolls",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > follows the focus row while the user has not scrolled",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > a focus row already on screen leaves the offset alone",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > once scrolled, the list stops following",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > listScroll > a new focus row re-attaches the list the user scrolled away from",
           "status": "fail",
-          "reason": "TypeError: listScroll is not a function"
+          "reason": "Error: not impl: listScroll"
         },
         {
           "name": " > stripSegments > tabs sit left, brand right, and status takes what is left",
           "status": "fail",
-          "reason": "TypeError: stripSegments is not a function"
+          "reason": "Error: not impl: stripSegments"
         },
         {
           "name": " > stripSegments > a status slot that would go negative clamps to zero width",
           "status": "fail",
-          "reason": "TypeError: stripSegments is not a function"
+          "reason": "Error: not impl: stripSegments"
         },
         {
           "name": " > stripSegments > no tabs leaves the status starting at the pad",
           "status": "fail",
-          "reason": "TypeError: stripSegments is not a function"
+          "reason": "Error: not impl: stripSegments"
         },
         {
           "name": " > railRows > splits the body height evenly",
           "status": "fail",
-          "reason": "TypeError: railRows is not a function"
+          "reason": "Error: not impl: railRows"
         },
         {
           "name": " > railRows > a body too short to give each entry a row still yields one rect each",
           "status": "fail",
-          "reason": "TypeError: railRows is not a function"
+          "reason": "Error: not impl: railRows"
         },
         {
           "name": " > railRows > zero entries is empty, not a divide by zero",
           "status": "fail",
-          "reason": "TypeError: railRows is not a function"
+          "reason": "Error: not impl: railRows"
         },
         {
           "name": " > statColumns > columns share the width right of the rail",
           "status": "fail",
-          "reason": "TypeError: statColumns is not a function"
+          "reason": "Error: not impl: statColumns"
         },
         {
           "name": " > statColumns > one column takes the whole body",
           "status": "fail",
-          "reason": "TypeError: statColumns is not a function"
+          "reason": "Error: not impl: statColumns"
         },
         {
           "name": " > statColumns > a rail wider than the panel yields no columns rather than negatives",
           "status": "fail",
-          "reason": "TypeError: statColumns is not a function"
+          "reason": "Error: not impl: statColumns"
         },
         {
           "name": " > paintSkillShort for level bars > shortens every combat and skilling name the jive scripts train to fit a bar label",
@@ -2037,7 +2037,7 @@
     {
       "file": "scripts/JiveDragons/scheduler.test.ts",
       "stage": "excluded",
-      "reason": "The copied fixture still imports Jive catalog script modules (scripts/JiveDragons/*) that the shim-only Load isolate does not register; this scheduler test is excluded as a harness-coverage gap."
+      "reason": "Imports ./scheduler.fixture.js (upstream scheduler.fixture.ts, not vendored), which imports scripts/JiveDragons/{JiveDragons,combat,sites}.js and bun:test mock/spyOn; neither is served by the Load isolate."
     }
   ]
 }

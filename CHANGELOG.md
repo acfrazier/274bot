@@ -30,10 +30,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   read the selected object catalog; CowKiller uses its supported locations
   and bank choices.
 - Script authors can call combat and bank helpers such as `facingPlayer`,
-  `resolveCombatStyle`, `shouldBankNow` and `resolveBankOpenRoute`.
+  `resolveCombatStyle` and `resolveBankOpenRoute`.
 - Firemaking supports `parseBurnMode`, `findBurnLane`, spot selection and
-  tree-log helpers. Burn-mode labels and the player-face boundary use the same
-  compatibility data as their helpers.
+  tree-log helpers.
 - Hunting scripts can use `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
   `chasesTarget`. Food checks, ranged plans, trade/shop batching, clue-distance,
   door-walking and mining helpers are also available.
@@ -43,10 +42,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   and ranged plans honor caller-selected potion choices.
 - Clue and dialog helpers include `pickByLine`, `isUnderground`, `needsHop`,
   `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
-- Thieving targets and Paladin/Hero leashes now match 289 game data. Quest-only
-  mining rocks stay out of the regular ore options.
-- Public TypeScript declarations now describe script completion hooks, task
-  labels/current task names and the supported `InvItem.noted` flag.
+- Paladin and Hero pickpocket leashes now cover their 289 roaming areas.
+  Quest-only mining rocks stay out of the regular ore options.
+- Public TypeScript declarations cover script completion hooks, task labels and
+  current task names, the supported `InvItem.noted` flag, and `Paint.begin()`
+  frame methods.
 
 ### Not in this release
 
@@ -62,9 +62,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
 - Chatbox: `GameMessages.record`, `reset`, `firstSince` and `recent` remain
   unavailable. `mark`, `since` and `sawSince` read the host-backed chat
   snapshot, not a mutable message ring.
-- Paint: `PaintFrame`, `PaintState`, `paintState` and the unimplemented layout
-  and hit-testing helpers remain unavailable; the mutable paint-state family
-  is deferred to the compat rearchitecture.
+- Paint: direct `PaintFrame` construction, `PaintState`, `paintState` and the
+  unimplemented layout and hit-testing helpers remain unavailable; the mutable
+  paint-state family is deferred to the compat rearchitecture.
 - Client adapter: snapshot invalidation, attach/detach, packet listeners,
   object-catalog reset, loc-model extents, readiness checks, retaliation and
   modal-control reads, combat-showing threshold and `WELCOME_SCREEN` remain

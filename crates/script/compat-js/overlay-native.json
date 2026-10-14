@@ -36,7 +36,7 @@
     "module": "api/duel/ClueDuel.js",
     "selector": "ClueDuelHelper.log",
     "reason": "The native helper exposes its stored callback.",
-    "runtime": "crates/script/src/shim/clue_duel.js:38",
+    "runtime": "crates/script/src/shim/clue_duel.js:48",
     "declaration": "log: (message: string) => void;"
   },
   {
@@ -45,7 +45,7 @@
     "selector": "ClueDuelHelper.partner",
     "add": true,
     "reason": "The native helper stores its partner directly rather than a private handshake.",
-    "runtime": "crates/script/src/shim/clue_duel.js:37",
+    "runtime": "crates/script/src/shim/clue_duel.js:47",
     "declaration": "partner: string;"
   },
   {
@@ -54,7 +54,7 @@
     "selector": "Bank.depositAllExcept",
     "add": true,
     "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-    "runtime": "crates/script/src/shim/bank.js:96",
+    "runtime": "crates/script/src/shim/bank.js:86",
     "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;"
   },
   {
@@ -63,7 +63,7 @@
     "selector": "Bank.openNearestWorld",
     "add": true,
     "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-    "runtime": "crates/script/src/shim/bank.js:144",
+    "runtime": "crates/script/src/shim/bank.js:135",
     "declaration": "openNearestWorld(): Promise<boolean>;"
   },
   {
@@ -71,7 +71,7 @@
     "module": "api/bank/Banking.js",
     "selector": "Banking.bankNearest",
     "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
-    "runtime": "crates/script/src/shim/banking.js:81",
+    "runtime": "crates/script/src/shim/banking.js:129",
     "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;"
   },
   {
@@ -87,7 +87,7 @@
     "module": "api/combat/hunting/combat.js",
     "selector": "$add",
     "reason": "Native hunt tasks inherit public session fields and run; host-only entry helpers marshal the typed site and callbacks to Rust.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:91",
+    "runtime": "crates/script/src/shim/hunting_combat.js:116",
     "declaration": "type HuntHooks = Partial<Pick<CombatHost, 'log' | 'vlog' | 'setStatus' | 'eatOnce' | 'armSpecial' | 'countBurial' | 'countKill' | 'setSafespotIndex' | 'pickWeapon' | 'parkFor' | 'countBankTrip' | 'hpFraction' | 'panicHp' | 'retreatHp' | 'hasFood' | 'needEat' | 'style' | 'safespotIndex' | 'buryBones' | 'boneName' | 'shieldReady' | 'leaveByWalk' | 'foodName' | 'foodWithdraw' | 'weaponName' | 'ammoName' | 'spellName' | 'keepExtra'>> & { leave?: () => Promise<boolean>; sustain(): Promise<void>; died(): boolean; parked(): boolean; targetIdx(): number | null; setTarget(index: number | null): void; inArea?: (tile: import('../../../adapter/ClientAdapter.js').WorldTile) => boolean }; declare class HuntTask { family: string; host: CombatHost; site: DragonSite; hooks: HuntHooks; token: number; constructor(family: string, host: CombatHost, site: DragonSite); validate(): boolean; run(): Promise<unknown>; } export class EnterLair extends HuntTask { constructor(host: JiveHost, site: DragonSite); execute(): Promise<boolean>; } export function siteArgs(site: Partial<DragonSite> | null, extra?: Record<string, unknown>): Record<string, unknown>; export function hooksOf(host: Partial<CombatHost> | null, site?: DragonSite | null, leave?: () => Promise<boolean>): HuntHooks; export function cell(host: JiveHost, site: DragonSite): Promise<boolean>; export function leaveLair(host: JiveHost, site: DragonSite): Promise<boolean>; export function bankRoutine(host: JiveHost, site: DragonSite, opts?: import('./supply.js').BankOpts): Promise<boolean>;"
   },
   {
@@ -97,7 +97,7 @@
     "operation": "extends",
     "base": "HuntTask",
     "reason": "Native Fight inherits the hunt session instead of storing upstream private fight policy.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:110"
+    "runtime": "crates/script/src/shim/hunting_combat.js:116"
   },
   {
     "id": "hunting-retreat-session-base",
@@ -106,7 +106,7 @@
     "operation": "extends",
     "base": "HuntTask",
     "reason": "Native Retreat inherits the hunt session.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:133"
+    "runtime": "crates/script/src/shim/hunting_combat.js:143"
   },
   {
     "id": "hunting-hold-session-base",
@@ -115,7 +115,7 @@
     "operation": "extends",
     "base": "HuntTask",
     "reason": "Native HoldSafespot inherits the hunt session.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:144"
+    "runtime": "crates/script/src/shim/hunting_combat.js:154"
   },
   {
     "id": "hunting-walk-session-base",
@@ -124,7 +124,7 @@
     "operation": "extends",
     "base": "HuntTask",
     "reason": "Native WalkToSpot inherits the hunt session.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:155"
+    "runtime": "crates/script/src/shim/hunting_combat.js:165"
   },
   {
     "id": "firemaking-native-reexports",
@@ -217,7 +217,7 @@
     "operation": "optional",
     "parameters": ["opts"],
     "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-    "runtime": "crates/script/src/shim/traversal.js:47"
+    "runtime": "crates/script/src/shim/traversal.js:51"
   },
   {
     "id": "cook-native-bound-table",
@@ -315,7 +315,7 @@
     "module": "api/shop/Shop.js",
     "selector": "Shop.stock",
     "reason": "Host stock rows preserve an absent posted name as null.",
-    "runtime": "crates/script/src/shim/shop.js:26",
+    "runtime": "crates/script/src/shim/shop.js:32",
     "declaration": "stock(): { name: string | null; count: number; slot: number }[];"
   },
   {
@@ -324,7 +324,7 @@
     "selector": "Shop.player",
     "add": true,
     "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
-    "runtime": "crates/script/src/shim/shop.js:34",
+    "runtime": "crates/script/src/shim/shop.js:40",
     "declaration": "player(): { name: string | null; count: number; slot: number }[];"
   },
   {
@@ -332,7 +332,7 @@
     "module": "api/combat/hunting/logic.js",
     "selector": "prayerFor",
     "reason": "This compatibility helper is a site advisory; live Hunt protection selection is performed by the native fight machine.",
-    "runtime": "crates/script/src/hunt_catalog.rs:434",
+    "runtime": "crates/script/src/hunt_catalog.rs:444",
     "declaration": "/** Site/advisory overhead helper; the live Hunt fight picker is native. */\nexport function prayerFor(style: Style, fireAtRange: boolean): string | null;"
   },
   {
@@ -340,7 +340,7 @@
     "module": "api/combat/hunting/logic.js",
     "selector": "prayerSipDue",
     "reason": "The compatibility helper uses the shared native C5 prayer floor to decide when to sip.",
-    "runtime": "crates/script/src/combat/policy.rs:20",
+    "runtime": "crates/script/src/hunt_catalog.rs:451",
     "declaration": "/** Whether to sip at the native C5 floor: max(3, max - (7 + floor(max / 4))). */\nexport function prayerSipDue(points: number, max: number): boolean;"
   },
   {
@@ -348,7 +348,7 @@
     "module": "api/loadout/loadoutSetting.js",
     "selector": "selectedLoadout",
     "reason": "The native resolver prefers exact saved names, selects the first loadout for a blank setting, otherwise accepts only a unique trimmed ASCII-case-insensitive match, and refuses unresolved or ambiguous names with the available loadouts.",
-    "runtime": "crates/script/src/loadouts_store.rs:722",
+    "runtime": "crates/script/src/shim/loadout_setting.js:10",
     "declaration": "/** Exact names win; a blank setting selects the first loadout. Otherwise a unique trimmed, ASCII case-insensitive match is required, or the function throws with the available loadout names. */\nexport function selectedLoadout(bag: SettingsBag): Loadout;"
   },
 
@@ -364,7 +364,7 @@
     "id": "combat-style-autocast-choose-component",
     "module": "api/combat/CombatStyleLogic.js",
     "selector": "AUTO_CHOOSE_COM",
-    "reason": "The selected-facts adapter resolves this revision's component id from the packed interface alias at /Users/acfrazier/experiments/lostcity-289/content/pack/interface.pack:354; the frozen numeric literal is not authoritative across selected content.",
+    "reason": "The selected-facts adapter resolves this revision's component id from the relative source lostcity-289/content/pack/interface.pack:354; the frozen numeric literal is not authoritative across selected content.",
     "runtime": "crates/script/src/shim/combat_style_logic.js:7",
     "declaration": "export const AUTO_CHOOSE_COM: number;"
   },
@@ -372,7 +372,7 @@
     "id": "combat-style-autocast-toggle-component",
     "module": "api/combat/CombatStyleLogic.js",
     "selector": "AUTO_TOGGLE_COM",
-    "reason": "The selected-facts adapter resolves this revision's component id from the packed interface alias at /Users/acfrazier/experiments/lostcity-289/content/pack/interface.pack:350; the frozen numeric literal is not authoritative across selected content.",
+    "reason": "The selected-facts adapter resolves this revision's component id from the relative source lostcity-289/content/pack/interface.pack:350; the frozen numeric literal is not authoritative across selected content.",
     "runtime": "crates/script/src/shim/combat_style_logic.js:8",
     "declaration": "export const AUTO_TOGGLE_COM: number;"
   }

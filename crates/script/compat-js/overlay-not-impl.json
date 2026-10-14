@@ -395,5 +395,450 @@
     "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
     "runtime": "crates/script/src/shim/bot.js:38",
     "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:invalidateLocSnapshots",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "invalidateLocSnapshots",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: client snapshot invalidation has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:5",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:detach",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "detach",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: client detachment has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:6",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:activeStatsReady",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "activeStatsReady",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: active-stat readiness has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:7",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:currentLoginStatsReady",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "currentLoginStatsReady",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: login-stat readiness has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:8",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:locHullHeight",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "locHullHeight",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: location model hull height has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:9",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:resolveLocModelExtents",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "resolveLocModelExtents",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: location model extents have no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:10",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:attach",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "attach",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: client attachment has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:11",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:setPacketListener",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "setPacketListener",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: packet listeners have no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:12",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:resetObjCatalog",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "resetObjCatalog",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the cached object catalogue has no reset operation.",
+    "runtime": "crates/script/src/shim/client_adapter.js:13",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:readRetaliateControls",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "readRetaliateControls",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: retaliation controls have no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:14",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:readModalButtons",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "readModalButtons",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: modal-button reads have no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:15",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:readSelectButtonLabelsByVarp",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "readSelectButtonLabelsByVarp",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: select-button labels have no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:16",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:combatShowingThreshold",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "combatShowingThreshold",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
+    "runtime": "crates/script/src/shim/client_adapter.js:17",
+    "async": false
+  },
+  {
+    "id": "not-impl:data/woodcuttingLocations.js:resolveWoodcuttingLocation",
+    "module": "data/woodcuttingLocations.js",
+    "selector": "resolveWoodcuttingLocation",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: script-specific camps have no verified native location source.",
+    "runtime": "crates/script/src/shim/data/woodcutting_locations.js:9",
+    "async": false
+  },
+  {
+    "id": "not-impl:runtime/RunManager.js:resolveRunPolicy",
+    "module": "runtime/RunManager.js",
+    "selector": "resolveRunPolicy",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: run policy has no native state adapter.",
+    "runtime": "crates/script/src/shim/run_manager.js:9",
+    "async": false
+  },
+  {
+    "id": "not-impl:runtime/RunManager.js:shouldEnableRun",
+    "module": "runtime/RunManager.js",
+    "selector": "shouldEnableRun",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: run policy has no native state adapter.",
+    "runtime": "crates/script/src/shim/run_manager.js:13",
+    "async": false
+  },
+  {
+    "id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached",
+    "module": "runtime/ScriptRunner.js",
+    "selector": "loopReadyOrDetached",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
+    "runtime": "crates/script/src/shim/script_runner.js:21",
+    "async": false
+  },
+  {
+    "id": "not-impl:runtime/ScriptRunner.js:stopReasonOf",
+    "module": "runtime/ScriptRunner.js",
+    "selector": "stopReasonOf",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
+    "runtime": "crates/script/src/shim/script_runner.js:25",
+    "async": false
+  },
+  {
+    "id": "not-impl:runtime/Settings.js:settingOptionLabel",
+    "module": "runtime/Settings.js",
+    "selector": "settingOptionLabel",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: settings option labels have no native resolver.",
+    "runtime": "crates/script/src/shim/settings.js:78",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/quests/defs/murder/areas.js:suspectOrder",
+    "module": "api/ai/quests/defs/murder/areas.js",
+    "selector": "suspectOrder",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: suspect ordering has no verified native content source.",
+    "runtime": "crates/script/src/shim/murder_areas.js:42",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:resolveDock",
+    "module": "paint/paintLogic.js",
+    "selector": "resolveDock",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint layout resolution remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:32",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:toCanvasPoint",
+    "module": "paint/paintLogic.js",
+    "selector": "toCanvasPoint",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: canvas coordinate conversion remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:36",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:cycleOption",
+    "module": "paint/paintLogic.js",
+    "selector": "cycleOption",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint option cycling remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:40",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:hitRegion",
+    "module": "paint/paintLogic.js",
+    "selector": "hitRegion",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint hit testing remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:44",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:clipText",
+    "module": "paint/paintLogic.js",
+    "selector": "clipText",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint text clipping remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:48",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:paintCols",
+    "module": "paint/paintLogic.js",
+    "selector": "paintCols",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint column layout remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:52",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:cellWidths",
+    "module": "paint/paintLogic.js",
+    "selector": "cellWidths",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint column sizing remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:56",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:gridRows",
+    "module": "paint/paintLogic.js",
+    "selector": "gridRows",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint grid sizing remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:60",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:listScroll",
+    "module": "paint/paintLogic.js",
+    "selector": "listScroll",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint list scrolling remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:64",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:paintClip",
+    "module": "paint/paintLogic.js",
+    "selector": "paintClip",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint text clipping remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:68",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:gatherPaintAccent",
+    "module": "paint/paintLogic.js",
+    "selector": "gatherPaintAccent",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint accent selection remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:72",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:stripSegments",
+    "module": "paint/paintLogic.js",
+    "selector": "stripSegments",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint strip layout remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:76",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:railRows",
+    "module": "paint/paintLogic.js",
+    "selector": "railRows",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint rail layout remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:80",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:statColumns",
+    "module": "paint/paintLogic.js",
+    "selector": "statColumns",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: paint statistic layout remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:84",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
+    "module": "api/chatbox/gameMessages.js",
+    "selector": "GameMessages.record",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
+    "runtime": "crates/script/src/shim/game_messages.js:17",
+    "preserveParameters": true,
+    "async": false
+  },
+  {
+    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
+    "module": "api/chatbox/gameMessages.js",
+    "selector": "GameMessages.firstSince",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
+    "runtime": "crates/script/src/shim/game_messages.js:37",
+    "preserveParameters": true,
+    "async": false
+  },
+  {
+    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
+    "module": "api/chatbox/gameMessages.js",
+    "selector": "GameMessages.recent",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
+    "runtime": "crates/script/src/shim/game_messages.js:41",
+    "preserveParameters": true,
+    "async": false
+  },
+  {
+    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
+    "module": "api/chatbox/gameMessages.js",
+    "selector": "GameMessages.reset",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
+    "runtime": "crates/script/src/shim/game_messages.js:45",
+    "preserveParameters": true,
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.publishRegions",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.publishRegions",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:93",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.pointerDown",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.pointerDown",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:97",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.pointerMove",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.pointerMove",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:101",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.pointerIsInside",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.pointerIsInside",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:105",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.consumeClick",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.consumeClick",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:109",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.wheel",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.wheel",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:113",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.consumeWheel",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.consumeWheel",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:117",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.isHovered",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.isHovered",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:121",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.get",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.get",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:125",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.set",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.set",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:129",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/paintLogic.js:PaintState.reset",
+    "module": "paint/paintLogic.js",
+    "selector": "PaintState.reset",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
+    "runtime": "crates/script/src/shim/paintLogic.js:133",
+    "async": false
   }
 ]

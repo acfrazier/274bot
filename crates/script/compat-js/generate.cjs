@@ -162,7 +162,7 @@ function objectTypes(sf, live) {
 }
 function notImplemented(node, entry) {
     const result = entry.async ? ts.factory.createTypeReferenceNode('Promise', [ts.factory.createKeywordTypeNode(ts.SyntaxKind.NeverKeyword)]) : ts.factory.createKeywordTypeNode(ts.SyntaxKind.NeverKeyword);
-    const params = node.parameters?.map(p => ts.factory.updateParameterDeclaration(p, p.modifiers, p.dotDotDotToken, p.name, p.dotDotDotToken ? p.questionToken : ts.factory.createToken(ts.SyntaxKind.QuestionToken), p.type, undefined));
+    const params = entry.preserveParameters ? node.parameters : node.parameters?.map(p => ts.factory.updateParameterDeclaration(p, p.modifiers, p.dotDotDotToken, p.name, p.dotDotDotToken ? p.questionToken : ts.factory.createToken(ts.SyntaxKind.QuestionToken), p.type, undefined));
     if (ts.isFunctionDeclaration(node)) return ts.factory.updateFunctionDeclaration(node, node.modifiers, node.asteriskToken, node.name, node.typeParameters, params, result, undefined);
     if (ts.isMethodSignature(node)) return ts.factory.updateMethodSignature(node, node.modifiers, node.name, node.questionToken, node.typeParameters, params, result);
     if (ts.isMethodDeclaration(node)) return ts.factory.updateMethodDeclaration(node, node.modifiers, node.asteriskToken, node.name, node.questionToken, node.typeParameters, params, result, undefined);
@@ -207,10 +207,12 @@ function overlayDeclarations(text) {
 }
 function apply(module, text) {
     const entries = overlay.filter(e => e.module === module);
+    const preservedMembers = new Set(entries.filter(e => e.preserveMembers).map(e => e.selector));
     let sf = parse(text);
     sf = parse(objectTypes(sf, surfaces.get(module)));
     let statements = [...sf.statements];
     for (const e of entries) {
+        if (e.preserveMembers && (e.selector.includes('.') || !e.declaration)) throw new Error(`preserveMembers requires a full declaration selector: ${e.id}`);
         if (!e.reason || !/^crates\/script\/[^:]+:\d+/.test(e.runtime)) throw new Error(`Missing reason/runtime citation: ${e.id}`);
         if (used.has(e.id)) throw new Error(`Duplicate overlay id: ${e.id}`);
         if (e.selector === '$module') {
@@ -221,8 +223,39 @@ function apply(module, text) {
             const [symbol, member] = e.selector.split('.');
             let hits = 0;
             const replacement = e.declaration ? overlayDeclarations(e.declaration) : [];
+            const localSymbol = statements.some(s =>
+                name(s) === symbol ||
+                (ts.isVariableStatement(s) && s.declarationList.declarations.some(d => name(d) === symbol))
+            );
+            const hasReexport = !localSymbol && statements.some(s =>
+                ts.isExportDeclaration(s) && s.exportClause && ts.isNamedExports(s.exportClause) &&
+                s.exportClause.elements.some(specifier => specifier.name.text === symbol)
+            );
             statements = statements.flatMap(s => {
                 const variable = ts.isVariableStatement(s) && s.declarationList.declarations.length === 1 && name(s.declarationList.declarations[0]) === symbol;
+                const imported = hasReexport && ts.isImportDeclaration(s) && s.importClause?.namedBindings &&
+                    ts.isNamedImports(s.importClause.namedBindings) &&
+                    s.importClause.namedBindings.elements.some(specifier => specifier.name.text === symbol);
+                if (imported) {
+                    // Declaration emit may materialize a re-export as a local import.
+                    // Remove that binding when the overlay replaces it with a local declaration.
+                    const clause = s.importClause;
+                    const kept = clause.namedBindings.elements.filter(specifier => specifier.name.text !== symbol);
+                    const bindings = kept.length ? ts.factory.updateNamedImports(clause.namedBindings, kept) : undefined;
+                    const importClause = clause.name || bindings ? ts.factory.updateImportClause(clause, clause.isTypeOnly, clause.name, bindings) : undefined;
+                    return importClause ? [ts.factory.updateImportDeclaration(s, s.modifiers, importClause, s.moduleSpecifier, s.attributes)] : [];
+                }
+                const reexport = hasReexport && ts.isExportDeclaration(s) && s.exportClause && ts.isNamedExports(s.exportClause) &&
+                    s.exportClause.elements.some(specifier => specifier.name.text === symbol);
+                if (reexport) {
+                    if (member || e.operation || !replacement.length) throw new Error(`Unsupported re-export overlay: ${e.id}`);
+                    const kept = s.exportClause.elements.filter(specifier => specifier.name.text !== symbol);
+                    hits++;
+                    return [
+                        ...(kept.length ? [ts.factory.updateExportDeclaration(s, s.modifiers, s.isTypeOnly, ts.factory.updateNamedExports(s.exportClause, kept), s.moduleSpecifier, s.attributes)] : []),
+                        ...replacement,
+                    ];
+                }
                 if (!variable && name(s) !== symbol) return [s];
                 if (!member) { hits++; return e.operation ? [transformDeclaration(s, e)] : replacement; }
                 const decl = variable ? s.declarationList.declarations[0] : s;
@@ -270,8 +303,8 @@ function apply(module, text) {
                 return [];
             }
             const allowed = members(live.exports.get(symbol) || live.locals.get(symbol), live);
-            if (allowed && ts.isClassDeclaration(s)) {
-                // Private/protected state is an implementation detail, not a posted model contract.
+            if (allowed && ts.isClassDeclaration(s) && !preservedMembers.has(symbol)) {
+                // Explicit host declarations can include members supplied by a native adapter rather than the shim class.
                 const kept = s.members.filter(m => !modifiers(m).some(k => k === ts.SyntaxKind.PrivateKeyword || k === ts.SyntaxKind.ProtectedKeyword) && allowed.has(ts.isConstructorDeclaration(m) ? 'constructor' : name(m)));
                 return [ts.factory.updateClassDeclaration(s, s.modifiers, s.name, s.typeParameters, s.heritageClauses, kept)];
             }
@@ -315,6 +348,75 @@ function normalizeBundle(text) {
         return [s];
     }).map(s => print(s, sf)).join('\n').replace(/^declare (?=(?:abstract )?(?:class|function|const|let|var)\b)/gm, '') + '\n';
 }
+function checkPaintDeclarations(index, scratch) {
+    const declarations = path.join(scratch, 'compat-index.d.ts');
+    const probe = path.join(scratch, 'paint-on-paint.ts');
+    fs.writeFileSync(declarations, index);
+    fs.writeFileSync(probe, `
+import { Paint } from '*paint/Paint.js';
+import type { PaintState } from '*paint/paintLogic.js';
+import { GameMessages } from '*api/chatbox/gameMessages.js';
+function onPaint(ctx: CanvasRenderingContext2D): void {
+    const frame = Paint.begin(ctx);
+    frame.title('title');
+    frame.tabs('tabs', ['one']);
+    frame.cols();
+    frame.rowsLeft();
+    frame.text('text');
+    frame.row('left', 'right');
+    frame.cells([{ text: 'cell' }]);
+    frame.wrap('wrapped');
+    frame.list('list', [], 1);
+    frame.fill('fill', []);
+    frame.grid('grid', [], 2);
+    frame.bar('bar', 0.5);
+    frame.buttons([{ id: 'button', label: 'Button' }]);
+    frame.select('select', 'Select', [], '');
+    frame.stepper('stepper', 'Stepper', [], '');
+    frame.strip('strip', [], '', '');
+    frame.rail('rail', []);
+    frame.statGrid([]);
+    frame.footer('footer');
+    frame.gap();
+    frame.end();
+}
+declare const state: PaintState;
+state.publishRegions([]);
+state.pointerDown(0, 0);
+state.pointerMove(0, 0);
+state.pointerIsInside(0, 0);
+state.consumeClick('id');
+state.wheel(0, 0, 1);
+state.consumeWheel('id');
+state.isHovered({ x: 0, y: 0, w: 1, h: 1 });
+state.get('key', '');
+state.set('key', 'value');
+state.reset();
+GameMessages.record('line');
+GameMessages.firstSince(0, /line/);
+GameMessages.recent();
+GameMessages.reset();
+// @ts-expect-error GameMessages.record requires its upstream text argument.
+GameMessages.record();
+// @ts-expect-error GameMessages.firstSince requires its upstream mark and pattern.
+GameMessages.firstSince(0);
+`);
+    const program = ts.createProgram([declarations, probe], {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        lib: ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+        types: [],
+    });
+    const diagnostics = ts.getPreEmitDiagnostics(program);
+    if (diagnostics.length) {
+        throw new Error(`Paint declaration check failed:\\n${diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\\n')).join('\\n')}`);
+    }
+}
+
 async function main() {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), '274bot-dts-'));
     try {
@@ -380,6 +482,7 @@ async function main() {
         }).join('\n');
         let index = header + `declare module '@rs2b0t/api' {\n${define ? define.declaration : ''}\n${barrel}\n}\n`;
         for (const m of modules.sort((a,b) => a.module.localeCompare(b.module))) index += `\ndeclare module '*${m.module}' {\n${m.body}\n}\n`;
+        checkPaintDeclarations(index, scratch);
         const products = { 'index.d.ts': index, 'modules.json': JSON.stringify(registry, null, 2) + '\n' };
         for (const [file, content] of Object.entries(products)) {
             const dest = path.join(here, file);

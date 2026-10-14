@@ -417,13 +417,15 @@ import * as scriptRunnerExports from '#/bot/runtime/ScriptRunner.js';
 import * as botHostExports from '#/bot/runtime/BotHost.js';
 import * as paintExports from '#/bot/paint/Paint.js';
 import * as paintLogicExports from '#/bot/paint/paintLogic.js';
+import * as gameMessagesExports from '#/bot/api/chatbox/gameMessages.js';
 
 
 const check = (ok, message) => { if (!ok) throw new Error(message); };
 async function refuses(member, call) {
     let error;
     try { await call(); } catch (caught) { error = caught; }
-    check(error && String(error.message ?? error).includes(member), `missing named refusal for ${member}`);
+    const message = String(error?.message ?? error);
+    check(error && message.includes('not impl:') && message.includes(member), `missing named refusal for ${member}: ${message}`);
 }
 check(
     GAS_ROCK_TICKS === 60 &&
@@ -481,12 +483,35 @@ check(
     'random-event casket id is not selected from game content'
 );
 const objCatalog = reader.objCatalog();
+const selectedCatalog = globalThis.__rs2b0t_selected_facts('obj-catalog');
+const selectedIds = [...selectedCatalog.byId.keys()].sort((a, b) => a - b);
 check(
     Array.isArray(objCatalog) &&
-        objCatalog.length > 0 &&
-        objCatalog.every((item) => typeof item.id === 'number' && typeof item.stackable === 'boolean'),
-    'reader.objCatalog did not return selected object facts'
+        objCatalog.length === selectedIds.length &&
+        objCatalog.every((item, index) =>
+            item.id === selectedIds[index] &&
+            typeof item.name === 'string' &&
+            typeof item.cost === 'number' &&
+            typeof item.stackable === 'boolean' &&
+            typeof item.members === 'boolean' &&
+            typeof item.equippable === 'boolean' &&
+            typeof item.certlink === 'number' &&
+            typeof item.certtemplate === 'number' &&
+            typeof item.stackVariant === 'boolean'),
+    'reader.objCatalog did not return every named selected object in ID order'
 );
+check(objCatalog.find((item) => item.id === 537)?.stackable === true, 'noted dragon bones are missing or not stackable');
+check(objCatalog.some((item) => item.id === 1752), 'noted blue dragonhide is missing');
+check(
+    [883, 885, 887, 889, 891, 893].every((id) => objCatalog.some((item) => item.id === id)),
+    'poisoned arrow records are missing'
+);
+check(objCatalog.some((item) => item.id === __UNTRADEABLE_OBJ_ID__), 'named untradeable object is missing');
+check(reader.objCatalog() === objCatalog, 'reader.objCatalog rebuilt its selected records');
+await refuses('GameMessages.record', () => gameMessagesExports.GameMessages.record('line'));
+await refuses('GameMessages.firstSince', () => gameMessagesExports.GameMessages.firstSince(0, /line/));
+await refuses('GameMessages.recent', () => gameMessagesExports.GameMessages.recent());
+await refuses('GameMessages.reset', () => gameMessagesExports.GameMessages.reset());
 const rangingPlanValue = rangingPlan([{ item: 'Ranging potion(2)', qty: 3 }]);
 check(rangingPlanValue.potion === RANGING_POTION && rangingPlanValue.flask === 'Ranging potion(2)' && rangingPlanValue.want === 3, 'rangingPlan does not use the exported ranging descriptor');
 check(typeof AUTO_CHOOSE_COM === 'number' && typeof AUTO_TOGGLE_COM === 'number' && typeof SELL_STACK_STEP === 'number' && typeof NEARBY_BANK_RADIUS === 'number', 'combat, shop, or bank constant export missing');
@@ -554,15 +579,16 @@ await refuses('toCanvasPoint', () => paintLogicExports.toCanvasPoint());
 await refuses('cycleOption', () => paintLogicExports.cycleOption());
 await refuses('hitRegion', () => paintLogicExports.hitRegion());
 await refuses('clipText', () => paintLogicExports.clipText());
-await refuses('paintCols', () => Number(paintLogicExports.paintCols));
-await refuses('cellWidths', () => Number(paintLogicExports.cellWidths));
-await refuses('gridRows', () => Number(paintLogicExports.gridRows));
-await refuses('listScroll', () => Number(paintLogicExports.listScroll));
-await refuses('paintClip', () => Number(paintLogicExports.paintClip));
-await refuses('gatherPaintAccent', () => Number(paintLogicExports.gatherPaintAccent));
-await refuses('stripSegments', () => Number(paintLogicExports.stripSegments));
-await refuses('railRows', () => Number(paintLogicExports.railRows));
-await refuses('statColumns', () => Number(paintLogicExports.statColumns));
+await refuses('paintCols', () => paintLogicExports.paintCols(100, 8, 7));
+await refuses('cellWidths', () => paintLogicExports.cellWidths(100, [1, 2]));
+await refuses('gridRows', () => paintLogicExports.gridRows(5, 2));
+await refuses('listScroll', () => paintLogicExports.listScroll(10, 4, { offset: 0, manual: false, focus: 0 }, 1, 0));
+await refuses('paintClip', () => paintLogicExports.paintClip('some text'));
+await refuses('gatherPaintAccent', () => paintLogicExports.gatherPaintAccent('fish'));
+await refuses('stripSegments', () => paintLogicExports.stripSegments(100, [], 20, 8));
+await refuses('railRows', () => paintLogicExports.railRows(100, 3));
+await refuses('statColumns', () => paintLogicExports.statColumns(100, 10, 8, 2));
+await refuses('PaintState.reset', () => paintLogicExports.PaintState.prototype.reset.call({}));
 await refuses('PaintState', () => new paintLogicExports.PaintState());
 await refuses('paintState', () => Number(paintLogicExports.paintState));
 await refuses('WHEEL_ROWS', () => Number(paintLogicExports.WHEEL_ROWS));
@@ -782,9 +808,16 @@ await refuses('LeafTask.constructor', () => new LeafTask());
 await refuses('LeafTask.execute', () => LeafTask.prototype.execute.call({}));
 export default class RefreezeProbe extends LoopingBot { loop() {} }
 "#;
-    let js = transpile_ts(ts).expect("transpile refreeze probe");
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
         .expect("R289 selected game data");
+    let untradeable_obj_id = game_data
+        .items()
+        .iter()
+        .find(|item| item.name.is_some() && !item.tradeable)
+        .expect("R289 named untradeable object")
+        .id;
+    let ts = ts.replace("__UNTRADEABLE_OBJ_ID__", &untradeable_obj_id.to_string());
+    let js = transpile_ts(&ts).expect("transpile refreeze probe");
     let isolate = LoadIsolate::spawn_with_game_data(js, LoadShape::CompatClass, vec![], game_data)
         .expect("spawn refreeze probe with selected game data");
     let ready = wait_ready(&isolate);
