@@ -2,7 +2,7 @@ use super::*;
 use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
-use host::{Guardian, InputEv};
+use host::{Guardian, GuardianLiveContext, InputEv};
 use nav::bank_fetch::BankRows;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -19368,7 +19368,17 @@ fn plant_npc_with_face(
     face_entity: i32,
     overhead: Option<&str>,
 ) {
-    let type_id = 500 + slot;
+    plant_typed_npc_with_face(c, slot, 500 + slot, name, face_entity, overhead);
+}
+
+fn plant_typed_npc_with_face(
+    c: &mut Client,
+    slot: usize,
+    type_id: usize,
+    name: &str,
+    face_entity: i32,
+    overhead: Option<&str>,
+) {
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.npcs.len() <= type_id {
@@ -23712,13 +23722,25 @@ fn load_ignored_randoms_decline_only_listed_events() {
         assert!(!slot.want_run);
     }
     let mut c = guardian_client();
-    plant_attacking_npc(&mut c, 0, "Swarm");
+    plant_typed_npc_with_face(&mut c, 0, 411, "Swarm", 32768, None);
     plant_positive_hit(&mut c);
     let mut g = Guardian::new();
     let mut drv = GuardRec::default();
     let mut snap = GameSnapshot::new();
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("revision 289 selected content is embedded");
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    let status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
     assert_eq!(status.claim, RandomClaim::Host);
     assert!(
         !drv.walks.is_empty(),

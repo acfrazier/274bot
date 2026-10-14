@@ -640,7 +640,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Settings opens at {width}x{height}"
         );
 
-        for _ in 0..10 {
+        for _ in 0..12 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);
@@ -701,7 +701,7 @@ fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
         let mut app = crate::test_support::fleet_app(&["alice"]);
         app.show_screen(Screen::Overview);
         assert_eq!(app.on_key(ch('o')), AppAction::None);
-        for _ in 0..3 {
+        for _ in 0..7 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);
@@ -742,10 +742,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     let mut app = TuiApp::new("274bot headless");
     assert!(app.pause_script_on_manual_walk_abort);
     app.settings_state.open = true;
-    for _ in 0..7 {
+    for _ in 0..9 {
         assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     }
-    assert_eq!(app.settings_state.row, 7);
+    assert_eq!(app.settings_state.row, 9);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(!app.pause_script_on_manual_walk_abort);
     assert!(app.pause_script_on_manual_walk_abort_dirty);
@@ -754,7 +754,7 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 12,
+        app.settings_state.row, 14,
         "Reload Paths remains reachable at the final settings row"
     );
 }
@@ -766,7 +766,7 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     app.script_scope_notice_ack = true;
     app.survivable_routing_notice_ack = true;
-    app.settings_state.row = 6;
+    app.settings_state.row = 8;
     let rows = draw(&mut app, 60, 14);
     let (col, row) = find(&rows, "Danger routing:")
         .expect("the selected global remains visible in a compact terminal");
@@ -893,7 +893,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     app.nav.allow_danger_zones = false;
     app.map_route_through_zones = true;
     app.settings_state.open = true;
-    app.settings_state.row = 6;
+    app.settings_state.row = 8;
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
     assert!(app.nav.allow_danger_zones);

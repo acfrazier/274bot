@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ use client::config::IfType;
 use client::io::client_stream::LoginCancel;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
-use vault::Profile;
+use vault::{Profile, RandomEventPolicy};
 
 use super::{clear_startup_progress, lock_statuses, public_worlds, Play, SlotStatus, StartupPhase};
 
@@ -166,6 +167,8 @@ pub struct SlotArm {
     pub lamp_auto: Arc<AtomicBool>,
     /// Live lamp skill choice (`ProfileSettings.lamp_skill`).
     pub lamp_skill: Arc<Mutex<String>>,
+    /// Live per-event Guardian policies, mirrored from profile saves.
+    pub random_event_policies: Arc<Mutex<BTreeMap<String, RandomEventPolicy>>>,
     /// Operator-selected world for the next login handshake. `None` keeps
     /// automatic fallback; panel profile saves update this shared value
     /// without disturbing an online connection.
@@ -242,6 +245,7 @@ impl SlotArm {
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
+            random_event_policies: Arc::new(Mutex::new(BTreeMap::new())),
             world: Arc::new(parking_lot::Mutex::new(None)),
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
@@ -918,6 +922,7 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     arm.lamp_auto
         .store(profile.settings.lamp_auto, Ordering::Relaxed);
     *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+    *arm.random_event_policies.lock().unwrap() = profile.settings.random_event_policies.clone();
     let world_changed = {
         let mut world = arm.world.lock();
         let changed = *world != profile.settings.world;

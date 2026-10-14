@@ -104,6 +104,31 @@ pub fn assignment_key(source_kind: &str, identity: &str) -> String {
     format!("{source_kind}:{identity}")
 }
 
+/// Combat response for one random-event NPC. Only `Flee` is implemented by
+/// the Guardian; the other stored values yield the event to script handling.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RandomEventPolicy {
+    #[default]
+    Flee,
+    Fight,
+    Ignore,
+}
+
+/// Stable event keys and their profile-settings labels, shared by the panel
+/// and TUI. Keys are lowercase NPC names so profile files remain readable.
+pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 9] = [
+    ("river troll", "River troll"),
+    ("swarm", "Swarm"),
+    ("rock golem", "Rock golem"),
+    ("zombie", "Zombie"),
+    ("shade", "Shade"),
+    ("watchman", "Watchman"),
+    ("tree spirit", "Tree spirit"),
+    ("strange plant", "Strange plant"),
+    ("drunken dwarf", "Drunken dwarf"),
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSettings {
     pub lowmem: bool,
@@ -123,6 +148,9 @@ pub struct ProfileSettings {
     /// pre-0.1.2 vaults keep them flowing.
     #[serde(default = "default_random_events")]
     pub random_events: bool,
+    /// Per-hostile-random NPC response; absent entries default to Flee.
+    #[serde(default)]
+    pub random_event_policies: BTreeMap<String, RandomEventPolicy>,
     /// Lamp skill set from the lamp dialogue.
     #[serde(default = "default_lamp_skill")]
     pub lamp_skill: String,
@@ -161,12 +189,27 @@ impl Default for ProfileSettings {
             tutorial_skipped: None,
             raster: RasterMode::Gpu,
             random_events: true,
+            random_event_policies: BTreeMap::new(),
             lamp_skill: "strength".into(),
             lamp_auto: true,
             clue_duel_partner: String::new(),
             script_assignment: None,
             script_settings: BTreeMap::new(),
         }
+    }
+}
+
+impl ProfileSettings {
+    pub fn random_event_policy(&self, event: &str) -> RandomEventPolicy {
+        self.random_event_policies
+            .get(&event.trim().to_ascii_lowercase())
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn set_random_event_policy(&mut self, event: &str, policy: RandomEventPolicy) {
+        self.random_event_policies
+            .insert(event.trim().to_ascii_lowercase(), policy);
     }
 }
 
@@ -661,6 +704,32 @@ mod tests {
         assert!(d.random_events);
         assert_eq!(d.lamp_skill, "strength");
         assert!(d.lamp_auto);
+    }
+
+    #[test]
+    fn hostile_random_event_policy_defaults_to_flee_and_roundtrips() {
+        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        assert_eq!(
+            missing.random_event_policy("River Troll"),
+            super::RandomEventPolicy::Flee
+        );
+
+        let mut settings = ProfileSettings::default();
+        settings.set_random_event_policy(" River Troll ", super::RandomEventPolicy::Fight);
+        assert_eq!(
+            settings.random_event_policies.get("river troll"),
+            Some(&super::RandomEventPolicy::Fight)
+        );
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let decoded: ProfileSettings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            decoded.random_event_policy("river troll"),
+            super::RandomEventPolicy::Fight
+        );
+        assert_eq!(
+            decoded.random_event_policy("Swarm"),
+            super::RandomEventPolicy::Flee
+        );
     }
 
     #[test]

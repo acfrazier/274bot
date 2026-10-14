@@ -40,8 +40,8 @@ fn plant_player(c: &mut Client, name: &str, x: i32, z: i32) {
     lp.entity.z = z * 128 + 64;
     lp.name = Some(name.to_string());
     c.local_player = Some(lp);
-    // Evade's takingDamage gate requires an active session; dialog/pick
-    // detect paths stay ownership-only and do not depend on this flag.
+    // Hostile event ownership comes from the live target index, not damage
+    // hitmarks; ordinary dialog/pick paths remain ownership-only.
     c.ingame = true;
 }
 
@@ -74,6 +74,18 @@ fn plant_npc_typed(
     face_entity: i32,
     overhead: Option<&str>,
 ) {
+    plant_npc_typed_with_op(c, slot, type_id, name, face_entity, overhead, "Talk-to");
+}
+
+fn plant_npc_typed_with_op(
+    c: &mut Client,
+    slot: usize,
+    type_id: usize,
+    name: &str,
+    face_entity: i32,
+    overhead: Option<&str>,
+    op: &str,
+) {
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.npcs.len() <= type_id {
@@ -82,7 +94,7 @@ fn plant_npc_typed(
         cache.npcs[type_id] = NpcType {
             id: type_id as i32,
             name: name.to_string(),
-            op: vec![Some("Talk-to".to_string())],
+            op: vec![Some(op.to_string())],
             ..Default::default()
         };
     }
@@ -314,35 +326,36 @@ fn swarm_targeting_self_is_evade_ours_untargeted_swarm_is_not() {
 }
 
 #[test]
-fn owned_hostile_without_positive_hit_is_not_evade() {
+fn owned_hostile_without_positive_hit_is_evade() {
     let mut c = new_client();
     plant_player(&mut c, "Test", 0, 0);
     plant_npc(&mut c, 0, "Swarm", 32768, None);
     let snap = snap_at(&mut c);
-    assert!(
-        !snap.taking_damage(),
-        "no hitmarks must fail the damage gate"
-    );
+    assert!(!snap.taking_damage());
     assert_eq!(
-        detect(&snap, 0, &no_cooldown()),
-        None,
-        "owned hostile without a positive hit must not flee"
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+        Some(RandomKind::Evade),
+        "targeting the local player is enough even without a hitmark"
     );
 }
 
 #[test]
-fn owned_hostile_zero_hit_or_poison_is_not_evade() {
-    let mut c = new_client();
-    plant_player(&mut c, "Test", 0, 0);
-    // Zero red splat (value 0, type 1) does not qualify.
-    let until = c.loop_cycle + 70;
-    plant_hit(&mut c, 0, 0, 1, until);
-    plant_npc(&mut c, 0, "Watchman", 32768, None);
-    let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
-    assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+fn hostile_evade_does_not_require_positive_or_type_one_damage() {
+    for name in ["Watchman", "Shade", "Zombie"] {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 0, 1, until);
+        plant_npc(&mut c, 0, name, 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+            Some(RandomKind::Evade),
+            "{name} remains evadable without positive damage"
+        );
+    }
 
-    // Poison type 2 with positive value still fails the type-1 gate.
     let mut c = new_client();
     plant_player(&mut c, "Test", 0, 0);
     let until = c.loop_cycle + 70;
@@ -350,40 +363,27 @@ fn owned_hostile_zero_hit_or_poison_is_not_evade() {
     plant_npc(&mut c, 0, "Shade", 32768, None);
     let snap = snap_at(&mut c);
     assert!(!snap.taking_damage());
-    assert_eq!(detect(&snap, 0, &no_cooldown()), None);
-
-    // Blocked/type-0 value-0 hit is not damage.
-    let mut c = new_client();
-    plant_player(&mut c, "Test", 0, 0);
-    let until = c.loop_cycle + 70;
-    plant_hit(&mut c, 0, 0, 0, until);
-    plant_npc(&mut c, 0, "Zombie", 32768, None);
-    let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
-    assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    assert_eq!(
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+        Some(RandomKind::Evade),
+        "poison hitmarks are not needed to identify the attacking NPC"
+    );
 }
 
 #[test]
-fn owned_hostile_expired_hit_and_exact_boundary_are_not_evade() {
-    let mut c = new_client();
-    plant_player(&mut c, "Test", 0, 0);
-    // Strictly expired: cycle == loop_cycle is no longer active.
-    let boundary = c.loop_cycle;
-    plant_hit(&mut c, 0, 7, 1, boundary);
-    plant_npc(&mut c, 0, "Rock golem", 32768, None);
-    let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
-    assert_eq!(detect(&snap, 0, &no_cooldown()), None);
-
-    // Past expiry.
-    let mut c = new_client();
-    plant_player(&mut c, "Test", 0, 0);
-    let past = c.loop_cycle - 1;
-    plant_hit(&mut c, 0, 7, 1, past);
-    plant_npc(&mut c, 0, "Tree spirit", 32768, None);
-    let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
-    assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+fn expired_hit_does_not_clear_targeting_evade() {
+    for hit_cycle in [0, -1] {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_hit(&mut c, 0, 7, 1, hit_cycle);
+        plant_npc(&mut c, 0, "River troll", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+            Some(RandomKind::Evade)
+        );
+    }
 }
 
 #[test]
@@ -403,7 +403,7 @@ fn owned_hostile_positive_hit_with_later_miss_is_evade() {
 }
 
 #[test]
-fn evade_expires_without_player_generation_advance() {
+fn evade_survives_expired_hit_without_player_generation_advance() {
     let mut c = new_client();
     plant_player(&mut c, "Test", 0, 0);
     let until = c.loop_cycle + 70;
@@ -416,44 +416,36 @@ fn evade_expires_without_player_generation_advance() {
     snap.rebuild(&c);
     assert!(snap.taking_damage());
     assert_eq!(
-        detect(&snap, 0, &no_cooldown()).map(|e| e.kind),
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
         Some(RandomKind::Evade)
     );
 
-    // Advance loop_cycle past the splat without bumping player gen.
+    // Expiry clears the hitmark without a player packet, but the NPC's
+    // current target index keeps the event alive.
     c.loop_cycle += 70;
     let player_gen_before = c.gens.player;
-    // rebuild_from_drain still refreshes native facts every call.
     assert!(!snap.rebuild_from_drain(&c, false));
     assert_eq!(c.gens.player, player_gen_before);
-    assert!(
-        !snap.taking_damage(),
-        "hit expiry must clear without a player packet"
-    );
+    assert!(!snap.taking_damage());
     assert_eq!(
-        detect(&snap, 0, &no_cooldown()),
-        None,
-        "evade must drop once the positive hit expires"
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+        Some(RandomKind::Evade)
     );
 }
 
 #[test]
-fn no_local_player_or_logged_out_fails_damage_gate() {
+fn missing_local_player_or_logged_out_fails_evade_detection() {
     let mut c = new_client();
     c.ingame = true;
-    // No local player planted.
     plant_npc(&mut c, 0, "Swarm", 32768, None);
     let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
     assert_eq!(detect(&snap, 0, &no_cooldown()), None);
 
     let mut c = new_client();
     plant_player(&mut c, "Test", 0, 0);
-    plant_positive_hit(&mut c);
     plant_npc(&mut c, 0, "Swarm", 32768, None);
     c.ingame = false;
     let snap = snap_at(&mut c);
-    assert!(!snap.taking_damage());
     assert_eq!(detect(&snap, 0, &no_cooldown()), None);
 }
 
@@ -1236,18 +1228,14 @@ fn no_knock_source_keeps_host_claim_and_talks() {
 // --- Task 9: range WalkTo + the remaining act kinds ---
 
 #[test]
-fn flee_candidates_rings_are_farthest_first() {
-    let tiles = flee_candidates((10, 20));
-    assert_eq!(tiles.len(), 40, "8 compass points x 5 rings");
-    assert_eq!(tiles[0], (10, 8), "north of the dist-12 ring first");
-    assert_eq!(tiles[7], (-2, 8), "north-west closes the dist-12 ring");
-    assert_eq!(tiles[8], (10, 10), "the dist-10 ring comes next");
-    assert_eq!(tiles[39], (6, 16), "north-west of the dist-4 ring last");
+fn flee_candidates_use_content_distance() {
+    let tiles: Vec<_> = flee_candidates((10, 20), 17).collect();
+    assert_eq!(tiles.len(), 8, "one candidate per compass point");
+    assert_eq!(tiles[0], (10, 3), "north is first");
+    assert_eq!(tiles[7], (-7, 3), "north-west closes the compass");
     assert!(
-        tiles[0..8]
-            .iter()
-            .all(|(x, z)| cheb((10, 20), (*x, *z)) == 12),
-        "every first-ring tile is chebyshev 12 from the threat"
+        tiles.iter().all(|(x, z)| cheb((10, 20), (*x, *z)) == 17),
+        "every candidate is at the content-derived distance"
     );
 }
 
@@ -1278,42 +1266,312 @@ fn out_of_range_dialog_walks_to_npc_before_talk_to() {
     assert!(status.hold, "the range walk holds the slot");
 }
 
+fn event_game_data() -> Arc<api::game_data::SelectedGameData> {
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("revision 289 selected content is embedded")
+}
+
+fn guardian_tick_with_data(
+    guardian: &mut Guardian,
+    driver: &mut FakeDriver,
+    snap: &GameSnapshot,
+    settings: &ProfileSettings,
+    data: &api::game_data::SelectedGameData,
+) -> RandomStatus {
+    guardian.tick_with_live_policies(
+        driver,
+        snap,
+        settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(data),
+        },
+        0,
+        None,
+    )
+}
+
 #[test]
-fn evade_swarm_holds_flees_and_walks_back_after_despawn() {
+fn evade_swarm_holds_until_despawn_and_clears_seventeen_tiles() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_positive_hit(&mut c);
-    plant_npc(&mut c, 0, "Swarm", 32768, None);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
     c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
     c.npc[0].as_mut().expect("planted").entity.z = 64;
+    let data = event_game_data();
+    let swarm = data.npc_name(411).expect("289 Swarm content row");
+    assert_eq!(swarm.attackrate, Some(7));
+    assert_eq!(swarm.maxrange, 15);
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
 
-    // Tick 1: the swarm targets us → flee away, hold the slot.
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(status.kind, Some(RandomKind::Evade));
-    assert!(status.ours);
-    assert!(status.hold, "an in-flight flee holds the slot");
+    assert!(status.ours && status.hold);
     assert_eq!(
         drv.walks,
-        vec![(3, -12)],
-        "the first flee candidate is the farthest ring, north of the threat"
+        vec![(3, -17)],
+        "maxrange 15 plus two clears the maxrange+1 chase stop"
     );
 
-    // Tick 2: the swarm despawned → the hold lifts and the guardian
-    // walks back toward the pre-flee tile.
+    // Fourteen replay ticks cover two attackrate-7 intervals, including
+    // zero-damage hits on swings and all inter-swing ticks.
+    for tick in 1..=14 {
+        c.loop_cycle += 30;
+        if tick == 7 || tick == 14 {
+            let cycle = c.loop_cycle;
+            plant_hit(&mut c, 0, 0, 1, cycle + 70);
+            let player = c.local_player.as_mut().expect("local player");
+            player.entity.combat_cycle = cycle + 300;
+            c.npc[0].as_mut().expect("swarm").entity.combat_cycle = cycle + 300;
+        }
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert_eq!(
+            status.kind,
+            Some(RandomKind::Evade),
+            "the Swarm remains current at replay tick {tick}"
+        );
+        assert!(status.hold, "the slot remains held at tick {tick}");
+        assert_eq!(
+            drv.walks,
+            vec![(3, -17)],
+            "never walk back while the Swarm still targets the player (tick {tick})"
+        );
+        if tick == 7 || tick == 14 {
+            assert!(!snap.taking_damage(), "the test hit is zero damage");
+        }
+    }
+
     drv.walks.clear();
     c.npc[0] = None;
     c.npc_count = 0;
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(status.kind, None);
-    assert!(!status.hold, "the hold lifts once the threat is gone");
-    assert_eq!(drv.walks, vec![(0, 0)], "walk back to the pre-flee tile");
+    assert!(!status.hold);
+    assert_eq!(
+        drv.walks,
+        vec![(0, 0)],
+        "despawn ends the event and walks back"
+    );
+}
+
+#[test]
+fn river_troll_evasion_survives_zero_damage_inter_swing_ticks_until_unlock() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_positive_hit(&mut c);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let data = event_game_data();
+    let troll = data.npc_name(391).expect("289 River troll content row");
+    assert_eq!(troll.attackrate, Some(4));
+    assert_eq!(troll.maxrange, 5);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let first = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert_eq!(first.kind, Some(RandomKind::Evade));
+    assert!(first.hold);
+    assert_eq!(drv.walks, vec![(0, -7)]);
+
+    // The River troll swings every four ticks. Inter-swing gaps and
+    // zero-damage hits never release the target-index/in_combat latch.
+    for tick in 1..=8 {
+        c.loop_cycle += 30;
+        if tick == 2 {
+            let cycle = c.loop_cycle;
+            let npc = c.npc[0].as_mut().expect("river troll");
+            npc.entity.face_entity = -1;
+            npc.entity.combat_cycle = cycle + 300;
+        }
+        if tick == 4 || tick == 8 {
+            let cycle = c.loop_cycle;
+            plant_hit(&mut c, 0, 0, 1, cycle + 70);
+            let player = c.local_player.as_mut().expect("local player");
+            player.entity.combat_cycle = cycle + 300;
+            let npc = c.npc[0].as_mut().expect("river troll");
+            npc.entity.face_entity = 32768;
+            npc.entity.combat_cycle = cycle + 300;
+        }
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert_eq!(
+            status.kind,
+            Some(RandomKind::Evade),
+            "the River troll remains current at replay tick {tick}"
+        );
+        assert!(status.hold);
+        assert_eq!(
+            drv.walks,
+            vec![(0, -7)],
+            "never walk back while the troll still targets the player (tick {tick})"
+        );
+        if tick == 4 || tick == 8 {
+            assert!(!snap.taking_damage(), "the test hit is zero damage");
+        }
+    }
+
+    // Unlocking the NPC ends the latch and permits the pre-flee walk-back.
+    drv.walks.clear();
+    let cycle = c.loop_cycle;
+    c.npc[0].as_mut().expect("river troll").entity.face_entity = -1;
+    c.npc[0].as_mut().expect("river troll").entity.combat_cycle = cycle;
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert_eq!(status.kind, None);
+    assert!(!status.hold);
+    assert_eq!(
+        drv.walks,
+        vec![(0, 0)],
+        "unlock ends the event and walks back"
+    );
+}
+
+#[test]
+fn evade_releases_without_walkback_after_two_ticks_outside_chase_range() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let data = event_game_data();
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert_eq!(drv.walks, vec![(0, -7)]);
+
+    // The troll's range is 5: seven tiles out is beyond the engine's
+    // maxrange + 1 stop, and releases only after two fresh ticks. The NPC
+    // still points at the player, so the Guardian must not walk back.
+    let player = c.local_player.as_mut().expect("player");
+    player.entity.x = 7 * 128 + 64;
+    player.route_x[0] = 7;
+    for tick in 1..=2 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        if tick == 1 {
+            assert_eq!(status.kind, Some(RandomKind::Evade));
+            assert!(status.hold);
+            assert_eq!(drv.walks, vec![(0, -7)]);
+        } else {
+            assert_eq!(status.kind, None);
+            assert!(!status.hold);
+            assert_eq!(
+                drv.walks,
+                vec![(0, -7)],
+                "range release is not an invitation to walk back while targeted"
+            );
+        }
+    }
+}
+
+#[test]
+fn angry_strange_plant_is_evade_only_and_uses_its_content_range() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 408, "Strange plant", 32768, None, "Attack");
+    let data = event_game_data();
+    let plant = data.npc_name(408).expect("289 angry Strange plant row");
+    assert_eq!(plant.maxrange, 3);
+    assert!(plant.ops.iter().any(|op| op.eq_ignore_ascii_case("Attack")));
+    assert!(!plant.ops.iter().any(|op| op.eq_ignore_ascii_case("Pick")));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert!(status.ours && status.hold);
+    assert_eq!(drv.walks, vec![(0, -5)]);
+}
+
+#[test]
+fn drunken_dwarf_is_evade_only_during_its_hostile_combat_window() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 956, "Drunken Dwarf", 32768, None, "Attack");
+    let data = event_game_data();
+    let dwarf = data.npc_name(956).expect("289 Drunken Dwarf content row");
+    assert_eq!(dwarf.attackrate, Some(4));
+    assert_eq!(dwarf.maxrange, 10_000);
+    let mut snap = snap_at(&mut c);
+    assert_eq!(
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+        Some(RandomKind::Dialog),
+        "the ordinary following state is still a dialog, not hostile combat"
+    );
+
+    let cycle = c.loop_cycle;
+    c.npc[0]
+        .as_mut()
+        .expect("drunken dwarf")
+        .entity
+        .combat_cycle = cycle + 100;
+    tick_at(&mut c, &mut snap);
+    let event = detect(&snap, 0, &no_cooldown()).expect("hostile dwarf event");
+    assert_eq!(event.kind, RandomKind::Evade);
+    assert_eq!(event.name, "drunken dwarf");
+}
+
+#[test]
+fn fight_and_ignore_policies_yield_evade_to_the_script_layer() {
+    let data = event_game_data();
+    for policy in [
+        vault::RandomEventPolicy::Fight,
+        vault::RandomEventPolicy::Ignore,
+    ] {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+        let mut settings = ProfileSettings::default();
+        settings
+            .random_event_policies
+            .insert("river troll".to_string(), policy);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let mut snap = GameSnapshot::new();
+        let mut notifications = 0;
+        tick_at(&mut c, &mut snap);
+        let mut knock = |event: &DetectedRandom| {
+            assert_eq!(event.kind, RandomKind::Evade);
+            notifications += 1;
+            RandomClaim::Host
+        };
+        let status = g.tick_with_live_policies(
+            &mut drv,
+            &snap,
+            &settings,
+            &GuardianLiveContext {
+                event_policies: &settings.random_event_policies,
+                game_data: Some(&data),
+            },
+            0,
+            Some(&mut knock),
+        );
+        assert_eq!(status.kind, Some(RandomKind::Evade));
+        assert!(status.ours, "the notification path publishes the event");
+        assert!(!status.hold, "{policy:?} yields to script-layer handling");
+        assert_eq!(notifications, 1, "on_random sees the event");
+        assert!(drv.walks.is_empty(), "host does not perform a flee action");
+    }
 }
 
 #[test]
