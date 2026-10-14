@@ -11,6 +11,7 @@ import contextlib
 import json
 import importlib.util
 import os
+import resource
 from pathlib import Path
 import re
 import shutil
@@ -1715,7 +1716,7 @@ else:
                         self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), result.stdout)
         print("GOOD §26 syscall attacks are killed in both modes; prepare keeps only local sockets")
 
-    def test_seccomp_killed_probe_has_zero_core_limit(self) -> None:
+    def test_seccomp_killed_probe_inherits_parent_core_limit(self) -> None:
         work, payload = self._write_probe_script(
             "no-core-dump",
             "import ctypes, os, resource\n"
@@ -1737,9 +1738,43 @@ else:
                 # A piped core_pattern can set WCOREDUMP with a zero limit;
                 # the host storage check is recorded separately.
                 self.assertEqual(
-                    (result.returncode, result.stdout.strip()), (0, "(0, 0) True 31 True"),
+                    (result.returncode, result.stdout.strip()),
+                    (0, f"{resource.getrlimit(resource.RLIMIT_CORE)} True 31 True"),
                     result.stdout,
                 )
+
+    def test_probe_and_real_checker_child_inherit_same_core_limit(self) -> None:
+        soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        if hard == 0:
+            self.skipTest("nonzero hard core limit required to distinguish the former child-only hook")
+        work, payload = self._write_probe_script(
+            "core-limit-parity",
+            "import resource\nprint(resource.getrlimit(resource.RLIMIT_CORE))\n",
+        )
+        checker = self.root / "core-limit-checker"
+        (checker / gate.ARCH_DIR).mkdir(parents=True)
+        (checker / gate.ARCH_DIR / "check.py").write_text(
+            "import resource\n"
+            "def check_tree(root):\n"
+            "    return [str(resource.getrlimit(resource.RLIMIT_CORE))]\n",
+            encoding="utf-8",
+        )
+        try:
+            # The enclosing test run suppresses cores with a zero soft limit.
+            # A nonzero soft limit distinguishes inheritance from a probe-only
+            # pre-exec hard+soft zero without creating any killed child here.
+            resource.setrlimit(resource.RLIMIT_CORE, (1, hard))
+            expected = str(resource.getrlimit(resource.RLIMIT_CORE))
+            real_checker_limit = gate.checker_findings(checker, "tree", root=self.root)
+            self.assertEqual(real_checker_limit, [expected])
+            for deny_sockets in (True, False):
+                with self.subTest(deny_sockets=deny_sockets):
+                    result = gate._isolated_probe(
+                        [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                    )
+                    self.assertEqual((result.returncode, result.stdout.strip()), (0, expected), result.stdout)
+        finally:
+            resource.setrlimit(resource.RLIMIT_CORE, (soft, hard))
 
     def test_probe_filter_answers_sched_yield_with_zero_in_every_configuration(self) -> None:
         # The one no-op rule: sched_yield returns 0 and errno 0 instead of killing.

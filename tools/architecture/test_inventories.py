@@ -3094,6 +3094,303 @@ pub struct FleetRow {
         self.assertTrue(any("seam classification disagrees" in error
                             for error in inventories.check_tree(relative_std)))
 
+    def test_consulted_generic_type_defaults_fail_closed(self) -> None:
+        api_lib = (
+            "#[derive(Clone)] pub struct Wrap<T = Vec<u8>> { pub label: &'static str, pub x: T }\n"
+            "#[derive(Clone)] pub enum Choice<T = Vec<u8>> { Value(T) }\n"
+            "#[derive(Clone)] pub struct Pair<T, U = Vec<u8>> { pub first: T, pub second: U }\n"
+            "#[derive(Clone)] pub struct Unused<T = Vec<u8>> { value: T }\n"
+            "#[derive(Clone)] pub struct Payload(pub Vec<u8>);\n"
+            "pub struct OwnedDefault<T = Payload> { pub value: T }\n"
+        )
+        cases = {
+            "bare struct": "api::Wrap",
+            "enum default": "api::Choice",
+            "partial arguments": "api::Pair<u64>",
+            "workspace-owned default": "api::OwnedDefault",
+        }
+        for label, payload in cases.items():
+            with self.subTest(case=label):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=self.baseline_views()
+                        + f"#[derive(Clone)] pub struct AttackView {{ pub label: &'static str, pub payload: {payload} }}\n",
+                        seam_types=(
+                            ("FleetCounts", "scalar"),
+                            ("FleetView", "borrowed"),
+                            ("AttackView", "borrowed"),
+                        ),
+                        workspace_files={"crates/api/src/lib.rs": api_lib},
+                    )
+                )
+                self.assertTrue(
+                    any("generic type defaults are unsupported" in error for error in errors),
+                    errors,
+                )
+
+        frontend_errors = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views(),
+                frontend_lib=(
+                    "pub mod views;\n"
+                    "#[derive(Clone)] pub struct FrontDefault<T = Vec<u8>> { pub x: T }\n"
+                ),
+                frontend_files={
+                    VIEWS_PATH: self.baseline_views()
+                    + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: crate::FrontDefault }\n"
+                },
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("AttackView", "borrowed"),
+                ),
+                additional_seam_types=(
+                    _seam("FrontDefault", "borrowed", "crates/frontend-core/src/lib.rs"),
+                ),
+            )
+        )
+        self.assertTrue(
+            any("generic type defaults are unsupported" in error for error in frontend_errors),
+            frontend_errors,
+        )
+
+        direct_frontend = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone)] pub struct AttackView<T = Vec<u8>> { pub label: &'static str, pub x: T }\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("AttackView", "borrowed"),
+                ),
+            )
+        )
+        self.assertTrue(
+            any("generic type defaults are unsupported" in error for error in direct_frontend),
+            direct_frontend,
+        )
+
+        base = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: api::Wrap }\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("AttackView", "borrowed"),
+            ),
+            workspace_files={
+                "crates/api/src/lib.rs": "#[derive(Clone)] pub struct Wrap<T = u64> { pub x: T }\n"
+            },
+        )
+        candidate = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: api::Wrap }\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("AttackView", "borrowed"),
+            ),
+            workspace_files={"crates/api/src/lib.rs": api_lib},
+        )
+        transition = inventories.check_transition(base, candidate)
+        self.assertTrue(
+            any("generic type defaults are unsupported" in error for error in transition),
+            transition,
+        )
+
+        unrelated = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone, Copy)] pub struct Unrelated { value: u64 }\n",
+                workspace_files={"crates/api/src/lib.rs": api_lib},
+            )
+        )
+        self.assertEqual(unrelated, [])
+
+        alias_errors = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "pub type BareAlias = api::Wrap;\n"
+                "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: BareAlias }\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("BareAlias", "owning"),
+                    ("AttackView", "borrowed"),
+                ),
+                workspace_files={"crates/api/src/lib.rs": api_lib},
+            )
+        )
+        self.assertTrue(
+            any("generic type defaults are unsupported" in error for error in alias_errors),
+            alias_errors,
+        )
+
+        explicit = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone, Copy)] pub struct AttackView { pub payload: api::Wrap<u64> }\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("AttackView", "scalar"),
+                ),
+                workspace_files={
+                    "crates/api/src/lib.rs": (
+                        "#[derive(Clone, Copy)] pub struct Wrap<T> { pub x: T }\n"
+                    )
+                },
+            )
+        )
+        self.assertEqual(explicit, [])
+
+    def test_frontend_glob_bindings_precede_crate_root_fallback(self) -> None:
+        api = (
+            "pub mod evil { #[derive(Clone)] pub struct Wrapping(pub Vec<u8>); }\n"
+            "pub mod noise { #[derive(Clone, Copy)] pub struct Other(pub u64); }\n"
+        )
+        seam_types = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("AttackView", "borrowed"),
+        )
+        root_seam = (_seam("Wrapping", "borrowed", "crates/frontend-core/src/lib.rs"),)
+        base = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: crate::Wrapping }\n",
+            frontend_lib=(
+                "pub mod views;\n"
+                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+            ),
+            seam_types=seam_types,
+            additional_seam_types=root_seam,
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        shadowed = self.fixture(
+            views="use api::evil::*;\n" + self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: Wrapping }\n",
+            frontend_lib=(
+                "pub mod views;\n"
+                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+            ),
+            seam_types=seam_types,
+            additional_seam_types=root_seam,
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        errors = inventories.check_tree(shadowed)
+        self.assertTrue(any("seam classification disagrees" in error for error in errors), errors)
+        transition = inventories.check_transition(base, shadowed)
+        self.assertTrue(
+            any("candidate: seam classification disagrees with syntax" in error for error in transition),
+            transition,
+        )
+
+        unrelated_glob = self.fixture(
+            views="use api::noise::*;\n" + self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: Wrapping }\n",
+            frontend_lib=(
+                "pub mod views;\n"
+                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+            ),
+            seam_types=seam_types,
+            additional_seam_types=root_seam,
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        self.assertEqual(inventories.check_tree(unrelated_glob), [])
+
+        multi_segment = self.fixture(
+            views="use api::evil::*;\n"
+            + self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: num::Wrapping }\n",
+            frontend_lib=(
+                "pub mod views;\n"
+                "pub mod num { #[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 } }\n"
+            ),
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("AttackView", "borrowed"),
+            ),
+            additional_seam_types=(
+                _seam("num::Wrapping", "borrowed", "crates/frontend-core/src/lib.rs"),
+            ),
+            workspace_files={
+                "crates/api/src/lib.rs": (
+                    "pub mod evil { pub mod num { "
+                    "#[derive(Clone)] pub struct Wrapping(pub Vec<u8>); } }\n"
+                )
+            },
+        )
+        multi_errors = inventories.check_tree(multi_segment)
+        self.assertTrue(
+            any("seam classification disagrees" in error for error in multi_errors),
+            multi_errors,
+        )
+
+    def test_std_leaf_exact_paths_refuse_glob_shadowing(self) -> None:
+        api = (
+            "pub mod std { pub mod num { "
+            "#[derive(Clone)] pub struct Wrapping(pub Vec<u8>); } }\n"
+        )
+        imports = (
+            "use api::{self, *};\n",
+            "use api::{*, self};\n",
+            "use api::*;\nuse api;\n",
+        )
+        for import_stmt in imports:
+            with self.subTest(imports=import_stmt):
+                errors = inventories.check_tree(
+                    self.fixture(
+                        views=import_stmt + self.baseline_views()
+                        + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: std::num::Wrapping }\n",
+                        seam_types=(
+                            ("FleetCounts", "scalar"),
+                            ("FleetView", "borrowed"),
+                            ("AttackView", "borrowed"),
+                        ),
+                        workspace_files={"crates/api/src/lib.rs": api},
+                    )
+                )
+                self.assertTrue(
+                    any("seam field type std::num::Wrapping" in error for error in errors),
+                    errors,
+                )
+
+        base = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: &'static str }\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("AttackView", "borrowed"),
+            ),
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        grouped = self.fixture(
+            views="use api::{self, *};\n" + self.baseline_views()
+            + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: std::num::Wrapping }\n",
+            seam_types=(
+                ("FleetCounts", "scalar"),
+                ("FleetView", "borrowed"),
+                ("AttackView", "borrowed"),
+            ),
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        self.assertTrue(inventories.check_transition(base, grouped))
+
+        standard = inventories.check_tree(
+            self.fixture(
+                views=self.baseline_views()
+                + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: std::num::Wrapping<u64> }\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("AttackView", "borrowed"),
+                ),
+            )
+        )
+        self.assertEqual(standard, [])
+
     def test_glob_import_shadows_multisegment_std_path_or_refuses_unknown(self) -> None:
         seams = (
             ("FleetCounts", "scalar"),
