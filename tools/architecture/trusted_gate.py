@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import shutil
 import stat
 import subprocess
@@ -974,6 +975,11 @@ def _check_approval_proposal(approval: dict[str, Any], proposed_sha: str, propos
             _fail(f"approval.{key} does not match the exact proposed enforcement identity")
 
 
+def _disable_child_core_dump() -> None:
+    """Keep seccomp-killed probe descendants out of the host coredump service."""
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 def _run_child(root: Path, *, evidence_root: Path, checker_root: Path | None = None) -> None:
     source = _path(root, "trusted qualification source")
     scratch = _path(evidence_root, "qualification evidence root")
@@ -1002,7 +1008,7 @@ def _run_child(root: Path, *, evidence_root: Path, checker_root: Path | None = N
         ]
         for command in commands:
             try:
-                result = subprocess.run(command, cwd=copied, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                result = subprocess.run(command, cwd=copied, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, preexec_fn=_disable_child_core_dump)
             except OSError as exc:
                 _fail(f"cannot run protected qualification command: {exc}")
             if result.returncode != 0:
@@ -1589,7 +1595,8 @@ def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True
     launch = sandbox if in_user_namespace else [sys.executable, "-I", "-S", "-c", _JOIN_PROBE_SESSION, *sandbox]
     try:
         result = subprocess.run(launch + staged, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                env=environment, pass_fds=(filter_fd,), timeout=300)
+                                env=environment, pass_fds=(filter_fd,), timeout=300,
+                                preexec_fn=_disable_child_core_dump)
     except subprocess.TimeoutExpired:
         _fail("proposed E' probe exceeded the 300-second child deadline")
     except OSError as exc:
