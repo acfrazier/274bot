@@ -3049,6 +3049,80 @@ pub struct FleetRow {
                 self.assertEqual(inventories.check_tree(candidate), [])
                 self.assertEqual(inventories.check_transition(base, candidate), [])
 
+    def test_absolute_paths_ignore_local_shadow_bindings(self) -> None:
+        seams = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("AbsoluteView", "borrowed"),
+        )
+        api = "#[derive(Clone)] pub struct Payload(pub Vec<u8>);\n"
+        shadow = "mod api { pub struct Payload(pub u64); }\n"
+        base = self.fixture(
+            views=self.baseline_views()
+            + "#[derive(Clone)] pub struct AbsoluteView { pub label: &'static str, pub payload: &'static str }\n",
+            seam_types=seams,
+            workspace_files={"crates/api/src/lib.rs": api},
+        )
+        for spelling in ("::api::Payload", "ExternalPayload"):
+            with self.subTest(spelling=spelling):
+                use = "use ::api::Payload as ExternalPayload;\n" if spelling == "ExternalPayload" else ""
+                candidate = self.fixture(
+                    views=self.baseline_views() + shadow + use
+                    + f"#[derive(Clone)] pub struct AbsoluteView {{ pub label: &'static str, pub payload: {spelling} }}\n",
+                    seam_types=seams,
+                    workspace_files={"crates/api/src/lib.rs": api},
+                )
+                errors = inventories.check_tree(candidate)
+                self.assertTrue(any("seam classification disagrees" in error for error in errors), errors)
+                self.assertTrue(any("seam classification disagrees" in error
+                                    for error in inventories.check_transition(base, candidate)))
+
+        local_std = (
+            "mod std { pub mod num { #[derive(Clone)] pub struct Wrapping<T>(pub Vec<T>); } }\n"
+        )
+        absolute_std = self.fixture(
+            views=self.baseline_views() + local_std
+            + "#[derive(Clone, Copy)] pub struct UsesStd { pub value: ::std::num::Wrapping<u64> }\n",
+            seam_types=seams[:2] + (("UsesStd", "scalar"),),
+        )
+        self.assertEqual(inventories.check_tree(absolute_std), [])
+        relative_std = self.fixture(
+            views=self.baseline_views() + local_std
+            + "#[derive(Clone)] pub struct UsesStd { pub value: std::num::Wrapping<u64> }\n",
+            seam_types=seams[:2] + (("UsesStd", "scalar"),),
+        )
+        self.assertTrue(any("seam classification disagrees" in error
+                            for error in inventories.check_tree(relative_std)))
+
+    def test_glob_import_shadows_multisegment_std_path_or_refuses_unknown(self) -> None:
+        seams = (
+            ("FleetCounts", "scalar"),
+            ("FleetView", "borrowed"),
+            ("GlobView", "borrowed"),
+        )
+        body = self.baseline_views() + (
+            "pub mod evil { pub mod std { pub mod num {\n"
+            "    #[derive(Clone)] pub struct Wrapping(pub Vec<u8>);\n"
+            "} } }\n"
+            "use self::evil::*;\n"
+            "#[derive(Clone)] pub struct GlobView { pub label: &'static str,"
+            " pub payload: std::num::Wrapping }\n"
+        )
+        candidate = self.fixture(
+            views=body,
+            seam_types=seams + (("views::evil::std::num::Wrapping", "owning"),),
+        )
+        errors = inventories.check_tree(candidate)
+        self.assertTrue(any("seam classification disagrees" in error for error in errors), errors)
+        unknown = self.fixture(
+            views=self.baseline_views()
+            + "use absent::*;\n"
+            "#[derive(Clone)] pub struct GlobView { pub label: &'static str, pub payload: Option<u64> }\n",
+            seam_types=seams,
+        )
+        self.assertTrue(any("ambiguous cfg/alternative seam field type" in error
+                            for error in inventories.check_tree(unknown)))
+
     def test_macro_generated_workspace_items_fail_closed(self) -> None:
         seam_types = (
             ("FleetCounts", "scalar"),
