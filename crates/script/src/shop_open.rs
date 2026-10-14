@@ -357,7 +357,9 @@ impl OpenCore {
         });
     }
 
-    /// The deadline of the outstanding Trade, if any (for traces).
+    /// The deadline of the outstanding Trade, if any (for traces). Only the
+    /// compat `Shop.open` adapter (`load`) and tests read it.
+    #[cfg(any(test, feature = "load"))]
     pub(crate) fn deadline(&self) -> Option<u64> {
         match self.state {
             State::Trade(attempt) => Some(attempt.deadline),
