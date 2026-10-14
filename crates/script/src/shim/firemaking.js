@@ -31,7 +31,8 @@ export const FIRE_SPOTS = fireSpots();
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
 
-export const BURN_MODE_OPTIONS = ['Off', 'Chop then burn'];
+export const BURN_MODE_OPTIONS =
+    globalThis.__rs2b0t_firemaking('burnModeOptions');
 
 function native(op, ...args) {
     return globalThis.__rs2b0t_firemaking(op, ...args);

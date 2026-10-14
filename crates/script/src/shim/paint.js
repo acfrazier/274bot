@@ -23,6 +23,12 @@ function asNames(names) {
     return out;
 }
 
+export class PaintFrame {
+    constructor(ctx, opts) {
+        throw notImpl('PaintFrame');
+    }
+}
+
 export const Paint = {
     begin(ctx, opts) {
         const dock = opts && opts.dock != null ? opts.dock : 'chatbox';

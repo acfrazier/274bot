@@ -22,83 +22,66 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   short pause.
 - `parseBankStrategy('Loot count')` now returns the declared `items` strategy
   rather than `loot`.
-- When a catalog script uses an rs2b0t API member this version doesn't
-  provide, Start now names the member without saying the catalog is newer
-  than this version. Some members of the older API are also missing, so that
-  claim could be wrong.
-
-- Scripts can import every frozen rs2b0t value export from the served API
-  modules, plus `paintLogic.wrapText`. An unimplemented callable now
-  fails at call time with a named `not impl` error instead of a missing-export
-  error at Start. Rust-backed adapters cover `retaliateOnFromVarp`,
-  `facingPlayer`, `parseInterfaceCombatStyle`, `resolveCombatStyle`,
-  `CombatStyleController` (`resolution`, `mode`, `has` and `set`),
-  `rangingPlan`, `bankDistance`, `wrapText`, `pickByLine`, `isUnderground`,
-  `needsHop`, `nextCoordTool`, `cakeStallData.classifySteal`,
-  `cakeStallData.shouldReset`, `PartnerTrade.countOfferMatching`,
-  `parseTradePartnerHeader`, `suspectOrder`, `bankSortRules.CATEGORY_ORDER`,
-  `bankSortRules.categoryOf` and `bankSortRules.isUnmatched`. Firemaking
-  helpers `parseBurnMode`, `logsForTree`, `firemakingLevelForLogs`,
-  `resolveFireSpot`, `nearestFireSpot`, `expandLocalFirePlot`, `runWest`,
-  `shouldBurnFullLoad` and `findBurnLane` now use the native fire helper.
-- Hunting adapters expose `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
-  `chasesTarget` through native helpers. Thieving targets use the frozen
-  `HOSTILE_NAMES` constant. `plannedPotions` honors caller-selected descriptor
-  sets, axe tier levels match the API's level-1 default, and API constants
-  retain their frozen values. The Ardougne Paladin and Hero target leashes now
-  cover their 289 roam envelopes.
-- Native helpers now cover food eligibility (`isEdibleFood`), held-tool
-  keep/surplus selection (`toolAttackLevel`, `toolsNeedingEquip`), bank-open
-  routing (`resolveBankOpenRoute`), trade-screen state, shop-op batching,
-  `worthStocking` and the clue `tilesTo` distance query.
-- Mining rock data now provides native-backed `ROCK_TYPES`, `QUEST_ROCK_TYPES`,
-  `ROCK_OPTIONS`, `ROCK_TIER_ORDER`, `rockTierById` and `resolveRockIds`;
-  quest-only rocks remain outside the regular ore options.
-
-- CowKiller's data module now exposes its full location and bank constants,
-  plus native-backed `isCowFieldLootTile`, `resolveCowLocation`,
-  `nearestCowLocation`, `needsTollCoins`, `cowBankDestination` and
-  `shouldBootstrapTollCoins` helpers.
-- Door-walking helpers (`faceSteps`, `openedNeighbour`, `farSide`,
-  `isOpenableObstacle`, `openOp`, `closeOp` and `towardDest`) now use
-  native-backed compat exports instead of missing or refusing at call time.
-- Script declarations now match rs2b0t `2de6bb2397ceb9ffd05f2354f67dde328e324531`,
-  including the `script.finish` event, `AbstractBot.delegated`,
-  `requestFinish` and `bindFinish`, `Task.label`, `TaskBot.activeTaskName`,
-  and the already-supported `InvItem.noted` flag.
+- A script that imports an unsupported rs2b0t value now loads; using that value
+  stops the script with a named `not impl` message instead of a missing-export
+  error at Start.
+- The Jive Dragons, Jive Demons and Jive KBD scripts can now get past the
+  compatibility imports that previously stopped them. Jive loot checks can
+  read the selected object catalog; CowKiller uses its supported locations
+  and bank choices.
+- Script authors can call combat and bank helpers such as `facingPlayer`,
+  `resolveCombatStyle`, `shouldBankNow` and `resolveBankOpenRoute`.
+- Firemaking supports `parseBurnMode`, `findBurnLane`, spot selection and
+  tree-log helpers. Burn-mode labels and the player-face boundary use the same
+  compatibility data as their helpers.
+- Hunting scripts can use `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
+  `chasesTarget`. Food checks, ranged plans, trade/shop batching, clue-distance,
+  door-walking and mining helpers are also available.
+- Tool helpers keep Attack gates (`toolAttackLevel`, `toolsNeedingEquip`)
+  separate from held-tool selection (`bestHeldToolNames`,
+  `surplusHeldToolNames`). Axe requirements use the upstream level-1 default,
+  and ranged plans honor caller-selected potion choices.
+- Clue and dialog helpers include `pickByLine`, `isUnderground`, `needsHop`,
+  `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
+- Thieving targets and Paladin/Hero leashes now match 289 game data. Quest-only
+  mining rocks stay out of the regular ore options.
+- Public TypeScript declarations now describe script completion hooks, task
+  labels/current task names and the supported `InvItem.noted` flag.
 
 ### Not in this release
 
-- `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` are not
-  available yet, so GatheringBot and EssMiner still don't run. Use the
-  built-in Gatherer for woodcutting, mining and fishing; EssMiner stays dimmed
-  until the Gatherer covers it. A script that calls one of these helpers stops
-  with a `not impl` message naming it.
-
+- Banking: `purgePackAtBank`, `withdrawCoins`, `bankPace`, `bankPaceTicks`,
+  live `bankSort.sortBank` and walk-cost selectors remain unavailable.
 - Inventory: `backpackSnapshots` and `backpackCapacity` remain unavailable.
-- Banking: `bankSort.sortBank` remains unavailable; live bank sorting is
-  deferred to the compat rearchitecture. Walk-cost bank selectors
-  (`nearestWalkableBank`, `nearestWalkableBankAsync`, `bankCostForFinder`,
-  `bankCostForNavigator`) also remain unavailable.
-- Script-specific woodcutting camp data (`WOODCUTTING_LOCATIONS`,
-  `WOODCUTTING_LOCATION_OPTIONS` and `resolveWoodcuttingLocation`) remain
-  unavailable pending a verified native location catalog.
+- Woodcutting: script-specific camp data (`WOODCUTTING_LOCATIONS`,
+  `WOODCUTTING_LOCATION_OPTIONS`, `resolveWoodcuttingLocation`) still needs a
+  verified native location catalog.
 - Shop and market: `buildCatalog`, `searchCatalog`, `resolveByName` and
   `resetLiveCatalog` remain unavailable.
 - Combat: `Fight.hasChaseTarget` remains unavailable.
-- Chatbox: `GameMessages.record` remains unavailable; `mark`, `since` and
-  `sawSince` read the host-backed chat snapshot, not a mutable ring.
-- Paint: `PaintState` and `paintState` remain unavailable; the mutable paint
-  state family is deferred to the compat rearchitecture.
+- Chatbox: `GameMessages.record`, `reset`, `firstSince` and `recent` remain
+  unavailable. `mark`, `since` and `sawSince` read the host-backed chat
+  snapshot, not a mutable message ring.
+- Paint: `PaintFrame`, `PaintState`, `paintState` and the unimplemented layout
+  and hit-testing helpers remain unavailable; the mutable paint-state family
+  is deferred to the compat rearchitecture.
+- Client adapter: snapshot invalidation, attach/detach, packet listeners,
+  object-catalog reset, loc-model extents, readiness checks, retaliation and
+  modal-control reads, combat-showing threshold and `WELCOME_SCREEN` remain
+  unavailable.
+- Runtime: settings catalogs, `settingOptionLabel`, run-policy helpers,
+  runner lifecycle helpers and `BotHostImpl` remain unavailable.
+- Quest and clue data: murder/suspect tables, clue-visit locations and quest
+  coin/bank rules lack a verified native content source. Their exports remain
+  declared, but using them fails with a named error.
 - Quest, clue and duel behavior: `trailWalkOpts`, `extraItemShop`,
-  `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain unavailable.
+  `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain
+  unavailable.
 - Bot and pacing helpers: `resolveLoopCadence`, `BranchTask`, `LeafTask` and
   `stableClosedPoll` remain unavailable; rs2b0t timing is not carried forward.
-
-- `Input` target-use and spell-target methods (`useItemOnLoc`, `useItemOnNpc`,
-  `useItemOnObj`, `useItemOnItem`, `castOnNpc`, `castOnLoc` and `castOnItem`)
-  and `continueDialog` still refuse; they need native interaction support and
-  are deferred to the compat rearchitecture.
+- Input: target-use and spell-target methods (`useItemOnLoc`, `useItemOnNpc`,
+  `useItemOnObj`, `useItemOnItem`, `castOnNpc`, `castOnLoc`, `castOnItem`) and
+  `continueDialog` still refuse pending native interaction support.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 

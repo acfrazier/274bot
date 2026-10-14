@@ -54,8 +54,6 @@ mod machine_v8;
 #[cfg(feature = "load")]
 mod melee_weapons_v8;
 #[cfg(feature = "load")]
-mod murder_areas_v8;
-#[cfg(feature = "load")]
 mod paint_chrome;
 #[cfg(feature = "load")]
 mod paint_jive;

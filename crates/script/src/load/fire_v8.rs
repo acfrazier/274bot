@@ -38,6 +38,7 @@ fn run<'s>(
     let op = args.get(0).to_rust_string_lossy(scope);
     match op.as_str() {
         "localFirePlot" => local_fire_plot(scope, args.get(1), args.get(2), args.get(3)),
+        "burnModeOptions" => burn_mode_options(scope),
         "parseBurnMode" => parse_burn_mode(scope, args.get(1)),
         "logsForTree" => logs_for_tree(scope, args.get(1)),
         "firemakingLevelForLogs" => firemaking_level_for_logs(scope, args.get(1)),
@@ -165,6 +166,19 @@ fn normalized_string<'s>(
     } else {
         Ok(String::new())
     }
+}
+
+fn burn_mode_options<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let array = v8::Array::new(scope, fire::BURN_MODE_OPTIONS.len() as i32);
+    for (index, mode) in fire::BURN_MODE_OPTIONS.iter().enumerate() {
+        let value = cb::string(scope, mode);
+        array
+            .set_index(scope, index as u32, value)
+            .ok_or_else(|| cb::type_error(scope, "Firemaking.burnModeOptions"))?;
+    }
+    Ok(array.into())
 }
 
 fn parse_burn_mode<'s>(

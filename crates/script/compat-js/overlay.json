@@ -59,8 +59,8 @@
     "id": "banking-native-casket",
     "module": "api/bank/Banking.js",
     "selector": "$add",
-    "reason": "Casket id is a native posted content value with unavailable sentinel, not the bankRules constant.",
-    "runtime": "crates/script/src/shim/banking.js:14",
+    "reason": "Selected game data supplies the id through api::content::random_event_casket_id; lostcity-289/content/pack/obj.pack:406 is 405=casket.",
+    "runtime": "crates/script/src/shim/banking.js:18",
     "declaration": "export const RANDOM_EVENT_CASKET_ID: number;"
   },
   {
@@ -94,5 +94,13 @@
     "reason": "Prelude TreeBot inherits LoopingBot.loop unchanged; its concrete root throws unless overridden.",
     "runtime": "crates/script/src/shim/modules.rs:201",
     "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }"
+  },
+  {
+    "id": "runtime-bot-host-refusal",
+    "module": "runtime/BotHost.js",
+    "selector": "$module",
+    "reason": "The host keeps its two BotHost snapshot members and exposes BotHostImpl only as a named constructor refusal.",
+    "runtime": "crates/script/src/shim/bot_host.js:36",
+    "declaration": "export const BotHost: { tickCount: number; addTickListener(cb: () => void): () => boolean; };\nexport class BotHostImpl { constructor(); }"
   }
 ]

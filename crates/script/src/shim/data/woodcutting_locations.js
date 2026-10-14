@@ -1,5 +1,14 @@
 // Thin native binding for the Ent quartet. IDs/lifetime live in Rust
 // (`api::ent`); this module does not copy a JS game-data table.
+import { notImpl, notImplValue } from '../shim/_kernel.js';
+
+export const WOODCUTTING_LOCATIONS = notImplValue('WOODCUTTING_LOCATIONS');
+export const WOODCUTTING_LOCATION_OPTIONS = notImplValue('WOODCUTTING_LOCATION_OPTIONS');
+
+export function resolveWoodcuttingLocation(setting, startTile) {
+    throw notImpl('resolveWoodcuttingLocation');
+}
+
 export const ENT_NPC_IDS = new Set(
     globalThis.rustyscript.functions.__rs2b0t_ent_npc_ids(),
 );

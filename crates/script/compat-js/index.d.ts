@@ -52,13 +52,12 @@ export { Trade } from '*api/trade/Trade.js';
 export { Shop } from '*api/shop/Shop.js';
 export { default as EntityQuery } from '*api/query/Query.js';
 export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '*api/bank/BankLocations.js';
+export { NAV_PURE_WALK, NAV_WITH_TELES } from '*api/walking/Traversal.js';
 export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
 export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '*data/woodcuttingLocations.js';
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '*data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '*data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '*data/runeCraftLocations.js';
-export const NAV_PURE_WALK: { useTeleportCatalog: boolean; policy: {useTeleports: boolean} };
-export const NAV_WITH_TELES: { useTeleportCatalog: boolean; policy: {useTeleports: boolean} };
 export const ALL_FISHING_GEAR_NAMES: never;
 export const AXE_BAR_FOR: never;
 export const AXE_SHOP_COSTS: never;
@@ -143,10 +142,192 @@ export function withBaitTarget(...args: unknown[]): never;
 }
 
 declare module '*adapter/ClientAdapter.js' {
+class Linkable {
+    key: bigint;
+    next: Linkable | null;
+    prev: Linkable | null;
+    unlink(): void;
+}
+class Linkable2 extends Linkable {
+    next2: Linkable2 | null;
+    prev2: Linkable2 | null;
+    unlink2(): void;
+}
+class PointNormal {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+}
+abstract class OnDemandProvider {
+    abstract requestModel(id: number): void;
+}
+class Metadata {
+    src: Uint8Array | null;
+    numPoints: number;
+    numFaces: number;
+    numT: number;
+    vertexOrderOffset: number;
+    vertexXOffset: number;
+    vertexYOffset: number;
+    vertexZOffset: number;
+    vertexLabelOffset: number;
+    faceIndexOffset: number;
+    faceIndexOrderOffset: number;
+    faceColourOffset: number;
+    faceRenderTypeOffset: number;
+    facePriorityOffset: number;
+    faceAlphaOffset: number;
+    faceLabelOffset: number;
+    faceTextureAxisOffset: number;
+}
+class Model extends ModelSource {
+    static loaded: number;
+    static meta: (Metadata | null)[];
+    static provider: OnDemandProvider;
+    static tmpVertexX: Int32Array;
+    static tmpVertexY: Int32Array;
+    static tmpVertexZ: Int32Array;
+    numPoints: number;
+    pointX: Int32Array | null;
+    pointY: Int32Array | null;
+    pointZ: Int32Array | null;
+    numFaces: number;
+    faceVertexA: Int32Array | null;
+    faceVertexB: Int32Array | null;
+    faceVertexC: Int32Array | null;
+    faceRenderType: Int32Array | null;
+    facePriority: Int32Array | null;
+    faceAlpha: Int32Array | null;
+    faceColour: Int32Array | null;
+    priority: number;
+    numT: number;
+    faceTextureP: Int32Array | null;
+    faceTextureM: Int32Array | null;
+    faceTextureN: Int32Array | null;
+    vertexLabel: Int32Array | null;
+    faceLabel: Int32Array | null;
+    labelVertices: (Int32Array | null)[] | null;
+    labelFaces: (Int32Array | null)[] | null;
+    sharedPointNormal: (PointNormal | null)[] | null;
+    maxY: number;
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    objRaise: number;
+    static tempModel: Model;
+    static tempFTran: Int32Array;
+    faceColourA: Int32Array | null;
+    faceColourB: Int32Array | null;
+    faceColourC: Int32Array | null;
+    useAABBMouseCheck: boolean;
+    radius: number;
+    maxDepth: number;
+    minDepth: number;
+    static faceClippedX: boolean[];
+    static faceNearClipped: boolean[];
+    static vertexScreenX: Int32Array;
+    static vertexScreenY: Int32Array;
+    static vertexScreenZ: Int32Array;
+    static vertexViewSpaceX: Int32Array;
+    static vertexViewSpaceY: Int32Array;
+    static vertexViewSpaceZ: Int32Array;
+    static tmpDepthFaceCount: Int32Array;
+    static tmpDepthFaces: Int32Array[];
+    static tmpPriorityFaceCount: Int32Array;
+    static tmpPriorityFaces: Int32Array[];
+    static tmpPriority10FaceDepth: Int32Array;
+    static tmpPriority11FaceDepth: Int32Array;
+    static tmpPriorityDepthSum: Int32Array;
+    static clippedX: Int32Array;
+    static clippedY: Int32Array;
+    static clippedColour: Int32Array;
+    static oX: number;
+    static oY: number;
+    static oZ: number;
+    static mouseCheck: boolean;
+    static mouseX: number;
+    static mouseY: number;
+    static pickedCount: number;
+    static pickedEntityTypecode: Int32Array;
+    static trackTypecode: number;
+    static frameStamp: number;
+    static trackStamp: number;
+    static trackMinX: number;
+    static trackMaxX: number;
+    static trackMinY: number;
+    static trackMaxY: number;
+    private static trackExtend;
+    static init(total: number, provider: OnDemandProvider): void;
+    static unpack(id: number, src: Uint8Array | null): void;
+    static unload(id: number): void;
+    static load(id: number): Model | null;
+    static requestDownload(id: number): boolean;
+    static combineForAnim(models: (Model | null)[], count: number): Model;
+    static combine(models: Model[], count: number): Model;
+    static copyForAnim(src: Model, shareColours: boolean, shareAlpha: boolean, shareVertices: boolean): Model;
+    static hillSkewCopy(src: Model, copyVertexY: boolean, copyFaces: boolean): Model;
+    set(src: Model, shareAlpha: boolean): void;
+    addPoint(src: Model, vertex: number): number;
+    calcBoundingCylinder(): void;
+    recalcBoundingCylinder(): void;
+    private calcBoundingCube;
+    prepareAnim(): void;
+    animate(id: number): void;
+    maskAnimate(primaryId: number, secondaryId: number, mask: Int32Array | null): void;
+    private animate2;
+    rotate90(): void;
+    rotateXAxis(angle: number): void;
+    translate(y: number, x: number, z: number): void;
+    recolour(src: number, dst: number): void;
+    mirror(): void;
+    resize(x: number, y: number, z: number): void;
+    calculateNormals(ambient: number, contrast: number, x: number, y: number, z: number, doNotShareLight: boolean): void;
+    light(ambient: number, contrast: number, x: number, y: number, z: number): void;
+    static getColour(hsl: number, scalar: number, faceRenderType: number): number;
+    objRender(pitch: number, yaw: number, roll: number, eyePitch: number, eyeX: number, eyeY: number, eyeZ: number): void;
+    worldRender(yaw: number, sinEyePitch: number, cosEyePitch: number, sinEyeYaw: number, cosEyeYaw: number, relativeX: number, relativeY: number, relativeZ: number, typecode: number): void;
+    private render2;
+    private render3;
+    private render3ZClip;
+    isMouseRoughlyInsideTriangle(x: number, y: number, yA: number, yB: number, yC: number, xA: number, xB: number, xC: number): boolean;
+}
+class ModelSource extends Linkable2 {
+    pointNormal: (PointNormal | null)[] | null;
+    minY: number;
+    worldRender(yaw: number, sinEyePitch: number, cosEyePitch: number, sinEyeYaw: number, cosEyeYaw: number, relativeX: number, relativeY: number, relativeZ: number, typecode: number): void;
+    getTempModel(): Model | null;
+}
+/** Called when a zone packet lands; the next locs() rebuilds from the live scene. */
+export function invalidateLocSnapshots(): void;
+/** Releases the client; later reads return empty state. */
+export function detach(): void;
 export type ModalCloseObservation = {
     readonly session: symbol;
     readonly generation: number;
 };
+/** Whether the login snapshot has populated every skill exposed by this client. */
+export function activeStatsReady(baseLevels: ArrayLike<number>): boolean;
+/** Whether every active stat was received during this exact login session. */
+export function currentLoginStatsReady(baseLevels: ArrayLike<number>, seenGenerations: ArrayLike<number>, sessionGeneration: number): boolean;
+/**
+ * Object/NPC vertical extent for hulls. RS model space: minY = max(-vertexY)
+ * (height above origin), same as ClientNpc.height. maxY is below-origin only.
+ */
+export function locHullHeight(model: {
+    minY: number;
+    maxY: number;
+} | null | undefined, fallback?: number): number;
+/**
+ * Walls/scenery often store a static `Model` as ModelSource, and Model returns null from getTempModel().
+ * Why: bare ModelSource.minY defaults to 1000, so never read extents off the source itself.
+ */
+export function resolveLocModelExtents(src: ModelSource | null | undefined): {
+    minY: number;
+    maxY: number;
+    radius: number;
+} | null;
 export interface WorldTile {
     x: number;
     z: number;
@@ -201,6 +382,8 @@ export interface ModalButton {
     /** A `buttontype=pause` button resumes a suspended script instead of firing `if_button`. */
     pause: boolean;
 }
+export function attach(client: unknown): string[];
+export function setPacketListener(cb: ((ptype: number) => void) | null): void;
 /** One obj definition, flattened for bot code that may not import client internals. */
 export interface ObjRecord {
     id: number;
@@ -215,6 +398,8 @@ export interface ObjRecord {
     /** One of a stackable's pile-size models, which carries the base item's name and is not a separate item. */
     stackVariant?: boolean;
 }
+/** Test seam; the live client only fills this table once, at login. */
+export function resetObjCatalog(): void;
 export const reader: {
     ingame(): boolean;
     sceneState(): number;
@@ -248,6 +433,7 @@ export const reader: {
     locs(): LocSnapshot[];
     groundItems(): GroundItemSnapshot[];
     inventory(): InvItemSnapshot[];
+    objCatalog(): ObjRecord[];
     inventorySize(): number;
     equipment(): InvItemSnapshot[];
     bankComId(): never;
@@ -303,6 +489,19 @@ export const actions: {
     clickSideTab(tab: number): boolean;
     closeModal(): boolean;
 };
+export const WELCOME_SCREEN = 5993;
+export function readRetaliateControls(): {
+    onComId: number;
+    offComId: number;
+} | null;
+export function readModalButtons(rootComId: number): ModalButton[];
+/** Read each select button together with the style text rendered beside it. */
+export function readSelectButtonLabelsByVarp(rootComId: number, varp: number): SelectButtonLabel[];
+/**
+ * Cycles-remaining threshold that keeps the combat window at {@link COMBAT_WINDOW_MS}.
+ * Why: deltime can be zero during random-event teleports and scene rebuilds, and dividing by it would NaN the window and crash handlers.
+ */
+export function combatShowingThreshold(deltimeMs: number): number;
 interface PostedSceneEntity {
     index: number;
     id: number;
@@ -456,32 +655,18 @@ export const TRIO: readonly [
     "Watch",
     "Chart"
 ];
-export function trailKit(scrollId?: number | null): never;
+export function trailKit(scrollId: number | null): string[];
 export const SPADE_SPAWNS: Tile[];
+type CoordTool = 'sextant' | 'watch' | 'chart';
 export interface HeldTrio {
     sextant: boolean;
     watch: boolean;
     chart: boolean;
 }
-export function nextCoordTool(held?: HeldTrio): never;
-export const PROFESSOR: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
-export const MURPHY: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
-export const KOJO: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
+export function nextCoordTool(held: HeldTrio): CoordTool | null;
+export const PROFESSOR: NpcStop;
+export const MURPHY: NpcStop;
+export const KOJO: NpcStop;
 export const KOJO_EXIT: Tile;
 export function extraItemShop(name?: string): never;
 export function gateItemShop(name?: string): never;
@@ -586,24 +771,9 @@ export const ARHEIN: {
     npc: string;
     anchor: Tile;
 };
-export const GUARD_START: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
-export const GUARD_HANDIN: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
-export const SALESMAN: {
-    "npc": NpcStop["npc"];
-    "anchor": NpcStop["anchor"];
-    "leash": NpcStop["leash"];
-    "prefer": NpcStop["prefer"];
-};
+export const GUARD_START: NpcStop;
+export const GUARD_HANDIN: NpcStop;
+export const SALESMAN: NpcStop;
 export interface LocStop {
     id: number;
     name: string;
@@ -673,15 +843,15 @@ export interface LineRule {
     /** Option to choose when that fragment is present. */
     choose: string;
 }
-export function pickByLine(lines?: string[], options?: string[], rules?: readonly LineRule[]): never;
+export function pickByLine(lines: string[], options: string[], rules: readonly LineRule[]): string | null;
 export function isUnderground(t: {
     z: number;
 }): boolean;
-export function needsHop(here?: {
+export function needsHop(here: {
     z: number;
-}, anchor?: {
+}, anchor: {
     z: number;
-}): never;
+}): boolean;
 export interface LadderHop {
     stand: Tile;
     locName: string;
@@ -1381,8 +1551,8 @@ export function parseRangeStyle(name: string): number;
 
 declare module '*api/combat/CombatStyleLogic.js' {
 export { SPELL_DB } from "*data/spelldb.js";
-export const AUTO_CHOOSE_COM = 353;
-export const AUTO_TOGGLE_COM = 349;
+export const AUTO_CHOOSE_COM: number;
+export const AUTO_TOGGLE_COM: number;
 export const ATTACKSTYLE_MAGIC_VARP = 108;
 export const AUTOCAST_ARMED = 3;
 export function runesPerCast(spellName: string, wielded: string[]): {
@@ -3402,13 +3572,14 @@ export const STALL_OP = "Steal from";
 export const CAKE_ITEMS: string[];
 export const LOCKOUT_TICKS = 10;
 export const RESET_AFTER_REFUSALS = 3;
+type StealOutcome = 'success' | 'caught' | 'lockout' | 'refused' | 'timeout';
 interface StealSignals {
     gained: boolean;
     combat: boolean;
     lockoutSeen: boolean;
     attemptSeen: boolean;
 }
-export function classifySteal(s?: StealSignals): never;
+export function classifySteal(s: StealSignals): StealOutcome;
 export function shouldReset(consecutiveRefusals: number): boolean;
 
 }
@@ -4116,6 +4287,7 @@ export const STAFF_RUNES: Record<string, string[]>;
 }
 
 declare module '*data/woodcuttingLocations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
 import Tile from "*geometry/Tile.js";
 /**
  * Shared gather camp: home pin + bank stand for Fisher / Miner / Woodcutter. Membership (ReturnToAnchor / soft wander bound) uses {@link campRadius}, while fishing hop chase inside camp uses {@link chaseRadius} measured from the player.
@@ -4175,6 +4347,9 @@ export function entNpcOnTile(npcs: readonly {
     z: number;
     level: number;
 }): boolean;
+export const WOODCUTTING_LOCATIONS: WoodcuttingLocation[];
+export const WOODCUTTING_LOCATION_OPTIONS: string[];
+export function resolveWoodcuttingLocation(setting: string, startTile: WorldTile): WoodcuttingLocation | null;
 
 }
 
@@ -4549,52 +4724,8 @@ export interface PaintFillOptions extends PaintListOptions {
     /** Panel pixels to leave below the list, for buttons drawn after it. */
     reserve?: number;
 }
-export interface PaintFrame {
-    title(text: string): void;
-    tabs(id: string, names: string[]): string;
-    /** Columns of monospace text the panel fits between its gutters. */
-    cols(): number;
-    /** Rows still clear of the panel's bottom edge. */
-    rowsLeft(): number;
-    text(line: string, color?: string): void;
-    row(...cols: string[]): void;
-    /** A row of weighted, individually coloured columns, each clipped to its own slot. */
-    cells(cells: PaintCell[]): void;
-    /** Text too long for one line, spilled onto indented continuation lines. */
-    wrap(text: string, color?: string, indent?: number): void;
-    /** A scrollable list of lines. Returns the entry index now at the top. */
-    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): number;
-    /**
-     * A `list` sized to whatever panel height is left, minus `reserve` pixels
-     * held back for whatever is drawn after it.
-     */
-    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): number;
-    /** A `fill` laid `columns` across, reading left to right; the wheel moves a full row. */
-    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): number;
-    bar(label: string, fraction: number, color?: string): void;
-    buttons(items: {
-        id: string;
-        label: string;
-    }[]): string | null;
-    select(id: string, label: string, options: string[], current: string): string | null;
-    /**
-     * Prev / label / Next stepper, one click moves one option (no spam overshoot).
-     * Layout: `[◀] label: current [▶]`. Returns the newly selected option or null.
-     */
-    stepper(id: string, label: string, options: string[], current: string): string | null;
-    /**
-     * Title row of tabs, a live status and a brand. Returns the active tab and
-     * replaces `title()` for a branded panel.
-     */
-    strip(id: string, tabs: string[], status: string, brand: string): string;
-    /** Vertical sub-tab column down the panel's left edge. Returns the active entry. */
-    rail(id: string, names: string[]): string;
-    /** Rows of cells laid out right of the rail. */
-    statGrid(rows: PaintCell[][], columns?: number): void;
-    /** Right-aligned byline on the panel's last row. */
-    footer(text: string): void;
-    gap(px?: number): void;
-    end(): void;
+export class PaintFrame {
+    constructor(ctx: CanvasRenderingContext2D, opts: PaintOptions);
 }
 /**
  * Immediate-mode overlay HUD of tabs, buttons and bars, redrawn every frame from
@@ -4623,7 +4754,22 @@ export interface Region extends Rect {
     kind: 'panel' | 'widget' | 'scroll';
 }
 export type Dock = 'chatbox' | 'topleft' | Rect;
-export interface PaintState {
+export function resolveDock(dock: Dock): Rect;
+export function toCanvasPoint(clientX: number, clientY: number, rect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}): {
+    x: number;
+    y: number;
+};
+/** Wrap an option index; -1 moves back, +1 moves forward, and unknown values start at 0. */
+export function cycleOption(options: readonly string[], current: string, delta: number): string;
+export function hitRegion(regions: readonly Region[], x: number, y: number): Region | null;
+export class PaintState {
+}
+export const paintState: {
     publishRegions(regions: Region[]): void;
     pointerDown(x: number, y: number): boolean;
     pointerMove(x: number, y: number): boolean;
@@ -4637,9 +4783,17 @@ export interface PaintState {
     get(key: string, fallback: string): string;
     set(key: string, value: string): void;
     reset(): void;
-}
+};
+/** Monospace characters that fit a panel `w` px wide with `pad` px of gutter each side. */
+export function paintCols(w: number, pad: number, charW: number): number;
 /** Wrap text to `cols`, indenting continuation lines by `indent` spaces. */
 export function wrapText(text: string, cols: number, indent?: number): string[];
+/** Pixel widths for weighted columns sharing `total` px. */
+export function cellWidths(total: number, weights: readonly number[]): number[];
+/** Rows needed to lay `len` entries `columns` across. */
+export function gridRows(len: number, columns: number): number;
+/** Rows a single wheel notch moves a scrollable list. */
+export const WHEEL_ROWS = 3;
 export interface ListScrollState {
     offset: number;
     /** True once the user has scrolled, which detaches the list from `focus`. */
@@ -4647,10 +4801,21 @@ export interface ListScrollState {
     /** The focus row this state was computed against; a change re-attaches. */
     focus: number;
 }
+/**
+ * Scroll position for an immediate-mode list.
+ * Wheel notches detach the list from `focus`; a new `focus` row re-attaches it.
+ */
+export function listScroll(len: number, rows: number, state: ListScrollState, wheel: number, focus: number): ListScrollState;
 export function fmtDuration(mins: number): string;
 /** Compact skill labels for chatbox paint rows. */
 export function paintSkillShort(skill: string): string;
+/** Clip to `cols` characters with a trailing ellipsis, keeping leading spaces so padded columns stay aligned. */
+export function clipText(text: string, cols: number): string;
+/** Truncate paint text with an ellipsis (chatbox rows are tight). */
+export function paintClip(text: string, max?: number): string;
 export function fmtXpHr(gained: number, mins: number): string;
+/** Gathering script title accent colours. */
+export function gatherPaintAccent(kind: 'fish' | 'mine' | 'wc' | 'other'): string;
 export interface Slot {
     x: number;
     w: number;
@@ -4660,6 +4825,12 @@ export interface StripSegments {
     status: Slot;
     brand: Slot;
 }
+/** Title-row slots: tabs from the left, brand hard right, status filling the gap. */
+export function stripSegments(w: number, tabWidths: readonly number[], brandWidth: number, pad: number): StripSegments;
+/** Even vertical slices of the rail, never shorter than a pixel. */
+export function railRows(h: number, count: number): RailRow[];
+/** Equal columns filling the body to the right of the rail. */
+export function statColumns(panelW: number, railW: number, pad: number, columns: number): Slot[];
 
 }
 
@@ -4668,6 +4839,9 @@ export const BotHost: {
     tickCount: number;
     addTickListener(cb: () => void): () => boolean;
 };
+export class BotHostImpl {
+    constructor();
+}
 
 }
 
@@ -4695,6 +4869,14 @@ export interface RunPolicyOverride {
     runAuto?: boolean;
     energyMin?: number;
 }
+export function resolveRunPolicy(over: RunPolicyOverride | null | undefined, globals: {
+    runAuto: boolean;
+    energyMin: number;
+}): {
+    runAuto: boolean;
+    energyMin: number;
+};
+export function shouldEnableRun(s: RunState): boolean;
 export const RunManager: {
     /** Last call wins as a whole snapshot. `null` returns to Global. Cleared when a script starts or stops. */
     override(policy: RunPolicyOverride | null): void;
@@ -4704,6 +4886,12 @@ export const RunManager: {
 
 declare module '*runtime/ScriptRunner.js' {
 import { PaintFrame } from "*paint/Paint.js";
+export function loopReadyOrDetached(): boolean;
+/**
+ * Never let a blank reason read as "the script stopped for no reason".
+ * Why: a missing reason is a caller bug, but throwing out of `stop()` would wedge the run in `running`, which broke every harness calling `runner.stop()` from page context.
+ */
+export function stopReasonOf(reason: string): string;
 export const ScriptRunner: {
     paintControls(p: PaintFrame): void;
     /**
@@ -4743,6 +4931,8 @@ export interface SettingDef {
     /** For `string[]` settings: when this key's value is `'csv'`, render a CSV textarea with copy/paste buttons instead of the chip list. */
     csvToggle?: string;
 }
+/** Return an option's display label without changing its persisted value. */
+export function settingOptionLabel(def: SettingDef, value: string): string;
 export type SettingsSchema = Record<string, SettingDef>;
 export class SettingsBag {
     values: Record<string, unknown>;
@@ -4754,6 +4944,24 @@ export class SettingsBag {
     tile(key: string, fallback?: undefined): Tile | null;
     tile<F extends ___adapter_ClientAdapter_js.WorldTile | null>(key: string, fallback: F): Tile | F;
 }
+/** Account-wide settings, shown under the panel "Global settings" button and stored under the `Global` namespace. */
+export const GLOBAL_SETTINGS_CORE: Record<string, SettingDef>;
+/** World-walk and path paint settings, shown under the "Nav settings" button but still stored under `Global` so URL and storage keys stay stable. */
+export const NAV_SETTINGS: Record<string, SettingDef>;
+/** Full Global storage schema = core + nav (URL / SettingsStore.globalBag). */
+export const GLOBAL_SETTINGS: Record<string, SettingDef>;
+/**
+ * Settings for the tile map picker's own Settings modal, absent from Global settings.
+ * Why: the storage namespace is {@link MAP_PICKER_SETTINGS_NS} and the URL form is `?MapPicker.showBasemap=false`.
+ */
+export const MAP_PICKER_SETTINGS_NS = "MapPicker";
+export const MAP_PICKER_SETTINGS: Record<string, SettingDef>;
+/** Player-defined loadouts. Storage only; the Loadout panel owns editing, so this never appears in a settings modal. */
+export const LOADOUT_SETTINGS_NS = "Loadouts";
+export const LOADOUT_SETTINGS: Record<string, SettingDef>;
+/** Player-defined order books. Storage only; the order book panel owns editing, so this never appears in a settings modal. */
+export const PRICE_BOOK_SETTINGS_NS = "PriceBooks";
+export const PRICE_BOOK_SETTINGS: Record<string, SettingDef>;
 export const SettingsStore: {
     saved(name: string, key: string): string | undefined;
     displayString(name: string, key: string, def: SettingDef): string;

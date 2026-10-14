@@ -1,0 +1,2043 @@
+{
+  "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "files": [
+    {
+      "file": "api/acquisition/Tools.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > Tools kit > tiers are best-first",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > bestPickaxe respects mining gates; bestAxe has none",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > bestFromTiers matches bestPickaxe",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolKeepNames expands tiers + exact",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > hasAllTools / missing labels for axe + tinderbox",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolRestockPlan withdraws best banked tier + missing exact",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolRestockPlan skips tools already held",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolRestockPlan withdraws better bank tier when worse is held",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolRestockPlan skips same-tier bank duplicate when best is already held",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolsNeedingEquip when best tier held but not worn",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolsNeedingEquip skips non-equip reqs",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolAttackLevel / canWieldTool follow classic metal Attack gates",
+          "status": "pass"
+        },
+        {
+          "name": " > Tools kit > toolsNeedingEquip skips wield when Attack is too low (backpack use still ok)",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/acquisition/woodcutting-axes.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > bestAxe > 41 woodcutting takes the rune axe when available",
+          "status": "pass"
+        },
+        {
+          "name": " > bestAxe > 41 woodcutting without rune falls to adamant, then mithril, etc.",
+          "status": "pass"
+        },
+        {
+          "name": " > bestAxe > no woodcutting gate: every tier chops at level 1",
+          "status": "pass"
+        },
+        {
+          "name": " > bestAxe > empty bank → null",
+          "status": "pass"
+        },
+        {
+          "name": " > bestAxe > every axe tier is usable at woodcutting 1",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/ai/clues/data/toolAcquire.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > nextCoordTool (item-keyed chain order) > nothing held -> sextant first",
+          "status": "pass"
+        },
+        {
+          "name": " > nextCoordTool (item-keyed chain order) > sextant held, no watch -> watch",
+          "status": "pass"
+        },
+        {
+          "name": " > nextCoordTool (item-keyed chain order) > sextant+watch held, no chart -> chart",
+          "status": "pass"
+        },
+        {
+          "name": " > nextCoordTool (item-keyed chain order) > all three held -> null (done)",
+          "status": "pass"
+        },
+        {
+          "name": " > nextCoordTool (item-keyed chain order) > strict order: a held watch without a sextant still asks for the sextant first",
+          "status": "pass"
+        },
+        {
+          "name": " > data sanity > two spade spawns, Ardougne and Falador, far apart",
+          "status": "fail",
+          "reason": "Error: not impl: SPADE_SPAWNS.length"
+        },
+        {
+          "name": " > data sanity > trio + spade names",
+          "status": "pass"
+        },
+        {
+          "name": " > data sanity > three NPC stops with distinct anchors and a Treasure-Trails preference",
+          "status": "fail",
+          "reason": "Error: not impl: PROFESSOR.anchor"
+        }
+      ]
+    },
+    {
+      "file": "api/ai/clues/toolAcquire.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > trailKit > non-coord scroll still packs the full standard kit",
+          "status": "pass"
+        },
+        {
+          "name": " > trailKit > coordinate scroll packs the same kit",
+          "status": "pass"
+        },
+        {
+          "name": " > trailKit > per-clue row items ride along (2811 falls-ledge rope)",
+          "status": "pass"
+        },
+        {
+          "name": " > trailKit > the spade is fixed — there is only one digging item",
+          "status": "pass"
+        },
+        {
+          "name": " > trailKit > no scroll (casket-only hold) needs nothing",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/ai/quests/driveDialogGap.test.ts",
+      "stage": "timeout",
+      "reason": "test run exceeded fixed deadline"
+    },
+    {
+      "file": "api/ai/quests/exec/primitives.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > pickPreferred > returns the full option text for the first preferred match",
+          "status": "pass"
+        },
+        {
+          "name": " > pickPreferred > prefer order wins over option order",
+          "status": "pass"
+        },
+        {
+          "name": " > pickPreferred > matches case-insensitively by substring",
+          "status": "pass"
+        },
+        {
+          "name": " > pickPreferred > null when nothing matches (caller falls back + warns)",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > matches the rule whose line the NPC actually spoke",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > prefers the longest matching rule so overlapping phrases cannot collide",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > ignores colour tags and pipe separators in the spoken line",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > null when no rule matches, rather than guessing",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > null when the matched reply is not on offer",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine > null when the NPC has said nothing yet",
+          "status": "pass"
+        },
+        {
+          "name": " > isUnderground / needsHop > classifies the wizard basement as underground, the tower as surface",
+          "status": "pass"
+        },
+        {
+          "name": " > isUnderground / needsHop > needsHop only when regions disagree",
+          "status": "pass"
+        },
+        {
+          "name": " > talkOp > resolves the standard 'Talk-to'",
+          "status": "pass"
+        },
+        {
+          "name": " > talkOp > resolves a bare 'Talk' (Fycie — the ICY FE abandon)",
+          "status": "pass"
+        },
+        {
+          "name": " > talkOp > null when the NPC has no talk-style op",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine — the option list must not be mistaken for the NPC line > the option labels alone match no rule, so a clobbered capture yields null",
+          "status": "pass"
+        },
+        {
+          "name": " > pickByLine — the option list must not be mistaken for the NPC line > the NPC line still matches once captured before the options appear",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/bank/bank-withdraw-op.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > withdrawOp > resolves the all op in both label forms",
+          "status": "pass"
+        },
+        {
+          "name": " > withdrawOp > resolves the 10 op in both label forms",
+          "status": "pass"
+        },
+        {
+          "name": " > withdrawOp > '5' is bounded — never catches Withdraw 10",
+          "status": "pass"
+        },
+        {
+          "name": " > withdrawOp > resolves the x op in both label forms",
+          "status": "pass"
+        },
+        {
+          "name": " > withdrawOp > '1' is anchored — never catches Withdraw 10",
+          "status": "pass"
+        },
+        {
+          "name": " > withdrawOp > 'any' takes the first withdraw op; non-withdraw ops never match",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/bank/bankQuestJunk.test.ts",
+      "stage": "excluded",
+      "reason": "Uses node: filesystem imports unavailable in the offline Load isolate; excluded as an upstream test-harness dependency, not an API result."
+    },
+    {
+      "file": "api/bank/bankSortRules.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > categoryOf > Strange fruit sits with the food",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > coins are matched by id, never by name",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > runes are matched by id",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > ammunition beats the weapon rule for arrows",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > weapons and armour split",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > an unidentified herb is a herb, even though every one of them is named Herb",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > the herbs the table used to miss",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > keys that open a dragonstone chest file with the gems",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a quest key is still junk, not a gem",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > food, potions and herbs",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a swordfish is food, not a sword",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > every dosed potion in the game files as a potion",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > every cooked fish files as food",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > staves file apart from weapons",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > dragonhide files apart from melee armour, raw hide stays a supply",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > materials, logs, supplies and tools",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a bowstring is a supply, not a bow",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a topaz is a gem, not a top",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > hide armour is armour, raw hide is a supply",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > short material words do not match inside longer ones",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a bowl is not a bow",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > cannonballs are ammunition",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a lobster pot is a tool, a lobster is food",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > jewellery",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > anything no rule matches falls to junk and is flagged",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > an explicit junk entry is junk but is not unmatched",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > a null name never throws",
+          "status": "pass"
+        },
+        {
+          "name": " > categoryOf > CATEGORY_ORDER lists every category exactly once, coins first and junk last",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/bank/banking-common.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > matchesCommonBankLoot > matches each junk category (case-insensitive contains)",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesCommonBankLoot > matches only the random-event Casket object ID",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesCommonBankLoot > rejects unrelated names and empty",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesCommonBankLoot > keeps name-only callers compatible without guessing which Casket they mean",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesCommonBankLoot > COMMON_BANK_LOOT is non-empty and lowercased",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > own OR common when enabled",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > common suppressed when disabled",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > keeps name-only matcher calls compatible",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > banks a Casket when common rewards are enabled",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > keeps a Casket when common rewards are disabled",
+          "status": "pass"
+        },
+        {
+          "name": " > depositMatcher > the caller predicate still banks its own Casket when common rewards are disabled",
+          "status": "pass"
+        },
+        {
+          "name": " > isDisposableGatherJunk > includes common bank loot and random-event casket id",
+          "status": "pass"
+        },
+        {
+          "name": " > isDisposableGatherJunk > includes other event leftovers that this content actually has",
+          "status": "pass"
+        },
+        {
+          "name": " > isDisposableGatherJunk > rejects tools, coins, logs",
+          "status": "pass"
+        },
+        {
+          "name": " > PERIODIC_BANK_SETTINGS > exposes the bankCommonJunk opt-out, default true",
+          "status": "pass"
+        },
+        {
+          "name": " > depositAllExcept > deposits loot and random-event junk alike",
+          "status": "pass"
+        },
+        {
+          "name": " > depositAllExcept > keeps the keep-list (case-insensitive), never the empty name",
+          "status": "pass"
+        },
+        {
+          "name": " > depositAllExcept > empty keep-list (cow killer, not burying) deposits the whole pack",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/bank/banking-route.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > NEARBY_BANK_RADIUS > is wide enough for booth-underfoot / local stand snap",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > already-open wins over every other signal",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > usable booth within radius → scene-booth (skip distant preset)",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > booth just outside radius does not force scene-booth",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > preferNearby false ignores nearby booth and uses preset stand",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > local known bank beats distant preset when no booth in scene",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > preset stand when stand is also local (same bank area)",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > preset-stand when nothing nearby and stand is set",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > nearest-fallback when no stand and player is not already at a local bank",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveBankOpenRoute > custom nearbyRadius tightens the booth snap",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/bank/banking.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > off never banks",
+          "status": "pass"
+        },
+        {
+          "name": " > no loot never banks, any strategy",
+          "status": "pass"
+        },
+        {
+          "name": " > items banks at/over the item threshold only",
+          "status": "pass"
+        },
+        {
+          "name": " > time banks at/over the minute threshold only (with loot)",
+          "status": "pass"
+        },
+        {
+          "name": " > either banks when items OR time trips",
+          "status": "pass"
+        },
+        {
+          "name": " > parseBankStrategy maps labels, unknown -> off",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/chatbox/gameMessages.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > GameMessages > mark starts at 0 and advances per record",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > sawSince only sees messages recorded after the mark",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > stateful patterns remain stable across repeated checks",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > identical repeated texts are distinct messages",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > ring caps at 64 but seq keeps climbing",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > CANT_REACH matches the live server line",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        },
+        {
+          "name": " > GameMessages > recent returns newest-first limited slice",
+          "status": "fail",
+          "reason": "TypeError: GameMessages.reset is not a function"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/boostPotions.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > boostFaded > an unboosted skill is faded — the first sip of a fight is due",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > a boost sitting exactly on a tenth of the base is still faded",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > one level above the tenth is not",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > a fresh super potion on a level 70 skill is not faded",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > level 1 fades at any boost, since a tenth of one rounds to nothing",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > an unread skill never asks for a dose",
+          "status": "pass"
+        },
+        {
+          "name": " > boostFaded > a drained skill is not a faded boost — food and time fix that, not a super potion",
+          "status": "pass"
+        },
+        {
+          "name": " > potionToSip > names the potion whose boost has faded",
+          "status": "pass"
+        },
+        {
+          "name": " > potionToSip > names nothing while both boosts hold",
+          "status": "pass"
+        },
+        {
+          "name": " > potionToSip > names nothing when the pack is out of that flask",
+          "status": "pass"
+        },
+        {
+          "name": " > potionToSip > takes one potion per call, attack before strength, so a tick buys one op",
+          "status": "pass"
+        },
+        {
+          "name": " > potionToSip > an empty plan list sips nothing",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > full super sets default to three-dose flasks and honour a defence loadout override",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > falls back to one three-dose flask of each when the loadout names no potion",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > a carry entry sets both the dose form to withdraw and the count",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > the loadout naming only one potion leaves the other on its fallback",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > food and prayer potions in the same carry list are ignored",
+          "status": "pass"
+        },
+        {
+          "name": " > plannedPotions > matching is case-insensitive, since a hand-edited loadout is free text",
+          "status": "pass"
+        },
+        {
+          "name": " > the potion table > every dose form of both potions is listed, so a part-used flask still counts",
+          "status": "pass"
+        },
+        {
+          "name": " > the potion table > attack comes before strength, fixing the order a tick is spent in",
+          "status": "pass"
+        },
+        {
+          "name": " > the potion table > the floor is the tenth of base level the design asks for",
+          "status": "pass"
+        },
+        {
+          "name": " > the potion table > the drained flask is named as the game names it",
+          "status": "pass"
+        },
+        {
+          "name": " > the potion table > each potion carries a paint label short enough for a three-column row",
+          "status": "pass"
+        },
+        {
+          "name": " > the ranging potion > lifts ranged and names the dose forms the item database uses",
+          "status": "pass"
+        },
+        {
+          "name": " > the ranging potion > stays out of the melee pair, so a melee loadout is unchanged",
+          "status": "pass"
+        },
+        {
+          "name": " > the ranging potion > takes its dose form and count from the loadout, falling back to one three-dose flask",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/combat-style.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > parseCombatStyle normalizes semantic styles and aliases",
+          "status": "pass"
+        },
+        {
+          "name": " > parseCombatStyle is case/space-insensitive and defaults to strength",
+          "status": "pass"
+        },
+        {
+          "name": " > tryParseCombatStyle rejects non-melee combat kinds without defaulting",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveSplitCombatSettings migrates pre-split combatStyle saves (#461)",
+          "status": "pass"
+        },
+        {
+          "name": " > the melee dropdown offers all four semantic training styles",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > ordinary sword maps all four labels to their semantic training styles",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > ordinary three-mode layout sends unavailable controlled to its last defensive option",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > axe and heavy-sword layouts never mistake their second aggressive mode for controlled",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > polearm layout respects controlled-first and falls unavailable attack back to defensive",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > spear layout selects its first controlled mode and falls attack and strength back to defensive",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCombatStyle > fails closed rather than inferring semantics from unknown labels or positions",
+          "status": "pass"
+        },
+        {
+          "name": " > interface labels are the source of semantic combat styles",
+          "status": "pass"
+        },
+        {
+          "name": " > combat-style descriptions disclose any unavailable-style fallback",
+          "status": "pass"
+        },
+        {
+          "name": " > CombatStyleController > four-mode resolve, set, and already-selected checks share one target",
+          "status": "pass"
+        },
+        {
+          "name": " > CombatStyleController > three-mode controlled sets and asserts the same defensive fallback",
+          "status": "pass"
+        },
+        {
+          "name": " > CombatStyleController > an unavailable or empty combat interface fails closed",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/combatStyleLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > runesPerCast > no staff → full cost",
+          "status": "pass"
+        },
+        {
+          "name": " > runesPerCast > matching staff zeroes its element (Staff of fire + Fire Strike)",
+          "status": "pass"
+        },
+        {
+          "name": " > runesPerCast > staff of air kills the air cost on every spell",
+          "status": "pass"
+        },
+        {
+          "name": " > runesPerCast > lava battlestaff provides BOTH earth and fire",
+          "status": "pass"
+        },
+        {
+          "name": " > runesPerCast > non-elemental weapon → full cost; unknown spell → null",
+          "status": "pass"
+        },
+        {
+          "name": " > runesPerCast > spell name matching is case-insensitive",
+          "status": "pass"
+        },
+        {
+          "name": " > spellButtonCom > ssb index maps to staff_spells com id (1830 + ssb)",
+          "status": "pass"
+        },
+        {
+          "name": " > castsAvailable > limited by the scarcest rune",
+          "status": "pass"
+        },
+        {
+          "name": " > castsAvailable > zero when a rune is absent; staff makes a mono-rune spell castable",
+          "status": "pass"
+        },
+        {
+          "name": " > runeWithdrawList > scales per-cast costs by the requested casts",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/eatTiming.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > shouldHoldEat > holds the tick the attack started, so the swing is not stalled",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldHoldEat > eats on any other tick — the cooldown is free",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldHoldEat > urgent health eats immediately, even on the attack tick",
+          "status": "pass"
+        },
+        {
+          "name": " > AttackClock > marks only the tick an animation began, not the whole swing",
+          "status": "pass"
+        },
+        {
+          "name": " > AttackClock > a fresh swing after idle marks a new tick",
+          "status": "pass"
+        },
+        {
+          "name": " > AttackClock > switching straight to a different animation counts as a new start",
+          "status": "pass"
+        },
+        {
+          "name": " > AttackClock > reports nothing before any animation is seen",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/food-heal.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > foodHealAmount > knows common combat foods",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldEatToUseFood (#465) > eats when a full heal fits without overheal",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldEatToUseFood (#465) > always eats at or below the safety floor when food remains",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldEatToUseFood (#465) > low-max accounts still honor the floor when food heals more than max",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldEatToUseFood (#465) > shouldEatFood resolves heal from the food name",
+          "status": "pass"
+        },
+        {
+          "name": " > FOOD_OPTIONS > includes Shark so combat scripts (MossGiant, etc.) can select it",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/food-notes.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > noted Lobster does not count as edible food",
+          "status": "pass"
+        },
+        {
+          "name": " > noted Shark does not count as edible food",
+          "status": "pass"
+        },
+        {
+          "name": " > partial foods still count without Eat actions in the bank view",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/meleeWeapons.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > bestMeleeWeapon > the highest tier wins, and stab first for a target soft to stab",
+          "status": "pass"
+        },
+        {
+          "name": " > bestMeleeWeapon > the scimitar leads its tier elsewhere",
+          "status": "pass"
+        },
+        {
+          "name": " > bestMeleeWeapon > a tier above the Attack level is skipped",
+          "status": "pass"
+        },
+        {
+          "name": " > bestMeleeWeapon > a weapon a wield refused is skipped, whatever its tier",
+          "status": "pass"
+        },
+        {
+          "name": " > bestMeleeWeapon > names match whatever their case, and nothing wieldable is null",
+          "status": "pass"
+        },
+        {
+          "name": " > knownMeleeWeapon > finds the one melee weapon in a worn list",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/combat/special.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > weapon specials > a weapon without param=specwep has no cost",
+          "status": "pass"
+        },
+        {
+          "name": " > weapon specials > cost lookup ignores case and padding",
+          "status": "pass"
+        },
+        {
+          "name": " > weapon specials > every special is affordable on a full bar",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/cooking/cookLocations.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > cook location catalog > carries every bank",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > offers Auto and Custom alongside the banks",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > keeps the curated Catherby range",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > keeps the curated Draynor fireplace and its door approach",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > prefers an oven over an equally close fire",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > takes the closer surface when both are the same kind",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > finds nothing when the only surfaces are out of range or off-plane",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > derives a surface for banks with no curated entry",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > leaves banks with nothing in range fire-only",
+          "status": "pass"
+        },
+        {
+          "name": " > cook location catalog > never pairs a surface further than the cutoff or off-plane",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCookLocation > matches a name regardless of case",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCookLocation > returns null for Custom so the tile settings win",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCookLocation > Auto takes the nearest bank",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCookLocation > Auto skips a bank this account cannot open",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveCookLocation > an unknown name resolves to nothing rather than a surprise bank",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/game/combat-signals.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > auto-retaliate varp > reads option_nodef",
+          "status": "pass"
+        },
+        {
+          "name": " > auto-retaliate varp > is inverted — 0 means ON",
+          "status": "pass"
+        },
+        {
+          "name": " > face target encoding > a player target is slot + 32768",
+          "status": "pass"
+        },
+        {
+          "name": " > face target encoding > an npc target or no target is not a player",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/market/catalog.test.ts",
+      "stage": "load",
+      "reason": "load: Error: not impl: buildCatalog"
+    },
+    {
+      "file": "api/shop/buyout-logic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > buyoutPlan > allocates valuable-first (law > death > fire > mind) regardless of record order",
+          "status": "pass"
+        },
+        {
+          "name": " > buyoutPlan > coin budget bounds the plan; cheap tail starves before the valuable head",
+          "status": "pass"
+        },
+        {
+          "name": " > buyoutPlan > honors the chosen filter and skips empty stock",
+          "status": "pass"
+        },
+        {
+          "name": " > buyoutPlan > unknown stock names are ignored; zero coins buys nothing",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/shop/shopOpBatch.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > shopOpBatch > sells 25 as 10+10+5 in one tick, not three ticks of one click",
+          "status": "pass"
+        },
+        {
+          "name": " > shopOpBatch > caps a tick at five user-event ops (50 via 10s)",
+          "status": "pass"
+        },
+        {
+          "name": " > shopOpBatch > uses 1 when less than 5 remain",
+          "status": "pass"
+        },
+        {
+          "name": " > selling a stack in tens > one Sell 10 is what a ten-sized ask asks for",
+          "status": "pass"
+        },
+        {
+          "name": " > selling a stack in tens > the step is ten, the biggest the shop offers",
+          "status": "pass"
+        },
+        {
+          "name": " > selling a stack in tens > a shop without a Sell 10 falls back to what it has, so the loop still moves",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/sustain/sustain.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > run() is a no-op with no hook registered",
+          "status": "pass"
+        },
+        {
+          "name": " > run() awaits the registered hook",
+          "status": "pass"
+        },
+        {
+          "name": " > re-entrant run() is guarded (a hook that walks cannot recurse)",
+          "status": "pass"
+        },
+        {
+          "name": " > a throwing hook releases the guard",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/tasks/Anchor.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > Anchor helpers > resolveRunAnchor prefers location spot",
+          "status": "pass"
+        },
+        {
+          "name": " > Anchor helpers > beyondLeash respects slack",
+          "status": "pass"
+        },
+        {
+          "name": " > Anchor helpers > tileWithinLeash",
+          "status": "pass"
+        },
+        {
+          "name": " > Anchor helpers > soft return defaults: slack 6 / arrive disk 8 (createReturnToAnchorTask)",
+          "status": "pass"
+        },
+        {
+          "name": " > Anchor helpers > createReturnToAnchorTask accepts obstacle / long-range options",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/trade/PartnerTrade.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > parsePartnerList / isConfiguredPartner > splits and trims comma names",
+          "status": "pass"
+        },
+        {
+          "name": " > parsePartnerList / isConfiguredPartner > partner match is case-insensitive",
+          "status": "pass"
+        },
+        {
+          "name": " > offer counts > countOfferByName sums stacks",
+          "status": "pass"
+        },
+        {
+          "name": " > offer counts > countOfferMatching uses predicate",
+          "status": "pass"
+        },
+        {
+          "name": " > decideReceiverOfferScreen > waits for header lag",
+          "status": "pass"
+        },
+        {
+          "name": " > decideReceiverOfferScreen > declines strangers and non-empty own offer",
+          "status": "pass"
+        },
+        {
+          "name": " > decideReceiverOfferScreen > accepts when partner offered product",
+          "status": "pass"
+        },
+        {
+          "name": " > decideGiverOfferScreen > offer then accept",
+          "status": "pass"
+        },
+        {
+          "name": " > mule mode flags > parseMuleMode",
+          "status": "pass"
+        },
+        {
+          "name": " > mule mode flags > handoff only for gatherer with partners and not power",
+          "status": "pass"
+        },
+        {
+          "name": " > mule mode flags > cooker / supplier / non-gatherer roles",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "api/trade/TradePartner.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > parseTradePartnerHeader > strips Trading With: prefix",
+          "status": "pass"
+        },
+        {
+          "name": " > parseTradePartnerHeader > handles missing colon prefix",
+          "status": "pass"
+        },
+        {
+          "name": " > parseTradePartnerHeader > bare name passes through",
+          "status": "pass"
+        },
+        {
+          "name": " > parseTradePartnerHeader > empty / whitespace is null",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "data/CowKillerLocations.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > CowKiller locations > maps the supported fields to verified cow-spawn centres",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > Auto picks the local supported field from each nearby bank",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > named locations are case-insensitive and Start tile stays custom",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > dropdown contains Auto, every field, and custom start tile",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > loot stays inside the anchored cow-hunting leash",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > the north-west field leash covers its scouted cow spawns",
+          "status": "pass"
+        },
+        {
+          "name": " > CowKiller locations > the East Ardougne anchor covers every map-backed cow spawn",
+          "status": "pass"
+        },
+        {
+          "name": " > Al Kharid toll float > only enabled Lumbridge runs keep toll coins",
+          "status": "pass"
+        },
+        {
+          "name": " > Al Kharid toll float > bootstraps below 20 coins when starting around Al Kharid bank",
+          "status": "pass"
+        },
+        {
+          "name": " > Al Kharid toll float > pins every field to a bank without adding a toll or supply requirement",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "data/WoodcuttingLocations.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > resolveWoodcuttingLocation > Use Start Position and Use Custom Position are freeform (null)",
+          "status": "fail",
+          "reason": "Error: not impl: resolveWoodcuttingLocation"
+        },
+        {
+          "name": " > resolveWoodcuttingLocation > Use Closest near Draynor willows",
+          "status": "fail",
+          "reason": "Error: not impl: resolveWoodcuttingLocation"
+        },
+        {
+          "name": " > resolveWoodcuttingLocation > Use Closest near Seers maples",
+          "status": "fail",
+          "reason": "Error: not impl: resolveWoodcuttingLocation"
+        },
+        {
+          "name": " > resolveWoodcuttingLocation > Use Closest still snaps even NW of Crafting Guild (no chunk gate)",
+          "status": "fail",
+          "reason": "Error: not impl: resolveWoodcuttingLocation"
+        },
+        {
+          "name": " > resolveWoodcuttingLocation > named match is case-insensitive",
+          "status": "fail",
+          "reason": "Error: not impl: resolveWoodcuttingLocation"
+        },
+        {
+          "name": " > WOODCUTTING_LOCATIONS table > dropdown is Auto + Use Closest + Use Start Position + Use Custom Position + legacy None + camps",
+          "status": "fail",
+          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+        },
+        {
+          "name": " > WOODCUTTING_LOCATIONS table > every bankStand is a known BANK_LOCATIONS tile",
+          "status": "fail",
+          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+        },
+        {
+          "name": " > WOODCUTTING_LOCATIONS table > core catalog entries are verified; tick-manip camps may be provisional",
+          "status": "fail",
+          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+        },
+        {
+          "name": " > WOODCUTTING_LOCATIONS table > includes tick-manip WC camps (#160)",
+          "status": "fail",
+          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+        },
+        {
+          "name": " > WOODCUTTING_LOCATIONS table > fire spots are not mixed into chop camps",
+          "status": "fail",
+          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+        },
+        {
+          "name": " > ENT_NPC_IDS > covers pack 444-452 and stops before suit of armour",
+          "status": "pass"
+        },
+        {
+          "name": " > ENT_NPC_IDS > entNpcOnTile is the clicked loc only",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "data/itemParse.test.ts",
+      "stage": "excluded",
+      "reason": "Imports test-only tools/items/parse.js, which is outside the registered API module set and is not served by this Load isolate."
+    },
+    {
+      "file": "data/mining-rocks.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > every ore type maps to exactly two rock loc ids",
+          "status": "pass"
+        },
+        {
+          "name": " > all rock loc ids are unique across ore types",
+          "status": "pass"
+        },
+        {
+          "name": " > rock loc ids are the contiguous 2090..2109 block",
+          "status": "pass"
+        },
+        {
+          "name": " > ROCK_OPTIONS lists every ore type",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveRockIds maps selected names to their ids (case-insensitive)",
+          "status": "pass"
+        },
+        {
+          "name": " > resolveRockIds ignores unknown names and empty input",
+          "status": "pass"
+        },
+        {
+          "name": " > bestPickaxe > 41 mining takes the rune pickaxe when the bank has one",
+          "status": "pass"
+        },
+        {
+          "name": " > bestPickaxe > 41 mining without a rune pick falls to adamant, then mithril, etc.",
+          "status": "pass"
+        },
+        {
+          "name": " > bestPickaxe > level gates: 40 mining skips rune even when banked",
+          "status": "pass"
+        },
+        {
+          "name": " > bestPickaxe > empty bank → null",
+          "status": "pass"
+        },
+        {
+          "name": " > bestPickaxe > tiers are best-first and level-descending",
+          "status": "pass"
+        },
+        {
+          "name": " > GAS_ROCK_IDS > gas variants never overlap the real ore rock ids",
+          "status": "pass"
+        },
+        {
+          "name": " > ROCK_TIER_ORDER > follows the mining ladder, best ore last",
+          "status": "pass"
+        },
+        {
+          "name": " > rockTierById > ranks runite above coal above iron",
+          "status": "pass"
+        },
+        {
+          "name": " > rockTierById > depleted rock variants share their ore tier",
+          "status": "pass"
+        },
+        {
+          "name": " > rockTierById > local ids outside ROCK_TYPES have no tier",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "data/spelldb-drift.test.ts",
+      "stage": "excluded",
+      "reason": "Uses node: filesystem imports unavailable in the offline Load isolate; excluded as an upstream test-harness dependency, not an API result."
+    },
+    {
+      "file": "event/webwalk/script-travel-corpus.test.ts",
+      "stage": "excluded",
+      "reason": "Imports an upstream tools/nav fixture that is not registered in the Load isolate; this exercises upstream navigation tooling, not the served compatibility API."
+    },
+    {
+      "file": "event/webwalk/scriptRouteCorpus.test.ts",
+      "stage": "excluded",
+      "reason": "Imports an upstream tools/nav fixture that is not registered in the Load isolate; this exercises upstream navigation tooling, not the served compatibility API."
+    },
+    {
+      "file": "event/webwalk/stairsParse.test.ts",
+      "stage": "excluded",
+      "reason": "Imports upstream tools/nav/stairsParse.js, which is not registered in the Load isolate; this exercises upstream navigation tooling, not the served compatibility API."
+    },
+    {
+      "file": "event/webwalk/walkOpening.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > isOpenableObstacle > matches a shut door/gate by name + an Open op",
+          "status": "pass"
+        },
+        {
+          "name": " > isOpenableObstacle > rejects an OPEN door (it offers Close, not Open)",
+          "status": "pass"
+        },
+        {
+          "name": " > isOpenableObstacle > rejects names that do not match any obstacle keyword",
+          "status": "pass"
+        },
+        {
+          "name": " > towardDest > keeps the door between us and the destination",
+          "status": "pass"
+        },
+        {
+          "name": " > towardDest > rejects a neighbouring house's door that leads away from the destination",
+          "status": "pass"
+        },
+        {
+          "name": " > towardDest > allows a slightly-backward exit door (escaping a shop we are shut inside)",
+          "status": "pass"
+        },
+        {
+          "name": " > towardDest > rejects a door far behind us",
+          "status": "pass"
+        },
+        {
+          "name": " > openOp > returns the first Open-style op, skipping others",
+          "status": "pass"
+        },
+        {
+          "name": " > openOp > null when no Open op is present",
+          "status": "pass"
+        },
+        {
+          "name": " > openedNeighbour > is the tile across the one face the open swung free",
+          "status": "pass"
+        },
+        {
+          "name": " > openedNeighbour > is null while every face reads as it did before the click",
+          "status": "pass"
+        },
+        {
+          "name": " > openedNeighbour > ignores a face that was already open",
+          "status": "pass"
+        },
+        {
+          "name": " > faceSteps > asks about west, north, east and south in that order",
+          "status": "pass"
+        },
+        {
+          "name": " > farSide > steps inward from the door tile",
+          "status": "pass"
+        },
+        {
+          "name": " > farSide > steps outward from the inside tile",
+          "status": "pass"
+        },
+        {
+          "name": " > farSide > picks the tile further away when standing beside the passage",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "input/input.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > Input > exposes every driver operation",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "paint/Paint.test.ts",
+      "stage": "load",
+      "reason": "load: Error: not impl: resolveDock"
+    },
+    {
+      "file": "paint/jive.test.ts",
+      "stage": "load",
+      "reason": "load: Error: not impl: resolveDock"
+    },
+    {
+      "file": "paint/levelProgress.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > xpAtLevel > matches the known experience table",
+          "status": "pass"
+        },
+        {
+          "name": " > xpAtLevel > 99 is half of 92, the usual sanity check",
+          "status": "pass"
+        },
+        {
+          "name": " > xpAtLevel > clamps out-of-range levels rather than returning undefined",
+          "status": "pass"
+        },
+        {
+          "name": " > levelProgress > reports the gap to the next level",
+          "status": "pass"
+        },
+        {
+          "name": " > levelProgress > halfway through a level reads as a half bar",
+          "status": "pass"
+        },
+        {
+          "name": " > levelProgress > 99 is complete and needs nothing",
+          "status": "pass"
+        },
+        {
+          "name": " > levelProgress > xp below the level floor does not go negative",
+          "status": "pass"
+        },
+        {
+          "name": " > etaHours > divides the gap by the rate",
+          "status": "pass"
+        },
+        {
+          "name": " > etaHours > is null when stalled or already there",
+          "status": "pass"
+        },
+        {
+          "name": " > levelRow > labels the bar with the short skill name and the level",
+          "status": "pass"
+        },
+        {
+          "name": " > levelRow > reads the rate, the gap and the eta off the gain and the minutes run",
+          "status": "pass"
+        },
+        {
+          "name": " > levelRow > shows n/a for the rate and the eta until half a minute has run or while nothing is gained",
+          "status": "pass"
+        },
+        {
+          "name": " > levelRow > a maxed skill reads as full with nothing to go",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "paint/paintLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > toCanvasPoint > maps CSS pixels to 765x503 logical space via the bounding rect",
+          "status": "fail",
+          "reason": "Error: not impl: toCanvasPoint"
+        },
+        {
+          "name": " > resolveDock > chatbox dock covers the chat area; topleft matches the legacy box",
+          "status": "fail",
+          "reason": "Error: not impl: resolveDock"
+        },
+        {
+          "name": " > resolveDock > explicit rect passes through",
+          "status": "fail",
+          "reason": "Error: not impl: resolveDock"
+        },
+        {
+          "name": " > hitRegion > innermost (widget) region wins over the panel backdrop",
+          "status": "fail",
+          "reason": "Error: not impl: hitRegion"
+        },
+        {
+          "name": " > PaintState > click inside a widget region queues for that widget; next-frame consume",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > PaintState > click on the panel backdrop swallows but queues nothing",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > PaintState > click outside every region is not swallowed",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > PaintState > hover tracks the pointer and only swallows moves inside regions",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > PaintState > widget kv store persists across frames (tabs, collapse)",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > PaintState > reset clears regions so a stopped bot swallows nothing",
+          "status": "fail",
+          "reason": "Error: not impl: PaintState"
+        },
+        {
+          "name": " > paintCols > counts whole monospace characters that fit inside the padding",
+          "status": "fail",
+          "reason": "TypeError: paintCols is not a function"
+        },
+        {
+          "name": " > paintCols > a panel narrower than its padding fits nothing",
+          "status": "fail",
+          "reason": "TypeError: paintCols is not a function"
+        },
+        {
+          "name": " > wrapText > packs whole words up to the column count",
+          "status": "pass"
+        },
+        {
+          "name": " > wrapText > indents continuation lines so a wrapped reason reads as one entry",
+          "status": "pass"
+        },
+        {
+          "name": " > wrapText > hard-splits a word longer than the line",
+          "status": "pass"
+        },
+        {
+          "name": " > wrapText > collapses runs of whitespace and drops empty text",
+          "status": "pass"
+        },
+        {
+          "name": " > clipText > text that fits is untouched",
+          "status": "fail",
+          "reason": "Error: not impl: clipText"
+        },
+        {
+          "name": " > clipText > overlong text ends in an ellipsis inside the column count",
+          "status": "fail",
+          "reason": "Error: not impl: clipText"
+        },
+        {
+          "name": " > clipText > leading spaces survive, so padded list columns stay aligned",
+          "status": "fail",
+          "reason": "Error: not impl: clipText"
+        },
+        {
+          "name": " > clipText > no columns means nothing to draw",
+          "status": "fail",
+          "reason": "Error: not impl: clipText"
+        },
+        {
+          "name": " > cellWidths > splits the total evenly when every cell weighs the same",
+          "status": "fail",
+          "reason": "TypeError: cellWidths is not a function"
+        },
+        {
+          "name": " > cellWidths > a heavier cell takes proportionally more room",
+          "status": "fail",
+          "reason": "TypeError: cellWidths is not a function"
+        },
+        {
+          "name": " > cellWidths > no cells take no room",
+          "status": "fail",
+          "reason": "TypeError: cellWidths is not a function"
+        },
+        {
+          "name": " > gridRows > a queue laid two across needs half as many rows, rounded up",
+          "status": "fail",
+          "reason": "TypeError: gridRows is not a function"
+        },
+        {
+          "name": " > gridRows > one column is a plain list",
+          "status": "fail",
+          "reason": "TypeError: gridRows is not a function"
+        },
+        {
+          "name": " > gridRows > an empty grid has no rows",
+          "status": "fail",
+          "reason": "TypeError: gridRows is not a function"
+        },
+        {
+          "name": " > listScroll > a wheel notch moves several rows and hands the list to the user",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > scrolling stops at both ends",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > a list shorter than its window never scrolls",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > follows the focus row while the user has not scrolled",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > a focus row already on screen leaves the offset alone",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > once scrolled, the list stops following",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > listScroll > a new focus row re-attaches the list the user scrolled away from",
+          "status": "fail",
+          "reason": "TypeError: listScroll is not a function"
+        },
+        {
+          "name": " > stripSegments > tabs sit left, brand right, and status takes what is left",
+          "status": "fail",
+          "reason": "TypeError: stripSegments is not a function"
+        },
+        {
+          "name": " > stripSegments > a status slot that would go negative clamps to zero width",
+          "status": "fail",
+          "reason": "TypeError: stripSegments is not a function"
+        },
+        {
+          "name": " > stripSegments > no tabs leaves the status starting at the pad",
+          "status": "fail",
+          "reason": "TypeError: stripSegments is not a function"
+        },
+        {
+          "name": " > railRows > splits the body height evenly",
+          "status": "fail",
+          "reason": "TypeError: railRows is not a function"
+        },
+        {
+          "name": " > railRows > a body too short to give each entry a row still yields one rect each",
+          "status": "fail",
+          "reason": "TypeError: railRows is not a function"
+        },
+        {
+          "name": " > railRows > zero entries is empty, not a divide by zero",
+          "status": "fail",
+          "reason": "TypeError: railRows is not a function"
+        },
+        {
+          "name": " > statColumns > columns share the width right of the rail",
+          "status": "fail",
+          "reason": "TypeError: statColumns is not a function"
+        },
+        {
+          "name": " > statColumns > one column takes the whole body",
+          "status": "fail",
+          "reason": "TypeError: statColumns is not a function"
+        },
+        {
+          "name": " > statColumns > a rail wider than the panel yields no columns rather than negatives",
+          "status": "fail",
+          "reason": "TypeError: statColumns is not a function"
+        },
+        {
+          "name": " > paintSkillShort for level bars > shortens every combat and skilling name the jive scripts train to fit a bar label",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/ArdyFighter/ArdyFighterLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > matchesAny > case-insensitive name-contains",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesAny > null names and empty pattern lists never match",
+          "status": "pass"
+        },
+        {
+          "name": " > matchesAny > blank patterns are ignored rather than matching everything",
+          "status": "pass"
+        },
+        {
+          "name": " > countMatching > sums quantities across stacks and slots",
+          "status": "pass"
+        },
+        {
+          "name": " > countMatching > empty pack counts zero",
+          "status": "pass"
+        },
+        {
+          "name": " > slotsMatching > a stack occupies one slot regardless of count",
+          "status": "pass"
+        },
+        {
+          "name": " > slotsMatching > empty pack occupies no slots",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldBank > true at the slot threshold, false below",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldBank > a full pack banks with any loot but never with none",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldRestock > strictly below the floor",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldEat > eats when a full heal fits or HP is at the safety floor",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldPanic > only with zero food below the panic gate",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/ArdyFighter/CakeStallLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > classifySteal (one steal click resolved) > a gained cake is success even if ambient combat coincides",
+          "status": "pass"
+        },
+        {
+          "name": " > classifySteal (one steal click resolved) > combat without a cake = a guard caught the theft",
+          "status": "pass"
+        },
+        {
+          "name": " > classifySteal (one steal click resolved) > the engine lockout message wins over a bare refusal",
+          "status": "pass"
+        },
+        {
+          "name": " > classifySteal (one steal click resolved) > attempt seen but nothing landed = Baker refusal (his npc_say is overhead-only)",
+          "status": "pass"
+        },
+        {
+          "name": " > classifySteal (one steal click resolved) > no signals at all = the click never registered",
+          "status": "pass"
+        },
+        {
+          "name": " > shouldReset (refusal streak -> swap to the other stand) > swaps at the threshold, not before",
+          "status": "pass"
+        },
+        {
+          "name": " > constants > both stands are beside the stall (a click from either walks at most a tile)",
+          "status": "pass"
+        },
+        {
+          "name": " > constants > cake items cover the multi-bite stages by contains-match",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/ArdyFighter/ThievingBotLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > Thiever food banking > banking is opt-in",
+          "status": "pass"
+        },
+        {
+          "name": " > Thiever food banking > food matching retains the existing case-insensitive contains behavior",
+          "status": "pass"
+        },
+        {
+          "name": " > Thiever food banking > auto banking triggers at the food floor or a full pack with bankable items",
+          "status": "pass"
+        },
+        {
+          "name": " > Thiever food banking > low health without food blocks another pickpocket attempt",
+          "status": "pass"
+        },
+        {
+          "name": " > Thiever food banking > suicide thieving keeps stealing at low HP with no food",
+          "status": "pass"
+        },
+        {
+          "name": " > bulk withdraw chunk selection > need ladder: 1 / 5 / 10 / X",
+          "status": "pass"
+        },
+        {
+          "name": " > pickpocket stun > wait the full 9-tick movement lock (retrying at 8 only turns the character)",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/ArdyFighter/ardythiever-logic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > targetSpot > resolves a spot for every Ardougne dropdown target",
+          "status": "pass"
+        },
+        {
+          "name": " > targetSpot > every spawn PLUS its engine roam cap sits within the target leash (Chebyshev)",
+          "status": "pass"
+        },
+        {
+          "name": " > targetSpot > unknown target falls back to the Guard spot",
+          "status": "pass"
+        },
+        {
+          "name": " > requiredThieving > per-target pickpocket requirements from the content table",
+          "status": "pass"
+        },
+        {
+          "name": " > requiredThieving > unknown target does not gate (level 1)",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > accepts an in-combat adjacent market hostile with an Attack op",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > rejects a guard already fighting ANOTHER player (not us)",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > every fight-mode hostile is an Ardougne dropdown target and vice versa",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > rejects a bystander not in combat",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > rejects a hostile beyond the engage radius",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > accepts a hostile at the exact engage radius (inclusive boundary)",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > rejects non-hostile NPCs (the Baker) and null names",
+          "status": "pass"
+        },
+        {
+          "name": " > isHostileAttacker > rejects a hostile with no Attack op (mid-death / op-less variant)",
+          "status": "pass"
+        },
+        {
+          "name": " > chooseTarget (reachability-aware pickpocket selection) > picks the nearest REACHABLE target, skipping closer unreachable ones",
+          "status": "pass"
+        },
+        {
+          "name": " > chooseTarget (reachability-aware pickpocket selection) > nearest reachable wins when the closest IS reachable",
+          "status": "pass"
+        },
+        {
+          "name": " > chooseTarget (reachability-aware pickpocket selection) > none reachable → no target, surfaces the nearest as blocked for a bounded clear",
+          "status": "pass"
+        },
+        {
+          "name": " > chooseTarget (reachability-aware pickpocket selection) > empty candidate list → nothing to do",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/GatheringBot/FiremakingLogic.test.ts",
+      "stage": "ran",
+      "cases": [
+        {
+          "name": " > FiremakingLogic > parseBurnMode",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > logsForTree maps scenery names",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > firemakingLevelForLogs",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > burnLaneWant caps at 27",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > runWest stops on occupied / cap",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > findBurnLane prefers longer west runs",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > findBurnLane prefers a full-load west lane over a longer partial elsewhere",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > findBurnLane falls back to a single free tile when no west lane exists",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > nearestFireSpot picks closest bank",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > shouldBurnFullLoad gates",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > localFirePlot boxes origin",
+          "status": "pass"
+        },
+        {
+          "name": " > FiremakingLogic > expandLocalFirePlot grows until max",
+          "status": "pass"
+        },
+        {
+          "name": " > NoLightTiles > remembers a refused tile by coordinate",
+          "status": "pass"
+        },
+        {
+          "name": " > NoLightTiles > folds refused tiles into the occupied set",
+          "status": "pass"
+        },
+        {
+          "name": " > NoLightTiles > keeps findBurnLane off a tile the game already refused",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "scripts/JiveDragons/scheduler.test.ts",
+      "stage": "excluded",
+      "reason": "The copied fixture still imports Jive catalog script modules (scripts/JiveDragons/*) that the shim-only Load isolate does not register; this scheduler test is excluded as a harness-coverage gap."
+    }
+  ]
+}

@@ -8,7 +8,8 @@ const COM_MODE_VARP = 43;
 const RUN_VARP = 173;
 export const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
-export const PLAYER_FACE_BASE = 32768;
+export const PLAYER_FACE_BASE =
+    globalThis.rustyscript.functions.__rs2b0t_player_face_base();
 
 export function retaliateOnFromVarp(value) {
     return globalThis.rustyscript.functions.__rs2b0t_retaliate_on_from_varp(value);

@@ -1,5 +1,5 @@
 // Posted tick only. No attach, no packet listener.
-import { snap, proxy } from '../shim/_kernel.js';
+import { snap, proxy, notImpl } from '../shim/_kernel.js';
 
 const tickListeners = new Set();
 
@@ -33,3 +33,9 @@ export const BotHost = proxy('BotHost', {
     },
     addTickListener,
 });
+export class BotHostImpl {
+    constructor() {
+        throw notImpl('BotHostImpl');
+    }
+}
+
