@@ -22,14 +22,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   before Start, instead of showing an uneditable `unsupported type` row or
   starting and failing when no loadouts exist.
 - Opening a shop (rs2b0t `Shop.open`, used for JiveKQ's Shantay pass and
-  by other shop scripts) now sends one Trade click and waits for the shop
-  as long as the walk to the shopkeeper needs, plus a margin, before it
-  clicks again. Before, it clicked again after 3 seconds, and on a longer
-  walk that second click could close the shop as it opened, so the
-  purchase failed. When the bot can't measure the walk, it waits longer
-  (about a minute) before clicking again. A shopkeeper behind a closed door
-  is walked to first. A shop that doesn't open still gets up to three Trade
-  clicks, and "I can't reach that!" ends a click at once. Quester shop
+  by other shop scripts) now sends one Trade click and waits for the
+  measured walk to the shopkeeper plus a margin before clicking again. Each
+  wait is capped at about 70 seconds. Before, it clicked again after 3
+  seconds, and on a longer walk that second click could close the shop as it
+  opened, so the purchase failed. When the bot can't measure the walk, it
+  uses the full wait. A shopkeeper behind a closed door is walked to first.
+  A shop that doesn't open still gets up to three Trade clicks, and "I can't reach that!" ends a click at once. Quester shop
   purchases follow the same rule, and their buy steps no longer give up
   after 10 seconds.
 - Known limit: being attacked while a shop or bank window is open closes
