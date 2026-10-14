@@ -51,7 +51,7 @@ use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use nav::WorldState;
-use vault::{Profile, ProfileSettings, Secret, Vault};
+use vault::{Profile, ProfileSettings, RandomEventPolicy, Secret, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -4081,6 +4081,19 @@ impl Session {
         let result = self
             .core
             .set_random_settings(name, random_events, lamp_skill, lamp_auto)
+            .map(|_| ());
+        self.apply_result(result)
+    }
+
+    pub fn set_random_event_policy(
+        &mut self,
+        name: &str,
+        event: &str,
+        policy: RandomEventPolicy,
+    ) -> bool {
+        let result = self
+            .core
+            .set_random_event_policy(name, event, policy)
             .map(|_| ());
         self.apply_result(result)
     }

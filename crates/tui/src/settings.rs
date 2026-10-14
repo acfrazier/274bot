@@ -1,12 +1,11 @@
 //! Settings popup (spec `2026-09-01-headless-tui-design.md`): an overlay
 //! (`o` on the Overview, or the palette) with the selected profile's
-//! `random_events`, `lamp_skill`, and `lamp_auto`, plus durable global walk
-//! grants (teleports / wilderness / danger zones), manual WalkTo bank fetch,
-//! and the remembered terrain-bake choice shared with the panel. The random
-//! toggle flips
-//! [`ProfileSettings`] in place (the operator vault; `--live` still
-//! ephemeral, no persist). Not crowding the main view — a small centered
-//! box drawn after the panes.
+//! random-event toggle, per-event Guardian policy, and lamp reward settings,
+//! plus durable global walk grants (teleports / wilderness / danger zones),
+//! manual WalkTo bank fetch, and the remembered terrain-bake choice shared
+//! with the panel. Profile settings are edited in place (the operator vault;
+//! `--live` still ephemeral, no persist). Not crowding the main view — a small
+//! centered box drawn after the panes.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
@@ -25,6 +24,8 @@ use vault::ProfileSettings;
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
+const EVENT_POLICY_UNAVAILABLE: &str =
+    "Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.";
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -42,16 +43,19 @@ pub const LAMP_SKILLS: [&str; 7] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsState {
     pub open: bool,
-    /// 0=random events, 1=lamp skill, 2=lamp auto, 3=teleports,
-    /// 4=wilderness, 5=bank fetch, 6=danger zones, 7=manual-walk pause,
-    /// 8=map bake, 9=memory, 10=folder gate, 11=folder, 12=reload.
+    /// 0=random events, 1=lamp skill, 2=lamp auto, 3=event, 4=event policy,
+    /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
+    /// 9=manual-walk pause, 10=map bake, 11=memory, 12=folder gate,
+    /// 13=folder, 14=reload.
     pub row: usize,
+    /// Selected per-event policy row.
+    pub random_event_index: usize,
     /// Path folder text input is active.
     pub folder_editing: bool,
     /// Text changed during this folder edit and needs persistence when closed.
     pub folder_changed: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 13],
+    pub row_areas: [Rect; 15],
 }
 
 impl SettingsState {
@@ -67,6 +71,10 @@ impl SettingsState {
 pub enum SettingsKey {
     /// A profile setting value changed — persist [`ProfileSettings`] back.
     Changed,
+    /// An unavailable policy was reset to Flee and the reason should be shown.
+    ChangedWithNotice(&'static str),
+    /// The selected setting is unavailable; show the refusal reason.
+    Refused(&'static str),
     /// The remembered map-bake choice changed; persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
@@ -197,11 +205,11 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(12);
+                self.state.row = (self.state.row + 1).min(14);
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
-            KeyCode::Char(' ') if self.state.row == 11 => SettingsKey::Consumed,
+            KeyCode::Char(' ') if self.state.row == 14 => SettingsKey::Consumed,
             KeyCode::Char(' ') => self.activate(),
             KeyCode::Esc => {
                 self.state.open = false;
@@ -252,42 +260,47 @@ impl<'a> SettingsPane<'a> {
     /// The focused row's toggle/cycle or command.
     fn activate(&mut self) -> SettingsKey {
         match self.state.row {
-            0..=2 | 9 => {
+            0..=2 | 11 => {
                 self.activate_value();
                 SettingsKey::Changed
             }
             3 => {
                 self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::AllowTeleports)
+                SettingsKey::Consumed
             }
-            4 => {
-                self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::AllowWilderness)
-            }
+            4 => self.activate_event_policy(),
             5 => {
                 self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::AllowBankFetch)
+                SettingsKey::WalkGlobal(NavPreference::AllowTeleports)
             }
             6 => {
                 self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::SurvivableRouting)
+                SettingsKey::WalkGlobal(NavPreference::AllowWilderness)
             }
-            7 if self.pause_script_on_manual_walk_abort.is_some() => {
+            7 => {
                 self.activate_value();
-                SettingsKey::PauseScriptOnManualWalkAbort
+                SettingsKey::WalkGlobal(NavPreference::AllowBankFetch)
             }
             8 => {
                 self.activate_value();
-                SettingsKey::MapBake
+                SettingsKey::WalkGlobal(NavPreference::SurvivableRouting)
+            }
+            9 if self.pause_script_on_manual_walk_abort.is_some() => {
+                self.activate_value();
+                SettingsKey::PauseScriptOnManualWalkAbort
             }
             10 => {
+                self.activate_value();
+                SettingsKey::MapBake
+            }
+            12 => {
                 let Some(paths) = self.quester_paths.as_deref_mut() else {
                     return SettingsKey::Consumed;
                 };
                 paths.enabled = !paths.enabled;
                 SettingsKey::QuesterPathsChanged
             }
-            11 => {
+            13 => {
                 if self.quester_paths.is_none() {
                     return SettingsKey::Consumed;
                 }
@@ -295,9 +308,19 @@ impl<'a> SettingsPane<'a> {
                 self.state.folder_changed = false;
                 SettingsKey::Consumed
             }
-            12 => SettingsKey::ReloadPaths,
+            14 => SettingsKey::ReloadPaths,
             _ => SettingsKey::Consumed,
         }
+    }
+    fn activate_event_policy(&mut self) -> SettingsKey {
+        let (event, _) = vault::RANDOM_EVENT_POLICY_EVENTS
+            [self.state.random_event_index % vault::RANDOM_EVENT_POLICY_EVENTS.len()];
+        if self.settings.random_event_policy(event) == vault::RandomEventPolicy::Flee {
+            return SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE);
+        }
+        self.settings
+            .set_random_event_policy(event, vault::RandomEventPolicy::Flee);
+        SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
     }
 
     fn activate_value(&mut self) {
@@ -312,20 +335,24 @@ impl<'a> SettingsPane<'a> {
                 self.settings.lamp_skill = LAMP_SKILLS[next].into();
             }
             2 => self.settings.lamp_auto = !self.settings.lamp_auto,
-            3 => self.nav.allow_teleports = !self.nav.allow_teleports,
-            4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
-            5 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
-            6 => {
+            3 => {
+                self.state.random_event_index =
+                    (self.state.random_event_index + 1) % vault::RANDOM_EVENT_POLICY_EVENTS.len();
+            }
+            5 => self.nav.allow_teleports = !self.nav.allow_teleports,
+            6 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
+            7 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
+            8 => {
                 let next = self.nav.danger_level().next();
                 self.nav.set_danger_level(next);
             }
-            7 => {
+            9 => {
                 if let Some(pause) = self.pause_script_on_manual_walk_abort.as_deref_mut() {
                     *pause = !*pause;
                 }
             }
-            8 => *self.map_bake = self.map_bake.toggled(),
-            9 => self.settings.lowmem = !self.settings.lowmem,
+            10 => *self.map_bake = self.map_bake.toggled(),
+            11 => self.settings.lowmem = !self.settings.lowmem,
             _ => {}
         }
     }
@@ -350,11 +377,10 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
-        let selected_row = self.state.row.min(12);
-        let danger_help = (selected_row == 6
+        let selected_row = self.state.row.min(14);
+        let danger_help = (selected_row == 8
             && danger_level == frontend_core::DangerLevel::WhenSurvivable)
             .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
-        let marker = |row| if row == self.state.row { "> " } else { "  " };
         let path_folder = self
             .quester_paths
             .as_deref()
@@ -374,6 +400,15 @@ impl Widget for SettingsPane<'_> {
         } else {
             " [Enter edit]"
         };
+        let event_index = self.state.random_event_index % vault::RANDOM_EVENT_POLICY_EVENTS.len();
+        let (event_key, event_label) = vault::RANDOM_EVENT_POLICY_EVENTS[event_index];
+        let event_policy = match self.settings.random_event_policy(event_key) {
+            vault::RandomEventPolicy::Flee => "Flee",
+            vault::RandomEventPolicy::Fight => "Fight (not available yet)",
+            vault::RandomEventPolicy::Ignore => "Ignore (not available yet)",
+        };
+        let marker = |row| if selected_row == row { "> " } else { "  " };
+
         let rows = [
             format!(
                 "{}random events: {}",
@@ -382,21 +417,23 @@ impl Widget for SettingsPane<'_> {
             ),
             format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill),
             format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto),
+            format!("{}event: {}", marker(3), event_label),
+            format!("{}event policy: {event_policy}", marker(4)),
             format!(
                 "{}{}: {}",
-                marker(3),
+                marker(5),
                 GLOBAL_PERMISSION_LABELS[0].1,
                 self.nav.allow_teleports
             ),
             format!(
                 "{}{}: {}",
-                marker(4),
+                marker(6),
                 GLOBAL_PERMISSION_LABELS[1].1,
                 self.nav.allow_wilderness
             ),
             format!(
                 "{}{}: {} · {}",
-                marker(5),
+                marker(7),
                 GLOBAL_PERMISSION_LABELS[2].1,
                 self.nav.allow_bank_fetch,
                 BANK_FETCH_PERMISSION_SCOPE
@@ -404,7 +441,7 @@ impl Widget for SettingsPane<'_> {
             if danger_level == frontend_core::DangerLevel::Always {
                 format!(
                     "{}{}: {} — {}",
-                    marker(6),
+                    marker(8),
                     GLOBAL_PERMISSION_LABELS[3].1,
                     frontend_core::walk_permissions::danger_routing_label(danger_level),
                     GLOBAL_DANGER_WARNING
@@ -412,38 +449,43 @@ impl Widget for SettingsPane<'_> {
             } else {
                 format!(
                     "{}{}: {}",
-                    marker(6),
+                    marker(8),
                     GLOBAL_PERMISSION_LABELS[3].1,
                     frontend_core::walk_permissions::danger_routing_label(danger_level)
                 )
             },
             format!(
                 "{}Pause script on manual movement: {}",
-                marker(7),
+                marker(9),
                 self.pause_script_on_manual_walk_abort
                     .as_deref()
                     .copied()
                     .unwrap_or(true)
             ),
-            format!("{}map bake: {}", marker(8), self.map_bake.as_str()),
+            format!("{}map bake: {}", marker(10), self.map_bake.as_str()),
             format!(
                 "{}memory: {}",
-                marker(9),
+                marker(11),
                 MemoryNotice::status_text(self.settings.lowmem, self.memory)
             ),
-            format!("{}{}: {}", marker(10), LOAD_PATHS_LABEL, paths_enabled),
-            format!("{}Paths folder: {}{}", marker(11), path_folder, folder_hint),
-            format!("{}{}", marker(12), reload),
+            format!("{}{}: {}", marker(12), LOAD_PATHS_LABEL, paths_enabled),
+            format!("{}Paths folder: {}{}", marker(13), path_folder, folder_hint),
+            format!("{}{}", marker(14), reload),
         ];
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
         // height, but the row keeps its own index, hit target, and scroll slot.
-        let headers: [Option<(&str, Style)>; 13] = [
+        let headers: [Option<(&str, Style)>; 15] = [
             None,
             None,
             None,
+            None,
+            Some((
+                "Fight/Ignore are unavailable; the Guardian treats saved choices as Flee.",
+                note_style,
+            )),
             Some((ROUTING_SCOPE_NOTE, note_style)),
             None,
             None,
@@ -460,7 +502,7 @@ impl Widget for SettingsPane<'_> {
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
-        let block_heights: [u16; 13] =
+        let block_heights: [u16; 15] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
@@ -549,7 +591,7 @@ impl Widget for SettingsPane<'_> {
             }
             let bottom = (y + row_heights[index]).min(rows_bottom);
             self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
-            let row_style = if index == 6 && danger_level == frontend_core::DangerLevel::Always {
+            let row_style = if index == 8 && danger_level == frontend_core::DangerLevel::Always {
                 Style::default().fg(Color::Red)
             } else {
                 Style::default()
@@ -718,7 +760,7 @@ mod tests {
 
     use host_play::WalkGlobals;
 
-    use super::{SettingsKey, SettingsPane, SettingsState, LAMP_SKILLS};
+    use super::{SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE, LAMP_SKILLS};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -768,6 +810,49 @@ mod tests {
     }
 
     #[test]
+    fn popup_refuses_unavailable_fight_and_ignore_policies_with_reason() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 4,
+            ..Default::default()
+        };
+
+        for policy in [
+            vault::RandomEventPolicy::Fight,
+            vault::RandomEventPolicy::Ignore,
+        ] {
+            settings.set_random_event_policy("river troll", policy);
+            let changed = {
+                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                pane.on_key(key(KeyCode::Enter))
+            };
+            assert_eq!(
+                changed,
+                SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
+            );
+            assert_eq!(
+                settings.random_event_policy("river troll"),
+                vault::RandomEventPolicy::Flee,
+                "the operator can restore the supported policy"
+            );
+
+            let refused = {
+                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                pane.on_key(key(KeyCode::Enter))
+            };
+            assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
+            assert_eq!(
+                settings.random_event_policy("river troll"),
+                vault::RandomEventPolicy::Flee,
+                "selecting unavailable Fight or Ignore is refused"
+            );
+        }
+    }
+
+    #[test]
     fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
         let mut settings = ProfileSettings::default();
         let mut nav = WalkGlobals::default();
@@ -801,7 +886,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 5,
+            row: 7,
             ..Default::default()
         };
         let key = {
@@ -818,10 +903,10 @@ mod tests {
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         for (row, preference) in [
-            (3, NavPreference::AllowTeleports),
-            (4, NavPreference::AllowWilderness),
-            (5, NavPreference::AllowBankFetch),
-            (6, NavPreference::SurvivableRouting),
+            (5, NavPreference::AllowTeleports),
+            (6, NavPreference::AllowWilderness),
+            (7, NavPreference::AllowBankFetch),
+            (8, NavPreference::SurvivableRouting),
         ] {
             let mut state = SettingsState {
                 open: true,
@@ -926,7 +1011,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 6,
+            row: 8,
             ..Default::default()
         };
         let mut acknowledged = false;
@@ -1020,6 +1105,13 @@ mod tests {
             14,
         );
         assert!(text.contains("random events"), "row paints: {text:?}");
+
+        state.row = 7;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            60,
+            14,
+        );
         assert!(text.contains("bank fetch"), "nav row paints: {text:?}");
         state.open = false;
         let text = render(
@@ -1048,10 +1140,10 @@ mod tests {
             {
                 let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
                     .pause_script_on_manual_walk_abort(&mut pause);
-                for _ in 0..7 {
+                for _ in 0..9 {
                     assert_eq!(pane.on_key(key(KeyCode::Down)), SettingsKey::Consumed);
                 }
-                assert_eq!(pane.state.row, 7);
+                assert_eq!(pane.state.row, 9);
                 assert_eq!(
                     pane.on_key(key(KeyCode::Enter)),
                     SettingsKey::PauseScriptOnManualWalkAbort
@@ -1077,7 +1169,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 9,
+            row: 11,
             ..Default::default()
         };
         let outcome = {
@@ -1134,7 +1226,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 9,
+            row: 11,
             ..Default::default()
         };
         let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
@@ -1160,7 +1252,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 7,
+            row: 9,
             ..Default::default()
         };
         let (moved, flipped) = {
@@ -1169,7 +1261,7 @@ mod tests {
             (moved, pane.on_key(key(KeyCode::Enter)))
         };
         assert_eq!(moved, SettingsKey::Consumed);
-        assert_eq!(state.row, 8, "the map-bake row follows the pause toggle");
+        assert_eq!(state.row, 10, "the map-bake row follows the pause toggle");
         assert_eq!(flipped, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Always);
         assert!(!nav.allow_bank_fetch, "the bank row is untouched");

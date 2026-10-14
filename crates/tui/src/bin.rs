@@ -2173,6 +2173,21 @@ impl TuiSession {
         let Some(name) = app.settings_profile.clone() else {
             return;
         };
+        let changed_policies = self
+            .core
+            .vault()
+            .and_then(|vault| vault.get(&name))
+            .map(|profile| {
+                vault::RANDOM_EVENT_POLICY_EVENTS
+                    .iter()
+                    .filter_map(|(event, _)| {
+                        let policy = app.settings.random_event_policy(event);
+                        (profile.settings.random_event_policy(event) != policy)
+                            .then_some((*event, policy))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         // Field edit, not a whole-settings replacement: the popup owns the
         // guardian fields and the memory row, and each arm change lands
         // through its own write (the form tracks the latest).
@@ -2207,6 +2222,18 @@ impl TuiSession {
                 let reason = format!("settings: {e}");
                 app.settings_save.refused(reason.clone());
                 app.error = Some(reason);
+            }
+        }
+        for (event, policy) in changed_policies {
+            match self.core.set_random_event_policy(&name, event, policy) {
+                Ok(op) => app
+                    .settings_save
+                    .submitted(&mut self.core, op, Some(&name), &name),
+                Err(e) => {
+                    let reason = format!("settings: {e}");
+                    app.settings_save.refused(reason.clone());
+                    app.error = Some(reason);
+                }
             }
         }
     }

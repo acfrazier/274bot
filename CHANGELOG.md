@@ -14,6 +14,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   "dialogue interrupted by combat" and can be retried, and script
   dialogues (`driveDialog` / `talkThrough`) report failure the same way.
 
+### Random-event guardian
+
+- When a random event attacks (a River troll, a Swarm, an angry Strange plant
+  and similar), the bot now keeps running away between the attacker's hits,
+  including hits that miss. Before, it could walk straight back to its
+  fishing or gathering spot between hits, next to the attacker. It runs far
+  enough that the attacker gives up chasing, which now also outruns a Swarm,
+  and returns only once the attacker has gone. If it can't get away, it
+  stops trying after about 15 seconds and hands control back to the script.
+- Panel and TUI have a new per-event Policies control for random events.
+  Flee is the default and the only option that works yet.
+
 ### Scripts
 
 - Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
@@ -31,6 +43,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - `purgePackAtBank`, `withdrawCoins`, `bankPace` and `bankPaceTicks` aren't
   available yet. A script that calls one of them stops with a `not impl`
   message naming it.
+- Fight and Ignore in the random-event Policies control can be chosen but
+  aren't available yet; a saved Fight or Ignore is treated as Flee.
+- Running from an angry Strange plant doesn't cure its poison.
 
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 
