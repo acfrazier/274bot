@@ -3,6 +3,24 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+### Combat
+
+- Hostile random-event attackers keep Flee active across misses and the ticks
+  between hits, so bots no longer walk back into an attacker while it still
+  targets the player. Flee distance follows each event NPC's content chase
+  range; it releases only after the NPC despawns, unlocks, or stays beyond
+  that range for more than one tick. The bot returns to its pre-flee tile
+  only when the NPC despawns or unlocks. Flee is the default per-event policy;
+  Fight and Ignore are marked unavailable, and the Guardian yields those
+  choices to scripts without starting combat.
+
+### Not in this release
+
+- Fleeing from an angry Strange plant does not stop its poison. Antipoison
+  handling is separate work.
+
 ## [0.2.2] — 2026-10-14 — Beta 1 patch
 
 ### Scripts

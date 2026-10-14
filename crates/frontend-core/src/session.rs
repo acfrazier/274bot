@@ -19,7 +19,7 @@ use api::host_log;
 use api::hostlog::{Category, Level, Source};
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
-use vault::{Profile, ProfileSettings, Vault, VaultChange};
+use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
 
 use crate::capacity::{CapacityNotice, RenderPolicyLabel};
 use crate::fleet::Fleet;
@@ -144,6 +144,10 @@ pub enum ArmMirror {
         lamp_skill: String,
         lamp_auto: bool,
     },
+    RandomEventPolicy {
+        event: String,
+        policy: RandomEventPolicy,
+    },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
     /// write resets the arm to the restored durable value. No client state
@@ -182,6 +186,10 @@ impl ArmMirror {
             | (Self::Guardian { .. }, Self::Guardian { .. })
             | (Self::Remember(_), Self::Remember(_))
             | (Self::Memory(_), Self::Memory(_)) => true,
+            (
+                Self::RandomEventPolicy { event: later, .. },
+                Self::RandomEventPolicy { event, .. },
+            ) => later == event,
             (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
                 later == card
             }
@@ -663,6 +671,7 @@ impl<Io> OperatorSession<Io> {
         arm.lamp_auto
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+        *arm.random_event_policies.lock().unwrap() = profile.settings.random_event_policies.clone();
         if self.fleet.latched(name) {
             arm.hold_logged_out();
         }
@@ -2090,6 +2099,30 @@ impl<Io> OperatorSession<Io> {
         self.save_profile(profile, mirror, "random")
     }
 
+    /// Persist one hostile random's policy and mirror it to a running slot
+    /// once the vault write is durable.
+    pub fn set_random_event_policy(
+        &mut self,
+        name: &str,
+        event: &str,
+        policy: RandomEventPolicy,
+    ) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "random: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("random: no profile {name}"))?;
+        let event = event.trim().to_ascii_lowercase();
+        profile.settings.set_random_event_policy(&event, policy);
+        self.save_profile(
+            profile,
+            ArmMirror::RandomEventPolicy { event, policy },
+            "random",
+        )
+    }
+
     /// Whether `name` has no durable row yet: its first save (new or
     /// renamed profile) is still being written. Such a profile cannot be
     /// selected, loaded, removed or deleted until the write settles.
@@ -2363,6 +2396,14 @@ impl<Io> OperatorSession<Io> {
                     arm.random_events.store(random_events, Ordering::Relaxed);
                     arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
                     *arm.lamp_skill.lock().unwrap() = lamp_skill;
+                }
+            }
+            ArmMirror::RandomEventPolicy { event, policy } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.random_event_policies
+                        .lock()
+                        .unwrap()
+                        .insert(event, policy);
                 }
             }
             ArmMirror::Memory(lowmem) => {

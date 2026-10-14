@@ -5596,10 +5596,9 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
     );
 }
 
-/// random: the guardian's per-profile toggles + lamp reward settings
-/// (guardian spec `ProfileSettings`). Checkboxes and the skill combo write
-/// straight through the vault upsert (`Session::set_random_settings`); the
-/// lamp auto rubs through the guardian when enabled (`lamp_auto`).
+/// Random-event toggles, per-NPC combat policies and lamp reward settings.
+/// Profile choices use the same vault save path as the existing random-event
+/// and lamp controls.
 fn slot_random_section(ui: &Ui, session: &mut Session) {
     let mut events = session.cred_settings.random_events;
     if ui.checkbox("random events", &mut events) {
@@ -5614,6 +5613,27 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
             );
         }
         session.note_chooser_edited();
+    }
+    ui.same_line();
+    let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
+    ui.set_item_tooltip(
+        "Per-event random response; only Flee is available, while Fight and Ignore are not yet available.",
+    );
+    if policies_open {
+        ui.text_wrapped("Fight and Ignore yield the event to scripts.");
+        for (event, label) in vault::RANDOM_EVENT_POLICY_EVENTS {
+            ui.text_disabled(label);
+            ui.same_line();
+            let mut policy = session.cred_settings.random_event_policy(event);
+            if random_event_policy_combo(ui, event, &mut policy) {
+                session.cred_settings.set_random_event_policy(event, policy);
+                if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+                    let name = name.to_string();
+                    session.set_random_event_policy(&name, event, policy);
+                }
+                session.note_chooser_edited();
+            }
+        }
     }
     ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
     let mut auto = session.cred_settings.lamp_auto;
@@ -5664,6 +5684,38 @@ fn lamp_skill_combo(ui: &Ui, skill: &mut String) -> bool {
             let _row = ui.push_style_color(StyleColor::Text, if selected { ACCENT } else { TEXT });
             if ui.selectable_config(preset).selected(selected).build() {
                 *skill = preset.to_string();
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    changed
+}
+
+fn random_event_policy_combo(ui: &Ui, event: &str, policy: &mut vault::RandomEventPolicy) -> bool {
+    use vault::RandomEventPolicy::{Fight, Flee, Ignore};
+
+    let preview = match *policy {
+        Flee => "Flee",
+        Fight => "Fight (not available yet)",
+        Ignore => "Ignore (not available yet)",
+    };
+    let id = format!("##random-event-policy-{event}");
+    let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    let mut changed = false;
+    ui.set_next_item_width(-1.0);
+    if let Some(_open) = ui.begin_combo_with_flags(&id, preview, options) {
+        for (option, label) in [
+            (Flee, "Flee"),
+            (Fight, "Fight (not available yet)"),
+            (Ignore, "Ignore (not available yet)"),
+        ] {
+            let selected = option == *policy;
+            let _disabled = (option != Flee).then(|| ui.begin_disabled());
+            if ui.selectable_config(label).selected(selected).build() && option == Flee {
+                *policy = option;
                 changed = true;
             }
             if selected {
