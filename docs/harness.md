@@ -199,8 +199,8 @@ these lists in step with what the cells send.
 `guardian_skill_*` (the twelve skill events, `::skill_macro_event 1`–`12`)
 check that the host Guardian handles every random event while a low-level
 account (combat level 3, 10 Hitpoints) does real work: the Gatherer fishing at
-Catherby (general events and the fishing events), mining at Varrock East or
-chopping at Draynor, and the catalog BoneBurier and Thiever cards at
+Catherby (general events and the fishing events), mining at Varrock East,
+chopping west of Lumbridge (oaks at Draynor for the ent), and the catalog BoneBurier and Thiever cards at
 Lumbridge for the prayer and thieving events. Each cell seeds only the
 account's own skill and tool, waits for the activity's first XP, then sends
 the one trigger (again only after the content's busy reply). It never adds an

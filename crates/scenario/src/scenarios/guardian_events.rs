@@ -4,7 +4,8 @@
 //!
 //! Each cell seeds only the account's own state (stats, tool, position),
 //! starts a real activity on real content (the compiled Gatherer fishing at
-//! Catherby, mining at Varrock East or chopping at Draynor; the catalog
+//! Catherby, mining at Varrock East, chopping west of Lumbridge or oaks at
+//! Draynor; the catalog
 //! BoneBurier and Thiever cards at Lumbridge), waits for the activity's
 //! first XP, then summons one event through the engine's own random-event
 //! machinery: `::macro_event <id>` for the eight general events, or the
@@ -18,7 +19,7 @@
 //! zombie and watchman tiers scale with combat level
 //! (`macro_events.rs2` `~macro_event_combat_level`).
 
-use super::gatherer::{GATHERER_START, GATHERER_START_INJECT};
+use super::gatherer::GATHERER_START_INJECT;
 use super::script_basics::script_live_seed_steps;
 use crate::random_episode::{Oracle, RandomEventCell, Reward, TrapKind, Trigger};
 use crate::*;
@@ -75,6 +76,17 @@ const FISHING_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Power"),
     },
 ];
+
+/// Normal trees west of Lumbridge castle, for the tree spirit and lost axe
+/// cells. The Draynor stand of the `gatherer` cell lies beside the Draynor
+/// jail, whose Jail guards (`area_draynor/configs/draynor.npc:152-182`,
+/// `huntmode=aggressive_melee`, `huntrange=5`) attacked the combat-level-3
+/// account in live round 3 and a diagnostic run, whatever the event.
+pub(crate) const LUMBRIDGE_TREES_START: WorldTile = WorldTile {
+    x: 3168,
+    z: 3226,
+    level: 0,
+};
 
 /// Draynor's oak grove east of the bank (`gatherer_live.rs`
 /// `DRAYNOR_OAK_BANK_START`), seven tiles from the nearest oak. The ent cell
@@ -208,7 +220,7 @@ impl Activity {
         match self {
             Self::Fishing => CATHERBY_HARPOON_START,
             Self::Mining => VARROCK_EAST_MINE_START,
-            Self::Woodcutting => GATHERER_START,
+            Self::Woodcutting => LUMBRIDGE_TREES_START,
             Self::OakWoodcutting => DRAYNOR_OAK_START,
             Self::Prayer | Self::Thieving => MAINLAND_LANDING,
         }
