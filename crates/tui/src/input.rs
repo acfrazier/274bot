@@ -622,6 +622,12 @@ impl TuiApp {
                 // longer describes it.
                 self.settings_save.edited();
             }
+            SettingsKey::ChangedWithNotice(reason) => {
+                self.settings_dirty = true;
+                self.settings_save.edited();
+                self.error = Some(reason.into());
+            }
+            SettingsKey::Refused(reason) => self.error = Some(reason.into()),
             SettingsKey::WalkGlobal(preference) => {
                 let pending = frontend_core::WalkGlobalsView {
                     globals: self.nav,

@@ -50,7 +50,6 @@ const EVADE_NAMES: &[&str] = &[
     "shade",
     "watchman",
     "tree spirit",
-    "drunken dwarf",
 ];
 
 /// The growing plant (pick kind): acted on only with current ownership
@@ -258,14 +257,13 @@ fn detect_scene(
         };
         let name = raw.to_lowercase();
         let ours = is_ours(npc, self_slot, display_name.as_deref());
-        // Aggressive event actors are owned only when face_entity resolves
-        // to this local-player slot. The drunken dwarf also needs its live
-        // combat window so its ordinary follow state remains a dialog.
+        // Hostile event actors are owned only when face_entity resolves to
+        // this local-player slot. The drunken dwarf stays in Dialog: its
+        // content resolves both its ordinary and angry phases with Talk-to.
         if snap.ingame()
             && snap.local_player().is_some()
             && is_evade_npc(npc, &name)
             && event_npc_targets_player(npc, self_slot)
-            && (name != "drunken dwarf" || npc.in_combat)
         {
             return Some(DetectedRandom {
                 kind: RandomKind::Evade,
@@ -504,10 +502,53 @@ fn cheb(a: (i32, i32), b: (i32, i32)) -> i32 {
 
 /// Ordered compass choices at a content-derived Chebyshev distance. This
 /// iterator allocates nothing; the first walkable tile becomes the target.
+#[cfg(test)]
 fn flee_candidates(from: (i32, i32), distance: i32) -> impl Iterator<Item = (i32, i32)> {
     FLEE_COMPASS
         .into_iter()
         .map(move |(dx, dz)| (from.0 + dx * distance, from.1 + dz * distance))
+}
+
+/// Engine chase stop: Chebyshev distance past maxrange+1, except the
+/// diagonal corner exactly at maxrange+1 (`Npc.ts:661-670`).
+fn outside_chase_range(player: (i32, i32), start: (i32, i32), maxrange: i32) -> bool {
+    let dx = (player.0 - start.0).abs();
+    let dz = (player.1 - start.1).abs();
+    let stop = maxrange.saturating_add(1);
+    dx.max(dz) > stop || (dx == stop && dz == stop)
+}
+
+/// First direction points away from the player relative to the latched NPC
+/// tile; ties prefer a cardinal path and otherwise retain compass order.
+fn flee_direction_index(from: (i32, i32), player: (i32, i32)) -> usize {
+    let (dx, dz) = ((from.0 - player.0) as i64, (from.1 - player.1) as i64);
+    let mut best = 0;
+    let mut best_score = i64::MIN;
+    let mut best_cardinal = false;
+    for (index, (step_x, step_z)) in FLEE_COMPASS.iter().copied().enumerate() {
+        let score = dx * step_x as i64 + dz * step_z as i64;
+        let cardinal = step_x == 0 || step_z == 0;
+        if score > best_score || (score == best_score && cardinal && !best_cardinal) {
+            best = index;
+            best_score = score;
+            best_cardinal = cardinal;
+        }
+    }
+    best
+}
+
+/// Exactly one flee ring, beginning in the direction away from the player.
+/// The fixed compass rotation keeps the iterator allocation-free.
+fn flee_candidates_away(
+    from: (i32, i32),
+    player: (i32, i32),
+    distance: i32,
+) -> impl Iterator<Item = (i32, i32)> {
+    let first = flee_direction_index(from, player);
+    (0..FLEE_COMPASS.len()).map(move |offset| {
+        let (dx, dz) = FLEE_COMPASS[(first + offset) % FLEE_COMPASS.len()];
+        (from.0 + dx * distance, from.1 + dz * distance)
+    })
 }
 
 /// Hazard escape candidates are exactly one frozen four-tile ring around

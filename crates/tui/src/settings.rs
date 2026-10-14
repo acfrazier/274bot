@@ -1,6 +1,6 @@
 //! Settings popup (spec `2026-09-01-headless-tui-design.md`): an overlay
 //! (`o` on the Overview, or the palette) with the selected profile's
-//! random-event toggle, per-event combat policy, and lamp reward settings,
+//! random-event toggle, per-event Guardian policy, and lamp reward settings,
 //! plus durable global walk grants (teleports / wilderness / danger zones),
 //! manual WalkTo bank fetch, and the remembered terrain-bake choice shared
 //! with the panel. Profile settings are edited in place (the operator vault;
@@ -24,6 +24,8 @@ use vault::ProfileSettings;
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
+const EVENT_POLICY_UNAVAILABLE: &str =
+    "Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.";
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -69,6 +71,10 @@ impl SettingsState {
 pub enum SettingsKey {
     /// A profile setting value changed — persist [`ProfileSettings`] back.
     Changed,
+    /// An unavailable policy was reset to Flee and the reason should be shown.
+    ChangedWithNotice(&'static str),
+    /// The selected setting is unavailable; show the refusal reason.
+    Refused(&'static str),
     /// The remembered map-bake choice changed; persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
@@ -310,11 +316,11 @@ impl<'a> SettingsPane<'a> {
         let (event, _) = vault::RANDOM_EVENT_POLICY_EVENTS
             [self.state.random_event_index % vault::RANDOM_EVENT_POLICY_EVENTS.len()];
         if self.settings.random_event_policy(event) == vault::RandomEventPolicy::Flee {
-            return SettingsKey::Consumed;
+            return SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE);
         }
         self.settings
             .set_random_event_policy(event, vault::RandomEventPolicy::Flee);
-        SettingsKey::Changed
+        SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
     }
 
     fn activate_value(&mut self) {
@@ -411,7 +417,7 @@ impl Widget for SettingsPane<'_> {
             ),
             format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill),
             format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto),
-            format!("{}combat event: {}", marker(3), event_label),
+            format!("{}event: {}", marker(3), event_label),
             format!("{}event policy: {event_policy}", marker(4)),
             format!(
                 "{}{}: {}",
@@ -477,7 +483,7 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             Some((
-                "Fight/Ignore are not available yet; both yield to scripts.",
+                "Fight/Ignore are unavailable; the Guardian treats saved choices as Flee.",
                 note_style,
             )),
             Some((ROUTING_SCOPE_NOTE, note_style)),
@@ -754,7 +760,7 @@ mod tests {
 
     use host_play::WalkGlobals;
 
-    use super::{SettingsKey, SettingsPane, SettingsState, LAMP_SKILLS};
+    use super::{SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE, LAMP_SKILLS};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -804,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_refuses_unavailable_fight_and_ignore_policies() {
+    fn popup_refuses_unavailable_fight_and_ignore_policies_with_reason() {
         let mut settings = ProfileSettings::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
@@ -823,7 +829,10 @@ mod tests {
                 let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
                 pane.on_key(key(KeyCode::Enter))
             };
-            assert_eq!(changed, SettingsKey::Changed);
+            assert_eq!(
+                changed,
+                SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
+            );
             assert_eq!(
                 settings.random_event_policy("river troll"),
                 vault::RandomEventPolicy::Flee,
@@ -834,7 +843,7 @@ mod tests {
                 let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
                 pane.on_key(key(KeyCode::Enter))
             };
-            assert_eq!(refused, SettingsKey::Consumed);
+            assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
             assert_eq!(
                 settings.random_event_policy("river troll"),
                 vault::RandomEventPolicy::Flee,

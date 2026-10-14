@@ -5,19 +5,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ## Unreleased
 
-### Combat
+### Random-event guardian
 
-- Hostile random-event attackers keep Flee active across misses and the ticks
-  between hits, so bots no longer walk back into an attacker while it still
-  targets the player. Flee distance follows each event NPC's content chase
-  range; it releases only after the NPC despawns, unlocks, or stays beyond
-  that range for more than one tick. The bot returns to its pre-flee tile
-  only when the NPC despawns or unlocks. Flee is the default per-event policy;
-  Fight and Ignore are marked unavailable, and the Guardian yields those
-  choices to scripts without starting combat.
+- Hostile event attackers keep Flee active through missed or zero-damage
+  attacks. The Guardian latches each NPC's first-seen tile, measures the
+  content-derived `maxrange + 2` flee target and chase-stop release from that
+  tile, and re-flees when a route stops before escape. A blocked outer ring
+  falls back to nearest-path and closer rings; after its bounded fresh-tick
+  window without escape, the Guardian releases the slot instead of holding
+  forever.
+- If a Swarm leaves NPC view while the player is fleeing, the
+  Guardian keeps the event latched for the bounded flee window and releases
+  without walking back into a possibly still-active attacker. Confirmed
+  despawns or unlocks within view return to the pre-flee tile. Flee is the
+  default policy, with a per-event Policies control in Panel and TUI.
 
 ### Not in this release
 
+- Fight (a script-layer CombatMachine opt-in) and Ignore are listed but
+  unavailable. Until those script-layer handlers exist, saved Fight/Ignore
+  policies are treated as Flee.
 - Fleeing from an angry Strange plant does not stop its poison. Antipoison
   handling is separate work.
 

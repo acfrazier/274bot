@@ -295,6 +295,7 @@ impl Host {
             lamp_auto,
             lamp_skill,
             random_event_policies,
+            None,
             input,
             mailbox,
             ctl,
@@ -305,8 +306,8 @@ impl Host {
         )
     }
 
-    /// Like [`Host::run_client`], with a shared live policy map owned by
-    /// host-play's profile arm.
+    /// Like [`Host::run_client`], with a shared live policy map and selected
+    /// game data from host-play's bound connection profile.
     #[allow(clippy::too_many_arguments)]
     pub fn run_client_with_event_policies<F, P, K>(
         client: &mut Client,
@@ -316,6 +317,7 @@ impl Host {
         lamp_auto: Arc<AtomicBool>,
         lamp_skill: Arc<Mutex<String>>,
         random_event_policies: Arc<Mutex<BTreeMap<String, vault::RandomEventPolicy>>>,
+        game_data: Option<Arc<SelectedGameData>>,
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
@@ -337,7 +339,7 @@ impl Host {
             run_policy,
             random_event_policies,
         );
-        slot.game_data = api::game_data::for_revision(client.revision()).ok();
+        slot.game_data = game_data;
         #[cfg(feature = "performance-profile")]
         {
             slot.profile = Some(performance_profile::register(username));
