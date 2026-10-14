@@ -740,7 +740,8 @@ fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
         ScriptPopup::Catalog => {
             app.rs2b0t_catalog_dir = dir.to_path_buf();
             app.on_key(ch(':'));
-            for c in "import".chars() {
+            // "import" alone also matches Import rs2b0t profiles.
+            for c in "import rs2b0t catalog".chars() {
                 app.on_key(ch(c));
             }
             assert_eq!(

@@ -18,6 +18,7 @@ use crate::commands::{members_text, Command};
 use crate::help::{filter_rows, help_rows, render_help, HelpState};
 use crate::layout::{contains, Screen};
 use crate::palette::{palette_commands, render_palette, PaletteState};
+use crate::profile_import::{ImportAction, ImportView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
@@ -31,6 +32,8 @@ pub enum Modal {
     },
     /// WASD walking is armed for the selected bot until Esc.
     Manual,
+    /// Import rs2b0t's profile export: path, preview, report.
+    ProfileImport(ImportView),
 }
 
 impl Modal {
@@ -43,6 +46,7 @@ impl Modal {
             Modal::Context(_) => "Menu",
             Modal::Message { .. } => "Message",
             Modal::Manual => "Manual walk",
+            Modal::ProfileImport(_) => "rs2b0t import",
         }
     }
 
@@ -54,6 +58,7 @@ impl Modal {
             Modal::Context(_) => "Up/Down · Enter run · Esc close",
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
+            Modal::ProfileImport(view) => view.hints(),
         }
     }
 }
@@ -342,6 +347,14 @@ impl TuiApp {
                 _ => (Some(Modal::Message { scroll }), AppAction::None),
             },
             Modal::Manual => self.manual_key(key),
+            Modal::ProfileImport(mut view) => match view.on_key(key) {
+                Some(ImportAction::Close) => (None, AppAction::ProfileImport(ImportAction::Close)),
+                Some(action) => (
+                    Some(Modal::ProfileImport(view)),
+                    AppAction::ProfileImport(action),
+                ),
+                None => (Some(Modal::ProfileImport(view)), AppAction::None),
+            },
         };
         if self.modal.is_none() {
             self.modal = keep;
@@ -565,6 +578,9 @@ impl TuiApp {
             Modal::Help(state) if inside => (Some(Modal::Help(state)), AppAction::None),
             Modal::Help(_) | Modal::Message { .. } => (None, AppAction::None),
             Modal::Manual => (Some(Modal::Manual), AppAction::None),
+            // A click never closes the import: the typed path or the
+            // report would be lost. Esc closes it.
+            Modal::ProfileImport(view) => (Some(Modal::ProfileImport(view)), AppAction::None),
         };
         if self.modal.is_none() {
             self.modal = keep;
@@ -589,6 +605,7 @@ impl TuiApp {
             Some(Modal::Message { scroll }) => {
                 *scroll = scroll.saturating_add_signed(delta as i16 * 3);
             }
+            Some(Modal::ProfileImport(view)) => view.scroll_by(delta),
             _ => {}
         }
     }
@@ -615,6 +632,7 @@ impl TuiApp {
             Modal::Context(menu) => self.draw_context(menu, area, buf),
             Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
             Modal::Manual => self.draw_manual(area, buf),
+            Modal::ProfileImport(view) => self.regions.modal = view.render(area, buf),
         }
         self.modal = Some(modal);
     }

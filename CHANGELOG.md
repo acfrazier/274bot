@@ -5,6 +5,28 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ## Unreleased
 
+### Profiles
+
+- You can now import your accounts from rs2b0t instead of typing each one
+  again. In rs2b0t, export your profiles from Settings (this writes
+  `rs2b0t-profiles.json`), then in 274bot choose **Import from rs2b0t…** in
+  the panel's Profiles window, or **Import rs2b0t profiles…** in the TUI
+  command palette, and give the file's path. The vault must be unlocked.
+  A preview lists every account and setting before anything is saved.
+  The import brings over each account's username, password (into the
+  encrypted vault) and world, its selected script and the script
+  parameters it saved (matched by script name in your rs2b0t script
+  catalog, so import the catalog first), and the rs2b0t Global settings
+  274bot keeps per account:
+  genie lamp skill and clue duel partner. rs2b0t's renderer-off setting
+  turns the profile's display off. Everything else, such as tabs, rs2b0t's
+  run-energy and route-drawing options, loadouts and order books, is listed
+  in the preview and the final report with the reason it isn't imported.
+  Accounts already in the vault are kept as they are unless you choose
+  Overwrite, and importing the same file again changes nothing. The export
+  file holds your passwords in plain text: after a successful import,
+  274bot offers to delete it (it asks you to confirm first).
+
 ### Quests and dialogues
 
 - A conversation closed by an attack is no longer counted as finished. An

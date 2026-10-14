@@ -1,8 +1,9 @@
 //! Chooser credential scratch: picker edit buffers and vault read/write helpers.
 
+use frontend_core::fresh_uid;
 use vault::{Profile, ProfileSettings};
 
-use super::{fresh_uid, Session};
+use super::Session;
 
 /// What Discard does on a staged Discard / Keep editing prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,5 +375,27 @@ impl Session {
     /// Whether the open edit form's own save is still being written.
     pub fn form_saving(&self) -> bool {
         self.chooser_save.saving(&self.core)
+    }
+
+    /// Rebuild the rs2b0t import text from its flow: after each step, and
+    /// each frame while a confirmed import's writes are still settling.
+    pub fn refresh_profile_import(&mut self) {
+        use frontend_core::rs2b0t_import::Stage;
+        let flow = &self.profile_import;
+        self.profile_import_lines = match flow.stage() {
+            Stage::Path => Vec::new(),
+            Stage::Preview => flow.preview_lines(),
+            Stage::Report => flow.report_lines(&self.core),
+        };
+        self.profile_import_settled = flow.settled(&self.core);
+    }
+
+    /// Close the rs2b0t import, dropping its parsed file (and passwords).
+    pub fn close_profile_import(&mut self) {
+        self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
+        self.profile_import_open = false;
+        self.profile_import_lines.clear();
+        self.profile_import_settled = false;
+        self.import_delete_understood = false;
     }
 }

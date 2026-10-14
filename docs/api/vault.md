@@ -132,6 +132,60 @@ under `~/.274bot/`; `--vault PATH` overrides it. The built-ins use `vault`
 Profiles must name distinct vault files, so profiles never share
 storage implicitly.
 
+## Importing profiles from rs2b0t
+
+rs2b0t's Settings can export its unlocked profile vault, with each account's
+saved settings, as `rs2b0t-profiles.json`. 274bot imports that file: the
+panel's **Profiles** window has **Import from rs2b0t…**, and the TUI command
+palette has **Import rs2b0t profiles…**. Both need the vault unlocked, ask
+for the file's path, and show a preview before anything is written. Nothing
+is saved until you confirm. The shared flow is
+`frontend_core::rs2b0t_import`.
+
+The importer reads only rs2b0t's own export: kind
+`rs2b0t-multibox-profiles`, version 1. It refuses any other kind or version,
+or a malformed file, with a message that says why. Like rs2b0t, it accepts a
+file without the `storage` part. Errors never quote a profile entry, so a
+password never appears in one.
+
+| rs2b0t | 274bot |
+| --- | --- |
+| username, password | a vault profile; the password goes only into the encrypted vault |
+| world (1–3) | the profile's world (`wN`), used when the server's world list offers it |
+| tab, tab list, active tab | not imported: 274bot has no profile tabs or groups |
+| selected script | the profile's script, when your registered rs2b0t catalog has a script of that name that can run; a dimmed or unknown script is reported |
+| script parameters (`set:<Script>:<key>`) | that script's per-profile parameters, read the way rs2b0t reads them (out-of-range numbers are limited to the range, options matched without case); a parameter the catalog script doesn't have, or a value that isn't one of its options, is reported |
+| Global `lampSkill` | genie lamp skill |
+| Global `clueDuelPartner` | clue duel partner |
+| `rendererEnabled` | `0` sets the profile's display to Off; `1` turns an Off display back on |
+| Global `bankCommonJunk`, `useZanarisBank`, `useMageBank` | not imported: in rs2b0t they are the account-wide default for scripts that have the same parameter; 274bot has no account-wide default, so set them in each script's parameters (the Gatherer has its own bank choices) |
+| Global `runAuto`, `runEnergyMin` | not imported: 274bot turns run back on by itself at 20% energy (scripts may change that); there is no per-account setting |
+| Global `navTeleports` | not imported: one app-wide switch in Nav config |
+| Global `navPathStallTicks`, `navPathDeviation` | not imported: no such setting |
+| Global `navCameraFollow` | not imported: app-wide panel Nav setting |
+| Global `showNavPath` and the `navPath*` drawing options | not imported: route drawing is one app-wide panel Nav setting in 274bot; `navPathSceneExpand` has no equivalent |
+| `MapPicker.*` | not imported: rs2b0t tile-map picker display |
+| `Loadouts.sets` | not imported: 274bot keeps one loadout list for all accounts |
+| `PriceBooks.books` | not imported: order books are not supported |
+| `creds` | not imported: rs2b0t's per-tab login copy (its value is never read or shown) |
+| stored settings of an account the file doesn't list | not imported |
+
+An account already in the vault is kept as it is unless you choose
+**Overwrite**. Overwrite keeps the profile's uid and every setting the export
+doesn't carry (memory mode, auto-login, random events and the like). It
+replaces the password and world, and the parameters of each imported script.
+Importing the same file again writes nothing. Skip leaves every account
+untouched, and with Overwrite each account already matches. The preview and
+the final report list every item that isn't imported, with the reason. Each
+profile the import writes logs one line (profile, create or overwrite,
+operation id, old → new). The log line says only whether the password was set
+or changed.
+
+The export file holds the passwords in plain text. After an import with no
+failures, the report offers to delete the file and asks you to confirm.
+Loaded bots use an imported password and world at their next login, and
+imported script parameters at their next Start.
+
 ## Secrets in memory
 
 `Profile.password` is a `vault::Secret` (also the panel's passphrase and

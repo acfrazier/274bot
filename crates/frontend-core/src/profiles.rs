@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use vault::{Profile, ScriptAssignment, VaultChange, VaultStore};
+use vault::{Profile, ScriptAssignment, Vault, VaultChange, VaultStore};
 
 use crate::operations::OperationId;
 
@@ -397,4 +397,10 @@ impl Drop for ProfileWriter {
             let _ = thread.join();
         }
     }
+}
+
+/// The uid for a new profile: one past the vault's highest, from the 274M
+/// base. Shared by every path that creates a profile.
+pub fn fresh_uid(vault: &Vault) -> i32 {
+    vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
