@@ -1,39 +1,163 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.1` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.2] — 2026-10-14 — Beta 1 patch
 
 ### Scripts
 
-- The current rs2b0t Thiever loads and banks again, as do the other bank
-  scripts that open a bank the same way (Alcher, GemCutter, HerbCleaner,
-  LeatherCrafter, PotionMaker and Superheater). They failed to start
-  with "does not provide an export named 'openBankAccess'".
-- Scripts that finish on their own — BankFletcher when the bank runs out
-  of logs, and the many others that stop when they run out of supplies —
-  now end cleanly with their reason in the log instead of failing with
-  "requestFinish is not a function".
+- The current rs2b0t Thiever loads and banks again. The other bank scripts
+  that open a bank the same way (Alcher, GemCutter, HerbCleaner,
+  LeatherCrafter, PotionMaker and Superheater) load again too; they failed
+  to start with "does not provide an export named 'openBankAccess'".
+- Scripts that finish on their own, such as BankFletcher when the bank runs
+  out of logs, now end cleanly with their reason in the log, shown as
+  information rather than an error, instead of failing when they try to
+  finish.
 - Catalog combat scripts that group or customize their Loadout setting
   (ArdyFighter, ChaosDruidKiller, FireGiant, GreenDragon, HillGiant,
-  JiveDemons, JiveDragons, JiveKBD, MossGiant and RockCrab) now show a
-  working Loadout picker in the panel and TUI and check your saved loadout
-  before Start, instead of showing an uneditable `unsupported type` row or
-  starting and failing when no loadouts exist.
-- Opening a shop (rs2b0t `Shop.open`, used for JiveKQ's Shantay pass and
-  by other shop scripts) now sends one Trade click and waits for the
-  measured walk to the shopkeeper plus a margin before clicking again. Each
-  wait is capped at about 70 seconds. Before, it clicked again after 3
-  seconds, and on a longer walk that second click could close the shop as it
-  opened, so the purchase failed. When the bot can't measure the walk, it
-  uses the full wait. A shopkeeper behind a closed door is walked to first.
-  A shop that doesn't open still gets up to three Trade clicks, and "I can't reach that!" ends a click at once. Quester shop
-  purchases follow the same rule, and their buy steps no longer give up
-  after 10 seconds.
-- Known limit: being attacked while a shop or bank window is open closes
-  the window on every hit, even a miss, and the bot doesn't react to
-  attackers yet.
+  MossGiant and RockCrab) now show a working Loadout picker in the panel and
+  TUI and check your saved loadout before Start, instead of showing an
+  uneditable `unsupported type` row or starting and failing when no loadouts
+  exist.
+- Opening a shop (rs2b0t `Shop.open`, used for JiveKQ's Shantay pass and by
+  other shop scripts) now sends one Trade click and waits for the measured
+  walk to the shopkeeper plus a margin before clicking again. Each wait is
+  capped at about 70 seconds. Before, it clicked again after 3 seconds, and
+  on a longer walk that second click could close the shop as it opened, so
+  the purchase failed. When the bot can't measure the walk, it uses the full
+  wait. A shopkeeper behind a closed door is walked to first. A shop that
+  doesn't open still gets up to three Trade clicks, and "I can't reach
+  that!" ends a click at once. Quester shop purchases follow the same rule,
+  and their buy steps no longer give up after 10 seconds.
+
+### Not in this release
+
+Planned work that didn't make this release, plus options and script calls
+that visibly refuse. Where a fix is planned, the item says so.
+
+**Quests and combat**
+
+- Quest guides cover 25 of 69 quests. Haunted Mine is unavailable on the
+  supported server. The guides that ship are still beta rather than all
+  checked end to end. More quest coverage is planned for a later release.
+- The Quester doesn't yet pick quest-aware supplies or pick up every quest
+  where you left off: earned quest items, some mid-conversation resumes,
+  following up on some quest targets, and coin costs in quest requirements
+  aren't handled. Quest resume and recipe work is planned for a later
+  release.
+- Prayer flicking, safespots, luring around corners, attacking other players,
+  range-aware standing spots, automatic gear switching and face-tank fallbacks
+  aren't here. Combat settings the game doesn't support still refuse to start,
+  and fights without progress still use the existing time limits. Combat
+  tactics are planned for later combat work.
+- Hunt keeps its two-minute fight limit and retreat behaviour; it hasn't moved
+  to the full combat system. Hunt parity is planned for later combat work.
+
+**Walking, gathering and clues**
+
+- Walks into quest areas that unlock as a quest progresses, regional
+  entrances and transports such as boats and gliders, the land route over
+  White Wolf Mountain below level 51, and some traveller and cosmetic walks
+  aren't fully handled yet. Fuller routing is planned for a later release.
+- Gathering sites the route finder can't reach yet stay hidden: 90 on 289 and
+  71 on 274. They're in Morytania, Tirannwn, the islands and boat or glider
+  trips, places behind gates and fences, and caves and underground areas. A
+  saved Gatherer card that names one refuses to start with an "unknown" site
+  error; pick another site. They come back as the route finder learns the
+  entrances, which is planned for a later release. A few enclosed spots have
+  no known way in yet, so those may stay hidden.
+- The bot doesn't yet react when something attacks it during non-combat
+  work. The Gatherer doesn't flee or eat on its own when, for example, a
+  fishing random event attacks it, so a bot on a very long session can
+  occasionally die. Every hit, even a miss, also closes an open shop or bank
+  window. Reacting to attackers is planned for later combat work; if a bot
+  dies, its log around the death helps us look into it.
+- Faster interactions aren't here: acting on the nearest thing first, not
+  walking through the thing you're acting on, shorter follow-ups when using an
+  item on something next to you, and reaching a clue's usable side in one walk.
+- The Gatherer gets no closest-site option, no shop tool buying, and no tool
+  provisioning while a quest route is holding the inventory. Finding locked
+  areas and matching gather timing are unchanged. More Gatherer work is
+  planned for a later release.
+- Clues that need a key you don't carry, locked chests, and Kharazi and
+  Tirannwn coverage stay incomplete, and clue conversations still go one step
+  at a time. The wider clue backlog is planned for a later release.
+- The WalkTo town list is unchanged, and map redraw work is planned for a
+  later release.
+
+**Scripts and compatibility**
+
+- Some catalog scripts are dimmed in the script picker and can't be started:
+  AIOQuester and Barcrawl (the built-in Quester replaces them, and Barcrawl
+  is planned for it); GatheringBot's Woodcutter, Miner and Fisher, and
+  EssMiner (the built-in Gatherer replaces them); MarketMaker and BankSorter
+  (both planned as built-in features); ArravSupplier and RoguesPurse (they use
+  rs2b0t quest helpers the bot doesn't provide yet); JiveKQ (its four-player
+  setup isn't qualified yet); and one BrimhavenAgility version that retries a
+  broken plank instead of taking another route.
+- JiveDemons, JiveDragons and JiveKBD can't start yet: they use rs2b0t
+  helpers the bot doesn't provide yet. They're planned for the next release.
+- Scripts that call these helpers the bot doesn't provide yet still refuse to
+  start, or stop when they reach the helper:
+  - Walking: `Traversal.remaining` and `requestRepath`.
+  - Banking: `shouldBankNow`, `sortBank`, `findQuestJunk` and `coinsToWithdraw`.
+  - Shops and trading: `Shop.buyById` and `countOfferMatching`.
+  - Tools: `toolAttackLevel` and `toolsNeedingEquip`.
+  - Chat, game and objects: `ChatDialog.makeOne`, `Game.castOnNpc`,
+    `EntityQuery.inside`, `nearestPreferLocal` and `resolveRockIds`.
+  - Inventory items: the `InvItem` methods and `acquireKeepNames`.
+- Scripts written against rs2b0t releases newer than the one this release
+  was checked against can use calls the bot doesn't know yet: they fail to
+  start, or stop when they reach the call. Catching up with current rs2b0t is
+  planned for the next release.
+- The clearer Start messages don't yet separate "can't do that right now"
+  from "not implemented" everywhere in scripts.
+- FlourCollector, the Zanaris cook and the blocked Jive cards stay
+  unqualified, and the stronger pair-trade checks don't qualify every pair
+  setup.
+- A Duel script that remembers the wrong opponent can still wait in a Duel
+  Arena fight pen until the fight moves on. Correct opponent tracking is
+  planned for a later release.
+
+**Panel, TUI, memory and host**
+
+- No quick world switch from the world bubble, no Fleet bulk world switch
+  with script pause and resume, no game-window resizing, no script-window
+  auto-sizing, and no custom profile ordering. These controls are planned for
+  a later release.
+- Grid cells don't each paint their script, the terminal shows no game
+  pixels, GPU sampling stays approximate, and the pickpocket wall-clip fix
+  isn't in this release. Rendering work is planned for a later release.
+- The Mac memory readout still shows RSS rather than physical footprint, and
+  turning render-all off can leave counted-but-reclaimable memory behind; the
+  capacity warning doesn't change that accounting. Readout improvements are
+  planned for a later release.
+- Waking bots together and using fewer connection resources per bot are
+  planned for later host work; this release brings no broader CPU or memory
+  optimization.
+- Copying settings onto a profile with no bot can still save without
+  assigning when a later copy fails or is cancelled, and there is no saved
+  quest-route knowledge yet. Saved-state work is planned for a later release.
+- Full audit logging of operator actions, frame-stall diagnostics and
+  lock-order checking aren't here; the Gatherer and watchdog messages are
+  specific fixes, not that project. Region-load lines still appear under the
+  login category.
+
+**Testing and supported versions**
+
+- 23 catalog scripts have no live test scenario, so their behaviour on a live
+  server is untested.
+- 289 is the supported server version; 274 stays best-effort and unqualified.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a
+  Ryzen with built-in graphics plus a separate graphics card), the panel can
+  close right after it starts with "importing the supplied dmabufs failed".
+  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
+  0.2.0.2, 0.2.1 and 0.2.2 have the same problem.
 
 ## [0.2.1] — 2026-10-13 — Beta 1 hotfix
 
