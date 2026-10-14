@@ -2,10 +2,15 @@ use super::*;
 
 use api::hostlog::{Category, Level};
 const LOST_TOOL_BOUND_MS: u64 = 12_000;
-/// The Swarm ring is maxrange 15 + 2 = 17 tiles; one 7-tick attack interval
-/// gives the 24-tick escape deadline. Dwarf's 10000 range is Dialog via
-/// Talk-to, not a flee candidate (`content/scripts/macro events/configs/antimacro.npc:126,131,1385,1397`).
-const MAX_EVADE_TICKS: u32 = 24;
+/// For the Swarm, `maxrange` 15 plus the `maxrange + 2` stop margin is 17
+/// tiles from the NPC start. Events spawn one tile from the player, so the
+/// longest route is 18; one 7-tick attack interval gives 25 fresh ticks
+/// (`content/scripts/macro events/scripts/macro_events.rs2:30-36`,
+/// `content/scripts/engine.rs2:77-78`,
+/// `content/scripts/macro events/configs/antimacro.npc:126,131`). The
+/// Dwarf's 10000 range is Dialog/Talk-to and is excluded
+/// (`content/scripts/macro events/configs/antimacro.npc:1385,1397`).
+const MAX_EVADE_TICKS: u32 = 25;
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
 const NPC_VIEW_RADIUS: i32 = 15;
 

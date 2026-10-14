@@ -1554,10 +1554,10 @@ fn blocked_flee_uses_nearest_and_closer_rings_then_releases_at_bound() {
     let mut snap = GameSnapshot::new();
 
     let mut last = RandomStatus::default();
-    for tick in 1..=24 {
+    for tick in 1..=25 {
         tick_at(&mut c, &mut snap);
         last = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
-        if tick < 24 {
+        if tick < 25 {
             assert_eq!(last.kind, Some(RandomKind::Evade));
             assert!(last.hold, "the Guardian holds before bound tick {tick}");
         }
@@ -1589,7 +1589,7 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
-    c.npc[0].as_mut().expect("swarm").entity.x = 3 * 128 + 64;
+    c.npc[0].as_mut().expect("swarm").entity.x = 128 + 64;
     c.npc[0].as_mut().expect("swarm").entity.z = 64;
     let data = event_game_data();
     let mut g = Guardian::new();
@@ -1600,21 +1600,24 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     tick_at(&mut c, &mut snap);
     let first = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(first.kind, Some(RandomKind::Evade));
-    assert_eq!(drv.walks, vec![(20, 0)]);
+    assert_eq!(drv.walks, vec![(18, 0)]);
 
-    // The player completes the 17-tile flee. The Swarm leaving its 15-tile
-    // NPC view is not evidence of despawn and must not trigger a walk-back.
+    // The shared spawner uses radius one (`macro_events.rs2:30-36`,
+    // `engine.rs2:77-78`); Swarm maxrange 15 (`antimacro.npc:126`) plus
+    // the +2 margin makes the 17-tile flee. From a player one tile from the
+    // NPC, the route is 18 and beyond its 15-tile view (`info.ts:310`).
+    // Missing NPCs must not trigger a walk-back.
     let player = c.local_player.as_mut().expect("player");
-    player.entity.x = 20 * 128 + 64;
+    player.entity.x = 18 * 128 + 64;
     player.entity.z = 64;
-    player.route_x[0] = 20;
+    player.route_x[0] = 18;
     player.route_z[0] = 0;
     clear_npcs(&mut c);
     let mut last = first;
-    for tick in 2..=24 {
+    for tick in 2..=25 {
         tick_at(&mut c, &mut snap);
         last = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
-        if tick < 24 {
+        if tick < 25 {
             assert_eq!(last.kind, Some(RandomKind::Evade));
             assert!(last.hold, "view-missing event stays bounded at tick {tick}");
         }
@@ -1626,7 +1629,7 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     );
     assert_eq!(
         drv.walks,
-        vec![(20, 0)],
+        vec![(18, 0)],
         "never walk back to the unseen Swarm"
     );
 
@@ -1635,7 +1638,7 @@ fn swarm_missing_beyond_view_stays_latched_only_until_bound() {
     assert!(!after_bound.ours && !after_bound.hold);
     assert_eq!(
         drv.walks,
-        vec![(20, 0)],
+        vec![(18, 0)],
         "the released latch does not oscillate"
     );
 }
