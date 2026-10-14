@@ -148,6 +148,12 @@ export const Paint = {
                 }
                 return current;
             },
+            cols() { throw notImpl('PaintFrame.cols'); },
+            wrap(text, color, indent) { throw notImpl('PaintFrame.wrap'); },
+            list(id, lines, rows, opts) { throw notImpl('PaintFrame.list'); },
+            fill(id, lines, opts) { throw notImpl('PaintFrame.fill'); },
+            grid(id, lines, columns, opts) { throw notImpl('PaintFrame.grid'); },
+            stepper(id, label, options, current) { throw notImpl('PaintFrame.stepper'); },
             buttons(items) {
                 flushRows();
                 if (!items || items.length === 0) {

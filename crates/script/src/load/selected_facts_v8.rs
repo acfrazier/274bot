@@ -265,6 +265,30 @@ fn cert_link<'s>(
     }
 }
 
+fn obj_record_row<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    item: &api::game_data::GameItem,
+    name: &str,
+) -> Result<v8::Local<'s, v8::Object>, String> {
+    let row = v8::Object::new(scope);
+    set_i32(scope, row, "id", item.id);
+    let name = v8_str(scope, name)?;
+    set_key(scope, row, "name", name);
+    set_i32(scope, row, "cost", item.cost);
+    set_bool(scope, row, "stackable", item.stackable);
+    set_bool(scope, row, "members", item.members);
+    set_bool(
+        scope,
+        row,
+        "equippable",
+        crate::market_catalog::equippable(item),
+    );
+    set_i32(scope, row, "certlink", item.certificate_link);
+    set_i32(scope, row, "certtemplate", item.certificate_template);
+    set_bool(scope, row, "stackVariant", item.stack_variant);
+    Ok(row)
+}
+
 fn obj_records_cache<'s>(
     scope: &mut v8::HandleScope<'s>,
     data: &Arc<SelectedGameData>,
@@ -282,22 +306,7 @@ fn obj_records_cache<'s>(
                 .map_err(|_| "selected facts object-record count".to_string())?;
             let rows = v8::Array::new(scope, length);
             for (index, (item, name)) in items.into_iter().enumerate() {
-                let row = v8::Object::new(scope);
-                set_i32(scope, row, "id", item.id);
-                let name = v8_str(scope, name)?;
-                set_key(scope, row, "name", name);
-                set_i32(scope, row, "cost", item.cost);
-                set_bool(scope, row, "stackable", item.stackable);
-                set_bool(scope, row, "members", item.members);
-                set_bool(
-                    scope,
-                    row,
-                    "equippable",
-                    crate::market_catalog::equippable(item),
-                );
-                set_i32(scope, row, "certlink", item.certificate_link);
-                set_i32(scope, row, "certtemplate", item.certificate_template);
-                set_bool(scope, row, "stackVariant", item.stack_variant);
+                let row = obj_record_row(scope, item, name)?;
                 rows.set_index(scope, index as u32, row.into())
                     .ok_or_else(|| "selected facts object-record row".to_string())?;
             }
@@ -338,22 +347,7 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
     };
     let mut records = std::collections::HashMap::with_capacity(data.items().len());
     for (item, name) in crate::market_catalog::records(data.items()) {
-        let row = v8::Object::new(scope);
-        set_i32(scope, row, "id", item.id);
-        let name = v8_str(scope, name)?;
-        set_key(scope, row, "name", name);
-        set_i32(scope, row, "cost", item.cost);
-        set_bool(scope, row, "stackable", item.stackable);
-        set_bool(scope, row, "members", item.members);
-        set_bool(
-            scope,
-            row,
-            "equippable",
-            crate::market_catalog::equippable(item),
-        );
-        set_i32(scope, row, "certlink", item.certificate_link);
-        set_i32(scope, row, "certtemplate", item.certificate_template);
-        set_bool(scope, row, "stackVariant", item.stack_variant);
+        let row = obj_record_row(scope, item, name)?;
         let id = v8::Integer::new(scope, item.id);
         by_id
             .set(scope, id.into(), row.into())

@@ -536,6 +536,7 @@ fn not_impl_overlay_runtime_members_still_throw() {
 export default class NotImplOverlayProbe extends LoopingBot {
     async loop() {
         const unexpected = [];
+        let paintFrame;
         for (const [moduleIndex, selector] of overlayCases) {
             try {
                 const parts = selector.split('.');
@@ -543,9 +544,14 @@ export default class NotImplOverlayProbe extends LoopingBot {
                 let owner = namespace;
                 if (parts.length > 1) {
                     const rootName = parts.shift();
-                    owner = namespace[rootName];
-                    if (owner === undefined && namespace.default?.name === rootName) {
-                        owner = namespace.default;
+                    if (rootName === 'PaintFrame') {
+                        paintFrame ??= namespace.Paint.begin(null, {});
+                        owner = paintFrame;
+                    } else {
+                        owner = namespace[rootName];
+                        if (owner === undefined && namespace.default?.name === rootName) {
+                            owner = namespace.default;
+                        }
                     }
                 }
                 while (parts.length > 1) owner = owner[parts.shift()];

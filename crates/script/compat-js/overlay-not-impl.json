@@ -841,4 +841,145 @@
     "runtime": "crates/script/src/shim/paintLogic.js:133",
     "async": false
   }
+  ,
+  {
+    "id": "not-impl:input/Input.js:Input.useItemOnLoc",
+    "module": "input/Input.js",
+    "selector": "Input.useItemOnLoc",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:167",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.useItemOnNpc",
+    "module": "input/Input.js",
+    "selector": "Input.useItemOnNpc",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:170",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.useItemOnObj",
+    "module": "input/Input.js",
+    "selector": "Input.useItemOnObj",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:173",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.useItemOnItem",
+    "module": "input/Input.js",
+    "selector": "Input.useItemOnItem",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:176",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.castOnNpc",
+    "module": "input/Input.js",
+    "selector": "Input.castOnNpc",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:179",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.castOnLoc",
+    "module": "input/Input.js",
+    "selector": "Input.castOnLoc",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:182",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.castOnItem",
+    "module": "input/Input.js",
+    "selector": "Input.castOnItem",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:185",
+    "async": false
+  },
+  {
+    "id": "not-impl:input/Input.js:Input.continueDialog",
+    "module": "input/Input.js",
+    "selector": "Input.continueDialog",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
+    "runtime": "crates/script/src/shim/input.js:188",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.cols",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.cols",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: the frame column helper is not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:151",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.wrap",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.wrap",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: frame text wrapping is not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:152",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.list",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.list",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: frame lists are not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:153",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.fill",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.fill",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: frame fills are not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:154",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.grid",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.grid",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: frame grids are not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:155",
+    "async": false
+  },
+  {
+    "id": "not-impl:paint/Paint.js:PaintFrame.stepper",
+    "module": "paint/Paint.js",
+    "selector": "PaintFrame.stepper",
+    "operation": "not-impl",
+    "preserveParameters": true,
+    "reason": "Unconditional not-impl: frame steppers are not provided by the paint host.",
+    "runtime": "crates/script/src/shim/paint.js:156",
+    "async": false
+  }
 ]

@@ -2454,8 +2454,8 @@ fn wildcard_spec(spec: &str) -> String {
 }
 /// Declaration-only members are allowed only where an overlay explicitly
 /// preserves an upstream public class surface.
-fn preserved_overlay_members() -> &'static [(String, String)] {
-    static MEMBERS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
+fn compat_overlay_entries() -> &'static [serde_json::Value] {
+    static ENTRIES: LazyLock<Vec<serde_json::Value>> = LazyLock::new(|| {
         [
             include_str!("../compat-js/overlay.json"),
             include_str!("../compat-js/overlay-native.json"),
@@ -2467,8 +2467,17 @@ fn preserved_overlay_members() -> &'static [(String, String)] {
             serde_json::from_str::<Vec<serde_json::Value>>(source)
                 .expect("parse compatibility overlay")
         })
-        .filter_map(|entry| {
-            (entry["preserveMembers"].as_bool() == Some(true)).then(|| {
+        .collect()
+    });
+    ENTRIES.as_slice()
+}
+
+fn preserved_overlay_members() -> &'static [(String, String)] {
+    static MEMBERS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
+        compat_overlay_entries()
+            .iter()
+            .filter(|entry| entry["preserveMembers"].as_bool() == Some(true))
+            .map(|entry| {
                 (
                     format!("*{}", entry["module"].as_str().expect("overlay module")),
                     entry["selector"]
@@ -2477,10 +2486,132 @@ fn preserved_overlay_members() -> &'static [(String, String)] {
                         .to_owned(),
                 )
             })
-        })
-        .collect()
+            .collect()
     });
     MEMBERS.as_slice()
+}
+
+fn preserved_overlay_has_not_impl_member(label: &str, owner: &str, member: &str) -> bool {
+    let module = label.strip_prefix('*').unwrap_or(label);
+    compat_overlay_entries().iter().any(|entry| {
+        entry["operation"] == "not-impl"
+            && entry["module"].as_str() == Some(module)
+            && entry["selector"]
+                .as_str()
+                .and_then(|selector| selector.strip_prefix(owner))
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                == Some(member)
+    })
+}
+
+fn method_body_refuses_not_impl(body: Option<&BlockStmt>) -> bool {
+    let Some(body) = body else {
+        return false;
+    };
+    if body.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::Throw(throw) = &body.stmts[0] else {
+        return false;
+    };
+    let Expr::Call(call) = throw.arg.as_ref() else {
+        return false;
+    };
+    matches!(
+        &call.callee,
+        Callee::Expr(callee)
+            if matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "notImpl")
+    )
+}
+
+/// PaintFrame's declared class is a public view of the object returned from
+/// `Paint.begin`; retain only methods that exist on its runtime frame object.
+fn paint_frame_runtime_members() -> &'static HashSet<String> {
+    static MEMBERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+        let Some(parsed) = parse_js(
+            "/paint/Paint.js",
+            include_str!("shim/paint.js"),
+            MediaType::JavaScript,
+        ) else {
+            return HashSet::new();
+        };
+        let ProgramRef::Module(module) = parsed.program_ref() else {
+            return HashSet::new();
+        };
+        for item in &module.body {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
+                continue;
+            };
+            let Decl::Var(variables) = &export.decl else {
+                continue;
+            };
+            for variable in &variables.decls {
+                let Pat::Ident(name) = &variable.name else {
+                    continue;
+                };
+                if name.id.sym.as_ref() != "Paint" {
+                    continue;
+                }
+                let Some(Expr::Object(paint)) = variable.init.as_deref() else {
+                    continue;
+                };
+                for property in &paint.props {
+                    let PropOrSpread::Prop(property) = property else {
+                        continue;
+                    };
+                    let Prop::Method(begin) = property.as_ref() else {
+                        continue;
+                    };
+                    if prop_name(&begin.key).as_deref() != Some("begin") {
+                        continue;
+                    }
+                    let Some(body) = &begin.function.body else {
+                        continue;
+                    };
+                    for statement in &body.stmts {
+                        let Stmt::Decl(Decl::Var(locals)) = statement else {
+                            continue;
+                        };
+                        for local in &locals.decls {
+                            let Pat::Ident(name) = &local.name else {
+                                continue;
+                            };
+                            if name.id.sym.as_ref() != "frame" {
+                                continue;
+                            }
+                            let Some(Expr::Object(frame)) = local.init.as_deref() else {
+                                continue;
+                            };
+                            return frame
+                                .props
+                                .iter()
+                                .filter_map(|property| {
+                                    let PropOrSpread::Prop(property) = property else {
+                                        return None;
+                                    };
+                                    let Prop::Method(method) = property.as_ref() else {
+                                        return None;
+                                    };
+                                    if method_body_refuses_not_impl(method.function.body.as_ref()) {
+                                        return None;
+                                    }
+                                    prop_name(&method.key)
+                                })
+                                .collect();
+                        }
+                    }
+                }
+            }
+        }
+        HashSet::new()
+    });
+    &MEMBERS
+}
+
+fn preserved_native_frame_member(label: &str, owner: &str, member: &str) -> bool {
+    label == "*paint/Paint.js"
+        && owner == "PaintFrame"
+        && paint_frame_runtime_members().contains(member)
 }
 
 fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatExport {
@@ -2701,9 +2832,6 @@ fn compare_members(
     preserved_members: &[(String, String)],
     drifts: &mut Vec<String>,
 ) {
-    let allow_extra = preserved_members
-        .iter()
-        .any(|(module, member)| module == label && member == owner);
     for m in shim {
         let Some(d) = dts.iter().find(|x| x.name == m.name) else {
             // A JS class has an implicit zero-argument constructor when its
@@ -2733,8 +2861,17 @@ fn compare_members(
             );
         }
     }
+    let preserved_owner = preserved_members
+        .iter()
+        .any(|(module, member)| module == label && member == owner);
     for d in dts {
-        if !allow_extra && !shim.iter().any(|m| m.name == d.name) {
+        if shim.iter().any(|m| m.name == d.name) {
+            continue;
+        }
+        let allowed_preserved_member = preserved_owner
+            && (preserved_overlay_has_not_impl_member(label, owner, &d.name)
+                || preserved_native_frame_member(label, owner, &d.name));
+        if !allowed_preserved_member {
             drifts.push(format!("{label} {owner} extra authored member {}", d.name));
         }
     }

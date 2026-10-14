@@ -4567,15 +4567,15 @@ export const Input: {
     takeObj(lx: number, lz: number, objId: number, op: number): boolean;
     heldOp(objId: number, slot: number, comId: number, op: number): boolean;
     invButton(objId: number, slot: number, comId: number, op: number): boolean;
-    useItemOnLoc(useObjId: number, useSlot: number, useComId: number, lx: number, lz: number, typecode: number): boolean;
-    useItemOnNpc(useObjId: number, useSlot: number, useComId: number, index: number): boolean;
-    useItemOnObj(useObjId: number, useSlot: number, useComId: number, targetObjId: number, lx: number, lz: number): boolean;
-    useItemOnItem(useObjId: number, useSlot: number, useComId: number, targetObjId: number, targetSlot: number, targetComId: number): boolean;
-    castOnNpc(spellComId: number, index: number): boolean;
-    castOnLoc(spellComId: number, lx: number, lz: number, typecode: number): boolean;
-    castOnItem(spellComId: number, itemId: number, itemSlot: number, itemComId: number): boolean;
+    useItemOnLoc(useObjId: number, useSlot: number, useComId: number, lx: number, lz: number, typecode: number): never;
+    useItemOnNpc(useObjId: number, useSlot: number, useComId: number, index: number): never;
+    useItemOnObj(useObjId: number, useSlot: number, useComId: number, targetObjId: number, lx: number, lz: number): never;
+    useItemOnItem(useObjId: number, useSlot: number, useComId: number, targetObjId: number, targetSlot: number, targetComId: number): never;
+    castOnNpc(spellComId: number, index: number): never;
+    castOnLoc(spellComId: number, lx: number, lz: number, typecode: number): never;
+    castOnItem(spellComId: number, itemId: number, itemSlot: number, itemComId: number): never;
     walk(lx: number, lz: number): boolean;
-    continueDialog(): boolean;
+    continueDialog(): never;
 };
 
 }
@@ -4709,26 +4709,27 @@ export interface PaintFillOptions extends PaintListOptions {
     /** Panel pixels to leave below the list, for buttons drawn after it. */
     reserve?: number;
 }
+/** Construction is refused; obtain frames from Paint.begin(ctx, opts). */
 export class PaintFrame {
     constructor(ctx: CanvasRenderingContext2D, opts?: PaintOptions);
     title(text: string): void;
     tabs(id: string, names: string[]): string;
-    cols(): number;
+    cols(): never;
     rowsLeft(): number;
     text(line: string, color?: string): void;
     row(...cols: string[]): void;
     cells(cells: PaintCell[]): void;
-    wrap(text: string, color?: string, indent?: number): void;
-    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): number;
-    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): number;
-    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): number;
+    wrap(text: string, color?: string, indent?: number): never;
+    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): never;
+    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): never;
+    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): never;
     bar(label: string, fraction: number, color?: string): void;
     buttons(items: {
         id: string;
         label: string;
     }[]): string | null;
     select(id: string, label: string, options: string[], current: string): string | null;
-    stepper(id: string, label: string, options: string[], current: string): string | null;
+    stepper(id: string, label: string, options: string[], current: string): never;
     strip(id: string, tabs: string[], status: string, brand: string): string;
     rail(id: string, names: string[]): string;
     statGrid(rows: PaintCell[][], columns?: number): void;
@@ -4773,6 +4774,7 @@ export function toCanvasPoint(clientX?: number, clientY?: number, rect?: {
 /** Wrap an option index; -1 moves back, +1 moves forward, and unknown values start at 0. */
 export function cycleOption(options?: readonly string[], current?: string, delta?: number): never;
 export function hitRegion(regions?: readonly Region[], x?: number, y?: number): never;
+/** Construction is refused; the mutable paint-state family remains unavailable. */
 export class PaintState {
     constructor();
     publishRegions(regions?: Region[]): never;

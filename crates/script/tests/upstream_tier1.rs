@@ -507,6 +507,34 @@ check(
     'poisoned arrow records are missing'
 );
 check(objCatalog.some((item) => item.id === __UNTRADEABLE_OBJ_ID__), 'named untradeable object is missing');
+check(
+    [883, 884, 885, 886, 887, 888, 889, 890, 891, 892, 893].every(
+        (id) => objCatalog.find((item) => item.id === id)?.equippable === false,
+    ),
+    'objCatalog equippable must match the missing worn models for arrows 883–893',
+);
+const wornModelAbsentIds = [
+    78, 598, 773, 877, 878, 879, 880, 881, 882, 883, 884, 885, 886, 887,
+    888, 889, 890, 891, 892, 893, 942, 1635, 1637, 1639, 1641, 1643, 1645,
+    2532, 2533, 2534, 2535, 2536, 2537, 2538, 2539, 2540, 2541, 2550, 2552,
+    2554, 2556, 2558, 2560, 2562, 2564, 2566, 2568, 2570, 2572, 2866,
+    4023, 4024, 4025, 4026, 4027, 4028, 4029, 4030, 4031, 4032,
+];
+check(
+    wornModelAbsentIds.every((id) => objCatalog.find((item) => item.id === id)?.equippable === false),
+    'objCatalog marks an object without a worn model as equippable',
+);
+const wornModelPresentIds = [
+    229, 301, 303, 305, 307, 309, 311, 583, 585, 590, 717, 718, 719, 727,
+    731, 946, 952, 970, 972, 973, 1511, 1601, 1603, 1605, 1607, 1609, 1611,
+    1613, 1615, 1733, 1735, 1741, 1785, 1925, 1963, 2347, 2520, 2522, 2524,
+    2526, 2946, 2949, 2968, 2969, 3159, 3164, 3695, 3711, 3801, 3803,
+];
+check(
+    wornModelPresentIds.every((id) => objCatalog.find((item) => item.id === id)?.equippable === true),
+    'objCatalog omits a worn model from equippable',
+);
+check(objCatalog.find((item) => item.id === 1321)?.equippable === true, 'bronze scimitar worn model is missing');
 check(reader.objCatalog() === objCatalog, 'reader.objCatalog rebuilt its selected records');
 await refuses('GameMessages.record', () => gameMessagesExports.GameMessages.record('line'));
 await refuses('GameMessages.firstSince', () => gameMessagesExports.GameMessages.firstSince(0, /line/));

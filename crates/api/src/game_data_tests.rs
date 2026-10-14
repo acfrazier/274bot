@@ -133,7 +133,7 @@ fn unbound_selected_data_refuses_the_gathering_family() {
 fn minimal_json(tail: &str) -> String {
     format!(
         r#"{{
-                "schema_version": 4,
+                "schema_version": 5,
                 "revision": 274,
                 "provenance": {{
                     "cache_identity": {{"cache_id": "x"}},
@@ -1499,6 +1499,7 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
             wear_position: 0,
             wear_position_2: 0,
             wear_position_3: 0,
+            worn_model: false,
             tradeable: true,
             stack_variant: false,
             category: None,
