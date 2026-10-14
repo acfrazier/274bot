@@ -7,6 +7,7 @@
 //! the frozen log lines and completion stay here. Game actions reuse the
 //! existing FlatBuffer `npc` / `continue` / `answer` verbs.
 
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 #[cfg(test)]
 use crate::observed::Ops;
@@ -52,6 +53,10 @@ struct NativeObservation {
     chat_page_fingerprint: u64,
     chat_options: Vec<String>,
     bank_open: bool,
+    /// The local player's health-bar window (see
+    /// [`DialogueOutcome::combat_interrupted`]): raised by every hit,
+    /// including a 0-damage miss, so it witnesses a combat `if_close`.
+    in_combat: bool,
     #[cfg(test)]
     npcs: Vec<Npc>,
 }
@@ -75,6 +80,7 @@ impl NativeObservation {
             // Empty texts stay: the 1-based Answer index is the posted slot.
             chat_options: chat_options.to_vec(),
             bank_open: session.bank_open().unwrap_or(false),
+            in_combat: session.in_combat().unwrap_or(false),
             #[cfg(test)]
             npcs: Vec::new(),
         }
@@ -157,6 +163,15 @@ pub(crate) struct Dialog {
     reach: Option<NpcReach>,
     reach_result: Option<bool>,
     open_error: Option<String>,
+    /// A chat page was observed during this dialogue, so a later closed
+    /// observation is the conversation ending (or being ended), not the
+    /// wait for it to open.
+    chat_seen: bool,
+    /// The chat was observed closed while the player was in combat after
+    /// having been open: an NPC hit's `if_close`, not a finished talk.
+    /// Latched because the success decision can wait out a long authored
+    /// gap after the `in_combat` window closes.
+    combat_close_seen: bool,
 }
 
 impl Family for Dialog {
@@ -200,6 +215,8 @@ impl Family for Dialog {
             reach: None,
             reach_result: None,
             open_error: None,
+            chat_seen: false,
+            combat_close_seen: false,
         };
         match dialog.start(&obs, cx) {
             // A queued log line is written by the first step (the start kick).
@@ -404,22 +421,51 @@ impl Dialog {
         Step::Wait
     }
 
+    /// Latch a witnessed combat close: the chat was open on an earlier
+    /// observation and is now closed while the player is in combat. An
+    /// NPC hit `if_close`s the chat on every swing, including a 0-damage
+    /// miss, and that same hit raises `in_combat` (see
+    /// [`DialogueOutcome::combat_interrupted`]), so the two facts
+    /// together are the hit, not a finished conversation. The compat
+    /// contract stays the frozen bool: this only turns the would-be
+    /// success into the failure value `false`.
+    fn note_obs(&mut self, obs: &NativeObservation) {
+        if obs.dialog_ready() {
+            self.chat_seen = true;
+        } else if self.chat_seen
+            && DialogueOutcome::combat_interrupted(obs.dialog_ready(), obs.in_combat)
+        {
+            self.combat_close_seen = true;
+        }
+    }
+
+    /// The frozen closed-chat success, minus a witnessed combat close.
+    fn closed_ok(&self, obs: &NativeObservation) -> bool {
+        !obs.is_open() && !self.combat_close_seen
+    }
+
     fn wait_gap(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        self.note_obs(obs);
         if obs.dialog_ready() {
             self.phase = Phase::Drive;
             cx.clock().deadline = None;
             return self.drive_step(obs, cx);
         }
-        if obs.bank_open || cx.clock().bound_reached() {
+        // A bank the talk opened is its own success evidence, as before.
+        if obs.bank_open {
             return Step::Done(!obs.is_open());
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(self.closed_ok(obs));
         }
         Step::Wait
     }
 
     fn drive_step(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        self.note_obs(obs);
         self.phase = Phase::Drive;
         if self.steps >= DRIVE_STEPS {
-            return Step::Done(!obs.is_open());
+            return Step::Done(self.closed_ok(obs));
         }
         if !obs.dialog_ready() {
             if obs.bank_open {
@@ -428,7 +474,7 @@ impl Dialog {
             self.phase = Phase::WaitGap;
             cx.clock().arm(self.gap_ms);
             return if cx.clock().bound_reached() {
-                Step::Done(!obs.is_open())
+                Step::Done(self.closed_ok(obs))
             } else {
                 Step::Wait
             };
@@ -528,6 +574,7 @@ mod tests {
             chat_page_fingerprint: 0,
             chat_options: Vec::new(),
             bank_open: false,
+            in_combat: false,
             npcs,
         }
     }
@@ -543,6 +590,7 @@ mod tests {
                 .chat_page_fingerprint(obs.chat_page_fingerprint)
                 .chat_options(obs.chat_options.clone())
                 .bank_open(obs.bank_open)
+                .in_combat(obs.in_combat)
                 .npcs(
                     obs.npcs
                         .iter()
@@ -758,5 +806,34 @@ mod tests {
             machine::take(drive),
             Take::Settled(Outcome::Done(json!(false)))
         );
+    }
+
+    #[test]
+    fn combat_closed_chat_fails_but_a_finished_chat_succeeds() {
+        // `in_combat` is the only hit fact a 0-damage miss raises: the
+        // client sets the combat cycle for every Hit mask regardless of
+        // the damage value, while HP (and `taking_damage`) stay put. So
+        // `in_combat: true` with no other change is the miss case.
+        for (in_combat, expected) in [(true, false), (false, true)] {
+            let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
+            observation.chat_modal_id = 968;
+            post(&observation);
+            let drive = running(start("drive"));
+            assert!(ops().is_empty());
+            // The chat closes: a hit's `if_close`, or the talk's own end.
+            observation.tick = 2;
+            observation.chat_modal_id = -1;
+            observation.in_combat = in_combat;
+            post(&observation);
+            assert!(tick().is_empty());
+            assert_eq!(machine::take(drive), Take::Pending);
+            machine::tests::expire_deadlines();
+            assert!(tick().is_empty());
+            assert_eq!(
+                machine::take(drive),
+                Take::Settled(Outcome::Done(json!(expected))),
+                "closed chat with in_combat={in_combat}"
+            );
+        }
     }
 }
