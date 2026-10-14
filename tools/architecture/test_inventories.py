@@ -1910,7 +1910,7 @@ pub struct FleetRow {
             )
         )
         print(f"BAD generic parameter named like a std leaf: {generic}")
-        self.assertIn(f"{VIEWS_PATH}::Held: unresolved generic field ownership (Wrapping)", generic)
+        self.assertIn(f"{VIEWS_PATH}::Held: generic type defaults are unsupported (Wrapping)", generic)
 
     def test_transition_into_a_std_named_workspace_payload_is_not_silent(self) -> None:
         api = (
@@ -3202,6 +3202,11 @@ pub struct FleetRow {
             self.fixture(
                 views=self.baseline_views()
                 + "#[derive(Clone, Copy)] pub struct Unrelated { value: u64 }\n",
+                seam_types=(
+                    ("FleetCounts", "scalar"),
+                    ("FleetView", "borrowed"),
+                    ("Unrelated", "scalar"),
+                ),
                 workspace_files={"crates/api/src/lib.rs": api_lib},
             )
         )
@@ -3233,11 +3238,11 @@ pub struct FleetRow {
                 seam_types=(
                     ("FleetCounts", "scalar"),
                     ("FleetView", "borrowed"),
-                    ("AttackView", "scalar"),
+                    ("AttackView", "borrowed"),
                 ),
                 workspace_files={
                     "crates/api/src/lib.rs": (
-                        "#[derive(Clone, Copy)] pub struct Wrap<T> { pub x: T }\n"
+                        "#[derive(Clone, Copy)] pub struct Wrap<T: 'static> { pub x: &'static T }\n"
                     )
                 },
             )
@@ -3260,7 +3265,7 @@ pub struct FleetRow {
             + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: crate::Wrapping }\n",
             frontend_lib=(
                 "pub mod views;\n"
-                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+                "#[derive(Clone)] pub struct Wrapping { pub label: &'static str }\n"
             ),
             seam_types=seam_types,
             additional_seam_types=root_seam,
@@ -3271,7 +3276,7 @@ pub struct FleetRow {
             + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: Wrapping }\n",
             frontend_lib=(
                 "pub mod views;\n"
-                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+                "#[derive(Clone)] pub struct Wrapping { pub label: &'static str }\n"
             ),
             seam_types=seam_types,
             additional_seam_types=root_seam,
@@ -3290,7 +3295,7 @@ pub struct FleetRow {
             + "#[derive(Clone)] pub struct AttackView { pub label: &'static str, pub payload: Wrapping }\n",
             frontend_lib=(
                 "pub mod views;\n"
-                "#[derive(Clone, Copy)] pub struct Wrapping { pub value: u64 }\n"
+                "#[derive(Clone)] pub struct Wrapping { pub label: &'static str }\n"
             ),
             seam_types=seam_types,
             additional_seam_types=root_seam,
