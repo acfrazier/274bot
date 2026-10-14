@@ -28,6 +28,7 @@ pub enum Command {
     MarkAllShown,
     ClearMarks,
     LoadLoginAll,
+    ImportProfiles,
     LogoutAll,
     Login,
     Logout,
@@ -189,6 +190,7 @@ impl Command {
         Command::ClearMarks,
         Command::LoadLoginAll,
         Command::LogoutAll,
+        Command::ImportProfiles,
         Command::Login,
         Command::Logout,
         Command::Remove,
@@ -241,7 +243,8 @@ impl Command {
             | Command::MarkAllShown
             | Command::ClearMarks
             | Command::LoadLoginAll
-            | Command::LogoutAll => Group::Fleet,
+            | Command::LogoutAll
+            | Command::ImportProfiles => Group::Fleet,
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -293,6 +296,7 @@ impl Command {
             Command::ClearMarks => "Clear row selection",
             Command::LoadLoginAll => "Load + log in all…",
             Command::LogoutAll => "Log out all…",
+            Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
             Command::Remove => "Remove from fleet…",
@@ -395,6 +399,7 @@ impl Command {
                 Command::LoadLoginAll => "every vault profile".into(),
                 Command::LogoutAll if !app.table.selection.is_empty() => selected_scope(),
                 Command::LogoutAll => format!("all {}", members_text(app.names.len())),
+                Command::ImportProfiles => "vault".into(),
                 _ => "fleet table".into(),
             },
             Group::Script

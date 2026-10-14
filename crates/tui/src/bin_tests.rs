@@ -4296,3 +4296,57 @@ fn memory_relog_confirms_while_a_script_runs() {
     assert!(alice.login_latched(), "the confirmed relog logs out");
     assert!(alice.wants_logout());
 }
+
+/// Review R3-H3: the import overlay built from a real preview of an export
+/// whose password is repeated as the account's tab holds no copy of the
+/// password, so its derived `Debug` shows none. (The redaction registry is
+/// process-wide: this test's password is its own.)
+#[test]
+fn import_overlay_debug_holds_no_export_password() {
+    const SECRET: &str = "r4t-tui-pw-60234";
+    let iso = IsolatedEnv::enter("tui-import-redacted");
+    let (mut session, mut app) = tui_with_profiles(&iso, &[]);
+    let path = iso
+        .dir
+        .join(frontend_core::rs2b0t_import::PROFILE_FILE_NAME);
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "kind": frontend_core::rs2b0t_import::PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [{ "username": "rvr4probe", "password": SECRET, "tab": SECRET }],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": { "rvr4probe": {} },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let open = app.run_command(crate::commands::Command::ImportProfiles);
+    dispatch(&mut session, &mut app, open);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ProfileImport(crate::profile_import::ImportAction::Preview(
+            path.display().to_string(),
+        )),
+    );
+    let Some(crate::overlay::Modal::ProfileImport(view)) = app.modal.as_ref() else {
+        panic!("the import overlay is not open");
+    };
+    assert_eq!(
+        view.stage,
+        frontend_core::rs2b0t_import::Stage::Preview,
+        "{:?}",
+        view.error
+    );
+    assert!(
+        view.lines
+            .iter()
+            .any(|line| line.contains("not imported: tab")),
+        "{:?}",
+        view.lines
+    );
+    let shown = format!("{view:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+}

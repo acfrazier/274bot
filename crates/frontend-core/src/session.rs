@@ -1856,8 +1856,19 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
+        self.create_profile_with_log_action(profile, mirror, label, "profile save")
+    }
+
+    /// [`Self::create_profile`] with the action that owns its assignment log.
+    pub(crate) fn create_profile_with_log_action(
+        &mut self,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+        assignment_action: &'static str,
+    ) -> Result<OperationId, String> {
         self.refuse_existing(&profile.username, label)?;
-        self.save_profile(profile, mirror, label)
+        self.save_profile_with_log_action(profile, mirror, label, assignment_action)
     }
 
     /// Rename `old` to `profile.username` as one transaction: the new row
