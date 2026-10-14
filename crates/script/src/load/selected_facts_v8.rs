@@ -47,6 +47,8 @@ fn run_selected_facts<'s>(
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "obj-catalog" => obj_catalog(scope),
+        "random-event-casket" => random_event_casket(scope),
+        "autocast-component" => autocast_component(scope, args.get(1)),
         "item-tradeable" => item_tradeable(scope, args.get(1)),
         "item-name" => item_name(scope, args.get(1), args.get(2)),
         "cow-locations" => cow_locations(scope, args.get(1)),
@@ -71,6 +73,32 @@ fn run_selected_facts<'s>(
         "worth-stocking" => worth_stocking(scope, args.get(1)),
         _ => Err("invalid selected facts op".into()),
     }
+}
+
+fn random_event_casket<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let id = supply_v2::selected_data()
+        .as_deref()
+        .and_then(|data| api::content::random_event_casket_id(Some(data)))
+        .unwrap_or(-1);
+    Ok(v8::Integer::new(scope, id).into())
+}
+fn autocast_component<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    alias: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let alias = js_to_string(scope, alias)?;
+    let component = supply_v2::selected_data()
+        .as_deref()
+        .and_then(api::game_data::SelectedGameData::autocast_controls)
+        .and_then(|controls| match alias.as_str() {
+            "combat_staff_2:auto_choose" => Some(controls.choose_com),
+            "combat_staff_2:auto_toggle" => Some(controls.toggle_com),
+            _ => None,
+        })
+        .unwrap_or(-1);
+    Ok(v8::Integer::new(scope, component).into())
 }
 
 fn worth_stocking<'s>(

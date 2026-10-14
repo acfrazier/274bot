@@ -280,6 +280,118 @@ export default class T extends LoopingBot {
     );
 }
 
+/// Every not-impl overlay citation points to a throwing native refusal, and
+/// every named member still throws that refusal when imported from Load.
+#[test]
+fn not_impl_overlay_runtime_members_still_throw() {
+    use script::load::{LoadIsolate, LoadShape};
+
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../compat-js/overlay-not-impl.json"))
+            .expect("not-impl overlay JSON");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut modules = Vec::<String>::new();
+    for entry in &entries {
+        assert_eq!(entry["operation"], "not-impl", "{entry}");
+        let runtime = entry["runtime"].as_str().expect("runtime citation");
+        let (path, line) = runtime.rsplit_once(':').expect("runtime line number");
+        let line = line.parse::<usize>().expect("numeric runtime line");
+        let source = std::fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read {runtime}: {error}"));
+        let target = source
+            .lines()
+            .nth(line - 1)
+            .unwrap_or_else(|| panic!("runtime line out of range: {runtime}"));
+        assert!(
+            target.contains("notImpl(") || target.contains("notImplValue("),
+            "{runtime} does not point to a not-impl refusal: {target:?}"
+        );
+        let module = entry["module"].as_str().expect("overlay module");
+        if !modules.iter().any(|known| known == module) {
+            modules.push(module.to_owned());
+        }
+    }
+
+    let mut source = String::new();
+    for (index, module) in modules.iter().enumerate() {
+        let specifier = serde_json::to_string(&format!("#/bot/{module}")).unwrap();
+        source.push_str(&format!("import * as overlay{index} from {specifier};\n"));
+    }
+    let module_names = (0..modules.len())
+        .map(|index| format!("overlay{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    source.push_str(&format!("const overlayModules = [{module_names}];\n"));
+    let cases: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let module = entry["module"].as_str().expect("overlay module");
+            let module_index = modules
+                .iter()
+                .position(|known| known == module)
+                .expect("registered overlay module");
+            serde_json::json!([module_index, entry["selector"]])
+        })
+        .collect();
+    source.push_str(&format!(
+        "const overlayCases = {};\n",
+        serde_json::to_string(&cases).unwrap()
+    ));
+    source.push_str(
+        r#"
+export default class NotImplOverlayProbe extends LoopingBot {
+    async loop() {
+        const unexpected = [];
+        for (const [moduleIndex, selector] of overlayCases) {
+            try {
+                const parts = selector.split('.');
+                const namespace = overlayModules[moduleIndex];
+                let owner = namespace;
+                if (parts.length > 1) {
+                    const rootName = parts.shift();
+                    owner = namespace[rootName];
+                    if (owner === undefined && namespace.default?.name === rootName) {
+                        owner = namespace.default;
+                    }
+                }
+                while (parts.length > 1) owner = owner[parts.shift()];
+                const memberName = parts.at(-1);
+                let receiver = owner;
+                let member = owner[memberName];
+                if (typeof owner === 'function' && owner.prototype && member === undefined) {
+                    receiver = Object.create(owner.prototype);
+                    member = Reflect.get(owner.prototype, memberName, receiver);
+                }
+                if (typeof member === 'function') await member.call(receiver);
+                else member.valueOf();
+                unexpected.push(`${selector} returned`);
+            } catch (error) {
+                const message = String(error?.message ?? error);
+                if (!message.includes('not impl:') || !message.includes(selector.split('.').at(-1))) {
+                    unexpected.push(`${selector}: ${message}`);
+                }
+            }
+        }
+        globalThis.__overlayUnexpected = unexpected;
+    }
+}
+"#,
+    );
+
+    let isolate =
+        LoadIsolate::spawn(source, LoadShape::CompatClass, vec![]).expect("overlay probe loads");
+    isolate.on_game_tick(1);
+    let unexpected = isolate
+        .probe("globalThis.__overlayUnexpected")
+        .expect("overlay probe result");
+    isolate.join();
+    assert_eq!(
+        unexpected,
+        serde_json::json!([]),
+        "overlay refusals: {unexpected}"
+    );
+}
+
 /// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the
 /// generated bundle refreshes without the catalog tree.
 #[test]

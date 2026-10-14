@@ -4,7 +4,7 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "$add",
     "reason": "The V8 SceneEntity writer posts flat x/z/level/actions, the nested tile and common combat fields; it does not expose the FlatBuffer-only shape or angle fields. ClientAdapter returns these posted rows unchanged.",
-    "runtime": "crates/script/src/shim/client_adapter.js:89",
+    "runtime": "crates/script/src/shim/client_adapter.js:104",
     "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; }"
   },
   {
@@ -44,8 +44,8 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.selfTarget",
     "add": true,
-    "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script/src/shim/client_adapter.js:170-176).",
-    "runtime": "crates/script/src/shim/client_adapter.js:170",
+    "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script/src/shim/client_adapter.js:185-191).",
+    "runtime": "crates/script/src/shim/client_adapter.js:185",
     "declaration": "selfTarget(): { kind: number; index: number };"
   },
   {

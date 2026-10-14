@@ -163,7 +163,7 @@ export function test(name, body) {
     cases.push({
         name: [...suites.map((suite) => suite.name), String(name)].join(' > '),
         body,
-        suites,
+        suites: suites.slice(),
     });
 }
 

@@ -30,14 +30,13 @@ export { Trade } from '../../api/trade/Trade.js';
 export { Shop } from '../../api/shop/Shop.js';
 export { default as EntityQuery } from '../../api/query/Query.js';
 export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';
+export { NAV_PURE_WALK, NAV_WITH_TELES } from '../../api/walking/Traversal.js';
 export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';
 export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';
 
-export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };
-export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };
 export const ALL_FISHING_GEAR_NAMES = notImplValue('ALL_FISHING_GEAR_NAMES');
 export const AXE_BAR_FOR = notImplValue('AXE_BAR_FOR');
 export const AXE_SHOP_COSTS = notImplValue('AXE_SHOP_COSTS');

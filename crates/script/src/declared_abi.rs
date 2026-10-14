@@ -556,6 +556,11 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
+        names: &["NAV_PURE_WALK", "NAV_WITH_TELES"],
+        line: "export { NAV_PURE_WALK, NAV_WITH_TELES } from '../../api/walking/Traversal.js';",
+    },
+
+    Reexport {
         names: &[
             "PICKPOCKET_TARGETS",
             "PICKPOCKET_TARGET_NAMES",
@@ -615,21 +620,6 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
         }
     }
     out.push('\n');
-
-    // Walk flags are constants (not a walker clone).
-    if wanted.contains("NAV_PURE_WALK") && !covered.contains("NAV_PURE_WALK") {
-        out.push_str(
-            "export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };\n",
-        );
-        covered.insert("NAV_PURE_WALK");
-    }
-    if wanted.contains("NAV_WITH_TELES") && !covered.contains("NAV_WITH_TELES") {
-        out.push_str(
-            "export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };\n",
-        );
-        covered.insert("NAV_WITH_TELES");
-    }
-
     for exp in exports {
         if covered.contains(exp.name.as_str()) {
             continue;

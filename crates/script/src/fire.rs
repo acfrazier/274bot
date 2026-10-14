@@ -747,6 +747,8 @@ fn is_burn_west(input: &Value) -> Value {
     json!(i32_field(dir, "dx") == Some(-1) && i32_field(dir, "dz") == Some(0))
 }
 
+pub(crate) const BURN_MODE_OPTIONS: [&str; 2] = ["Off", "Chop then burn"];
+
 pub(crate) fn parse_burn_mode(normalized_label: &str) -> &'static str {
     if normalized_label == "chop then burn" {
         "chop-then-burn"

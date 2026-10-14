@@ -79,7 +79,7 @@
     "module": "api/combat/CombatStyleLogic.js",
     "selector": "$add",
     "reason": "The host additionally reexports its served spell table.",
-    "runtime": "crates/script/src/shim/combat_style_logic.js:34",
+    "runtime": "crates/script/src/shim/combat_style_logic.js:38",
     "declaration": "export { SPELL_DB } from '../../data/spelldb.js';"
   },
   {
@@ -141,7 +141,7 @@
     "operation": "optional",
     "parameters": ["want", "walkable", "canStep"],
     "reason": "Native lane search defaults want and never calls the legacy walkable or canStep predicates.",
-    "runtime": "crates/script/src/shim/firemaking.js:105"
+    "runtime": "crates/script/src/shim/firemaking.js:108"
   },
   {
     "id": "game-native-retaliate-alias",
@@ -149,7 +149,7 @@
     "selector": "Game.autoRetaliate",
     "add": true,
     "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-    "runtime": "crates/script/src/shim/game.js:63",
+    "runtime": "crates/script/src/shim/game.js:73",
     "declaration": "autoRetaliate(): boolean;"
   },
   {
@@ -157,7 +157,7 @@
     "module": "api/game/Game.js",
     "selector": "Game.combatStyleMode",
     "reason": "Native facade ignores the legacy style argument and returns the current posted varp mode.",
-    "runtime": "crates/script/src/shim/game.js:185",
+    "runtime": "crates/script/src/shim/game.js:195",
     "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;"
   },
   {
@@ -282,7 +282,7 @@
     "module": "runtime/Settings.js",
     "selector": "SettingsBag.values",
     "reason": "Host settings bag exposes the posted value map.",
-    "runtime": "crates/script/src/shim/settings.js:6",
+    "runtime": "crates/script/src/shim/settings.js:7",
     "declaration": "values: Record<string, unknown>;"
   },
   {
@@ -290,7 +290,7 @@
     "module": "runtime/Settings.js",
     "selector": "SettingsBag.tile",
     "reason": "Host converts posted coordinates to a real Tile, defaults fallback to null, and returns any supplied fallback unchanged without validation.",
-    "runtime": "crates/script/src/shim/settings.js:29",
+    "runtime": "crates/script/src/shim/settings.js:30",
     "declaration": "tile(key: string, fallback?: undefined): Tile | null; tile<F extends import('../adapter/ClientAdapter.js').WorldTile | null>(key: string, fallback: F): Tile | F;"
   },
   {
@@ -359,5 +359,21 @@
     "reason": "The current rs2b0t Duel API adds this lobby predicate beyond the frozen compat revision; the host keeps its bounds and fight-pen exclusion native.",
     "runtime": "crates/script/src/shim/duel.js:33",
     "declaration": "/** Whether a tile is in the level-zero challenge area outside every fight pen. */\nexport function inDuelChallengeArea(tile: WorldTile | null): boolean;"
+  },
+  {
+    "id": "combat-style-autocast-choose-component",
+    "module": "api/combat/CombatStyleLogic.js",
+    "selector": "AUTO_CHOOSE_COM",
+    "reason": "The selected-facts adapter resolves this revision's component id from the packed interface alias at /Users/acfrazier/experiments/lostcity-289/content/pack/interface.pack:354; the frozen numeric literal is not authoritative across selected content.",
+    "runtime": "crates/script/src/shim/combat_style_logic.js:7",
+    "declaration": "export const AUTO_CHOOSE_COM: number;"
+  },
+  {
+    "id": "combat-style-autocast-toggle-component",
+    "module": "api/combat/CombatStyleLogic.js",
+    "selector": "AUTO_TOGGLE_COM",
+    "reason": "The selected-facts adapter resolves this revision's component id from the packed interface alias at /Users/acfrazier/experiments/lostcity-289/content/pack/interface.pack:350; the frozen numeric literal is not authoritative across selected content.",
+    "runtime": "crates/script/src/shim/combat_style_logic.js:8",
+    "declaration": "export const AUTO_TOGGLE_COM: number;"
   }
 ]

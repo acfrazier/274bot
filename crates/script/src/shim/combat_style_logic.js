@@ -3,8 +3,9 @@ import { SPELL_DB } from '../../data/spelldb.js';
 export const ATTACKSTYLE_MAGIC_VARP = 108;
 export const AUTOCAST_ARMED = 3;
 
-export const AUTO_CHOOSE_COM = 353;
-export const AUTO_TOGGLE_COM = 349;
+const selectedFacts = globalThis.__rs2b0t_selected_facts;
+export const AUTO_CHOOSE_COM = selectedFacts('autocast-component', 'combat_staff_2:auto_choose');
+export const AUTO_TOGGLE_COM = selectedFacts('autocast-component', 'combat_staff_2:auto_toggle');
 
 function hostFn(name) {
     return globalThis.rustyscript.functions[name];

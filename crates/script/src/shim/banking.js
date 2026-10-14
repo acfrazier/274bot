@@ -14,7 +14,8 @@ export const COMMON_BANK_LOOT = Object.freeze(
     (globalThis.__rs2b0t_host?.content?.common_bank_loot || []).slice(),
 );
 
-export const RANDOM_EVENT_CASKET_ID = 405;
+export const RANDOM_EVENT_CASKET_ID =
+    globalThis.__rs2b0t_selected_facts('random-event-casket');
 
 export function matchesCommonBankLoot(name, id = -1) {
     return globalThis.rustyscript.functions.__rs2b0t_matches_common_bank_loot(

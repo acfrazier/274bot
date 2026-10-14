@@ -41,6 +41,8 @@ fn interface_style(label: &str) -> Option<&'static str> {
     }
 }
 
+const PLAYER_FACE_BASE: i32 = 32_768;
+
 fn retaliate_on_from_varp(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(serde_json::Value::as_f64)
@@ -50,7 +52,7 @@ fn retaliate_on_from_varp(value: Option<&serde_json::Value>) -> bool {
 fn facing_player(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(serde_json::Value::as_f64)
-        .is_some_and(|value| value >= 32_768.0)
+        .is_some_and(|value| value >= f64::from(PLAYER_FACE_BASE))
 }
 
 /// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
@@ -473,6 +475,12 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register retaliate varp helper: {e}"))?;
     runtime
+        .register_function("__rs2b0t_player_face_base", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!(PLAYER_FACE_BASE))
+        })
+        .map_err(|e| format!("register player face base: {e}"))?;
+
+    runtime
         .register_function("__rs2b0t_facing_player", |args: &[serde_json::Value]| {
             Ok(serde_json::json!(facing_player(args.first())))
         })
@@ -730,7 +738,6 @@ pub(super) fn wire_runtime(
     super::progress_methods_v8::install(runtime)
         .map_err(|e| format!("progress methods v8: {e}"))?;
     super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
-    super::murder_areas_v8::install(runtime).map_err(|e| format!("murder areas v8: {e}"))?;
     super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
     super::clue_logic_v8::install(runtime).map_err(|e| format!("clue logic v8: {e}"))?;
     super::clue_pack_v8::install(runtime).map_err(|e| format!("clue pack v8: {e}"))?;

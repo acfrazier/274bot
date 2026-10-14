@@ -38,11 +38,9 @@ fn collect_test_files(root: &Path) -> Vec<PathBuf> {
     tests
 }
 
-fn test_url(root: &Path, path: &Path) -> String {
-    let relative = path.strip_prefix(root).expect("test is below frozen root");
-    let mut url = relative.to_string_lossy().replace('\\', "/");
-    url.truncate(url.len() - ".ts".len());
-    format!("{TEST_MODULE_PREFIX}/{url}")
+fn test_url(file: &str) -> String {
+    let file = file.strip_suffix(".ts").unwrap_or(file);
+    format!("{TEST_MODULE_PREFIX}/{file}")
 }
 
 fn bot_source(test_url: &str) -> String {
@@ -96,15 +94,25 @@ fn run_upstream_file(
     game_data: Arc<api::game_data::SelectedGameData>,
     bank_facts: Arc<api::named_banks::NamedBankFacts>,
 ) -> serde_json::Value {
-    let file = path.strip_prefix(root).expect("test is below frozen root");
-    let file = file.to_string_lossy().replace('\\', "/");
+    let relative = path.strip_prefix(root).expect("test is below frozen root");
+    let file = relative.to_string_lossy().replace('\\', "/");
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) => {
             return serde_json::json!({ "file": file, "stage": "read", "error": error.to_string() })
         }
     };
-    let js = match transpile_ts(&source) {
+    run_upstream_source(&file, &source, harness, game_data, bank_facts)
+}
+
+fn run_upstream_source(
+    file: &str,
+    source: &str,
+    harness: &str,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    bank_facts: Arc<api::named_banks::NamedBankFacts>,
+) -> serde_json::Value {
+    let js = match transpile_ts(source) {
         Ok(js) => js,
         Err(error) => {
             return serde_json::json!({ "file": file, "stage": "transpile", "error": error })
@@ -114,7 +122,7 @@ fn run_upstream_file(
     let adapted = js
         .replace("'bun:test'", &harness_import)
         .replace("\"bun:test\"", &harness_import);
-    let url = test_url(root, path);
+    let url = test_url(file);
     let siblings = vec![
         (TEST_HARNESS_URL.to_string(), harness.to_string()),
         (url.clone(), adapted),
@@ -180,6 +188,75 @@ fn run_upstream_file(
     }
 }
 
+fn outcome_manifest_entry(result: &serde_json::Value) -> serde_json::Value {
+    let file = result["file"].as_str().expect("result file name");
+    let stage = result["stage"].as_str().expect("result stage");
+    if stage == "ran" {
+        let cases = result["cases"]
+            .as_array()
+            .expect("ran result case array")
+            .iter()
+            .map(|case| {
+                let name = case["name"].as_str().expect("case name");
+                let status = case["status"].as_str().expect("case status");
+                if status == "pass" {
+                    serde_json::json!({"name": name, "status": status})
+                } else {
+                    let reason = case["error"]
+                        .as_str()
+                        .expect("failing case reason")
+                        .lines()
+                        .next()
+                        .unwrap_or_default();
+                    serde_json::json!({"name": name, "status": status, "reason": reason})
+                }
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({"file": file, "stage": stage, "cases": cases})
+    } else {
+        let reason = if stage == "excluded" {
+            result["reason"].as_str().expect("excluded file reason")
+        } else {
+            result["error"]
+                .as_str()
+                .map(|error| error.lines().next().unwrap_or_default())
+                .unwrap_or("no test cases registered")
+        };
+        serde_json::json!({"file": file, "stage": stage, "reason": reason})
+    }
+}
+
+#[test]
+fn upstream_harness_fails_cases_when_nested_before_each_throws() {
+    let harness = include_str!("upstream/harness/bun_test.js");
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("R289 selected game data");
+    let source = r#"
+import { beforeEach, describe, test } from 'bun:test';
+describe('outer', () => {
+    beforeEach(() => { throw new Error('nested setup refused'); });
+    test('inner case', () => {});
+});
+"#;
+    let result = run_upstream_source(
+        "harness/hook-probe.test.ts",
+        source,
+        harness,
+        game_data,
+        catalog_bank_facts(),
+    );
+    assert_eq!(result["stage"], "ran", "{result}");
+    let cases = result["cases"].as_array().expect("registered test cases");
+    assert_eq!(cases.len(), 1, "{result}");
+    assert_eq!(cases[0]["status"], "fail", "{result}");
+    assert!(
+        cases[0]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("nested setup refused")),
+        "nested hook failure was not reported: {result}"
+    );
+}
+
 #[test]
 fn upstream_tier1_runs_unmodified_sources_in_load() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -191,20 +268,76 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
         EXPECTED_TEST_FILES,
         "tier-1 source inventory changed"
     );
+    let expected: serde_json::Value =
+        serde_json::from_str(include_str!("upstream/expected-2de6bb23.json"))
+            .expect("parse pinned tier-1 results");
+    assert_eq!(
+        expected["revision"], "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+        "tier-1 manifest revision changed"
+    );
+    let expected_files = expected["files"]
+        .as_array()
+        .expect("tier-1 manifest file list");
+    assert_eq!(
+        expected_files.len(),
+        EXPECTED_TEST_FILES,
+        "tier-1 manifest inventory changed"
+    );
+    let source_files: Vec<String> = tests
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&root)
+                .expect("test is below frozen root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    let manifest_files: Vec<String> = expected_files
+        .iter()
+        .map(|entry| {
+            entry["file"]
+                .as_str()
+                .expect("manifest file name")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        source_files, manifest_files,
+        "tier-1 source inventory differs from its expected-results manifest"
+    );
+    for entry in expected_files {
+        if entry["stage"] == "excluded" {
+            assert!(
+                entry["reason"]
+                    .as_str()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
+                "excluded test needs a documented reason: {entry}"
+            );
+        }
+    }
     let harness = include_str!("upstream/harness/bun_test.js");
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
         .expect("R289 selected game data");
     let bank_facts = catalog_bank_facts();
     let results: Vec<_> = tests
         .iter()
-        .map(|path| {
-            run_upstream_file(
-                &root,
-                path,
-                harness,
-                Arc::clone(&game_data),
-                Arc::clone(&bank_facts),
-            )
+        .zip(expected_files)
+        .map(|(path, expected_file)| {
+            if expected_file["stage"] == "excluded" {
+                serde_json::json!({
+                    "file": expected_file["file"],
+                    "stage": "excluded",
+                    "reason": expected_file["reason"],
+                })
+            } else {
+                run_upstream_file(
+                    &root,
+                    path,
+                    harness,
+                    Arc::clone(&game_data),
+                    Arc::clone(&bank_facts),
+                )
+            }
         })
         .collect();
 
@@ -229,6 +362,12 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
         );
     }
     assert_eq!(results.len(), EXPECTED_TEST_FILES);
+    let actual: Vec<_> = results.iter().map(outcome_manifest_entry).collect();
+    assert_eq!(
+        actual.as_slice(),
+        expected_files.as_slice(),
+        "upstream tier-1 results changed; review and update the pinned manifest"
+    );
 }
 
 #[test]
@@ -242,12 +381,13 @@ import { ENCLAVE_TARGET_OPTIONS as options, GUTANOTH_BLUE, enclaveTargets as sel
 import { chasesTarget, Fight } from '#/bot/api/combat/hunting/combat.js';
 import { ClueDuelSearch } from '#/bot/api/duel/ClueDuel.js';
 import { resetClueDuelSearch } from '#/bot/api/ai/clues/duelTravel.js';
-import { toolAttackLevel as rootToolAttackLevel, toolsNeedingEquip as rootToolsNeedingEquip, shouldBankNow as rootShouldBankNow, bankDistance as rootBankDistance, bestHeldToolNames as rootBestHeldToolNames, surplusHeldToolNames as rootSurplusHeldToolNames, resolveBankOpenRoute as rootResolveBankOpenRoute, NEARBY_BANK_RADIUS as rootNearbyBankRadius, InvItem as RootInvItem } from '@rs2b0t/api';
+import { toolAttackLevel as rootToolAttackLevel, toolsNeedingEquip as rootToolsNeedingEquip, shouldBankNow as rootShouldBankNow, bankDistance as rootBankDistance, bestHeldToolNames as rootBestHeldToolNames, surplusHeldToolNames as rootSurplusHeldToolNames, resolveBankOpenRoute as rootResolveBankOpenRoute, NEARBY_BANK_RADIUS as rootNearbyBankRadius, NAV_PURE_WALK as rootNavPureWalk, InvItem as RootInvItem } from '@rs2b0t/api';
 import { toolAttackLevel, toolsNeedingEquip } from '#/bot/api/acquisition/Tools.js';
 import { shouldBankNow, parseBankStrategy, matchesCommonBankLoot, RANDOM_EVENT_CASKET_ID } from '#/bot/api/bank/Banking.js';
 import type { EventMap, Task, InvItem as InvItemType } from '@rs2b0t/api';
 import type { BankOpts, CombatHost } from '#/bot/api/combat/hunting/supply.js';
 import { RETALIATE_VARP, PLAYER_FACE_BASE, retaliateOnFromVarp, facingPlayer } from '#/bot/api/game/Game.js';
+import { reader } from '#/bot/adapter/ClientAdapter.js';
 import { backpackSnapshots, backpackCapacity } from '#/bot/api/inventory/Inventory.js';
 import { bestHeldToolNames, surplusHeldToolNames } from '#/bot/api/acquisition/Tools.js';
 import { resolveBankOpenRoute, NEARBY_BANK_RADIUS } from '#/bot/api/bank/Banking.js';
@@ -269,6 +409,15 @@ import { tilesTo, trailWalkOpts, TRACE_STORAGE_KEY } from '#/bot/api/ai/clues/Cl
 import { trailKit, nextCoordTool, extraItemShop, gateItemShop, SPADE_SPAWNS, PROFESSOR, MURPHY, KOJO, KOJO_EXIT } from '#/bot/api/ai/clues/data/toolAcquire.js';
 import { pickByLine, isUnderground, needsHop } from '#/bot/api/ai/quests/exec/primitives.js';
 import { resolveLoopCadence, BranchTask, LeafTask } from '#/bot/api/bot/Bot.js';
+import * as clientAdapterExports from '#/bot/adapter/ClientAdapter.js';
+import * as woodcuttingExports from '#/bot/data/woodcuttingLocations.js';
+import * as settingsExports from '#/bot/runtime/Settings.js';
+import * as runManagerExports from '#/bot/runtime/RunManager.js';
+import * as scriptRunnerExports from '#/bot/runtime/ScriptRunner.js';
+import * as botHostExports from '#/bot/runtime/BotHost.js';
+import * as paintExports from '#/bot/paint/Paint.js';
+import * as paintLogicExports from '#/bot/paint/paintLogic.js';
+
 
 const check = (ok, message) => { if (!ok) throw new Error(message); };
 async function refuses(member, call) {
@@ -324,29 +473,99 @@ check(retaliateOnFromVarp(0) === true && retaliateOnFromVarp(1) === false, 'reta
 check(facingPlayer(PLAYER_FACE_BASE) === true && facingPlayer(PLAYER_FACE_BASE - 1) === false, 'player face boundary mismatch');
 check(RETALIATE_VARP > 0, 'RETALIATE_VARP export missing');
 check(parseInterfaceCombatStyle('(Aggressive)') === 'strength' && parseInterfaceCombatStyle('Defensive') === 'defence' && parseInterfaceCombatStyle('Rapid') === null, 'combat interface style mapping mismatch');
-check(matchesCommonBankLoot('', bankRulesCasket) === true && matchesCommonBankLoot('', RANDOM_EVENT_CASKET_ID) === true, 'bank rules casket id is not recognized by native bank rules');
+const contentCasket = globalThis.__rs2b0t_selected_facts('random-event-casket');
+check(
+    RANDOM_EVENT_CASKET_ID === contentCasket &&
+        bankRulesCasket === contentCasket &&
+        matchesCommonBankLoot('', contentCasket) === true,
+    'random-event casket id is not selected from game content'
+);
+const objCatalog = reader.objCatalog();
+check(
+    Array.isArray(objCatalog) &&
+        objCatalog.length > 0 &&
+        objCatalog.every((item) => typeof item.id === 'number' && typeof item.stackable === 'boolean'),
+    'reader.objCatalog did not return selected object facts'
+);
 const rangingPlanValue = rangingPlan([{ item: 'Ranging potion(2)', qty: 3 }]);
 check(rangingPlanValue.potion === RANGING_POTION && rangingPlanValue.flask === 'Ranging potion(2)' && rangingPlanValue.want === 3, 'rangingPlan does not use the exported ranging descriptor');
 check(typeof AUTO_CHOOSE_COM === 'number' && typeof AUTO_TOGGLE_COM === 'number' && typeof SELL_STACK_STEP === 'number' && typeof NEARBY_BANK_RADIUS === 'number', 'combat, shop, or bank constant export missing');
-check(Array.isArray(BURN_MODE_OPTIONS) && typeof NAV_PURE_WALK === 'object' && typeof NAV_WITH_TELES === 'object', 'firemaking or traversal constant export missing');
-check(typeof COIN_FLOAT === 'number' && typeof PROVISION_BANK === 'object', 'quest provisioning constants not loadable');
-check(typeof ARHEIN === 'object' && typeof GUARD_START === 'object' && typeof GUARD_HANDIN === 'object' && typeof SALESMAN === 'object', 'murder NPC data exports not loadable');
-check(Array.isArray(SUSPECTS) && Array.isArray(MURDER_EVIDENCE), 'murder evidence exports not loadable');
-const greenSuspects = suspectOrder(MURDER_OBJ.THREAD_GREEN);
 check(
-    greenSuspects.map(suspect => suspect.stop.npc).join(',') ===
-        'Anna,David,Bob,Carol,Elizabeth,Frank' &&
-        greenSuspects[0] === SUSPECTS[0] &&
-        greenSuspects[1] === SUSPECTS[3],
-    'murder suspect ordering mismatch'
+    AUTO_CHOOSE_COM === globalThis.__rs2b0t_selected_facts('autocast-component', 'combat_staff_2:auto_choose') &&
+        AUTO_TOGGLE_COM === globalThis.__rs2b0t_selected_facts('autocast-component', 'combat_staff_2:auto_toggle'),
+    'combat style component ids must come from selected interface aliases'
 );
-const unmatchedSuspects = suspectOrder(-1);
 check(
-    unmatchedSuspects.map(suspect => suspect.stop.npc).join(',') ===
-        SUSPECTS.map(suspect => suspect.stop.npc).join(','),
-    'murder suspect fallback order mismatch'
+    BURN_MODE_OPTIONS.join(',') === 'Off,Chop then burn' &&
+        typeof NAV_PURE_WALK === 'object' &&
+        typeof NAV_WITH_TELES === 'object' &&
+        rootNavPureWalk === NAV_PURE_WALK,
+    'firemaking or traversal constant export mismatch'
 );
-check(Array.isArray(SPADE_SPAWNS) && typeof PROFESSOR === 'object' && typeof MURPHY === 'object' && typeof KOJO === 'object' && typeof KOJO_EXIT === 'object', 'clue acquisition data exports not loadable');
+await refuses('COIN_FLOAT', () => Number(COIN_FLOAT));
+await refuses('PROVISION_BANK', () => PROVISION_BANK.x);
+await refuses('ARHEIN', () => ARHEIN.npc);
+await refuses('GUARD_START', () => GUARD_START.npc);
+await refuses('GUARD_HANDIN', () => GUARD_HANDIN.npc);
+await refuses('SALESMAN', () => SALESMAN.npc);
+await refuses('SUSPECTS', () => SUSPECTS.length);
+await refuses('suspectOrder', () => suspectOrder(MURDER_OBJ.THREAD_GREEN));
+await refuses('MURDER_EVIDENCE', () => MURDER_EVIDENCE.length);
+await refuses('SPADE_SPAWNS', () => SPADE_SPAWNS.length);
+await refuses('PROFESSOR', () => PROFESSOR.npc);
+await refuses('MURPHY', () => MURPHY.npc);
+await refuses('KOJO', () => KOJO.npc);
+await refuses('KOJO_EXIT', () => KOJO_EXIT.x);
+await refuses('invalidateLocSnapshots', () => clientAdapterExports.invalidateLocSnapshots());
+await refuses('detach', () => clientAdapterExports.detach());
+await refuses('activeStatsReady', () => clientAdapterExports.activeStatsReady());
+await refuses('currentLoginStatsReady', () => clientAdapterExports.currentLoginStatsReady());
+await refuses('locHullHeight', () => clientAdapterExports.locHullHeight());
+await refuses('resolveLocModelExtents', () => clientAdapterExports.resolveLocModelExtents());
+await refuses('attach', () => clientAdapterExports.attach());
+await refuses('setPacketListener', () => clientAdapterExports.setPacketListener());
+await refuses('resetObjCatalog', () => clientAdapterExports.resetObjCatalog());
+await refuses('readRetaliateControls', () => clientAdapterExports.readRetaliateControls());
+await refuses('readModalButtons', () => clientAdapterExports.readModalButtons());
+await refuses('readSelectButtonLabelsByVarp', () => clientAdapterExports.readSelectButtonLabelsByVarp());
+await refuses('combatShowingThreshold', () => clientAdapterExports.combatShowingThreshold());
+await refuses('WELCOME_SCREEN', () => Number(clientAdapterExports.WELCOME_SCREEN));
+await refuses('resolveWoodcuttingLocation', () => woodcuttingExports.resolveWoodcuttingLocation());
+await refuses('WOODCUTTING_LOCATIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATIONS));
+await refuses('WOODCUTTING_LOCATION_OPTIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS));
+await refuses('settingOptionLabel', () => settingsExports.settingOptionLabel());
+await refuses('GLOBAL_SETTINGS_CORE', () => Number(settingsExports.GLOBAL_SETTINGS_CORE));
+await refuses('NAV_SETTINGS', () => Number(settingsExports.NAV_SETTINGS));
+await refuses('GLOBAL_SETTINGS', () => Number(settingsExports.GLOBAL_SETTINGS));
+await refuses('MAP_PICKER_SETTINGS_NS', () => Number(settingsExports.MAP_PICKER_SETTINGS_NS));
+await refuses('MAP_PICKER_SETTINGS', () => Number(settingsExports.MAP_PICKER_SETTINGS));
+await refuses('LOADOUT_SETTINGS_NS', () => Number(settingsExports.LOADOUT_SETTINGS_NS));
+await refuses('LOADOUT_SETTINGS', () => Number(settingsExports.LOADOUT_SETTINGS));
+await refuses('PRICE_BOOK_SETTINGS_NS', () => Number(settingsExports.PRICE_BOOK_SETTINGS_NS));
+await refuses('PRICE_BOOK_SETTINGS', () => Number(settingsExports.PRICE_BOOK_SETTINGS));
+await refuses('resolveRunPolicy', () => runManagerExports.resolveRunPolicy());
+await refuses('shouldEnableRun', () => runManagerExports.shouldEnableRun());
+await refuses('loopReadyOrDetached', () => scriptRunnerExports.loopReadyOrDetached());
+await refuses('stopReasonOf', () => scriptRunnerExports.stopReasonOf());
+await refuses('BotHostImpl', () => new botHostExports.BotHostImpl());
+await refuses('PaintFrame', () => new paintExports.PaintFrame());
+await refuses('resolveDock', () => paintLogicExports.resolveDock());
+await refuses('toCanvasPoint', () => paintLogicExports.toCanvasPoint());
+await refuses('cycleOption', () => paintLogicExports.cycleOption());
+await refuses('hitRegion', () => paintLogicExports.hitRegion());
+await refuses('clipText', () => paintLogicExports.clipText());
+await refuses('paintCols', () => Number(paintLogicExports.paintCols));
+await refuses('cellWidths', () => Number(paintLogicExports.cellWidths));
+await refuses('gridRows', () => Number(paintLogicExports.gridRows));
+await refuses('listScroll', () => Number(paintLogicExports.listScroll));
+await refuses('paintClip', () => Number(paintLogicExports.paintClip));
+await refuses('gatherPaintAccent', () => Number(paintLogicExports.gatherPaintAccent));
+await refuses('stripSegments', () => Number(paintLogicExports.stripSegments));
+await refuses('railRows', () => Number(paintLogicExports.railRows));
+await refuses('statColumns', () => Number(paintLogicExports.statColumns));
+await refuses('PaintState', () => new paintLogicExports.PaintState());
+await refuses('paintState', () => Number(paintLogicExports.paintState));
+await refuses('WHEEL_ROWS', () => Number(paintLogicExports.WHEEL_ROWS));
 check(typeof TRACE_STORAGE_KEY === 'string', 'clue trace key export missing');
 check(typeof RANGING_POTION === 'object', 'ranging potion descriptor is not loadable');
 check(typeof RETALIATE_VARP === 'number', 'RETALIATE_VARP export missing');
