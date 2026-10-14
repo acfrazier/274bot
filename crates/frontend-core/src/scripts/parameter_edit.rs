@@ -1800,4 +1800,173 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn spread_loadout_setting_resolves_as_selectable_loadout_choice_in_view_model() {
+        let src = r#"
+import { LOADOUT_SETTING } from '../../api/loadout/loadoutSetting.js';
+export const SETTINGS: SettingsSchema = {
+    loadout: { ...LOADOUT_SETTING, group: 'Food & healing' },
+    foodWithdraw: { type: 'number', default: 20, min: 1, max: 27, group: 'Food & healing' },
+};
+"#;
+        let schema = script::try_settings_schema_from_source(src).expect("spread schema parses");
+        let loadout_def = schema
+            .iter()
+            .find(|def| def.id == "loadout")
+            .expect("loadout setting present");
+        assert_eq!(loadout_def.ty, "string");
+        assert_eq!(loadout_def.default.as_deref(), Some(""));
+        assert_eq!(loadout_def.options_from.as_deref(), Some("loadouts"));
+        assert_eq!(loadout_def.group.as_deref(), Some("Food & healing"));
+
+        let mut loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("parameter-spread-loadouts-{}", std::process::id())),
+        );
+        loadouts.upsert(
+            script::Loadout::new("Scenario Rock Crab food")
+                .with_slot("righthand", "Adamant scimitar")
+                .with_carry("Lobster", 12),
+        );
+        loadouts.upsert(script::Loadout::new("Backup melee"));
+
+        let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+        assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
+        let options = resolve_parameter_options(loadout_def, &bag, &loadouts, None);
+        assert_eq!(
+            options.selectable(),
+            &[
+                "Scenario Rock Crab food".to_string(),
+                "Backup melee".to_string()
+            ]
+        );
+        let chosen =
+            parse_parameter_text(loadout_def, "Scenario Rock Crab food", options.selectable())
+                .expect("selectable loadout choice parses in frontend-core");
+        assert_eq!(chosen, serde_json::json!("Scenario Rock Crab food"));
+    }
+    #[test]
+    fn catalog_loadout_schema_survives_prepare_reload_and_drives_admission_for_all_ten_cards() {
+        let unique = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-catalog-loadout-lifecycle-{}-{}",
+            std::process::id(),
+            unique.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let scripts = dir.join("rs2b0t/src/bot/scripts");
+        let names = [
+            "ArdyFighter",
+            "ChaosDruidKiller",
+            "FireGiant",
+            "GreenDragon",
+            "HillGiant",
+            "JiveDemons",
+            "JiveDragons",
+            "JiveKBD",
+            "MossGiant",
+            "RockCrab",
+        ];
+        let mut index = String::new();
+        for name in names {
+            let (export_name, local_name) = if name == "HillGiant" {
+                ("HILL_GIANT_SETTINGS", "HILL_GIANT_SETTINGS".to_string())
+            } else {
+                ("SETTINGS", format!("{name}_SETTINGS"))
+            };
+            index.push_str(&format!(
+                "import {name}, {{ {export_name} as {local_name} }} from './{name}/{name}.js';\n"
+            ));
+            index.push_str(&format!(
+                "ScriptRegistry.register({{ name: '{name}', settingsSchema: {local_name}, create: () => new {name}() }});\n"
+            ));
+            let folder = scripts.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join(format!("{name}.ts")),
+                format!(
+                    "export const {export_name} = {{ loadout: {{ ...LOADOUT_SETTING, group: 'Food & healing' }} }};\nexport default class {name} extends TaskBot {{}}\n"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(scripts.join("index.ts"), index).unwrap();
+
+        let root = dir.join("rs2b0t");
+        let mut library = script::JsLibrary::with_cache(dir.join("store.json"), dir.join("cache"));
+        assert_eq!(
+            library
+                .register_rs2b0t(&root, &dir.join("catalog-path"))
+                .expect("catalog registers"),
+            names.len()
+        );
+        let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        loadouts.upsert(script::Loadout::new("First choice"));
+        loadouts.upsert(script::Loadout::new("Second choice"));
+
+        for name in names {
+            let initial = library
+                .get(script::ScriptSource::Catalog, name)
+                .expect("registered card")
+                .settings_schema
+                .clone();
+            let initial_loadout = initial
+                .iter()
+                .find(|def| def.id == "loadout")
+                .unwrap_or_else(|| panic!("{name}: initial schema lacks loadout"));
+            assert_eq!(initial_loadout.ty, "string", "{name}");
+            assert_eq!(initial_loadout.default.as_deref(), Some(""), "{name}");
+
+            let prepared = library
+                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
+                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"));
+            let prepared_loadout = prepared
+                .card
+                .settings_schema
+                .iter()
+                .find(|def| def.id == "loadout")
+                .unwrap_or_else(|| panic!("{name}: prepared schema lacks loadout"));
+            assert_eq!(prepared_loadout.ty, "string", "{name}");
+            assert_eq!(prepared_loadout.default.as_deref(), Some(""), "{name}");
+            let reloaded = library
+                .commit_prepared(prepared)
+                .unwrap_or_else(|error| panic!("{name}: reload commit failed: {error}"));
+            let def = reloaded
+                .settings_schema
+                .iter()
+                .find(|def| def.id == "loadout")
+                .unwrap_or_else(|| panic!("{name}: reloaded schema lacks loadout"));
+
+            let bag = script::merge_bag(&reloaded.settings_schema, &serde_json::Map::new(), None);
+            let wanted = bag.get("loadout").and_then(serde_json::Value::as_str);
+            assert_eq!(
+                wanted,
+                Some(""),
+                "{name}: loadout default reaches admission"
+            );
+            let refusal = script::loadouts_store::resolve_script_loadout_setting(&[], wanted)
+                .expect_err("empty loadout store must refuse before Start");
+            assert!(
+                refusal.to_string().contains("no loadouts exist"),
+                "{name}: {refusal}"
+            );
+            let options = resolve_parameter_options(def, &bag, &loadouts, None);
+            assert_eq!(
+                options.selectable(),
+                ["First choice", "Second choice"],
+                "{name}"
+            );
+            let selected = parse_parameter_text(def, "Second choice", options.selectable())
+                .unwrap_or_else(|error| panic!("{name}: selection failed: {error}"));
+            assert_eq!(
+                selected.as_str(),
+                Some("Second choice"),
+                "{name}: view model accepts a saved choice"
+            );
+        }
+
+        drop(library);
+        drop(loadouts);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

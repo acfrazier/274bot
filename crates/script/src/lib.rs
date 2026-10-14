@@ -61,10 +61,12 @@ pub mod native_shop;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
+mod reach_route;
 pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
+mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;
@@ -103,8 +105,8 @@ pub use rs2b0t_registry::{
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
     rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
     rs2b0t_root_checked, rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
-    settings_schema_from_source, ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind,
-    ScriptSource, SettingDef,
+    settings_schema_from_source, try_settings_schema_from_source, ItemOptionCandidate,
+    ItemOptionSpec, RegistryCard, ScriptKind, ScriptSource, SettingDef,
 };
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,

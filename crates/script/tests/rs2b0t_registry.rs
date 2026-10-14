@@ -1446,3 +1446,64 @@ fn diff_catalog_loads_shopdb_from_refresh_root() {
     assert_eq!(opts, &["RootA Elixir".to_string()]);
     assert!(!opts.iter().any(|n| n == "RootB Tonic"));
 }
+
+#[test]
+fn parse_registry_refuses_unresolvable_setting_spread_and_loads_spread_loadout() {
+    let index = r#"
+import RockCrab, { SETTINGS } from './RockCrab/RockCrab.js';
+ScriptRegistry.register({
+    name: 'RockCrab',
+    settingsSchema: SETTINGS,
+    create: () => new RockCrab()
+});
+"#;
+    let bad_rock_crab = r#"
+export const SETTINGS = {
+    loadout: { ...NO_SUCH_SETTING, group: 'Food & healing' },
+    foodWithdraw: { type: 'number', default: 20, min: 1, max: 27 },
+};
+export default class RockCrab extends TaskBot {}
+"#;
+    let mut bad_sources = HashMap::new();
+    bad_sources.insert("./RockCrab/RockCrab.js".into(), bad_rock_crab.into());
+    let err = script::parse_registry_with_sources(index, &bad_sources)
+        .expect_err("unresolvable spread in setting def must refuse");
+    assert!(
+        err.contains("RockCrab") && err.contains("loadout") && err.contains("NO_SUCH_SETTING"),
+        "clear refusal must name card, setting, and spread: {err}"
+    );
+
+    let dir = scratch("file_load_unresolvable_spread");
+    let bad_file = dir.join("BadSpreadBot.ts");
+    std::fs::write(&bad_file, bad_rock_crab).unwrap();
+    let mut lib = test_library(&dir);
+    let load_err = lib
+        .load(&bad_file)
+        .expect_err("file card with unresolvable setting spread must refuse");
+    assert!(
+        load_err.contains("loadout") && load_err.contains("NO_SUCH_SETTING"),
+        "file load refusal must name the setting: {load_err}"
+    );
+
+    let good_rock_crab = r#"
+import { LOADOUT_SETTING } from '../../api/loadout/loadoutSetting.js';
+export const SETTINGS = {
+    loadout: { ...LOADOUT_SETTING, group: 'Food & healing' },
+    foodWithdraw: { type: 'number', default: 20, min: 1, max: 27 },
+};
+export default class RockCrab extends TaskBot {}
+"#;
+    let mut good_sources = HashMap::new();
+    good_sources.insert("./RockCrab/RockCrab.js".into(), good_rock_crab.into());
+    let cards =
+        script::parse_registry_with_sources(index, &good_sources).expect("RockCrab spread parses");
+    let loadout = cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "loadout")
+        .expect("loadout setting present");
+    assert_eq!(loadout.ty, "string");
+    assert_eq!(loadout.default.as_deref(), Some(""));
+    assert_eq!(loadout.options_from.as_deref(), Some("loadouts"));
+    assert_eq!(loadout.group.as_deref(), Some("Food & healing"));
+}

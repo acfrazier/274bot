@@ -401,17 +401,13 @@ pub(crate) fn chat_mark() -> i32 {
     })
 }
 
-/// Frozen `sawSince(mark, CANT_REACH)` (`/^i can't reach that/i`).
+/// Frozen `sawSince(mark, CANT_REACH)` ([`crate::shop_open::is_cant_reach`]).
 fn saw_cant_reach(mark: i32) -> bool {
-    const PREFIX: &[u8] = b"i can't reach that";
     observed::with(|scene| {
         scene.since_login().chat_lines().is_some_and(|lines| {
-            lines.iter().any(|line| {
-                let bytes = line.text.as_bytes();
-                line.seq > mark
-                    && bytes.len() >= PREFIX.len()
-                    && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
-            })
+            lines
+                .iter()
+                .any(|line| line.seq > mark && crate::shop_open::is_cant_reach(&line.text))
         })
     })
 }

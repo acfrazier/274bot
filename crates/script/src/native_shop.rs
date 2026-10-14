@@ -1,13 +1,18 @@
 //! Snapshot-driven shop purchase machine shared by compiled cards.
 //! Queued buttons are not receipts: each batch settles only after the held
-//! item count grows.
+//! item count grows. Opening the shop follows the rule shared with compat
+//! `Shop.open` ([`crate::shop_open`]): one Trade per attempt with a
+//! route-length tick deadline, and a nav walk to an unreachable keeper.
+use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::quester::families::reach::walk_request;
+use crate::reach_route;
 use crate::shim::InteractReq;
+use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-const OPEN_BOUND: Duration = Duration::from_secs(10);
 const SETTLE_BOUND: Duration = Duration::from_secs(4);
 const CLOSE_BOUND: Duration = Duration::from_secs(3);
 
@@ -27,10 +32,14 @@ pub struct BuyReceipt {
 }
 
 enum Phase {
+    /// The shared open core decides each tick.
     Open,
-    AwaitOpen,
+    /// The core asked for a nav walk to an unreachable keeper.
+    Walk(Box<Walk>),
     Buy,
-    AwaitBatch { before: i32 },
+    AwaitBatch {
+        before: i32,
+    },
     Close,
     AwaitClose,
 }
@@ -38,6 +47,7 @@ enum Phase {
 pub struct BuyMachine {
     request: BuyRequest,
     phase: Phase,
+    open: OpenCore,
     deadline: Duration,
 }
 
@@ -51,70 +61,59 @@ impl NativeMachine for BuyMachine {
                 "buy quantity must be positive",
             )));
         }
+        // A modal already up with no usable page waits a tick for its page
+        // before the core trades.
+        let facts = open_facts(cx);
+        let modal_up = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
+        let open = if modal_up && !facts.usable {
+            OpenCore::awaiting_page(&facts)
+        } else {
+            OpenCore::default()
+        };
         Ok(Self {
             request,
             phase: Phase::Open,
-            deadline: cx.active_now().saturating_add(OPEN_BOUND),
+            open,
+            deadline: Duration::ZERO,
         })
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         loop {
-            match self.phase {
+            match &mut self.phase {
                 Phase::Open => {
-                    if cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
-                        self.phase = Phase::Buy;
-                        continue;
+                    if cx.snapshot().npcs().is_none() {
+                        // No NPC rows observed yet: nothing to choose from.
+                        return Poll::Pending;
                     }
-                    let Some(npcs) = cx.snapshot().npcs() else {
-                        return Poll::Pending;
-                    };
-                    let npc = npcs
-                        .value
-                        .iter()
-                        .filter(|npc| {
-                            npc.r#type == usize::try_from(self.request.npc_id).ok()
-                                || npc.name.as_deref().is_some_and(|name| {
-                                    name.eq_ignore_ascii_case(&self.request.npc_name)
-                                })
-                        })
-                        .min_by_key(|npc| npc.distance);
-                    let Some(npc) = npc else {
-                        return Poll::Pending;
-                    };
-                    let trade = npc.actions.iter().flatten().find(|action| {
-                        action.eq_ignore_ascii_case("Trade")
-                            || action.eq_ignore_ascii_case("Trade-with")
-                    });
-                    let Some(trade) = trade else {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "shop NPC has no Trade action",
-                        ))));
-                    };
-                    std::task::ready!(crate::native::defer_budget(
-                        cx.emit(InteractReq::Npc {
-                            name: npc
-                                .name
-                                .clone()
-                                .unwrap_or_else(|| self.request.npc_name.to_string()),
-                            action: trade.clone(),
-                            index: i32::try_from(npc.index).ok(),
-                        },)
-                    ))?;
-                    self.phase = Phase::AwaitOpen;
-                    return Poll::Pending;
+                    let facts = open_facts(cx);
+                    let request = &self.request;
+                    let decision = self.open.tick(&facts, || Self::keeper(request, cx));
+                    match std::task::ready!(self.act(decision, &facts, cx))? {
+                        true => {
+                            self.phase = Phase::Buy;
+                            continue;
+                        }
+                        false => return Poll::Pending,
+                    }
                 }
-                Phase::AwaitOpen => {
-                    if cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
-                        self.phase = Phase::Buy;
-                        continue;
+                Phase::Walk(walk) => {
+                    let arrived = match walk.poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Ok(receipt)) => receipt.into_arrival().is_ok(),
+                        Poll::Ready(Err(_)) => false,
+                    };
+                    self.phase = Phase::Open;
+                    let facts = open_facts(cx);
+                    let request = &self.request;
+                    let decision = self.open.walked(arrived, || Self::keeper(request, cx));
+                    match std::task::ready!(self.act(decision, &facts, cx))? {
+                        true => {
+                            self.phase = Phase::Buy;
+                            continue;
+                        }
+                        false => return Poll::Pending,
                     }
-                    if cx.active_now() >= self.deadline {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "shop did not open",
-                        ))));
-                    }
-                    return Poll::Pending;
                 }
                 Phase::Buy => {
                     let snapshot = cx.snapshot();
@@ -166,7 +165,7 @@ impl NativeMachine for BuyMachine {
                     self.phase = Phase::AwaitBatch { before: held };
                     return Poll::Pending;
                 }
-                Phase::AwaitBatch { before } => {
+                &mut Phase::AwaitBatch { before } => {
                     let held = cx.snapshot().stock().held(self.request.item_id);
                     if held.is_some_and(|held| held > before) {
                         self.phase = Phase::Buy;
@@ -205,7 +204,11 @@ impl NativeMachine for BuyMachine {
         }
     }
 
-    fn cancel(&mut self) {}
+    fn cancel(&mut self) {
+        if let Phase::Walk(walk) = &mut self.phase {
+            walk.cancel();
+        }
+    }
 }
 
 impl BuyMachine {
@@ -218,13 +221,111 @@ impl BuyMachine {
                 .unwrap_or(0),
         }
     }
+
+    /// The shop NPC: rows matching the request's type or name, offered to
+    /// the shared chooser with their `Trade`/`Trade-with` op. The footprint
+    /// is the network tile the client's `tryMove` routes to.
+    fn keeper(request: &BuyRequest, cx: &ActionContext<'_>) -> Option<Keeper> {
+        let snapshot = cx.snapshot();
+        let npcs = snapshot.npcs()?;
+        let here = snapshot
+            .local_player()
+            .map(|player| player.value.player.network);
+        let view = reach_route::live(snapshot.reach().map(|reach| reach.value), here);
+        let candidates = npcs
+            .value
+            .iter()
+            .filter(|npc| {
+                npc.r#type == usize::try_from(request.npc_id).ok()
+                    || npc
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&request.npc_name))
+            })
+            .map(|npc| shop_open::Candidate {
+                name: npc.name.as_deref().unwrap_or(&request.npc_name),
+                action: npc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .find(|op| shop_open::is_trade_op(op))
+                    .map(String::as_str),
+                index: i32::try_from(npc.index).unwrap_or(-1),
+                tile: if npc.size >= 1 { npc.network } else { npc.tile },
+                size: npc.size,
+                distance: npc.distance,
+            });
+        shop_open::choose_keeper(candidates, view.zip(here))
+    }
+
+    /// Carry out one core decision: `Ready(Ok(true))` when the shop is open.
+    fn act(
+        &mut self,
+        decision: Decision,
+        facts: &Facts,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<bool, ActionError>> {
+        match decision {
+            Decision::Wait => Poll::Ready(Ok(false)),
+            Decision::Opened => Poll::Ready(Ok(true)),
+            Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(Arc::from(reason)))),
+            Decision::Trade(keeper) => {
+                std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Npc {
+                    name: keeper.name.clone(),
+                    action: keeper.action.clone(),
+                    index: Some(keeper.index),
+                })))?;
+                self.open.traded(facts, &keeper);
+                Poll::Ready(Ok(false))
+            }
+            Decision::Walk(tile) => {
+                let walk = Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)?;
+                self.phase = Phase::Walk(Box::new(walk));
+                Poll::Ready(Ok(false))
+            }
+        }
+    }
+}
+
+/// What the shared open core reads from a native snapshot. The session is
+/// the run key ([`api::selected::RunKey`]): a relog is a new session.
+fn open_facts(cx: &ActionContext<'_>) -> Facts {
+    let evidence = cx.evidence();
+    let snapshot = cx.snapshot();
+    let (chat_seq, cant_reach_seq) = snapshot.chat_lines(0).map_or((0, 0), |lines| {
+        lines.value.iter().fold((0, 0), |(all, refused), line| {
+            let refused_here =
+                line.username.is_none() && line.type_ == 0 && shop_open::is_cant_reach(&line.text);
+            (
+                all.max(line.sequence),
+                if refused_here {
+                    refused.max(line.sequence)
+                } else {
+                    refused
+                },
+            )
+        })
+    });
+    Facts {
+        tick: Some(evidence.tick),
+        session: Session {
+            epoch: evidence.run.run,
+            login: evidence.run.session,
+        },
+        chat_seq,
+        cant_reach_seq,
+        usable: snapshot
+            .shop()
+            .is_some_and(|shop| shop.value.open && !shop.value.stock.is_empty()),
+        trade_taken: false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, WorldTile,
     };
@@ -494,5 +595,212 @@ mod tests {
                 HostEffect::Interaction(InteractReq::CloseModal)
             ));
         });
+    }
+
+    fn trades(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::Npc { action, .. }) if action == "Trade"
+                )
+            })
+            .count()
+    }
+
+    fn buttons(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::ShopButton { .. })
+                )
+            })
+            .count()
+    }
+
+    /// The host sent the last queued interaction.
+    fn sent(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u64) {
+        let ledger = ledger.as_mut().unwrap();
+        let authority = ledger.outbox.last().unwrap().authority();
+        ledger.complete_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    /// A reach view round the keeper at (3200, 3200) with every step open,
+    /// flooded from `origin` (rank 0 there, nothing else ranked).
+    fn reach_from(origin: WorldTile) -> api::query::ReachQueryView {
+        const SIDE: i32 = 31;
+        let (base_x, base_z) = (3185, 3185);
+        let n = (SIDE * SIDE) as usize;
+        let i = ((origin.x - base_x) * SIDE + (origin.z - base_z)) as usize;
+        let mut reachable = vec![0u32; n.div_ceil(32)];
+        reachable[i / 32] |= 1 << (i % 32);
+        let mut exact_rank = vec![u16::MAX; n];
+        exact_rank[i] = 0;
+        api::query::ReachQueryView {
+            available: true,
+            base_x,
+            base_z,
+            level: 0,
+            width: SIDE,
+            height: SIDE,
+            walkable: vec![u32::MAX; n.div_ceil(32)],
+            reachable: reachable.clone(),
+            reachable_adj: reachable,
+            exact_rank: exact_rank.clone(),
+            adjacent_rank: exact_rank,
+            step: vec![u8::MAX; n],
+            canlight: Vec::new(),
+        }
+    }
+
+    /// Poll one Trade attempt to its end: the tick of the next Trade.
+    fn next_trade_tick(
+        snapshot: &GameSnapshot,
+        reach: Option<&api::query::ReachQueryView>,
+        handle: &crate::native::ActionHandle<BuyMachine>,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        from: u64,
+    ) -> u64 {
+        let before = trades(ledger);
+        for tick in from..from + 2 * shop_open::OPEN_CAP_TICKS {
+            let polled = match reach {
+                Some(reach) => with_tick_reach(snapshot, reach, ledger, tick, |t| {
+                    t.actions.poll(handle, &mut t.cx)
+                }),
+                None => with_tick(snapshot, ledger, tick, |t| {
+                    t.actions.poll(handle, &mut t.cx)
+                }),
+            };
+            assert!(polled.is_pending(), "tick {tick}");
+            if trades(ledger) > before {
+                assert_eq!(trades(ledger), before + 1, "one Trade on tick {tick}");
+                sent(ledger, tick);
+                return tick;
+            }
+        }
+        panic!("no Trade after tick {from}");
+    }
+
+    /// No reach view is posted: the straight-line distance (2) is no bound
+    /// on the walk, so the attempt waits the cap. No wall-clock bound fails
+    /// it early.
+    #[test]
+    fn shop_npc_open_without_a_reach_view_waits_the_cap() {
+        let client = client_with_shop(false);
+        let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 3198,
+            z: 3200,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger);
+        let first = next_trade_tick(&snapshot, None, &handle, &mut ledger, 2);
+        assert_eq!(first, 2);
+        let second = next_trade_tick(&snapshot, None, &handle, &mut ledger, 3);
+        assert_eq!(second, first + shop_open::OPEN_CAP_TICKS + 1);
+    }
+
+    /// A posted view flooded from another tile (stale: the player moved
+    /// since) is not a measured route either: the cap. The same view from
+    /// the player's own tile measures one step, and that attempt ends at
+    /// Trade + 1 + slack.
+    #[test]
+    fn shop_npc_open_with_a_stale_reach_view_waits_the_cap() {
+        let here = WorldTile {
+            x: 3198,
+            z: 3200,
+            level: 0,
+        };
+        let client = client_with_shop(false);
+        let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
+        snapshot.seed_local_player(local_player(here));
+
+        let stale = reach_from(WorldTile { x: 3190, ..here });
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger);
+        let first = next_trade_tick(&snapshot, Some(&stale), &handle, &mut ledger, 2);
+        let second = next_trade_tick(&snapshot, Some(&stale), &handle, &mut ledger, first + 1);
+        assert_eq!(second, first + shop_open::OPEN_CAP_TICKS + 1);
+
+        let live = reach_from(here);
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger);
+        let first = next_trade_tick(&snapshot, Some(&live), &handle, &mut ledger, 2);
+        let second = next_trade_tick(&snapshot, Some(&live), &handle, &mut ledger, first + 1);
+        assert_eq!(second, first + 1 + shop_open::OPEN_SLACK_TICKS + 1);
+    }
+
+    /// An `if_close` (an NPC's hit, `npc_combat_melee.rs2:31,36`) shuts the
+    /// shop under an outstanding buy batch. No button goes to the closed
+    /// shop, and the purchase ends with an error: at once when the batch
+    /// landed, within the settle bound when nothing moved.
+    #[test]
+    fn a_shop_closed_mid_batch_ends_the_purchase_without_another_button() {
+        for landed in [false, true] {
+            let open = client_with_shop(true);
+            let closed = client_with_shop(false);
+            let before = snapshot(&open, Vec::new(), Vec::new());
+            let held = if landed {
+                vec![item(4, "Pot", 1)]
+            } else {
+                Vec::new()
+            };
+            let after = snapshot(&closed, held, Vec::new());
+            let mut ledger = None;
+            let handle = start_machine(&before, &mut ledger);
+            let polled = with_tick(&before, &mut ledger, 2, |t| {
+                t.actions.poll(&handle, &mut t.cx)
+            });
+            assert!(polled.is_pending());
+            assert_eq!(buttons(&ledger), 1, "the first batch");
+            sent(&mut ledger, 2);
+            let mut tick = 3;
+            let result = loop {
+                let polled = with_tick(&after, &mut ledger, tick, |t| {
+                    t.actions.poll(&handle, &mut t.cx)
+                });
+                assert_eq!(
+                    buttons(&ledger),
+                    1,
+                    "no button to a closed shop, tick {tick}"
+                );
+                if let Poll::Ready(result) = polled {
+                    break result;
+                }
+                tick += 1;
+                assert!(tick < 20, "the purchase must end");
+            };
+            let Err(ActionError::Failed(reason)) = result else {
+                panic!("expected a failure, got {result:?}");
+            };
+            if landed {
+                assert_eq!(tick, 3);
+                assert_eq!(&*reason, "shop closed during purchase");
+            } else {
+                assert_eq!(&*reason, "shop purchase did not settle");
+            }
+        }
     }
 }

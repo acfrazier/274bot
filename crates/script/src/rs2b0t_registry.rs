@@ -21,10 +21,10 @@ pub use paths::{
 #[cfg(feature = "load")]
 pub(crate) use settings::insert_shop_db_from_root;
 use settings::parse_settings_export;
-pub use settings::settings_schema_from_source;
 pub(crate) use settings::{
     catalog_option_table, is_revision_fact_option_ident, w1c_equipment_option_families,
 };
+pub use settings::{settings_schema_from_source, try_settings_schema_from_source};
 
 /// How a script card is executed in the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,19 +139,17 @@ pub fn parse_registry_with_sources(
         let Some(path) = imports.get(&reg.ctor).map(|b| b.rel_path.clone()) else {
             continue;
         };
-        let settings_schema = reg
-            .settings_schema_ident
-            .as_ref()
-            .and_then(|ident| {
-                let binding = imports.get(ident)?;
-                let src = settings_blob(sources, &binding.rel_path)?;
-                Some(parse_settings_export(
-                    &src,
-                    &binding.export_name,
-                    Some(sources),
-                ))
-            })
-            .unwrap_or_default();
+        let settings_schema = match reg.settings_schema_ident.as_ref() {
+            Some(ident) => match imports.get(ident) {
+                Some(binding) => match settings_blob(sources, &binding.rel_path) {
+                    Some(src) => parse_settings_export(&src, &binding.export_name, Some(sources))
+                        .map_err(|err| format!("{}: {err}", reg.name))?,
+                    None => Vec::new(),
+                },
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
         cards.push(RegistryCard {
             name: reg.name,
             rel_path: path,
