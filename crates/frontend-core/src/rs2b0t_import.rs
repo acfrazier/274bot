@@ -921,10 +921,15 @@ impl ImportPlan {
         ];
         let unusable = self.unusable();
         if unusable > 0 {
-            out.push(if self.choices.include_unusable {
-                format!("{unusable} accounts the 289 client cannot log in with are imported anyway, as chosen.")
+            let (accounts, are) = if unusable == 1 {
+                ("account", "is")
             } else {
-                format!("{unusable} accounts the 289 client cannot log in with are not imported (you can choose to import them anyway).")
+                ("accounts", "are")
+            };
+            out.push(if self.choices.include_unusable {
+                format!("{unusable} {accounts} the 289 client cannot log in with {are} imported anyway, as chosen.")
+            } else {
+                format!("{unusable} {accounts} the 289 client cannot log in with {are} not imported (you can choose to import them anyway).")
             });
         }
         for account in &self.accounts {

@@ -5752,10 +5752,22 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
             ui.text_disabled("Existing profiles:");
             let policy = session.profile_import.policy();
             let mut next = policy;
+            // The two choices share a line when it fits them.
+            let style = ui.clone_style();
+            let radio = |label: &str| {
+                ui.frame_height()
+                    + style.item_inner_spacing()[0]
+                    + ui.current_font()
+                        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0]
+            };
+            let one_line = radio("Skip (keep them)") + style.item_spacing()[0] + radio("Overwrite")
+                <= ui.content_region_avail()[0];
             if ui.radio_button("Skip (keep them)", policy == ConflictPolicy::Skip) {
                 next = ConflictPolicy::Skip;
             }
-            ui.same_line();
+            if one_line {
+                ui.same_line();
+            }
             if ui.radio_button("Overwrite", policy == ConflictPolicy::Overwrite) {
                 next = ConflictPolicy::Overwrite;
             }
@@ -5765,18 +5777,14 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
                     .set_policy(&session.core, &session.scripts, next);
                 session.refresh_profile_import();
             }
+            // The preview's lines say which accounts and why.
             let unusable = session
                 .profile_import
                 .plan()
                 .map_or(0, |plan| plan.unusable());
             if unusable > 0 {
                 let mut include = session.profile_import.include_unusable();
-                if ui.checkbox(
-                    format!(
-                        "Also import the {unusable} accounts the 289 client cannot log in with"
-                    ),
-                    &mut include,
-                ) {
+                if ui.checkbox("Import unusable accounts", &mut include) {
                     session.profile_import.set_include_unusable(
                         &session.core,
                         &session.scripts,
