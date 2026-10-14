@@ -7,7 +7,7 @@ use crate::*;
 /// and (3105,3228), all within the r6 proof below. The previous start
 /// (3217,3231) was a Lumbridge tree's own footprint with no 1276 in r6,
 /// so the pre-Start tree proof could never hold on 289.
-const GATHERER_START: WorldTile = WorldTile {
+pub(crate) const GATHERER_START: WorldTile = WorldTile {
     x: 3109,
     z: 3228,
     level: 0,
@@ -15,7 +15,7 @@ const GATHERER_START: WorldTile = WorldTile {
 const BRONZE_AXE_ID: i32 = 1351;
 const NORMAL_TREE_ID: i32 = 1276;
 const WOODCUTTING_STAT_ID: i32 = 8;
-const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
+pub(crate) const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "skill",
         value: ScriptInjectValue::Str("Woodcutting"),

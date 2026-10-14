@@ -13,7 +13,9 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct Evidence {
     pub scenario: String,
-    /// `"PASS"` or `"FAIL"`.
+    /// `"PASS"`, `"FAIL"`, or `"UNAVAILABLE"` (the cell needs an engine
+    /// test patch the engine lacks; `message` names it). The runner reports
+    /// UNAVAILABLE as a failed status, so harnesses still exit non-zero.
     pub outcome: &'static str,
     /// The proof / arm predicate that passed or failed.
     pub predicate: String,
@@ -40,6 +42,9 @@ pub struct Evidence {
     /// Sherlock guardian protected-window oracle, when the scenario recorded one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protect_window: Option<ProtectWindowEvidence>,
+    /// Random-event Guardian episode receipt, when the scenario observed one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub random_event: Option<serde_json::Value>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -136,6 +141,7 @@ impl Evidence {
                 .collect(),
             receipt: None,
             protect_window: None,
+            random_event: None,
             scene: snap.scene_state(),
         }
     }
