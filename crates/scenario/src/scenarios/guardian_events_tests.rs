@@ -132,6 +132,7 @@ fn the_activity_stands_are_beside_real_resources() {
         ("mining.copper", VARROCK_EAST_MINE_START, 4),
         ("mining.tin", VARROCK_EAST_MINE_START, 4),
         ("woodcutting.oak", DRAYNOR_OAK_START, 8),
+        ("woodcutting.normal", LUMBRIDGE_TREES_START, 3),
     ] {
         let method_row = catalog
             .method(method)
