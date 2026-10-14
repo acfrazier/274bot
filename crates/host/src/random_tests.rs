@@ -155,7 +155,19 @@ fn plant_npc_with_op(
     overhead: Option<&str>,
     op: &str,
 ) {
-    let type_id = 500 + slot;
+    // Hostile fixtures use their macro-event cache identities, not an
+    // arbitrary same-name world type (`content/pack/npc.pack:392-444`).
+    let type_id = match name.to_ascii_lowercase().as_str() {
+        "river troll" => 391,
+        "swarm" => 411,
+        "rock golem" => 413,
+        "zombie" => 419,
+        "shade" => 425,
+        "watchman" => 431,
+        "tree spirit" => 438,
+        "strange plant" if op == "Attack" => 408,
+        _ => 500 + slot,
+    };
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.npcs.len() <= type_id {
@@ -1745,53 +1757,47 @@ fn blocked_flee_exhausts_nearest_and_closer_rings_without_hiding_attacker() {
     assert_eq!(nearest_targets[8], (0, -6), "then try the nearer ring");
 }
 
+/// Reviewer's 2000-tick replay: the player stops at maxrange+1, where
+/// cleanup cannot yet be inferred. The 1000-tick NPC lifetime plus two
+/// processing phases bounds this hold, even if every further walk fails.
 #[test]
-fn swarm_missing_at_chase_boundary_cannot_prove_despawn_from_elapsed_time() {
+fn guardian_r2_swarm_missing_at_chase_boundary_releases_within_lifetime() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
-    c.npc[0].as_mut().expect("swarm").entity.x = 128 + 64;
-    c.npc[0].as_mut().expect("swarm").entity.z = 64;
+    set_flee_npc(&mut c, 1, 0);
     let data = event_game_data();
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
-
     tick_at(&mut c, &mut snap);
     let first = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(first.kind, Some(RandomKind::Evade));
+    assert!(first.hold);
     assert_eq!(drv.walks, vec![(-18, 0)]);
 
-    // At the maxrange+1 boundary there is no proven escape, even when the
-    // NPC leaves the client view. Elapsed time alone cannot release it.
     set_flee_player(&mut c, -15, 0, false);
     clear_npcs(&mut c);
-    let mut last = first;
-    for tick in 2..=60 {
+    let mut released_at = None;
+    for elapsed in 1..=2_000 {
         tick_at(&mut c, &mut snap);
-        last = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
-        assert_eq!(last.kind, Some(RandomKind::Evade));
-        assert!(
-            last.hold,
-            "view-missing is not proven escape at tick {tick}"
-        );
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        if !status.hold {
+            released_at.get_or_insert(elapsed);
+            assert!(!status.ours);
+        } else {
+            assert!(
+                released_at.is_none(),
+                "an expired actor cannot retake the slot"
+            );
+        }
     }
-    assert!(last.ours && last.hold);
-    assert_eq!(
-        drv.walks,
-        vec![(-18, 0)],
-        "never walk back to the unseen Swarm"
-    );
-
-    tick_at(&mut c, &mut snap);
-    let still_missing = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
-    assert!(still_missing.ours && still_missing.hold);
-    assert_eq!(
-        drv.walks,
-        vec![(-18, 0)],
-        "do not walk back without proving escape and cleanup"
+    assert_eq!(released_at, Some(1_002));
+    assert!(
+        drv.walks.iter().all(|(x, z)| *x < 0 && *z == 0),
+        "give-up hands control to the script without walking back"
     );
 }
 
@@ -4533,6 +4539,44 @@ fn maze_touch_walks_preserve_adjacent_and_onto_completion_semantics() {
 }
 
 include!("random_fix_regressions.rs");
-#[path = "random_mime_regressions.rs"]
-mod mime_regressions;
+
+/// Pass-before guard: no Guardian Mime behavior changed in GUARDIAN-FIX-R1.
+/// Its separate Gatherer regression belongs to script's lifecycle suite.
+/// Mime return precedes the emote mesbox and tab restoration
+/// (`macro_event_mime.rs2:126-139,193-200,38-41`).
+#[test]
+fn mime_return_reward_page_releases_guardian_before_inventory_tab_restoration() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    c.side_icon[3] = -1;
+    plant_player(&mut c, "Test", 31 * 64, 74 * 64);
+    plant_npc(&mut c, 0, "Mime", -1, None);
+    c.npc[0].as_mut().expect("mime").entity.primary_anim = 860;
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian.tick(&mut driver, &snap, &settings, 0, None).hold);
+    c.chat_modal_id = 6_543;
+    tick_at(&mut c, &mut snap);
+    assert!(guardian.tick(&mut driver, &snap, &settings, 1, None).hold);
+    assert_eq!(
+        driver.menus,
+        vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6_546)]
+    );
+    assert_eq!(driver.actions, vec![0]);
+
+    clear_npcs(&mut c);
+    plant_player(&mut c, "Test", 3_088, 3_469);
+    c.chat_modal_id = 356;
+    tick_at(&mut c, &mut snap);
+    let returned = guardian.tick(&mut driver, &snap, &settings, 2, None);
+    assert_eq!(returned.kind, None);
+    assert!(!returned.hold, "the return mesbox is not a Guardian hold");
+    c.chat_modal_id = -1;
+    c.side_icon[3] = 3_213;
+    tick_at(&mut c, &mut snap);
+    assert!(!guardian.tick(&mut driver, &snap, &settings, 3, None).hold);
+}
 include!("random_ent_regressions.rs");

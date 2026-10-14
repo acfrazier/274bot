@@ -8,6 +8,12 @@ const LOST_TOOL_BOUND_MS: u64 = 12_000;
 /// (`antimacro.npc:130,1009`; `World.ts:340-408`;
 /// `macro_event_triffid.rs2:51-55`).
 const EVADE_CLEANUP_TICKS: u8 = 22;
+/// Failure budget: the normal hostile spawn's 1000-tick lifetime plus two
+/// observation phases (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`).
+/// This is a give-up rule, not despawn evidence: the angry plant extends its
+/// lifetime on morph (`macro_event_triffid.rs2:35`). At the bound, hand control
+/// to the script without walking toward a potentially surviving attacker.
+const EVADE_GIVE_UP_TICKS: u16 = 1_002;
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
 const NPC_VIEW_RADIUS: i32 = 15;
 
@@ -102,8 +108,12 @@ struct EvadeState {
     last_tile: (i32, i32),
     /// Outside-range targeted ticks; one NPC phase can trail player movement.
     outside_ticks: u8,
-    /// Consecutive stationary, escaped ticks with the NPC outside client view.
+    /// Consecutive stationary ticks outside chase range with no actor in view.
     missing_ticks: u8,
+    /// Fresh observations since ownership; never reset by view flicker.
+    elapsed_ticks: u16,
+    /// Detect-only after the give-up limit, until this actor is removed.
+    gave_up: bool,
     flee_target: Option<(i32, i32)>,
     fallback_distance: Option<i32>,
     fallback_exhausted: bool,
@@ -586,13 +596,7 @@ impl Guardian {
                 .iter()
                 .any(|npc| npc.index == seen.index && npc.r#type == seen.npc_type)
         });
-        for npc in snap.npcs().iter().filter(|npc| {
-            npc.name.as_deref().is_some_and(|name| {
-                EVADE_NAMES
-                    .iter()
-                    .any(|candidate| name.eq_ignore_ascii_case(candidate))
-            })
-        }) {
+        for npc in snap.npcs().iter().filter(|npc| is_evade_npc(npc)) {
             if !self
                 .evade_starts
                 .iter()
@@ -607,11 +611,10 @@ impl Guardian {
         }
     }
 
-    /// Preserve ownership while the same attacker is present, including its
-    /// disengaged cleanup interval. Targeting always wins over distance:
-    /// apparent escape, path failure, or elapsed time cannot hide an attacker.
-    /// A visible slot removal proves despawn; outside the 15-tile view, wait
-    /// through the content's cleanup timer while stationary beyond chase range.
+    /// Retain the exact macro-event actor through its cleanup interval.
+    /// Missing beyond view keeps fleeing and counts stationary outside-chase
+    /// ticks, even short of the full flee ring. A normal spawn's lifetime
+    /// sets the final give-up budget for blocked routes and ambiguous removals.
     fn refresh_evade(
         &mut self,
         snap: &GameSnapshot,
@@ -621,13 +624,8 @@ impl Guardian {
     ) {
         if let Some(mut state) = self.evade.take() {
             let actor = snap.npcs().iter().find(|npc| npc.index == state.index);
-            let same_actor = actor.is_some_and(|npc| {
-                npc.r#type == state.npc_type
-                    && npc
-                        .name
-                        .as_deref()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(&state.name))
-            });
+            let same_actor =
+                actor.is_some_and(|npc| npc.r#type == state.npc_type && is_evade_npc(npc));
             let engaged = actor.is_some_and(|npc| {
                 event_npc_targets_player(npc, snap.self_slot())
                     || (npc.target.is_none() && npc.in_combat)
@@ -664,21 +662,18 @@ impl Guardian {
                     };
                 }
                 true
-            } else if actor.is_none() && state.has_fled && beyond_view && !other_event {
+            } else if actor.is_none() && state.has_fled && beyond_view {
                 if fresh {
-                    state.missing_ticks = if outside
-                        && player.is_some_and(|player| {
-                            cheb(player, state.start_tile) >= state.flee_distance
-                        })
-                        && !moving
-                    {
+                    state.missing_ticks = if outside && !moving {
                         state.missing_ticks.saturating_add(1)
                     } else {
                         0
                     };
                 }
                 if state.missing_ticks >= EVADE_CLEANUP_TICKS {
-                    *ev = None;
+                    if !other_event {
+                        *ev = None;
+                    }
                     return;
                 }
                 true
@@ -687,14 +682,42 @@ impl Guardian {
                 false
             };
             if retain {
-                *ev = Some(DetectedRandom {
-                    kind: RandomKind::Evade,
-                    name: state.name.clone(),
-                    ours: state.maxrange.is_some(),
-                    npc_index: Some(state.index),
-                });
-                self.evade = Some(state);
-                return;
+                if fresh {
+                    state.elapsed_ticks = state.elapsed_ticks.saturating_add(1);
+                }
+                if state.elapsed_ticks >= EVADE_GIVE_UP_TICKS && !state.gave_up {
+                    state.gave_up = true;
+                    if self.acting_kind == RandomKind::Evade {
+                        self.acting = false;
+                        self.flee_from = None;
+                    }
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Warn,
+                        "evade: {} reached the escape attempt limit; returning control to the script",
+                        state.name
+                    );
+                }
+                // A retained former attacker must not replace a newly
+                // detected box, trap or dialog. Keep its original deadline.
+                if other_event {
+                    if ev
+                        .as_ref()
+                        .is_some_and(|event| event.kind != RandomKind::Evade)
+                    {
+                        self.evade = Some(state);
+                        return;
+                    }
+                } else {
+                    *ev = Some(DetectedRandom {
+                        kind: RandomKind::Evade,
+                        name: state.name.clone(),
+                        ours: state.maxrange.is_some() && !state.gave_up,
+                        npc_index: Some(state.index),
+                    });
+                    self.evade = Some(state);
+                    return;
+                }
             }
         }
 
@@ -741,6 +764,8 @@ impl Guardian {
             last_tile: (npc.tile.x, npc.tile.z),
             outside_ticks: 0,
             missing_ticks: 0,
+            elapsed_ticks: 0,
+            gave_up: false,
             flee_target: None,
             fallback_distance: None,
             fallback_exhausted: false,
@@ -1312,19 +1337,24 @@ impl Guardian {
         let Some(maxrange) = maxrange else {
             return;
         };
-        let Some(npc) = npc_by_index(snap.npcs(), index) else {
-            return;
-        };
-        let engaged = event_npc_targets_player(npc, snap.self_slot())
-            || (npc.target.is_none() && npc.in_combat);
+        let npc = npc_by_index(snap.npcs(), index);
+        let engaged = npc.is_some_and(|npc| {
+            event_npc_targets_player(npc, snap.self_slot())
+                || (npc.target.is_none() && npc.in_combat)
+        });
+        let reached_flee = cheb(player, start_tile) >= flee_distance;
         if engaged
             && outside_chase_range(player, start_tile, maxrange)
-            && cheb(player, start_tile) >= flee_distance
+            && reached_flee
             && outside_ticks < 2
         {
             return;
         }
-        if !engaged && cheb(player, (npc.tile.x, npc.tile.z)) > 3 {
+        if !engaged
+            && npc.map_or(reached_flee, |npc| {
+                cheb(player, (npc.tile.x, npc.tile.z)) > 3
+            })
+        {
             return;
         }
         let moving = snap

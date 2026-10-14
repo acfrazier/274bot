@@ -227,18 +227,47 @@ snapshot:
 - **Whirlpool, gas rock** have no documented Guardian act: the bot must
   survive them and keep its tool.
 - **Ent**: the bot keeps its axe. The Guardian cancels the forced chop and
-  holds the Gatherer until the Ent reverts or despawns.
+  holds the Gatherer until the Ent reverts, despawns, or reaches 60 held ticks.
 
 Every cell also fails on a death or on the content's failed-event teleport.
 It passes only when the hold is released and the activity earns fresh XP
 after the event. The terminal evidence carries a `random_event` receipt
 (ticks, tiles, hold edges, attacker start and range, escape distance).
 
-The host also waits for a disengaged attacker to despawn before returning.
-The flee route clears both `maxrange + 1` and `wanderrange + 3` from the
-earliest NPC sighting. This lets the content's 20-tick hostile cleanup run
-without the bot returning beside the NPC. An escaped NPC outside the client
-view stays held through that timer and the two processing phases.
+The host identifies attackers by the macro-event NPC types in the content,
+not their display names. A visible former attacker does not replace a newly
+detected event. The host normally waits for the event attacker to despawn
+before returning. Its flee route clears both `maxrange + 1` and
+`wanderrange + 3` from the earliest NPC sighting
+(`Npc.ts:661-714`, `macro_events.rs2:166-173`).
+
+If the NPC leaves client view, the bot still walks toward its flee target.
+Once the bot is stationary outside chase range, 22 consecutive missing ticks
+end the hold, even if the route stopped before the full flee distance.
+The bound covers the content's 20-tick hostile cleanup and two processing
+phases (`antimacro.npc:130`, `World.ts:340-408`,
+`macro_event_triffid.rs2:51-55`). A reappearing attacker resets that countdown.
+Every attempt also has a 1,002-game-tick give-up limit, based on the normal
+hostile spawn's `npc_add(..., 1000)` lifetime plus those phases
+(`macro_events.rs2:36`, `macro_event_dryad.rs2:10` and the other hostile skill
+spawns). This is a failure budget, not despawn evidence. An angry Strange
+plant extends its lifetime when it changes type (`macro_event_triffid.rs2:35`),
+and NPC script delays can suspend lifetime processing (`Npc.ts:120-148`).
+At the limit the script resumes without a return walk. The same actor remains
+detect-only until removal or type change, so it cannot immediately pause
+the script again.
+
+Ent ownership prefers the local player's visible NPC target, set by the
+content's `p_opnpc(1)` (`macro_event_ent.rs2:18-20`, `PlayerOps.ts:404-415`,
+`World.ts:710-717`, `PathingEntity.ts:514-531`). A known other target disables
+the proximity fallback; an Ent visibly targeted by another player is also
+excluded. Before the target update reaches the client, ownership is not
+observable. The remaining five-tile fallback can mistake a nearby player's
+Ent for this bot's event. It is a bounded guess, not proof of ownership.
+The radius covers a size-three tree and two running steps
+(`antimacro.npc:1285,1325`, `PathingEntity.ts:144-148`). Every hold ends after
+60 game ticks, from the Ent's `npc_add(..., 60)` in `macro_event_ent.rs2:18`.
+An expired visible Ent cannot immediately start another hold.
 
 A Mime return message can block the mapzone-exit script that restores the
 inventory tab. The Gatherer continues that message before it requires the

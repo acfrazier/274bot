@@ -3,11 +3,10 @@
 // that module's private client/driver helpers (`new_client`, `ingame_scene`,
 // `plant_player`, `plant_inv_named`, `plant_npc_typed_with_op`, `clear_npcs`,
 // `tick_at`, `FakeDriver`) and on `Guardian`, `ProfileSettings`,
-// `GameSnapshot` already in scope via `super::*`. The first two tests exercise
-// Guardian ticks (not new helper API) and fail on the baseline, which holds
-// nothing for the Ent. The latter two guard exactness (distant Ents) and the
-// fresh-only stop retry; they compile on the baseline without changing the
-// first two tests' semantics.
+// `GameSnapshot` already in scope via `super::*`. The R1 replay fixtures below
+// explicitly plant the local player's `p_opnpc` target. New cases cover visible
+// foreign ownership and the stale-visible-slot 60-tick cap; stop retries stay
+// fresh-only.
 //
 // Source: round 4 `guardian_skill_ent` t193 onset → t221 tool loss
 // (`live/round4/guardian_skill_ent/result.json`): the trigger `~skill_macro_event 8`
@@ -26,6 +25,7 @@ fn ent_oak_round4_replay_holds_stops_then_resumes_tool_kept() {
     plant_player(&mut c, "Test", 0, 0);
     plant_inv_named(&mut c, 1351, Some("Bronze axe"));
     plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -82,6 +82,8 @@ fn ent_willow_holds_stops_then_resumes_tool_kept() {
     plant_player(&mut c, "Test", 0, 0);
     plant_inv_named(&mut c, 1351, Some("Bronze axe"));
     plant_npc_typed_with_op(&mut c, 0, 449, "Willow", -1, None, "Chop down");
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
+
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -145,6 +147,90 @@ fn ent_distant_foreign_ent_does_not_hold() {
     assert!(drv.walks.is_empty(), "distant ent must send no stop walk");
 }
 
+/// A known target on a different actor suppresses fallback to a nearby Ent.
+/// c3c8a1295 still claims the Ent by distance after failing the exact-target
+/// comparison.
+#[test]
+fn ent_nearby_ent_is_not_claimed_when_local_targets_other_actor() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    plant_npc_typed_with_op(&mut c, 1, 391, "River troll", -1, None, "Attack");
+    c.local_player.as_mut().expect("local player").entity.face_entity = 1;
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "a known non-Ent target must disable proximity fallback");
+    assert!(drv.walks.is_empty(), "the unowned Ent must not send a stop walk");
+}
+
+/// A remote player's visible target identifies a nearby Ent as foreign even
+/// when the local player's target is not yet visible.
+#[test]
+fn ent_nearby_remote_target_is_not_claimed() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    let mut other = ClientPlayer::at(1, 0);
+    other.entity.face_entity = 0;
+    c.players[1] = Some(Box::new(other));
+    c.player_ids[0] = 1;
+    c.player_count = 1;
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    assert_eq!(snap.players().len(), 1);
+    assert_eq!(snap.players()[0].actor.face_entity, 0, "foreign target must be observable");
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "an Ent visibly targeted by another player must not be claimed");
+    assert!(drv.walks.is_empty(), "the foreign Ent must not send a stop walk");
+}
+
+/// A slot that stays visible cannot extend the content lifetime or restart
+/// the proximity hold after its 60 fresh ticks are exhausted.
+#[test]
+fn ent_stale_visible_slot_expires_after_60_ticks_without_reacquiring() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold, "the owned Ent holds on its onset tick");
+    for tick in 1..60 {
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold, "Ent remains held through its 60-tick lifetime at {tick}");
+    }
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "a visible stale slot must release after 60 held ticks");
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "the expired visible slot must not be reacquired");
+    assert_eq!(drv.walks.len(), 1, "the expired slot must not send another stop");
+}
+
+
 /// A refused stop walk retries only on fresh game ticks: non-fresh passes
 /// still publish the hold without resending, and a sent stop never resends.
 #[test]
@@ -154,6 +240,8 @@ fn ent_rejected_stop_retries_only_on_fresh() {
     plant_player(&mut c, "Test", 0, 0);
     plant_inv_named(&mut c, 1351, Some("Bronze axe"));
     plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
+
     let mut g = Guardian::new();
     let mut drv = FakeDriver {
         walk_ok: false,
