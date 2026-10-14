@@ -315,12 +315,55 @@ fn review_h3_a_credential_in_a_bad_header_never_reaches_an_error() {
             "activeTab": "Main",
             "storage": { REVIEW_SECRET: "x" },
         }),
+        // Re-review R2-H3: the password repeated as another listed
+        // account's username, keying a damaged storage box.
+        json!({
+            "kind": PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [
+                { "username": "rv2probe", "password": REVIEW_SECRET },
+                { "username": REVIEW_SECRET, "password": "rv2-generic-pass" },
+            ],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": { REVIEW_SECRET: 5 },
+        }),
+        json!({
+            "kind": PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [
+                { "username": "rv2probe", "password": REVIEW_SECRET },
+                { "username": REVIEW_SECRET, "password": "rv2-generic-pass" },
+            ],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": { REVIEW_SECRET: { "k": 1 } },
+        }),
     ];
     for case in cases {
         let error = parse_profile_file(&case.to_string()).unwrap_err();
         let shown = format!("{error} | {error:?}");
         assert!(!shown.contains(REVIEW_SECRET), "{shown}");
     }
+    // A file that parses keeps file text out of its `Debug` too: the
+    // secret here sits in a username, a tab and a stored value.
+    let file = parse_profile_file(
+        &json!({
+            "kind": PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [
+                { "username": "rv2probe", "password": REVIEW_SECRET, "tab": REVIEW_SECRET },
+                { "username": REVIEW_SECRET, "password": "rv2-generic-pass" },
+            ],
+            "tabs": [REVIEW_SECRET],
+            "activeTab": REVIEW_SECRET,
+            "storage": { "rv2probe": { "other": REVIEW_SECRET } },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let shown = format!("{file:?}");
+    assert!(!shown.contains(REVIEW_SECRET), "{shown}");
 }
 
 /// Review H2: Overwrite keeps a card's parameters the export does not
@@ -697,7 +740,7 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
     .unwrap_err();
     assert!(matches!(error, ImportError::Tab { index: 1 }), "{error}");
 
-    let alice = || StorageOwner::Listed("alice".into());
+    let alice = || StorageOwner::Listed(1);
     for (storage, want) in [
         (json!([]), ImportError::Storage),
         (json!({ "": {} }), ImportError::StorageUser),
