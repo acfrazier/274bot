@@ -388,3 +388,35 @@ fn a_recovered_fishing_tool_passes_and_an_abandoned_one_never_does() {
         assert_eq!(abandoned.observe(f), Verdict::Pending, "tick {tick}");
     }
 }
+
+#[test]
+fn a_hit_from_the_still_targeting_attacker_after_release_fails() {
+    // Diagnostic run diag3/tree_spirit-4: escape counted, hold released, the
+    // spirit kept targeting and hitting the bot until it died.
+    let mut ep = armed(TROLL);
+    let mut frames: Vec<Frame> = evade_pass_frames().into_iter().take(17).collect();
+    let mut released = frame(21, 100, 83, false);
+    released.npcs = vec![npc(100, 84, true)];
+    frames.push(released);
+    let mut hit = frame(22, 100, 83, false);
+    hit.npcs = vec![npc(100, 84, true)];
+    hit.hp = Some(8);
+    frames.push(hit);
+    match run(&mut ep, frames) {
+        Verdict::Fail(message) => assert!(message.contains("still targeting"), "{message}"),
+        other => panic!("expected hit-after-release failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_hit_after_release_from_a_disengaged_attacker_is_not_blamed_on_the_evade() {
+    let mut ep = armed(TROLL);
+    let mut frames = evade_pass_frames();
+    let resumed = frames.pop().unwrap();
+    let mut queued = frame(35, 100, 90, false);
+    queued.npcs = vec![npc(100, 99, false)];
+    queued.hp = Some(9);
+    frames.push(queued);
+    frames.push(resumed);
+    assert_eq!(run(&mut ep, frames), Verdict::Pass);
+}

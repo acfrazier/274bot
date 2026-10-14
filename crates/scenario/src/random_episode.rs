@@ -958,6 +958,21 @@ impl RandomEventEpisode {
                 json!({"attacker_present": present, "attacker_targeting": targeting}),
             );
         }
+        // After the Guardian let go, the same attacker must not be hitting
+        // the bot: a hit while it targets the bot means the evade ended
+        // before the attacker gave up (the bot is left to fight it).
+        if self.hold_fall.is_some() && !frame.hold && targeting {
+            if let Some(last_hp) = self.last.as_ref().and_then(|last| last.hp) {
+                if frame.hp.is_some_and(|hp| hp < last_hp) {
+                    return Some(Verdict::Fail(format!(
+                        "{npc} hit the bot at tick {} ({last_hp} -> {:?} HP, at ({x},{z}), {distance} \
+                         tiles from its start {:?}) after the Guardian released the hold at tick \
+                         {:?}: the attacker was still targeting the bot",
+                        frame.tick, frame.hp, attacker.start, self.hold_fall
+                    )));
+                }
+            }
+        }
         let disengaged = self.npc_gone.is_some() || !targeting;
         self.resolve_when(
             frame,
