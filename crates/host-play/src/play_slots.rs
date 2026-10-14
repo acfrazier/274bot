@@ -1296,6 +1296,7 @@ fn spawn_slot_thread(
                     Arc::clone(&arm_obs.lamp_auto),
                     Arc::clone(&arm_obs.lamp_skill),
                     Arc::clone(&arm_obs.random_event_policies),
+                    connection.profile().and_then(|profile| profile.game_data()),
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),

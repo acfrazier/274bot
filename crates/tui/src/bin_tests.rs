@@ -3066,7 +3066,7 @@ fn load_all_picks_focus_when_none_was_focused() {
 }
 
 #[test]
-fn settings_popup_writes_only_guardian_fields() {
+fn settings_popup_persists_guardian_fields_and_live_policy() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let alice = SlotArm::new(7, true);
@@ -3080,6 +3080,15 @@ fn settings_popup_writes_only_guardian_fields() {
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
+    session
+        .core
+        .set_random_event_policy("alice", "river troll", vault::RandomEventPolicy::Fight)
+        .unwrap();
+    session.core.flush_writes();
+    assert_eq!(
+        alice.random_event_policies.lock().unwrap()["river troll"],
+        vault::RandomEventPolicy::Fight
+    );
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
     session.last_focused = Some("alice".into());
@@ -3087,7 +3096,8 @@ fn settings_popup_writes_only_guardian_fields() {
     let open = app.run_command(crate::commands::Command::Settings);
     dispatch(&mut session, &mut app, open);
     session.pump(&mut app);
-    // A stale popup draft: every non-guardian field at its default.
+    // A stale popup draft restores the supported Flee policy and changes the
+    // other Guardian fields without replacing unrelated profile settings.
     app.settings = vault::ProfileSettings {
         random_events: false,
         lamp_skill: "Magic".into(),
@@ -3109,8 +3119,41 @@ fn settings_popup_writes_only_guardian_fields() {
     assert!(saved.settings.lamp_auto);
     assert_eq!(saved.settings.world, Some(2), "world pin survives");
     assert!(saved.settings.auto_login, "auto-login survives");
+    assert_eq!(
+        saved.settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee
+    );
+    assert_eq!(
+        alice.random_event_policies.lock().unwrap()["river troll"],
+        vault::RandomEventPolicy::Flee
+    );
     assert!(!alice.random_events.load(Ordering::Relaxed));
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Magic");
+}
+
+#[test]
+fn settings_popup_shows_unavailable_policy_refusal() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .core
+        .start(lifecycle_vault("settings-policy-refusal"), empty_play());
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    app.settings_state.row = 4;
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.")
+    );
 }
 
 #[test]

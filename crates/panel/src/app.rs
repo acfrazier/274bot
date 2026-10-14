@@ -5596,7 +5596,7 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
     );
 }
 
-/// Random-event toggles, per-NPC combat policies and lamp reward settings.
+/// Random-event toggles, per-event Guardian policies and lamp reward settings.
 /// Profile choices use the same vault save path as the existing random-event
 /// and lamp controls.
 fn slot_random_section(ui: &Ui, session: &mut Session) {
@@ -5614,13 +5614,12 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
         }
         session.note_chooser_edited();
     }
-    ui.same_line();
+    ui.text_wrapped("Off: show event status only; do not handle or hold events.");
     let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
     ui.set_item_tooltip(
-        "Per-event random response; only Flee is available, while Fight and Ignore are not yet available.",
+        "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
     );
     if policies_open {
-        ui.text_wrapped("Fight and Ignore yield the event to scripts.");
         for (event, label) in vault::RANDOM_EVENT_POLICY_EVENTS {
             ui.text_disabled(label);
             ui.same_line();
@@ -5635,7 +5634,6 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
             }
         }
     }
-    ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
     let mut auto = session.cred_settings.lamp_auto;
     if ui.checkbox("lamp auto", &mut auto) {
         session.cred_settings.lamp_auto = auto;

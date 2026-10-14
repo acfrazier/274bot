@@ -104,8 +104,8 @@ pub fn assignment_key(source_kind: &str, identity: &str) -> String {
     format!("{source_kind}:{identity}")
 }
 
-/// Combat response for one random-event NPC. Only `Flee` is implemented by
-/// the Guardian; the other stored values yield the event to script handling.
+/// Per-event response policy. Only `Flee` is supported; stored `Fight` and
+/// `Ignore` values are currently treated as `Flee`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RandomEventPolicy {
@@ -117,7 +117,7 @@ pub enum RandomEventPolicy {
 
 /// Stable event keys and their profile-settings labels, shared by the panel
 /// and TUI. Keys are lowercase NPC names so profile files remain readable.
-pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 9] = [
+pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 8] = [
     ("river troll", "River troll"),
     ("swarm", "Swarm"),
     ("rock golem", "Rock golem"),
@@ -126,7 +126,6 @@ pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 9] = [
     ("watchman", "Watchman"),
     ("tree spirit", "Tree spirit"),
     ("strange plant", "Strange plant"),
-    ("drunken dwarf", "Drunken dwarf"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -715,6 +714,12 @@ mod tests {
         );
 
         let mut settings = ProfileSettings::default();
+        assert!(
+            !super::RANDOM_EVENT_POLICY_EVENTS
+                .iter()
+                .any(|(event, _)| *event == "drunken dwarf"),
+            "the Talk-to dwarf is not a hostile policy choice"
+        );
         settings.set_random_event_policy(" River Troll ", super::RandomEventPolicy::Fight);
         assert_eq!(
             settings.random_event_policies.get("river troll"),
