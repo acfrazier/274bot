@@ -127,7 +127,7 @@ impl JsonType {
 }
 
 /// Why a profile file was refused. No variant carries a password or any
-/// value of the file; usernames appear only for listed accounts.
+/// text of the file: accounts and storage boxes are named by number.
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     #[error("cannot read {}: {source}", path.display())]
@@ -176,18 +176,19 @@ pub enum ImportError {
     },
 }
 
-/// Whose storage a storage error is about: a username the file's account
-/// list holds, or another key (not shown: it may be anything).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Whose storage a storage error is about: an account the file lists (its
+/// 1-based number in the list) or another key. Neither shows the key: a
+/// damaged file can put any text there, a password included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageOwner {
-    Listed(String),
+    Listed(usize),
     Unlisted,
 }
 
 impl std::fmt::Display for StorageOwner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Listed(user) => write!(f, "'{user}'"),
+            Self::Listed(number) => write!(f, "account {number}"),
             Self::Unlisted => f.write_str("an account the file does not list"),
         }
     }
@@ -216,12 +217,14 @@ impl ExportAccount {
     }
 }
 
+/// File text stays out of `Debug`: a damaged file can put a password in
+/// any field, so only the shape is shown.
 impl std::fmt::Debug for ExportAccount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExportAccount")
-            .field("username", &self.username)
+            .field("username", &"<hidden>")
             .field("password", &"<redacted>")
-            .field("tab", &self.tab)
+            .field("tab", &self.tab.as_ref().map(|_| "<hidden>"))
             .field("world", &self.world)
             .finish()
     }
@@ -236,12 +239,21 @@ pub type BoxStorage = BTreeMap<String, String>;
 const CREDS_KEY: &str = "creds";
 
 /// A parsed rs2b0t profile export.
-#[derive(Debug)]
 pub struct ExportFile {
     accounts: Vec<ExportAccount>,
     tabs: Vec<String>,
     active_tab: String,
     storage: BTreeMap<String, BoxStorage>,
+}
+
+impl std::fmt::Debug for ExportFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExportFile")
+            .field("accounts", &self.accounts)
+            .field("tabs", &self.tabs.len())
+            .field("storage_boxes", &self.storage.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ExportFile {
@@ -434,12 +446,9 @@ fn parse_storage(
         return Ok(BTreeMap::new());
     };
     let users = raw.as_object().ok_or(ImportError::Storage)?;
-    let owner = |user: &str| {
-        if accounts.iter().any(|a| a.username == user) {
-            StorageOwner::Listed(user.to_owned())
-        } else {
-            StorageOwner::Unlisted
-        }
+    let owner = |user: &str| match accounts.iter().position(|a| a.username == user) {
+        Some(index) => StorageOwner::Listed(index + 1),
+        None => StorageOwner::Unlisted,
     };
     let mut out = BTreeMap::new();
     for (user, entries) in users {

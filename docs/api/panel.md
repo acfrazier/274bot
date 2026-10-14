@@ -252,9 +252,9 @@ section stays hidden only while the rail is shown).
 
 A fitted **Profiles** window (same one as the strip **Profiles** button
 and rail **Profiles…**), not a blocking modal. Clicking a row focuses it
-(and loads it onto the wall while MultiBox is on; stays open for more);
-the focused profile's own script card shows, and no script starts.
-Single-bot pick closes the picker. **Load all** is MultiBox-only.
+(and loads it onto the wall while MultiBox is on); the window stays open
+either way, with any open edit form as it was. The focused profile's own
+script card shows, and no script starts. **Load all** is MultiBox-only.
 Unlocking the vault while MultiBox is already on focuses the remembered
 (or first) profile the same way, so it joins the rail.
 **Close**/Esc closes without loading. **Edit** (next to **✕**) shows
