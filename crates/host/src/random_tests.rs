@@ -1368,8 +1368,8 @@ fn evade_flee_targets_escape_all_npc_offsets_without_crossing_them() {
             assert!(first.hold, "NPC start {start:?} must engage the Guardian");
             let first_target = *driver.walks.first().expect("first flee target");
             assert!(
-                cheb(start, first_target) > cheb(start, (0, 0)),
-                "first target {first_target:?} must be farther from {start:?} than player (0, 0)"
+                cheb((0, 0), first_target) < cheb(start, first_target),
+                "first target {first_target:?} is not on the player's side of NPC {start:?}"
             );
             let first_route = direct_route_tiles((0, 0), first_target);
             assert!(
@@ -1399,8 +1399,8 @@ fn evade_flee_targets_escape_all_npc_offsets_without_crossing_them() {
                 "partial route should re-flee from {start:?}"
             );
             assert!(
-                cheb(start, reflee_target) > cheb(start, partial),
-                "re-flee target {reflee_target:?} must be farther from {start:?} than player {partial:?}"
+                cheb(partial, reflee_target) < cheb(current_npc, reflee_target),
+                "re-flee target {reflee_target:?} is not on the player's side of chasing NPC {current_npc:?}"
             );
             let reflee_route = direct_route_tiles(partial, reflee_target);
             assert!(
