@@ -214,7 +214,8 @@ snapshot:
   Watchman): the hold rises within five ticks of the attacker targeting the
   bot; the bot gets past the attacker's content `maxrange + 1` from its start
   tile; it never moves back toward the start while the attacker still targets
-  it; and the hold is not released before the escape.
+  it; the hold is not released before the escape; and the attacker doesn't
+  hit the bot again while still targeting it after the hold is released.
 - **Dialogue** (Genie, Drunken Dwarf, Mysterious Old Man): the Guardian
   engages the NPC, the NPC leaves, and the reward arrives. For the Genie, the
   lamp is also rubbed (lamp auto, Strength).
