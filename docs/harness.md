@@ -224,13 +224,25 @@ snapshot:
   back.
 - **Lost pickaxe and axe, big fish**: the lost tool is back in the pack or
   hand.
-- **Whirlpool, gas rock, ent** have no documented Guardian act: the bot must
+- **Whirlpool, gas rock** have no documented Guardian act: the bot must
   survive them and keep its tool.
+- **Ent**: the bot keeps its axe. The Guardian cancels the forced chop and
+  holds the Gatherer until the Ent reverts or despawns.
 
 Every cell also fails on a death or on the content's failed-event teleport.
 It passes only when the hold is released and the activity earns fresh XP
 after the event. The terminal evidence carries a `random_event` receipt
 (ticks, tiles, hold edges, attacker start and range, escape distance).
+
+The host also waits for a disengaged attacker to despawn before returning.
+The flee route clears both `maxrange + 1` and `wanderrange + 3` from the
+earliest NPC sighting. This lets the content's 20-tick hostile cleanup run
+without the bot returning beside the NPC. An escaped NPC outside the client
+view stays held through that timer and the two processing phases.
+
+A Mime return message can block the mapzone-exit script that restores the
+inventory tab. The Gatherer continues that message before it requires the
+inventory tab to become available.
 
 ```sh
 ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \

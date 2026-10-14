@@ -21,13 +21,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   including hits that miss. Before, it could walk straight back to its
   fishing or gathering spot between hits, next to the attacker. It runs far
   enough that the attacker gives up chasing, which now also outruns a Swarm,
-  and returns only once the attacker has gone. If it can't get away, it
-  stops trying after about 15 seconds and hands control back to the script.
+  and returns only once the attacker has gone. A blocked escape does not
+  release a still-targeting attacker back to the script.
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
+- When a chopped tree becomes an Ent, the Guardian stops chopping and waits
+  for the tree to return before the Gatherer resumes. This prevents the Ent
+  from breaking the axe.
+- Lost-tool recovery no longer abandons a pickaxe or axe after one refused
+  click. It waits for the next fresh snapshot and retries within the existing
+  recovery bound.
+
+### Fixed during development
+
+- The random-event Guardian remembers an attacker's first scene position,
+  before its delayed attack starts. A Tree spirit that still targets the bot
+  cannot disappear behind a completed-escape flag.
+- The Guardian waits for a visible attacker to despawn before returning.
+  Its flee route also clears the NPC's wandering range so the content's
+  despawn timer can finish.
 
 ### Scripts
 
+- The Gatherer continues message boxes before waiting for its inventory tab.
+  A Mime emote-unlock message after the return teleport no longer prevents
+  gathering from resuming.
 - Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
   `waitBankReady`. The junk check covers gems, strange fruit, beer, kebabs,
   the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
