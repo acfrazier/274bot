@@ -729,6 +729,11 @@ pub enum ActionError {
     UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
+    /// A hit on the local player closed the dialogue before it finished
+    /// (the NPC combat scripts `if_close` on every swing, including a
+    /// 0-damage miss). Typed so callers never match on a reason string;
+    /// runners treat it like `Blocked` (park for an explicit retry).
+    CombatInterrupted,
     /// The step cannot continue safely without an explicit operator retry.
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.

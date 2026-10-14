@@ -3,6 +3,17 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+### Quests and dialogues
+
+- A conversation closed by an attack is no longer counted as finished. An
+  NPC hit closes the chat even when it misses (0 damage), and that used to
+  look exactly like the talk ending on its own, so a quest step could move
+  on without the conversation happening. The step now stops with
+  "dialogue interrupted by combat" and can be retried, and script
+  dialogues (`driveDialog` / `talkThrough`) report failure the same way.
+
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 
 ### Scripts

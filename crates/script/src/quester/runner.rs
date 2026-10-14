@@ -278,6 +278,7 @@ fn trace_error_reason(error: &ActionError) -> &str {
         | ActionError::Failed(reason)
         | ActionError::Blocked(reason) => reason.as_ref(),
         ActionError::NeedsEvidence(_) => "needs evidence",
+        ActionError::CombatInterrupted => "dialogue interrupted by combat",
         ActionError::UserInput => super::families::MANUAL_MOVEMENT_MESSAGE,
         _ => "step error",
     }
@@ -920,6 +921,7 @@ impl Quester {
             }
             Poll::Ready(Err(
                 error @ (ActionError::Blocked(_)
+                | ActionError::CombatInterrupted
                 | ActionError::NeedsEvidence(_)
                 | ActionError::UserInput),
             )) => {
@@ -1061,6 +1063,10 @@ impl Quester {
             ActionError::Unavailable(reason)
             | ActionError::Failed(reason)
             | ActionError::Blocked(reason) => (QuesterFailureKind::Other, reason),
+            ActionError::CombatInterrupted => (
+                QuesterFailureKind::Other,
+                Arc::from("dialogue interrupted by combat"),
+            ),
             error => (
                 QuesterFailureKind::Other,
                 Arc::from(format!("step error: {error:?}")),
@@ -1704,7 +1710,8 @@ impl Quester {
                 | ActionError::Held
                 | ActionError::BudgetExhausted
                 | ActionError::Stale
-                | ActionError::Cancelled,
+                | ActionError::Cancelled
+                | ActionError::CombatInterrupted,
             ) => false,
             Err(error) => {
                 self.parked = true;
@@ -2831,6 +2838,7 @@ impl Quester {
             }
             Poll::Ready(Err(
                 error @ (ActionError::Blocked(_)
+                | ActionError::CombatInterrupted
                 | ActionError::NeedsEvidence(_)
                 | ActionError::UserInput),
             )) => {
