@@ -24,6 +24,10 @@ pub struct ImportView {
     pub lines: Vec<String>,
     pub error: Option<String>,
     pub policy: ConflictPolicy,
+    /// Accounts the 289 client cannot log in with (the preview's count).
+    pub unusable: usize,
+    /// Whether those accounts are imported anyway.
+    pub include_unusable: bool,
     /// Every write of the confirmed import has settled.
     pub settled: bool,
     pub can_delete: bool,
@@ -39,6 +43,8 @@ impl Default for ImportView {
             lines: Vec::new(),
             error: None,
             policy: ConflictPolicy::Skip,
+            unusable: 0,
+            include_unusable: false,
             settled: false,
             can_delete: false,
             delete_asked: false,
@@ -53,6 +59,8 @@ pub enum ImportAction {
     /// Read and preview the file at this path.
     Preview(String),
     Policy(ConflictPolicy),
+    /// Import accounts the 289 client cannot log in with too (or not).
+    IncludeUnusable(bool),
     /// Write the previewed import.
     Confirm,
     /// Back to the path, dropping the parsed file.
@@ -72,6 +80,12 @@ impl ImportView {
     pub fn hints(&self) -> &'static str {
         match self.stage {
             Stage::Path => "type the file path · Enter preview · Esc close",
+            Stage::Preview if self.unusable > 0 && self.include_unusable => {
+                "o skip/overwrite existing · u leave unusable accounts out · Enter/y import · Up/Down scroll · Esc back"
+            }
+            Stage::Preview if self.unusable > 0 => {
+                "o skip/overwrite existing · u import unusable accounts too · Enter/y import · Up/Down scroll · Esc back"
+            }
             Stage::Preview => {
                 "o skip/overwrite existing · Enter/y import · Up/Down scroll · Esc back"
             }
@@ -106,6 +120,9 @@ impl ImportView {
                     ConflictPolicy::Skip => ConflictPolicy::Overwrite,
                     ConflictPolicy::Overwrite => ConflictPolicy::Skip,
                 })),
+                KeyCode::Char('u') if self.unusable > 0 => {
+                    Some(ImportAction::IncludeUnusable(!self.include_unusable))
+                }
                 _ => {
                     self.scroll_key(key.code);
                     None
@@ -273,6 +290,18 @@ mod tests {
         assert_eq!(
             view.on_key(key(KeyCode::Char('o'))),
             Some(ImportAction::Policy(ConflictPolicy::Overwrite))
+        );
+        // No unusable account: nothing to include.
+        assert_eq!(view.on_key(key(KeyCode::Char('u'))), None);
+        view.unusable = 1;
+        assert_eq!(
+            view.on_key(key(KeyCode::Char('u'))),
+            Some(ImportAction::IncludeUnusable(true))
+        );
+        view.include_unusable = true;
+        assert_eq!(
+            view.on_key(key(KeyCode::Char('u'))),
+            Some(ImportAction::IncludeUnusable(false))
         );
         assert_eq!(
             view.on_key(key(KeyCode::Enter)),

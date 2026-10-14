@@ -19,6 +19,8 @@ pub enum EditLeave {
     DeleteTarget,
     /// Turn MultiBox off, which closes Profiles and the form with it.
     MultiBoxOff,
+    /// Close the form and open the rs2b0t import in the editor pane.
+    OpenImport,
 }
 
 /// A staged Discard / Keep editing prompt: the operator asked to leave the
@@ -182,8 +184,18 @@ impl Session {
     /// pending target is staged for the Discard / Keep editing prompt
     /// ([`Self::confirm_pending_edit_switch`],
     /// [`Self::cancel_pending_edit_switch`]). Focus changes never come
-    /// through here, so they can never retarget the form.
+    /// through here, so they can never retarget the form. The form and the
+    /// rs2b0t import share the editor pane: an import whose writes are
+    /// still being saved keeps it (the edit does not open), and any other
+    /// import (its path, or a preview, which has written nothing) closes.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
+        if self.import_writing() {
+            self.wall.chooser_open = true;
+            return;
+        }
+        if self.profile_import_open {
+            self.close_profile_import();
+        }
         let target = name.unwrap_or("");
         if self.chooser_edit.as_deref() == Some(target) {
             // Same target: keep the buffers — an explicit re-open never
@@ -202,6 +214,34 @@ impl Session {
             return;
         }
         self.open_edit_profile(target);
+    }
+
+    /// Open the rs2b0t import in the editor pane, in place of the edit
+    /// form. With unsaved changes on the form, or its save still being
+    /// written, the Discard / Keep editing prompt asks first.
+    pub fn request_open_import(&mut self) {
+        if self.profile_import_open {
+            return;
+        }
+        if self.chooser_edit.is_some() {
+            if self.edit_dirty() || self.form_saving() {
+                self.stage_edit_exit(EditLeave::OpenImport, "", "import rs2b0t profiles");
+                return;
+            }
+            self.cancel_edit_profile();
+        }
+        self.open_import();
+    }
+
+    fn open_import(&mut self) {
+        self.profile_import_open = true;
+        self.refresh_profile_import();
+    }
+
+    /// Whether a confirmed rs2b0t import's writes are still being saved:
+    /// the editor pane stays on its report until they settle.
+    pub fn import_writing(&self) -> bool {
+        self.profile_import_open && self.profile_import.writing(&self.core)
     }
 
     /// Stage the Discard / Keep editing prompt for leaving the form to
@@ -267,6 +307,10 @@ impl Session {
             EditLeave::MultiBoxOff => {
                 self.cancel_edit_profile();
                 self.apply_multibox(false);
+            }
+            EditLeave::OpenImport => {
+                self.cancel_edit_profile();
+                self.open_import();
             }
         }
     }

@@ -145,8 +145,12 @@ is saved until you confirm. The shared flow is
 The importer reads only rs2b0t's own export: kind
 `rs2b0t-multibox-profiles`, version 1. It refuses any other kind or version,
 or a malformed file, with a message that says why. Like rs2b0t, it accepts a
-file without the `storage` part. Errors never quote a profile entry, so a
-password never appears in one.
+file without the `storage` part. Errors never quote the file: a bad profile
+entry is named by its number, and a bad `kind` or `v` by the type of value
+found (for example "an object"), so a password in a damaged file never
+appears in one. The path must name a regular file (a FIFO, device or
+directory is refused before anything is read), and at most 16 MiB is read
+from it, whatever its size claimed.
 
 | rs2b0t | 274bot |
 | --- | --- |
@@ -154,7 +158,7 @@ password never appears in one.
 | world (1–3) | the profile's world (`wN`), used when the server's world list offers it |
 | tab, tab list, active tab | not imported: 274bot has no profile tabs or groups |
 | selected script | the profile's script, when your registered rs2b0t catalog has a script of that name that can run; a dimmed or unknown script is reported |
-| script parameters (`set:<Script>:<key>`) | that script's per-profile parameters, read the way rs2b0t reads them (out-of-range numbers are limited to the range, options matched without case); a parameter the catalog script doesn't have, or a value that isn't one of its options, is reported |
+| script parameters (`set:<Script>:<key>`) | that script's per-profile parameters, read the way rs2b0t reads them: numbers and tile coordinates with JavaScript's `Number()` (so `0x10` is 16 and an empty value is 0), then limited to the parameter's range; options matched without case. A parameter the catalog script doesn't have, or a value rs2b0t would have replaced with the default, is reported |
 | Global `lampSkill` | genie lamp skill |
 | Global `clueDuelPartner` | clue duel partner |
 | `rendererEnabled` | `0` sets the profile's display to Off; `1` turns an Off display back on |
@@ -170,10 +174,24 @@ password never appears in one.
 | `creds` | not imported: rs2b0t's per-tab login copy (its value is never read or shown) |
 | stored settings of an account the file doesn't list | not imported |
 
+An account the 289 client cannot log in with is listed as unusable, with the
+reason, and is not imported unless you choose to import those accounts too:
+a username longer than 12 characters, an empty password or one longer than
+20 characters (the 289 server refuses these at login), or a line break or a
+character beyond Latin-1 in either (the login carries one byte per
+character). The import never shortens a credential, and never shows one.
+
 An account already in the vault is kept as it is unless you choose
 **Overwrite**. Overwrite keeps the profile's uid and every setting the export
-doesn't carry (memory mode, auto-login, random events and the like). It
-replaces the password and world, and the parameters of each imported script.
+doesn't carry (memory mode, auto-login, random events, a world when the
+export has none, and the like). It writes the password, the world and each
+setting the export carries. A script's parameters are merged one by one: a
+parameter in the export replaces the profile's, every other parameter of
+that script stays, and a value the import refuses keeps the profile's own.
+The preview and the report say, for each parameter, its new value against
+the current one (`[new]`, `[unchanged]` or `[was …]`), list the parameters
+that stay, and give the current value a refused one keeps.
+
 Importing the same file again writes nothing. Skip leaves every account
 untouched, and with Overwrite each account already matches. The preview and
 the final report list every item that isn't imported, with the reason. Each
@@ -181,10 +199,22 @@ profile the import writes logs one line (profile, create or overwrite,
 operation id, old → new). The log line says only whether the password was set
 or changed.
 
-The export file holds the passwords in plain text. After an import with no
-failures, the report offers to delete the file and asks you to confirm.
-Loaded bots use an imported password and world at their next login, and
-imported script parameters at their next Start.
+An account counts as imported only when the import's own write of it is
+saved. The report says "not confirmed" for a write that a later save of the
+same profile replaced before it was saved, or whose result the session no
+longer knows, and lists every failure. The export file holds the passwords in
+plain text: only when every account you chose to import is confirmed saved
+does the report offer to delete the file, and it asks you to confirm. Loaded
+bots use an imported password and world at their next login, and imported
+script parameters at their next Start.
+
+The import holds the passwords in `vault::Secret`s. It reads the file into
+one buffer sized from the file's length and zeroes it after parsing, checks
+the JSON syntax before it builds any value tree, and zeroes every string
+value of that tree when it is dropped. It does not reach object keys, a
+value that a repeated key in the same object replaced, serde_json's own
+scratch buffer for strings with escapes, a buffer the read had to grow
+because the file grew meanwhile, or the log-redaction list described below.
 
 ## Secrets in memory
 

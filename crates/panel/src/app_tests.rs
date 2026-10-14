@@ -4186,6 +4186,10 @@ enum At {
     List,
     /// The Discard / Keep editing prompt.
     SwitchPrompt,
+    /// The editor pane's scrolling body (the import's path field).
+    Editor,
+    /// A popup the window opened in its own scope.
+    Popup(&'static str),
 }
 
 /// The Profiles item `label`, whose id lives `at` (`form` is the edit
@@ -4234,6 +4238,17 @@ fn profiles_item(
                     id(super::PROFILE_EDIT_SWITCH_POPUP, profiles_id)
                 ));
                 (prompt, (*prompt).ID)
+            }
+            At::Editor => {
+                let editor = window(&format!(
+                    "Profiles/##profiles-editor_{:08X}",
+                    id("##profiles-editor", profiles_id)
+                ));
+                (editor, (*editor).ID)
+            }
+            At::Popup(popup) => {
+                let popup = window(&format!("##Popup_{:08x}", id(popup, profiles_id)));
+                (popup, (*popup).ID)
             }
         };
         (window, id(label, seed))
@@ -4559,6 +4574,71 @@ impl ProfilesUi {
         self.ctx.io_mut().add_input_character(c);
         self.frame();
         self.frame()
+    }
+
+    /// Type `text` into the text field `label` (its id lives `at`): a mouse
+    /// click on the field, then the characters as the keyboard sends them.
+    fn type_into(&mut self, at: At, label: &str, text: &str) -> Shown {
+        let (field, _) = self.item_rect(at, label);
+        self.click_at(rect_center(field));
+        assert!(self.ctx.io().want_text_input(), "{label} has the keyboard");
+        for c in text.chars() {
+            self.ctx.io_mut().add_input_character(c);
+        }
+        self.frame();
+        self.frame()
+    }
+
+    /// One frame; how far the Profiles window itself could scroll, and
+    /// whether its list and editor regions were drawn as their own windows.
+    fn window_scroll(&mut self) -> (f32, bool, bool) {
+        self.frame();
+        let found = |name: &str| {
+            let name = std::ffi::CString::new(name).unwrap();
+            // SAFETY: the context is bound by `with_bound_context` below.
+            unsafe { !dear_imgui_rs::sys::igFindWindowByName(name.as_ptr()).is_null() }
+        };
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let shown = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(|| {
+                // SAFETY: the context is bound; the window was just drawn.
+                let profiles = unsafe {
+                    let profiles = dear_imgui_rs::sys::igFindWindowByName(c"Profiles".as_ptr());
+                    assert!(!profiles.is_null(), "Profiles was drawn");
+                    &*profiles
+                };
+                let child = |label: &str| {
+                    let id = {
+                        let label = std::ffi::CString::new(label).unwrap();
+                        // SAFETY: the context is bound.
+                        unsafe {
+                            dear_imgui_rs::sys::igGetIDWithSeed_Str(
+                                label.as_ptr(),
+                                std::ptr::null(),
+                                profiles.ID,
+                            )
+                        }
+                    };
+                    found(&format!("Profiles/{label}_{id:08X}"))
+                };
+                (
+                    profiles.ScrollMax.y,
+                    child("##profiles-list"),
+                    child("##profiles-editor"),
+                )
+            })
+        };
+        self.ctx.render();
+        shown
     }
 
     /// The main panel's banner line (hidden behind Profiles in the default
@@ -5968,6 +6048,209 @@ fn walk_send_window_opens_on_screen_and_fits_its_list() {
                 size[1] >= display[1] * 0.5,
                 "{label}: the window is sized to show much of the list, got {}",
                 size[1]
+            );
+        }
+    }
+}
+
+// ---- Profiles: the rs2b0t import and the split editor pane ------------------
+
+/// An rs2b0t export (generic names and passwords) with one new account and
+/// one the vault already holds.
+fn write_rs2b0t_export(dir: &std::path::Path) -> PathBuf {
+    let path = dir.join("rs2b0t-profiles.json");
+    std::fs::write(
+        &path,
+        r#"{"kind":"rs2b0t-multibox-profiles","v":1,"profiles":[{"username":"importone","password":"generic-pass-1","world":2},{"username":"alice","password":"generic-pass-2"}],"tabs":[],"activeTab":"Main"}"#,
+    )
+    .unwrap();
+    path
+}
+
+/// Open the import and preview `export` through the Profiles controls.
+fn preview_rs2b0t_export(ui: &mut ProfilesUi, export: &std::path::Path) -> Shown {
+    ui.click(At::Window, "Import from rs2b0t…");
+    ui.type_into(
+        At::Editor,
+        "##rs2b0t-import-path",
+        &export.display().to_string(),
+    );
+    ui.click(At::Window, "Preview")
+}
+
+/// The import runs path → preview → Import → report → delete through the
+/// Profiles window's own controls: the preview writes nothing, Import
+/// writes the new account and keeps the existing one (Skip), and the
+/// export file goes only through the confirm.
+#[test]
+fn the_profiles_import_runs_from_its_path_to_deleting_the_export() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-flow", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    let preview = preview_rs2b0t_export(&mut ui, &export);
+    assert_eq!(
+        ui.session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview,
+        "{}",
+        preview.text
+    );
+    assert!(preview.has("importone"), "{}", preview.text);
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")], "the preview wrote");
+
+    ui.click(At::Window, "Import");
+    ui.finish_writes();
+    ui.frame();
+    let report = ui.frame();
+    let disk = ui.disk();
+    assert_eq!(disk.len(), 2, "{disk:?}");
+    assert_eq!(disk[0], row("alice", 42, "apass"), "Skip kept alice");
+    assert_eq!(
+        (disk[1].0.as_str(), disk[1].2.as_str()),
+        ("importone", "generic-pass-1")
+    );
+    assert!(
+        !preview.has("generic-pass") && !report.has("generic-pass"),
+        "a password showed"
+    );
+    assert!(export.exists(), "deleted without asking");
+
+    ui.click(At::Window, "Delete export file…");
+    ui.click(At::Popup(super::IMPORT_DELETE_POPUP), "I understand");
+    ui.click(At::Popup(super::IMPORT_DELETE_POPUP), "Delete");
+    assert!(!export.exists(), "the confirmed delete");
+    ui.click(At::Window, "Done##rs2b0t-import");
+    assert!(!ui.session.profile_import_open);
+    assert!(ui.session.profile_import.is_fresh());
+}
+
+/// Import over a form with unsaved edits asks Discard / Keep editing
+/// first; Keep editing stays on the form, Discard opens the import.
+#[test]
+fn opening_the_import_over_unsaved_edits_asks_first() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-dirty", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.type_char('x');
+    assert!(ui.session.edit_dirty());
+    ui.click(At::Window, "Import from rs2b0t…");
+    assert!(ui.session.pending_edit_switch.is_some(), "the prompt asks");
+    assert!(!ui.session.profile_import_open);
+
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert!(!ui.session.profile_import_open);
+    assert!(ui.session.edit_dirty(), "the draft stays");
+
+    ui.click(At::Window, "Import from rs2b0t…");
+    let discarded = ui.click(At::SwitchPrompt, "Discard");
+    assert!(ui.session.profile_import_open);
+    assert_eq!(ui.session.chooser_edit, None);
+    assert!(!discarded.has("Editing alice"), "{}", discarded.text);
+
+    // A clean form gives the pane to the import at once.
+    ui.click(At::Window, "Cancel##rs2b0t-import");
+    ui.click(At::List, "Edit##edit-alice");
+    ui.click(At::Window, "Import from rs2b0t…");
+    assert!(ui.session.pending_edit_switch.is_none());
+    assert!(ui.session.profile_import_open);
+    assert_eq!(ui.session.chooser_edit, None);
+}
+
+/// Edit over an import preview drops the preview, which wrote nothing.
+#[test]
+fn opening_an_edit_drops_an_import_preview() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-edit", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    preview_rs2b0t_export(&mut ui, &export);
+    assert_eq!(
+        ui.session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview
+    );
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.profile_import_open);
+    assert!(
+        ui.session.profile_import.is_fresh(),
+        "the preview is dropped"
+    );
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+}
+
+/// While the import's writes are being saved the editor pane keeps its
+/// report: Edit and New profile wait, and work once the writes settle.
+#[test]
+fn an_import_being_saved_keeps_the_editor_pane() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-writing", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    preview_rs2b0t_export(&mut ui, &export);
+    let gate = ui.session.core.write_gate();
+    let hold = gate.lock().unwrap();
+    ui.click(At::Window, "Import");
+    assert!(ui.session.import_writing());
+    ui.click(At::List, "Edit##edit-alice");
+    ui.click(At::Window, "New profile");
+    ui.session.begin_edit_profile(Some("alice"));
+    assert!(ui.session.profile_import_open, "the report stays");
+    assert_eq!(ui.session.chooser_edit, None);
+    drop(hold);
+    ui.finish_writes();
+    ui.frame();
+    ui.frame();
+    assert!(!ui.session.import_writing());
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.profile_import_open);
+}
+
+/// Docked at 330 px the editor pane sits under the list; in a wide window
+/// beside it. Either way the window itself never scrolls (the list and the
+/// editor pane each scroll on their own), and with a long list Save and
+/// Close stay wholly in view.
+#[test]
+fn profiles_list_and_editor_split_by_width_and_scroll_on_their_own() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let names: Vec<String> = (0..40).map(|i| format!("prof{i:02}")).collect();
+    let profiles: Vec<(&str, &str, i32)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), "pass", 100 + i as i32))
+        .collect();
+    for (label, size, beside) in [
+        ("profiles-split-docked", [PANEL_WIDTH, 580.0], false),
+        ("profiles-split-wide", [700.0, 580.0], true),
+    ] {
+        let mut ui = ProfilesUi::with_geometry(label, &profiles, [1008.0, 580.0], [0.0, 0.0], size);
+        ui.click(At::List, "Edit##edit-prof00");
+        let (scroll, list, editor) = ui.window_scroll();
+        assert_eq!(scroll, 0.0, "{label}: the window scrolls");
+        assert!(list && editor, "{label}: list {list}, editor {editor}");
+        let (edit, _) = ui.item_rect(At::List, "Edit##edit-prof00");
+        let (save, _) = ui.item_rect(At::Form, "Save");
+        if beside {
+            assert!(
+                save[0][0] >= edit[1][0],
+                "{label}: Save {save:?}, Edit {edit:?}"
+            );
+        } else {
+            assert!(
+                save[0][1] >= edit[1][1],
+                "{label}: Save {save:?}, Edit {edit:?}"
+            );
+        }
+        for (at, item) in [
+            (At::Form, "Save"),
+            (At::Form, "Cancel"),
+            (At::Window, "Close"),
+        ] {
+            let (rect, visible) = ui.item_rect(at, item);
+            assert!(
+                rect[0][0] >= visible[0][0]
+                    && rect[0][1] >= visible[0][1]
+                    && rect[1][0] <= visible[1][0]
+                    && rect[1][1] <= visible[1][1],
+                "{label}: {item} at {rect:?} is not wholly in {visible:?}"
             );
         }
     }
