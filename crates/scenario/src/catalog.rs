@@ -450,6 +450,20 @@ const REGISTRY: &[Entry] = &[
     Entry::new("duel_arena", scenarios::duel_arena_scenario),
     Entry::new("clue_duel_3554", scenarios::clue_duel_3554_scenario),
     Entry::new("jive_kq_four", scenarios::jive_kq_four_scenario),
+    Entry::new("jive_chests", scenarios::jive_chests_scenario),
+    Entry::new("jive_crafting", scenarios::jive_crafting_scenario),
+    Entry::new("jive_enchanter", scenarios::jive_enchanter_scenario),
+    Entry::new("jive_dragons", scenarios::jive_dragons_scenario),
+    Entry::new(
+        "jive_dragons_black_range",
+        scenarios::jive_dragons_black_range_scenario,
+    ),
+    Entry::new(
+        "jive_dragons_potion_restock",
+        scenarios::jive_dragons_potion_restock_scenario,
+    ),
+    Entry::new("jive_demons", scenarios::jive_demons_scenario),
+    Entry::new("jive_kbd", scenarios::jive_kbd_scenario),
 ];
 
 /// The registered scenario with this name, `None` when unknown or when a
