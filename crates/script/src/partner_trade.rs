@@ -50,6 +50,64 @@ pub fn parse_partner_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// Strip the frozen `Trade.ts` offer-screen header into a bare display name.
+pub fn parse_trade_partner_header(header: &str) -> Option<String> {
+    let mut name = header.trim_matches(is_ecmascript_whitespace);
+    if name.is_empty() {
+        return None;
+    }
+    if let Some(colon) = name.find(':') {
+        name = name[colon + 1..].trim_matches(is_ecmascript_whitespace);
+    } else if let Some(rest) = strip_trading_with(name) {
+        name = rest.trim_matches(is_ecmascript_whitespace);
+    }
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The frozen trade screen precedence: offer, then confirm, then closed.
+pub fn trade_screen_state(offer_open: bool, confirm_open: bool) -> &'static str {
+    if offer_open {
+        "offer"
+    } else if confirm_open {
+        "confirm"
+    } else {
+        "closed"
+    }
+}
+
+fn strip_trading_with(name: &str) -> Option<&str> {
+    const PREFIX: &str = "trading with";
+    let prefix = name.get(..PREFIX.len())?;
+    let rest = name.get(PREFIX.len()..)?;
+    if !prefix.eq_ignore_ascii_case(PREFIX)
+        || !rest.chars().next().is_some_and(is_ecmascript_whitespace)
+    {
+        return None;
+    }
+    let start = rest
+        .char_indices()
+        .find_map(|(index, character)| (!is_ecmascript_whitespace(character)).then_some(index))
+        .unwrap_or(rest.len());
+    Some(&rest[start..])
+}
+
+fn is_ecmascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'..='\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200A}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202F}'
+            | '\u{205F}'
+            | '\u{3000}'
+            | '\u{FEFF}'
+    )
+}
+
 /// Trimmed, case-insensitive name equality.
 pub fn names_match(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
@@ -181,6 +239,36 @@ mod tests {
         assert!(!is_configured_partner(Some("  "), &partners));
         assert!(!is_configured_partner(None, &partners));
         assert!(!is_configured_partner(Some("Alice"), &[]));
+    }
+
+    #[test]
+    fn parse_trade_partner_header_preserves_name() {
+        assert_eq!(
+            parse_trade_partner_header(" Trading With: RunnerBot "),
+            Some("RunnerBot".into())
+        );
+        assert_eq!(
+            parse_trade_partner_header("Trading with RunnerBot"),
+            Some("RunnerBot".into())
+        );
+        assert_eq!(
+            parse_trade_partner_header("RunnerBot"),
+            Some("RunnerBot".into())
+        );
+        assert_eq!(parse_trade_partner_header(""), None);
+        assert_eq!(parse_trade_partner_header("Trading With:"), None);
+        assert_eq!(
+            parse_trade_partner_header("prefix: one:two"),
+            Some("one:two".into())
+        );
+    }
+
+    #[test]
+    fn trade_screen_state_prefers_offer_then_confirm() {
+        assert_eq!(trade_screen_state(false, false), "closed");
+        assert_eq!(trade_screen_state(false, true), "confirm");
+        assert_eq!(trade_screen_state(true, false), "offer");
+        assert_eq!(trade_screen_state(true, true), "offer");
     }
 
     #[test]

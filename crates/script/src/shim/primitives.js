@@ -31,16 +31,16 @@ export function pickPreferred(options, prefer) {
     return i < 0 ? null : opts[i];
 }
 
-export function pickByLine() {
-    throw notImpl('primitives.pickByLine');
+export function pickByLine(lines, options, rules) {
+    return globalThis.__rs2b0t_pick_by_line(lines, options, rules);
 }
 
 export function isUnderground(t) {
-    return t.z >= 5000;
+    return globalThis.__rs2b0t_is_underground(t.z);
 }
 
-export function needsHop() {
-    throw notImpl('primitives.needsHop');
+export function needsHop(here, anchor) {
+    return globalThis.__rs2b0t_needs_hop(here.z, anchor.z);
 }
 
 const tile = (t) => ({ x: t.x, z: t.z, level: t.level ?? 0 });

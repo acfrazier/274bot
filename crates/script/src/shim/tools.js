@@ -82,3 +82,11 @@ export function toolKitLabel(reqs, skillLevel, count) {
 export function bankHasBetterGatherTool(reqs, skillLevel, invCount, bankCount) {
     return native('bankHasBetterGatherTool', reqs, skillLevel, invCount, bankCount);
 }
+
+export function bestHeldToolNames(reqs, skillLevel, count) {
+    return native('bestHeldToolNames', reqs, skillLevel, count);
+}
+
+export function surplusHeldToolNames(reqs, skillLevel, count) {
+    return native('surplusHeldToolNames', reqs, skillLevel, count);
+}

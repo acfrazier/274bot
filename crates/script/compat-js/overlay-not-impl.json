@@ -1,14 +1,5 @@
 [
   {
-    "id": "not-impl:data/miningRocks.js:resolveRockIds",
-    "module": "data/miningRocks.js",
-    "selector": "resolveRockIds",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/mining_rocks.js:21",
-    "async": false
-  },
-  {
     "id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId",
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.chatContinueComId",
@@ -72,24 +63,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/bank/bankSortRules.js:categoryOf",
-    "module": "api/bank/bankSortRules.js",
-    "selector": "categoryOf",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_sort_rules.js:5",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bank/bankSortRules.js:isUnmatched",
-    "module": "api/bank/bankSortRules.js",
-    "selector": "isUnmatched",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_sort_rules.js:9",
-    "async": false
-  },
-  {
     "id": "not-impl:api/bank/bankSort.js:sortBank",
     "module": "api/bank/bankSort.js",
     "selector": "sortBank",
@@ -105,15 +78,6 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
     "runtime": "crates/script/src/shim/bank_quest_junk.js:5",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/trade/PartnerTrade.js:countOfferMatching",
-    "module": "api/trade/PartnerTrade.js",
-    "selector": "countOfferMatching",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/partner_trade.js:26",
     "async": false
   },
   {
@@ -207,24 +171,6 @@
     "async": true
   },
   {
-    "id": "not-impl:event/webwalk/walkOpening.js:towardDest",
-    "module": "event/webwalk/walkOpening.js",
-    "selector": "towardDest",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/walk_opening.js:7",
-    "async": false
-  },
-  {
-    "id": "not-impl:event/webwalk/walkOpening.js:isOpenableObstacle",
-    "module": "event/webwalk/walkOpening.js",
-    "selector": "isOpenableObstacle",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/walk_opening.js:11",
-    "async": false
-  },
-  {
     "id": "not-impl:api/tasks/Anchor.js:shouldWalkHomeToGatherAnchor",
     "module": "api/tasks/Anchor.js",
     "selector": "shouldWalkHomeToGatherAnchor",
@@ -303,6 +249,196 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-duel search state remains a behavior family for the compat rearchitecture; no successful result is produced.",
     "runtime": "crates/script/src/shim/clue_duel_travel.js:9",
+    "async": false
+  }
+,
+  {
+    "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
+    "module": "api/inventory/Inventory.js",
+    "selector": "backpackSnapshots",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
+    "runtime": "crates/script/src/shim/inventory.js:19",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
+    "module": "api/inventory/Inventory.js",
+    "selector": "backpackCapacity",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
+    "runtime": "crates/script/src/shim/inventory.js:23",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
+    "module": "api/trade/drivePartnerTrade.js",
+    "selector": "stableClosedPoll",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
+    "runtime": "crates/script/src/shim/drive_partner_trade.js:59",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank",
+    "module": "api/bank/BankLocations.js",
+    "selector": "nearestWalkableBank",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
+    "runtime": "crates/script/src/shim/bank_locations.js:68",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync",
+    "module": "api/bank/BankLocations.js",
+    "selector": "nearestWalkableBankAsync",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
+    "runtime": "crates/script/src/shim/bank_locations.js:72",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/bank/BankLocations.js:bankCostForFinder",
+    "module": "api/bank/BankLocations.js",
+    "selector": "bankCostForFinder",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
+    "runtime": "crates/script/src/shim/bank_locations.js:76",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator",
+    "module": "api/bank/BankLocations.js",
+    "selector": "bankCostForNavigator",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
+    "runtime": "crates/script/src/shim/bank_locations.js:80",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/market/catalog.js:buildCatalog",
+    "module": "api/market/catalog.js",
+    "selector": "buildCatalog",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: live market catalog construction waits for the native catalog family.",
+    "runtime": "crates/script/src/shim/catalog.js:63",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/market/catalog.js:searchCatalog",
+    "module": "api/market/catalog.js",
+    "selector": "searchCatalog",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: live market catalog search waits for the native catalog family.",
+    "runtime": "crates/script/src/shim/catalog.js:67",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/market/catalog.js:resolveByName",
+    "module": "api/market/catalog.js",
+    "selector": "resolveByName",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: live market name resolution waits for the native catalog family.",
+    "runtime": "crates/script/src/shim/catalog.js:71",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/market/catalog.js:resetLiveCatalog",
+    "module": "api/market/catalog.js",
+    "selector": "resetLiveCatalog",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: live market catalog lifetime management waits for the native catalog family.",
+    "runtime": "crates/script/src/shim/catalog.js:75",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/clues/ClueExecutor.js:trailWalkOpts",
+    "module": "api/ai/clues/ClueExecutor.js",
+    "selector": "trailWalkOpts",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: rs2b0t clue walking pace and options are not carried into native compatibility.",
+    "runtime": "crates/script/src/shim/clue_executor.js:17",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/clues/data/toolAcquire.js:trailKit",
+    "module": "api/ai/clues/data/toolAcquire.js",
+    "selector": "trailKit",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
+    "runtime": "crates/script/src/shim/clue_tool_acquire.js:34",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/clues/data/toolAcquire.js:nextCoordTool",
+    "module": "api/ai/clues/data/toolAcquire.js",
+    "selector": "nextCoordTool",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
+    "runtime": "crates/script/src/shim/clue_tool_acquire.js:38",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/clues/data/toolAcquire.js:extraItemShop",
+    "module": "api/ai/clues/data/toolAcquire.js",
+    "selector": "extraItemShop",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
+    "runtime": "crates/script/src/shim/clue_tool_acquire.js:42",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/clues/data/toolAcquire.js:gateItemShop",
+    "module": "api/ai/clues/data/toolAcquire.js",
+    "selector": "gateItemShop",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
+    "runtime": "crates/script/src/shim/clue_tool_acquire.js:46",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bot/Bot.js:resolveLoopCadence",
+    "module": "api/bot/Bot.js",
+    "selector": "resolveLoopCadence",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: rs2b0t's loop-cadence pacing is not carried into native compatibility.",
+    "runtime": "crates/script/src/shim/bot.js:11",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bot/Bot.js:BranchTask.validate",
+    "module": "api/bot/Bot.js",
+    "selector": "BranchTask.validate",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
+    "runtime": "crates/script/src/shim/bot.js:20",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bot/Bot.js:BranchTask.success",
+    "module": "api/bot/Bot.js",
+    "selector": "BranchTask.success",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
+    "runtime": "crates/script/src/shim/bot.js:24",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bot/Bot.js:BranchTask.failure",
+    "module": "api/bot/Bot.js",
+    "selector": "BranchTask.failure",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
+    "runtime": "crates/script/src/shim/bot.js:28",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bot/Bot.js:LeafTask.execute",
+    "module": "api/bot/Bot.js",
+    "selector": "LeafTask.execute",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
+    "runtime": "crates/script/src/shim/bot.js:38",
     "async": false
   }
 ]

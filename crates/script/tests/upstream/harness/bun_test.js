@@ -161,9 +161,9 @@ export function describe(name, body) {
 
 export function test(name, body) {
     cases.push({
-        name: [...suites.slice(1).map((suite) => suite.name), String(name)].join(' > '),
+        name: [...suites.map((suite) => suite.name), String(name)].join(' > '),
         body,
-        suites: suites.slice(1),
+        suites,
     });
 }
 

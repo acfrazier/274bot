@@ -237,23 +237,6 @@
     "runtime": "crates/script/src/shim/cook_locations_data.js:29"
   },
   {
-    "id": "cow-native-ignore-start",
-    "module": "data/cowKillerLocations.js",
-    "selector": "resolveCowLocation",
-    "operation": "optional",
-    "parameters": ["start"],
-    "reason": "Host resolves names only; the legacy start tile is ignored and may be omitted.",
-    "runtime": "crates/script/src/shim/cow_killer_locations.js:28"
-  },
-  {
-    "id": "cow-native-nearest-miss",
-    "module": "data/cowKillerLocations.js",
-    "selector": "nearestCowLocation",
-    "reason": "Host native lookup returns undefined when no location is selected, or null if the selected name cannot be resolved in the posted rows.",
-    "runtime": "crates/script/src/shim/cow_killer_locations.js:33",
-    "declaration": "export function nearestCowLocation(tile: WorldTile): CowLocation | null | undefined;"
-  },
-  {
     "id": "navigator-native-default-export",
     "module": "event/webwalk/Navigator.js",
     "selector": "$add",

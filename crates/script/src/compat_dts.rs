@@ -2659,6 +2659,11 @@ fn compare_members(
 ) {
     for m in shim {
         let Some(d) = dts.iter().find(|x| x.name == m.name) else {
+            // A JS class has an implicit zero-argument constructor when its
+            // declaration omits one; only explicit constructor parameters drift.
+            if m.kind == MemberKind::Constructor && m.params.is_empty() {
+                continue;
+            }
             drifts.push(format!("{label} {owner} missing member {}", m.name));
             continue;
         };

@@ -118,13 +118,14 @@ fn compat_dts_is_fresh() {
 }
 
 /// Re-run the frozen emitter and named runtime overlay without rewriting index.d.ts.
-/// The integration owner runs this with RS2B0T pointing at the frozen 00d39a17e0 source.
+/// The integration owner runs this with RS2B0T pointing at the frozen
+/// rs2b0t revision 2de6bb2397ceb9ffd05f2354f67dde328e324531 source.
 #[test]
 #[ignore = "requires RS2B0T set to the frozen rs2b0t source"]
 fn generator_check_matches_frozen_emit_and_overlay() {
     let rs2b0t = std::env::var_os("RS2B0T").unwrap_or_else(|| {
         panic!(
-            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 00d39a17e0 source before \
+            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 2de6bb2397ceb9ffd05f2354f67dde328e324531 source before \
              running `cargo test -p script --test compat_dts -- --include-ignored`"
         )
     });
@@ -155,8 +156,8 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[test]
 #[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
 fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
-    let rs2b0t =
-        std::env::var_os("RS2B0T").expect("set RS2B0T to the frozen rs2b0t 00d39a17e0 source");
+    let rs2b0t = std::env::var_os("RS2B0T")
+        .expect("set RS2B0T to the frozen rs2b0t 2de6bb2397ceb9ffd05f2354f67dde328e324531 source");
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let scratch = unique_temp_path("runtime-extension");
     let crate_copy = scratch.join("crate");
@@ -302,7 +303,7 @@ export const Gatherer: {
         .to_string();
     assert_ne!(
         actual_wrong_commit,
-        "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"
+        "2de6bb2397ceb9ffd05f2354f67dde328e324531"
     );
     let rejected = Command::new("node")
         .arg("generate.cjs")
@@ -317,7 +318,7 @@ export const Gatherer: {
     );
     assert!(
         stderr.contains(
-            "RS2B0T revision check failed: expected 00d39a17e0 (00d39a17e056df6c5e461f3f2cfd3598ff9720b6)"
+            "RS2B0T revision check failed: expected 2de6bb2397 (2de6bb2397ceb9ffd05f2354f67dde328e324531)"
         ),
         "wrong-revision failure must have the stable prefix: {stderr}"
     );

@@ -2,7 +2,7 @@
 // lanes inside the posted host AABB and walks the caller's lane callbacks;
 // this shim marshals inputs and results.
 import Tile from '../../geometry/Tile.js';
-import { host, snap, notImpl } from '../../shim/_kernel.js';
+import { host, notImpl } from '../../shim/_kernel.js';
 
 export { lightFire } from './LightFire.js';
 
@@ -30,6 +30,8 @@ function fireSpots() {
 export const FIRE_SPOTS = fireSpots();
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
+
+export const BURN_MODE_OPTIONS = ['Off', 'Chop then burn'];
 
 function native(op, ...args) {
     return globalThis.__rs2b0t_firemaking(op, ...args);
@@ -102,35 +104,38 @@ export function runInDir(from, plot, dir, occupied, walkable, canStep, cap) {
     return native('runInDir', from, plot, dir, occupied, walkable, canStep, cap);
 }
 
-export function findBurnLane(plot, here, occupied, want = 1, _walkable, _canStep, directions = BURN_DIRS) {
-    if (!plot || typeof plot.x0 !== 'number' || typeof plot.x1 !== 'number') {
-        throw notImpl('Firemaking.findBurnLane');
-    }
-    const refused = occupied instanceof Set
-        ? [...occupied]
-        : Array.isArray(occupied)
-          ? occupied.slice()
-          : [];
-    const step = callFire({
-        op: 'next-tile',
-        plot: {
-            x0: plot.x0,
-            x1: plot.x1,
-            z0: plot.z0,
-            z1: plot.z1,
-            bank: plot.bank || { x: 0, z: 0, level: 0 },
-        },
-        here: here || snap().here || null,
-        refused,
-        want: burnLaneWant(want),
-        directions: directions || BURN_DIRS,
-    });
-    if (!step || step.kind === 'none') return null;
-    if (step.kind === 'notImpl') throw notImpl('Firemaking.findBurnLane', step.reason);
-    if (step.kind !== 'tile') return null;
-    return {
-        start: new Tile(step.x, step.z, step.level ?? 0),
-        run: step.run,
-        dir: step.dir || BURN_WEST,
-    };
+export function findBurnLane(plot, here, occupied, want = 1, walkable, canStep, directions = BURN_DIRS) {
+    return native('findBurnLane', Tile, plot, here, occupied, want, walkable, canStep, directions);
+}
+
+export function parseBurnMode(label) {
+    return native('parseBurnMode', label);
+}
+
+export function logsForTree(treeName) {
+    return native('logsForTree', treeName);
+}
+
+export function firemakingLevelForLogs(logName) {
+    return native('firemakingLevelForLogs', logName);
+}
+
+export function resolveFireSpot(name) {
+    return native('resolveFireSpot', name, FIRE_SPOTS);
+}
+
+export function nearestFireSpot(from) {
+    return native('nearestFireSpot', from, FIRE_SPOTS);
+}
+
+export function expandLocalFirePlot(plot, growBy, maxHalf) {
+    return native('expandLocalFirePlot', Tile, plot, growBy, maxHalf);
+}
+
+export function runWest(from, plot, occupied, walkable, canStep, cap) {
+    return runInDir(from, plot, BURN_WEST, occupied, walkable, canStep, cap);
+}
+
+export function shouldBurnFullLoad(mode, inventoryFull, logCount, hasTinderbox) {
+    return native('shouldBurnFullLoad', mode, inventoryFull, logCount, hasTinderbox);
 }

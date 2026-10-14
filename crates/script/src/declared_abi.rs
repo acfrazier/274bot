@@ -452,18 +452,24 @@ const REEXPORTS: &[Reexport] = &[
             "matchesCommonBankLoot",
             "PERIODIC_BANK_SETTINGS",
             "RANDOM_EVENT_CASKET_ID",
+            "NEARBY_BANK_RADIUS",
+            "resolveBankOpenRoute",
             "parseBankStrategy",
             "shouldBankNow",
         ],
-        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
+    },
+    Reexport {
+        names: &["bankDistance"],
+        line: "export { bankDistance } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
         names: &["reader"],
         line: "export { reader } from '../../adapter/ClientAdapter.js';",
     },
     Reexport {
-        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool"],
-        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';",
+        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool", "bestHeldToolNames", "surplusHeldToolNames"],
+        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';",
     },
     Reexport {
         names: &["EventSignal"],
@@ -566,8 +572,18 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';",
     },
     Reexport {
-        names: &["COW_LOCATIONS", "COW_LOCATION_OPTIONS", "AL_KHARID_BANK", "resolveCowLocation", "nearestCowLocation"],
-        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, resolveCowLocation, nearestCowLocation } from '../../data/cowKillerLocations.js';",
+        names: &[
+            "COW_LOCATIONS",
+            "COW_LOCATION_OPTIONS",
+            "AL_KHARID_BANK",
+            "TOLL_COIN_TARGET",
+            "isCowFieldLootTile",
+            "resolveCowLocation",
+            "nearestCowLocation",
+            "needsTollCoins",
+            "shouldBootstrapTollCoins",
+        ],
+        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';",
     },
     Reexport {
         names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],

@@ -443,10 +443,7 @@ fn parse_v2_items(
     Ok(out)
 }
 
-fn item_noted(
-    scope: &mut v8::HandleScope,
-    item: v8::Local<v8::Value>,
-) -> Result<bool, String> {
+fn item_noted(scope: &mut v8::HandleScope, item: v8::Local<v8::Value>) -> Result<bool, String> {
     let Some(obj) = item.to_object(scope) else {
         return Ok(false);
     };

@@ -33,7 +33,7 @@ export class ClueDuelHandshake {
 }
 
 export class ClueDuelSearch {
-    constructor() {
+    constructor(log, tried = undefined) {
         throw notImpl('ClueDuelSearch.constructor');
     }
 

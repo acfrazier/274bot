@@ -15,6 +15,37 @@ pub(crate) use runtime::{
 
 /// Neighborhood around the selected stall tile used to reject the other stall.
 pub const TARGET_RADIUS: i32 = 3;
+/// Frozen Baker stall API pacing value, shared with the steal machine.
+pub const LOCKOUT_TICKS: i64 = 10;
+/// Frozen `RESET_AFTER_REFUSALS` value from `cakeStallData.ts`.
+pub const RESET_AFTER_REFUSALS: u32 = 3;
+/// Frozen public patterns from `cakeStallData.ts`, in its lower-case form.
+pub const CAKE_ITEMS: [&str; 3] = ["cake", "bread", "chocolate slice"];
+
+/// Frozen `classifySteal` precedence (`cakeStallData.ts:23-36`).
+pub fn classify_steal(
+    gained: bool,
+    combat: bool,
+    lockout_seen: bool,
+    attempt_seen: bool,
+) -> &'static str {
+    if gained {
+        "success"
+    } else if combat {
+        "caught"
+    } else if lockout_seen {
+        "lockout"
+    } else if attempt_seen {
+        "refused"
+    } else {
+        "timeout"
+    }
+}
+
+/// Frozen `shouldReset` (`cakeStallData.ts:39-41`).
+pub fn should_reset(consecutive_refusals: f64) -> bool {
+    consecutive_refusals >= f64::from(RESET_AFTER_REFUSALS)
+}
 
 fn names_match(actual: Option<&str>, want: &str) -> bool {
     actual

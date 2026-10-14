@@ -1,5 +1,5 @@
 import Tile from '../../geometry/Tile.js';
-import { runMachine } from '../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../shim/_kernel.js';
 
 function tileBank(bank) {
     return bank ? {
@@ -62,4 +62,24 @@ export function nearestUsableBank(here, usable) {
 export async function nearestBankReachable(here, _navigator) {
     const out = await runMachine('bank_select', { from: here, allow_wilderness: true });
     return tileBank(out.kind === 'done' ? out.value : null);
+}
+
+export function nearestWalkableBank() {
+    throw notImpl('nearestWalkableBank');
+}
+
+export async function nearestWalkableBankAsync() {
+    throw notImpl('nearestWalkableBankAsync');
+}
+
+export function bankCostForFinder() {
+    throw notImpl('bankCostForFinder');
+}
+
+export function bankCostForNavigator() {
+    throw notImpl('bankCostForNavigator');
+}
+
+export function bankDistance(from, bank) {
+    return globalThis.__rs2b0t_bank_distance(from, bank);
 }

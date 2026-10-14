@@ -77,6 +77,12 @@ pub const SUPER_DEFENCE: BoostPotion = BoostPotion {
     stem: "Super defence",
 };
 
+pub const RANGING_POTION: BoostPotion = BoostPotion {
+    skill: "ranged",
+    short: "Rng",
+    stem: "Ranging potion",
+};
+
 pub const SUPER_SET: [&BoostPotion; 3] = [&SUPER_ATTACK, &SUPER_STRENGTH, &SUPER_DEFENCE];
 
 /// Checked in this order; attack wins a tick both could use.
@@ -291,7 +297,10 @@ mod tests {
     fn super_set_adds_defence_without_changing_default_boost_potions() {
         assert_eq!(BOOST_POTIONS.len(), 2);
         assert_eq!(
-            SUPER_SET.iter().map(|potion| potion.skill).collect::<Vec<_>>(),
+            SUPER_SET
+                .iter()
+                .map(|potion| potion.skill)
+                .collect::<Vec<_>>(),
             ["attack", "strength", "defence"]
         );
         assert_eq!(SUPER_DEFENCE.flask(), "Super defence(3)");

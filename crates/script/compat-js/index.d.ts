@@ -27,12 +27,13 @@ SOFTWARE.
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
 export { Game } from '*api/game/Game.js';
-export { Inventory } from '*api/inventory/Inventory.js';
+export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
 export { Bank, withdrawOp } from '*api/bank/Bank.js';
-export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
+export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
+export { bankDistance } from '*api/bank/BankLocations.js';
 export { reader } from '*adapter/ClientAdapter.js';
-export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '*api/acquisition/Tools.js';
+export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '*api/acquisition/Tools.js';
 export { Execution } from '*api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '*api/bot/Bot.js';
 export { Special } from '*api/combat/Special.js';
@@ -54,7 +55,7 @@ export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '*api/bank/BankLocatio
 export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
 export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '*data/woodcuttingLocations.js';
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '*data/miningRocks.js';
-export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, resolveCowLocation, nearestCowLocation } from '*data/cowKillerLocations.js';
+export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '*data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '*data/runeCraftLocations.js';
 export const NAV_PURE_WALK: { useTeleportCatalog: boolean; policy: {useTeleports: boolean} };
 export const NAV_WITH_TELES: { useTeleportCatalog: boolean; policy: {useTeleports: boolean} };
@@ -79,16 +80,13 @@ export const FORGETFUL_BANK_SETTING: never;
 export const GERRANT_ONLY_FISHING: never;
 export const GERRANT_VENDOR: never;
 export const HARRY_VENDOR: never;
-export class InvItem { actions(...args: unknown[]): never; count(...args: unknown[]): never; id(...args: unknown[]): never; interact(...args: unknown[]): never; name(...args: unknown[]): never; slot(...args: unknown[]): never; useOn(...args: unknown[]): never; constructor(...args: unknown[]); }
 export class LeafTask { execute(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const MAP_SQUARE: never;
 export const MINING_LOCATIONS: never;
 export const MINING_LOCATION_OPTIONS: never;
 export const MINING_LOCATION_OPTION_LABELS: never;
-export const NEARBY_BANK_RADIUS: never;
 export const NURMOF_VENDOR: never;
 export const PICKAXE_SHOP_COSTS: never;
-export const TOLL_COIN_TARGET: never;
 export const TOOL_ACQUIRE_OPTIONS: never;
 export const TOOL_ACQUIRE_SETTING: never;
 export const VARROCK_ANVIL_BANK: never;
@@ -101,9 +99,7 @@ export const WOODCUTTING_LOCATION_OPTIONS: never;
 export function acquireKeepNames(...args: unknown[]): never;
 export const apiVersion: 1;
 export function axeShopOffers(...args: unknown[]): never;
-export function bankDistance(...args: unknown[]): never;
 export function bestAffordableShopTier(...args: unknown[]): never;
-export function bestHeldToolNames(...args: unknown[]): never;
 export function bestOwnedTier(...args: unknown[]): never;
 export function bestSmithableAxe(...args: unknown[]): never;
 export function boothFields(...args: unknown[]): never;
@@ -120,13 +116,11 @@ export function gearLabel(...args: unknown[]): never;
 export function hasAll(...args: unknown[]): never;
 export function hasFishingGear(...args: unknown[]): never;
 export function held(...args: unknown[]): never;
-export function isCowFieldLootTile(...args: unknown[]): never;
 export function isFishingBaitPiece(...args: unknown[]): never;
 export function locationOptions(...args: unknown[]): never;
 export function miningLocationLabel(...args: unknown[]): never;
 export function missingFishingGear(...args: unknown[]): never;
 export function nearestUsableBank(...args: unknown[]): never;
-export function needsTollCoins(...args: unknown[]): never;
 export function parseToolAcquireMode(...args: unknown[]): never;
 export function pickaxeShopOffers(...args: unknown[]): never;
 export function planAxeAcquire(...args: unknown[]): never;
@@ -136,7 +130,6 @@ export function planFishingGearBuys(...args: unknown[]): never;
 export function planGatherToolAcquire(...args: unknown[]): never;
 export function planPickaxeAcquire(...args: unknown[]): never;
 export function registerScript(...args: unknown[]): never;
-export function resolveBankOpenRoute(...args: unknown[]): never;
 export function resolveDestination(...args: unknown[]): never;
 export function resolveFishMethod(...args: unknown[]): never;
 export function resolveFishingLocation(...args: unknown[]): never;
@@ -145,11 +138,7 @@ export function resolveMiningLocation(...args: unknown[]): never;
 export function resolveWoodcuttingLocation(...args: unknown[]): never;
 export function sameMapSquare(...args: unknown[]): never;
 export function shopableMissingFishingGear(...args: unknown[]): never;
-export function shouldBootstrapTollCoins(...args: unknown[]): never;
 export function spotMatchesMethod(...args: unknown[]): never;
-export function surplusHeldToolNames(...args: unknown[]): never;
-export function toolAttackLevel(...args: unknown[]): never;
-export function toolsNeedingEquip(...args: unknown[]): never;
 export function withBaitTarget(...args: unknown[]): never;
 }
 
@@ -366,6 +355,8 @@ export type ToolReq = {
 };
 export const PICKAXES: readonly ToolTier[];
 export const AXES: readonly ToolTier[];
+/** Attack level required to wield an axe or pickaxe; defaults to 1 for unknown tools. */
+export function toolAttackLevel(name: string): number;
 /** True when Attack is high enough to wield this tool name. */
 export function canWieldTool(name: string, attackLevel: number): boolean;
 export const TINDERBOX = "Tinderbox";
@@ -401,6 +392,18 @@ export function toolRestockPlan(reqs: readonly ToolReq[], skillLevel: (skill: st
  * Requires bank counts (open/loaded bank). Used to decide a one-shot startup bank trip.
  */
 export function bankHasBetterGatherTool(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, invCount: (name: string) => number, bankCount: (name: string) => number): boolean;
+/** Names of tools that should be worn now (held, equip flag set, not yet worn); empty when nothing needs wielding. */
+export function toolsNeedingEquip(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number, worn: (name: string) => boolean): string[];
+/**
+ * Best usable tier currently held for each tiered req (plus exact tool names when held).
+ * Used as the deposit keep-set so worse axes/picks get banked.
+ */
+export function bestHeldToolNames(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number): string[];
+/**
+ * Tiered tools held on the player that are worse than the best usable tier we already have.
+ * e.g. a bronze axe while holding/wearing steel is surplus.
+ */
+export function surplusHeldToolNames(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number): string[];
 
 }
 
@@ -411,6 +414,18 @@ export function openClueBank(log?: (message: string) => void): Promise<boolean>;
 
 declare module '*api/ai/clues/ClueExecutor.js' {
 type GuardianStop = 'supplies-needed' | 'dead' | 'guardian-lost';
+interface NavPoint {
+    x: number;
+    z: number;
+    level: number;
+}
+export const TRACE_STORAGE_KEY = "rs2b0t:cluetrace";
+export function tilesTo(target: NavPoint | null): number | null;
+/**
+ * Options for a cross-map clue leg, so the teleport policy lives in one place.
+ * Why: close-in walks (onto an NPC or a dropped key) don't use this; the span gate would refuse a tele at 2 tiles anyway.
+ */
+export function trailWalkOpts(log?: (m: string) => void, radius?: number): never;
 export type ClueOutcome = 'done' | 'abandon' | 'yield' | 'reset-needed' | GuardianStop;
 export const ClueExecutor: {
     /** Route clue legs through the teleport catalog (spells, ring of dueling). */
@@ -433,17 +448,43 @@ export const CASKET_IDS: {};
 }
 
 declare module '*api/ai/clues/data/toolAcquire.js' {
+import Tile from '*geometry/Tile.js';
+import { NpcStop } from '*api/ai/quests/exec/primitives.js';
 export const SPADE_NAME = "Spade";
 export const TRIO: readonly [
     "Sextant",
     "Watch",
     "Chart"
 ];
+export function trailKit(scrollId?: number | null): never;
+export const SPADE_SPAWNS: Tile[];
 export interface HeldTrio {
     sextant: boolean;
     watch: boolean;
     chart: boolean;
 }
+export function nextCoordTool(held?: HeldTrio): never;
+export const PROFESSOR: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
+export const MURPHY: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
+export const KOJO: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
+export const KOJO_EXIT: Tile;
+export function extraItemShop(name?: string): never;
+export function gateItemShop(name?: string): never;
 
 }
 
@@ -455,6 +496,7 @@ export const DUEL_CLUE_TILE: {
     z: number;
     level: number;
 };
+export function resetClueDuelSearch(): never;
 export function crossesClueDuel(dest: WorldTile): boolean;
 export function walkAcrossClueDuel(dest: WorldTile, radius: number, log: (message: string) => void): Promise<boolean>;
 
@@ -540,6 +582,28 @@ export const MURDER_TILE: {
     readonly SALESMAN: Tile;
     readonly ARHEIN: Tile;
 };
+export const ARHEIN: {
+    npc: string;
+    anchor: Tile;
+};
+export const GUARD_START: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
+export const GUARD_HANDIN: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
+export const SALESMAN: {
+    "npc": NpcStop["npc"];
+    "anchor": NpcStop["anchor"];
+    "leash": NpcStop["leash"];
+    "prefer": NpcStop["prefer"];
+};
 export interface LocStop {
     id: number;
     name: string;
@@ -557,10 +621,21 @@ export interface Suspect {
     /** What they claim they bought the poison for. */
     poison: LocStop;
 }
+export const SUSPECTS: readonly Suspect[];
+/** The 2 whose clothes match the thread, then the rest as a fallback. */
+export function suspectOrder(thread: number): readonly Suspect[];
+/** Every object the guard's evidence check or a barrel's own gate counts, in the bank as well as the pack. */
+export const MURDER_EVIDENCE: readonly {
+    id: number;
+    name: string;
+}[];
 
 }
 
 declare module '*api/ai/quests/engine/QuestEngine.js' {
+import Tile from "*geometry/Tile.js";
+/** Spending money a quest keeps in the pack unless its module names another figure. */
+export const COIN_FLOAT = 1000;
 type QueueStatus = 'DONE' | 'RUNNING' | 'READY' | 'PARKED' | 'BLOCKED' | 'UNKNOWN';
 interface QueueRow {
     id: string;
@@ -581,6 +656,7 @@ export interface QuestHost {
     /** Why: the engine only reports it's out of work; stopping the run is the script's call. */
     finish(reason: string): void;
 }
+export const PROVISION_BANK: Tile;
 export const QuestEngine: {
     readonly [key: string]: never;
 };
@@ -695,8 +771,13 @@ export const Bank: {
 
 declare module '*api/bank/Banking.js' {
 import { WorldTile } from "*adapter/ClientAdapter.js";
-import { BankObjectAccess, BankNpcAccess } from "*api/bank/BankLocations.js";
+import { BankObjectAccess, BankNpcAccess, BankLocation } from "*api/bank/BankLocations.js";
 export { type BankStrategy, type BankTriggerState, COMMON_BANK_LOOT, PERIODIC_BANK_SETTINGS, depositAllExcept, depositMatcher, isDisposableGatherJunk, matchesCommonBankLoot, parseBankStrategy, shouldBankNow } from "*api/bank/bankRules.js";
+/**
+ * Snap radius for "I'm already at a bank", booth underfoot or local stand.
+ * Why: wider than a single booth tile so starting next to Draynor still counts when the script's camp bank is Edgeville (Barb fly restock).
+ */
+export const NEARBY_BANK_RADIUS = 14;
 export interface BankDestination {
     name: string;
     tile: WorldTile;
@@ -704,6 +785,11 @@ export interface BankDestination {
     /** Set when the banker is an npc (Gundai). */
     npcAccess?: BankNpcAccess;
 }
+/** A bank behind a conversation opens differently from one behind a booth. */
+export function openBankAccess(dest: {
+    access?: BankObjectAccess;
+    npcAccess?: BankNpcAccess;
+} | null, fallback: BankObjectAccess, log?: (m: string) => void): boolean | Promise<boolean>;
 /**
  * Start-of-script pack cleanup (#170): deposit anything off the keep list so the bot can start with a junk pack.
  * Why: true when nothing needed banking or the purge finished; false when junk remains and the bank couldn't be opened or deposited.
@@ -745,6 +831,20 @@ export interface OpenBankOpts {
     log?: (msg: string) => void;
 }
 export type BankOpenRoute = 'already-open' | 'scene-booth' | 'local-bank' | 'preset-stand' | 'nearest-fallback';
+/**
+ * Pure routing for {@link Banking.open}, unit-tested without the client.
+ * Nearby scene booth or local known bank beats a distant camp/vendor stand.
+ */
+export function resolveBankOpenRoute(input: {
+    bankOpen?: boolean;
+    here: WorldTile | null;
+    stand?: WorldTile | null;
+    /** Distance to a usable booth in scene, or null if none within radius. */
+    nearbyBoothDist: number | null;
+    nearest: BankLocation | null;
+    preferNearby?: boolean;
+    nearbyRadius?: number;
+}): BankOpenRoute;
 export const Banking: {
     /**
      * Open a bank for script work (deposit, withdraw, restock).
@@ -782,21 +882,18 @@ export function withdrawCoins(need?: number, opts?: {
     log?: (m: string) => void;
 }): Promise<never>;
 export const RANDOM_EVENT_CASKET_ID: number;
-/** A bank behind a conversation opens differently from one behind a booth. */
-export function openBankAccess(dest: {
-    access?: BankObjectAccess;
-    npcAccess?: BankNpcAccess;
-} | null, fallback: BankObjectAccess, log?: (m: string) => void): boolean | Promise<boolean>;
-export function openBankAccess(dest: {
-    access?: BankObjectAccess;
-    npcAccess?: BankNpcAccess;
-} | null, fallback: BankObjectAccess, log?: (m: string) => void): Promise<boolean>;
 
 }
 
 declare module '*api/bank/BankLocations.js' {
+import { WorldTile as WorldTile$1 } from "*adapter/ClientAdapter.js";
 import { WorldTile } from "*adapter/ClientAdapter.js";
 import Tile from "*geometry/Tile.js";
+/**
+ * Straight-line (Euclidean) distance, ignoring plane.
+ * Why: Chebyshev wrongly prefers Falador East over Edgeville from Barbarian Village tin/coal, where the walk is shorter north to Edge.
+ */
+export function bankDistance(from: WorldTile, bank: WorldTile): number;
 export interface BankRequirement {
     skill?: {
         name: string;
@@ -844,15 +941,18 @@ export const BANK_LOCATIONS: BankLocation[];
 /** The tile a bank is walked to, its approach when it has one. */
 export function approachOf(bank: BankLocation): Tile;
 /** Every bank this account can use, nearest first by straight line. */
-export function nearestBanks(from: WorldTile): BankLocation[];
-export function nearestUsableBank(from: WorldTile, usable: (bank: BankLocation) => boolean): BankLocation | null;
+export function nearestBanks(from: WorldTile$1): BankLocation[];
+export function nearestUsableBank(from: WorldTile$1, usable: (bank: BankLocation) => boolean): BankLocation | null;
 /** Whether this account's quests and stats unlock the bank at all. */
 export function bankUnlocked(bank: BankLocation): boolean;
-export function nearestBank(from: WorldTile): BankLocation | null;
+export function lockedBankAt(tile: WorldTile$1): BankLocation | null;
+export function nearestBank(from: WorldTile$1): BankLocation | null;
 /** Walk cost in run-tiles from `from` to a bank, or null when the bank is unreachable. */
-export type BankPathCost = (from: WorldTile, to: Tile) => number | null;
+export type BankPathCost = (from: WorldTile$1, to: Tile) => number | null;
+export function nearestWalkableBank(from?: WorldTile$1, pathCost?: BankPathCost): never;
 /** Async walk cost: the nav pack lives in the worker, so a live caller pays per {@link Navigator.findPath} instead of a local {@link PathFinder}. */
-export type BankPathCostAsync = (from: WorldTile, to: Tile) => Promise<number | null>;
+export type BankPathCostAsync = (from: WorldTile$1, to: Tile) => Promise<number | null>;
+export function nearestWalkableBankAsync(from?: WorldTile$1, pathCost?: BankPathCostAsync): Promise<never>;
 export interface BankPathStamp {
     x: number;
     z: number;
@@ -866,11 +966,24 @@ export type NavigatorLike = {
         reason?: string;
     }>;
 };
+/** Wrap a {@link PathFinder} so {@link nearestWalkableBank} can reuse it. */
+export function bankCostForFinder(finder?: {
+    findPath(from: BankPathStamp, to: BankPathStamp, opts?: unknown): {
+        ok: boolean;
+        cost?: number;
+        reason?: string;
+    };
+}, findPathOpts?: object): never;
+/**
+ * Wrap the {@link Navigator} worker so {@link nearestWalkableBankAsync} can reuse it live.
+ * Why: the pack lives in the worker, so this never desyncs from what a web-walk can do.
+ */
+export function bankCostForNavigator(navigator?: NavigatorLike, findPathOpts?: object): never;
 /**
  * Live pick of the cheapest reachable bank through the Navigator worker.
  * Why: nearestBank is air-ranked and a dungeon level offset floats every overworld bank near the same distance, so the winner collapses to "closest by x" (Edgeville from the Dwarven Mine); real per-candidate route cost fixes that, with the air-nearest bank as the no-route fallback. That batch ranks banks you are far from; standing at a booth the air-nearest bank is the one already in reach, so pay no walk-cost search there.
  */
-export function nearestBankReachable(here: WorldTile, navigator: NavigatorLike): Promise<BankLocation | null>;
+export function nearestBankReachable(here: WorldTile$1, navigator: NavigatorLike): Promise<BankLocation | null>;
 
 }
 
@@ -930,6 +1043,7 @@ export const PERIODIC_BANK_SETTINGS: {
     "bankCommonJunk": SettingsSchema["bankCommonJunk"];
 };
 export const COMMON_BANK_LOOT: string[];
+export const RANDOM_EVENT_CASKET_ID = 405;
 export function matchesCommonBankLoot(name: string, id?: number): boolean;
 /** Inventory junk that steals pack slots during long AFK loops (random-event leftovers, common bank loot). */
 export function isDisposableGatherJunk(name: string | null | undefined, id?: number): boolean;
@@ -968,8 +1082,8 @@ export interface SortableItem {
     name: string | null;
     cost: number;
 }
-export function categoryOf(item?: SortableItem): never;
-export function isUnmatched(item?: SortableItem): never;
+export function categoryOf(item: SortableItem): BankCategory;
+export function isUnmatched(item: SortableItem): boolean;
 
 }
 
@@ -1026,6 +1140,11 @@ export type LoopCadence = {
     kind: 'time';
     ms: number;
 };
+/**
+ * Map legacy `loopDelay` ms to an explicit cadence.
+ * Why: `0` is the next client frame, `600` (the old "one tick" default) is the next server tick, anything else is wall-clock ms.
+ */
+export function resolveLoopCadence(loopDelayMs?: number, override?: LoopCadence | null): never;
 export interface SettingsView {
     str(name: string, fallback?: string): string;
     num(name: string, fallback?: number): number;
@@ -1072,17 +1191,26 @@ export interface Task {
     execute(): void | Promise<void>;
 }
 export class TaskBot extends LoopingBot {
+    activeTaskName: string | null;
     constructor();
     add(...tasks: Task[]): void;
     loop(): Promise<number | void>;
 }
-export interface BranchTask {
-    validate(): boolean;
-    success(): TreeNode;
-    failure(): TreeNode;
+/**
+ * A decision node in a behaviour tree.
+ * @see docs/reference/api-bots.md#treebot
+ */
+export abstract class BranchTask {
+    abstract validate(): never;
+    abstract success(): never;
+    abstract failure(): never;
 }
-export interface LeafTask {
-    execute(): void | Promise<void>;
+/**
+ * An action node in a behaviour tree.
+ * @see docs/reference/api-bots.md#treebot
+ */
+export abstract class LeafTask {
+    abstract execute(): never;
 }
 export type TreeNode = BranchTask | LeafTask;
 export class TreeBot extends LoopingBot {
@@ -1142,6 +1270,27 @@ export const SUPER_STRENGTH: {
     /** Every dose form, so a part-used flask still counts as one in the pack. */
     doses: readonly string[];
 };
+export const SUPER_DEFENCE: {
+    /** The skill the dose lifts. */
+    skill: string;
+    /** Paint label, kept to 3 characters so a boost row still fits 3 columns. */
+    short: string;
+    /** The dose form drawn when the loadout names none. */
+    flask: string;
+    /** Every dose form, so a part-used flask still counts as one in the pack. */
+    doses: readonly string[];
+};
+export const SUPER_SET: readonly BoostPotion[];
+export const RANGING_POTION: {
+    /** The skill the dose lifts. */
+    skill: string;
+    /** Paint label, kept to 3 characters so a boost row still fits 3 columns. */
+    short: string;
+    /** The dose form drawn when the loadout names none. */
+    flask: string;
+    /** Every dose form, so a part-used flask still counts as one in the pack. */
+    doses: readonly string[];
+};
 /** Checked in this order; attack wins a tick both could use. */
 export const BOOST_POTIONS: readonly BoostPotion[];
 /** What the last dose leaves behind. */
@@ -1157,6 +1306,8 @@ export interface PotionPlan {
     /** Flasks to carry per trip. */
     want: number;
 }
+/** The ranging potion a ranged run carries, off the same loadout carry list. */
+export function rangingPlan(carry: readonly CarryEntry[]): PotionPlan;
 /** The potions to carry, taking the dose form and count from the loadout and falling back to one three-dose flask of each. */
 export function plannedPotions(carry: readonly CarryEntry[], potions?: readonly BoostPotion[]): PotionPlan[];
 export interface SipState {
@@ -1190,6 +1341,11 @@ export interface CombatModeLabel {
     mode: number;
     label: string;
 }
+interface CombatStyleBackend {
+    offeredModes(): readonly CombatModeLabel[] | null;
+    currentMode(): number;
+    selectMode(mode: number): boolean;
+}
 export function parseCombatStyle(name: string): MeleeCombatStyle;
 /**
  * Parse a melee training style without defaulting.
@@ -1206,7 +1362,12 @@ export function resolveSplitCombatSettings(rawCombatStyle: string, rawMeleeStyle
     meleeStyle: MeleeCombatStyle;
     legacyMigrated: MeleeCombatStyle | null;
 };
-export interface CombatStyleController {
+/** Resolve a requested training style against the labelled buttons in the current weapon's combat interface. */
+export function resolveCombatStyle(style: MeleeCombatStyle, offeredModes: readonly CombatModeLabel[]): CombatStyleResolution | null;
+export function parseInterfaceCombatStyle(label: string): MeleeCombatStyle | null;
+/** Keeps resolve, set, and assertion on the same weapon-aware mapping. */
+export class CombatStyleController {
+    constructor(backend: CombatStyleBackend);
     resolution(style: MeleeCombatStyle): CombatStyleResolution | null;
     mode(style: MeleeCombatStyle): number | null;
     has(style: MeleeCombatStyle): boolean;
@@ -1220,6 +1381,8 @@ export function parseRangeStyle(name: string): number;
 
 declare module '*api/combat/CombatStyleLogic.js' {
 export { SPELL_DB } from "*data/spelldb.js";
+export const AUTO_CHOOSE_COM = 353;
+export const AUTO_TOGGLE_COM = 349;
 export const ATTACKSTYLE_MAGIC_VARP = 108;
 export const AUTOCAST_ARMED = 3;
 export function runesPerCast(spellName: string, wielded: string[]): {
@@ -1299,6 +1462,7 @@ type FoodItem = {
     name: string | null | undefined;
     noted?: boolean;
 };
+export function isEdibleFood(item: FoodItem, foodName: string): boolean;
 export function foodCount(items: readonly FoodItem[], foodName: string): number;
 /**
  * Heal amount for one consume of `foodName`, resolving partial cake/pizza/pie forms and common aliases.
@@ -1362,9 +1526,11 @@ export interface CombatHost extends JiveHost {
     armSpecial?(): Promise<void>;
 }
 export function anchorFor(site: DragonSite, style: Style, index: number): Tile;
+export function chasesTarget(site: DragonSite, style: Style): boolean;
 export class Fight extends HuntTask implements Task {
     constructor(host: CombatHost, site: DragonSite);
     blocksLoot(): boolean;
+    hasChaseTarget(): never;
     reset(): void;
     interruptWatch(): void;
     validate(): boolean;
@@ -1977,6 +2143,8 @@ export const MAX_STANDS: number;
 /** Whether the run wears the Dragonfire shield: always for melee, and on a site that breathes at range for every style. */
 export function needsShield(site: DragonSite, style: string): boolean;
 export const SITE_OPTIONS: string[];
+export const ENCLAVE_TARGET_OPTIONS: string[];
+export function enclaveTargets(site: DragonSite, mode?: string): DragonSite;
 /** Every npc name this site kills: its target, then anything it fills downtime with. */
 export function huntNames(site: DragonSite): string[];
 /** The numbered stand to fight from, 1-based; the site's own tiles when it names none. */
@@ -2203,8 +2371,9 @@ export class ClueDuelHandshake {
     constructor(partner: string, initiator: boolean, log: (message: string) => void);
     tick(): Promise<boolean>;
 }
-export interface ClueDuelSearch {
-    tick(): Promise<void>;
+export class ClueDuelSearch {
+    constructor(log: (message: string) => void, tried?: Map<string, number>);
+    tick(): Promise<never>;
 }
 export class ClueDuelHelper {
     log: (message: string) => void;
@@ -2330,8 +2499,25 @@ export interface FirePlot {
 export const FIRE_SPOTS: Record<string, FirePlot>;
 export const FIRE_SPOT_OPTIONS: string[];
 export const LOG_LEVELS: Record<string, number>;
+export const BURN_MODE_OPTIONS: readonly [
+    "Off",
+    "Chop then burn"
+];
 export type BurnMode = 'off' | 'chop-then-burn';
+export function parseBurnMode(label: string): BurnMode;
+export function logsForTree(treeName: string): string;
+export function firemakingLevelForLogs(logName: string): number | undefined;
+export function resolveFireSpot(name: string): {
+    name: string;
+    plot: FirePlot;
+} | null;
+export function nearestFireSpot(from: WorldTile): {
+    name: string;
+    plot: FirePlot;
+} | null;
 export function localFirePlot(origin: WorldTile, half?: number): FirePlot;
+/** Grow a local plot outward when the current box has no clear lane left. */
+export function expandLocalFirePlot(plot: FirePlot, growBy?: number, maxHalf?: number): FirePlot | null;
 export function tileKey(t: {
     x: number;
     z: number;
@@ -2349,6 +2535,8 @@ export const BURN_WEST: {
 export function burnLaneWant(logCount: number): number;
 export function isBurnWest(dir: BurnDir): boolean;
 export function runInDir(from: WorldTile, plot: FirePlot, dir: BurnDir, occupied: ReadonlySet<string>, walkable: (t: WorldTile) => boolean, canStep: (from: WorldTile, to: WorldTile) => boolean, cap: number): number;
+/** @deprecated prefer runInDir, kept for bank-strip callers that always run west. */
+export function runWest(from: WorldTile, plot: FirePlot, occupied: ReadonlySet<string>, walkable: (t: WorldTile) => boolean, canStep: (from: WorldTile, to: WorldTile) => boolean, cap: number): number;
 export function inFirePlot(t: WorldTile, plot: FirePlot): boolean;
 /** Picks a lane start inside `plot`. */
 export function findBurnLane(plot: FirePlot, here: WorldTile, occupied: ReadonlySet<string>, want?: number, walkable?: (t: WorldTile) => boolean, canStep?: (from: WorldTile, to: WorldTile) => boolean, dirs?: readonly BurnDir[]): {
@@ -2358,6 +2546,7 @@ export function findBurnLane(plot: FirePlot, here: WorldTile, occupied: Readonly
 } | null;
 /** 1 tick between fire lights on a lane (tick-driven burn loop). */
 export function fireReactionTicks(): number;
+export function shouldBurnFullLoad(mode: BurnMode, inventoryFull: boolean, logCount: number, hasTinderbox: boolean): boolean;
 /** What one light attempt did. */
 export type LightOutcome = 'lit' | 'blocked' | 'stalled';
 /** Tiles that answered {@link CANT_LIGHT} this session. */
@@ -2397,6 +2586,12 @@ import { CombatModeLabel, MeleeCombatStyle, CombatStyleResolution } from "*api/c
 import { Loc } from "*api/model/Loc.js";
 import { Npc } from "*api/model/Npc.js";
 import { InvItem } from "*api/inventory/Inventory.js";
+/** option_nodef. Inverted: 0 = auto-retaliate on. */
+export const RETALIATE_VARP = 172;
+export function retaliateOnFromVarp(value: number): boolean;
+/** The engine encodes a player face target as slot + 32768. */
+export const PLAYER_FACE_BASE = 32768;
+export function facingPlayer(faceEntity: number): boolean;
 /**
  * Local player and world state.
  * @see docs/reference/api-game.md
@@ -2477,15 +2672,19 @@ export const GroundItems: {
 declare module '*api/inventory/Inventory.js' {
 import * as ___model_Player_js from "*api/model/Player.js";
 import * as ___grounditems_GroundItems_js from "*api/grounditems/GroundItems.js";
+import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
 import { Loc } from "*api/model/Loc.js";
 import { Npc } from "*api/model/Npc.js";
-export interface InvItem {
-    name: string;
-    count: number;
-    id: number;
-    slot: number;
-    noted: boolean;
-    cert: number;
+export function backpackSnapshots(): never;
+export function backpackCapacity(): never;
+export class InvItem {
+    readonly name: string | null;
+    readonly count: number;
+    readonly id: number;
+    readonly slot: number;
+    readonly noted: boolean;
+    readonly cert: number;
+    constructor(snapshot: ______adapter_ClientAdapter_js.InvItemSnapshot);
     actions(): string[];
     interact(action: string): boolean;
     useOn(target: InvItem | Loc | Npc | ___grounditems_GroundItems_js.GroundItem | ___model_Player_js.Player): boolean;
@@ -2644,14 +2843,23 @@ export interface Catalog {
 }
 /** Whether the content lets this obj cross a trade window at all. */
 export function tradeable(id: number): boolean;
+/** Whether a shop would carry this item as its own row. */
+export function worthStocking(name: string): boolean;
 /** What the shop calls an obj, which is the plain name until the content repeats it. */
 export function displayName(cat: Catalog, id: number): string;
 /** What the client itself calls an obj, which is the only name a click can be aimed by. */
 export function clientName(cat: Catalog, id: number): string | undefined;
+export function buildCatalog(records?: readonly ObjRecord[]): never;
 export function unnotedId(cat: Catalog, id: number): number;
 export function notedId(cat: Catalog, id: number): number | null;
+export function searchCatalog(cat?: Catalog, query?: string, limit?: number): never;
+export function resolveByName(cat?: Catalog, query?: string, opts?: {
+    exactOnly?: boolean;
+}): never;
 /** Built once per session from the adapter scan. */
 export function liveCatalog(): Catalog;
+/** Test seam, and a relogin onto a different world. */
+export function resetLiveCatalog(): never;
 
 }
 
@@ -2925,6 +3133,10 @@ export const Shop: {
         slot: number;
     }[];
 };
+/** How much one click of a stack sale asks for. */
+export const SELL_STACK_STEP = 10;
+/** Why: the engine drops extra user-event packets, so 25 must sell as 10+10+5 in one tick. */
+export function shopOpBatch(ops: (string | null)[], verb: 'buy' | 'sell', remaining: number): number[];
 
 }
 
@@ -3314,6 +3526,9 @@ interface DrivePartnerTradeOpts {
         acceptingOffer?: string;
     };
 }
+/** Which trade screen is up, for scripts that log hand-back diagnostics. */
+export function tradeScreenState(): string;
+export function stableClosedPoll(minMs?: number, nowFn?: () => number): never;
 /** Process one active-trade iteration from the task controlling the modal. Movement cancels the trade. */
 export function driveActivePartnerTrade(opts: DrivePartnerTradeOpts): Promise<void>;
 
@@ -3332,10 +3547,10 @@ export function countOfferByName(items: readonly {
     count: number;
 }[], itemName: string): number;
 /** Sum counts for offer slots matching a product predicate (name contains keyword, etc.). */
-export function countOfferMatching(items?: readonly {
+export function countOfferMatching(items: readonly {
     name: string | null;
     count: number;
-}[], match?: (name: string) => boolean): never;
+}[], match: (name: string) => boolean): number;
 type ReceiverOfferDecision = {
     action: 'wait-header';
 } | {
@@ -3395,6 +3610,8 @@ export interface TradeItem {
     name: string | null;
     count: number;
 }
+/** Strip `Trading With:` (and similar) to a bare display name. Exported for unit tests. */
+export function parseTradePartnerHeader(header: string): string | null;
 /**
  * Player-to-player trading.
  * @see docs/reference/api-items.md#item-acquisition
@@ -3616,6 +3833,23 @@ export interface WalkResilientOptions {
     avoidZones?: WalkOptions['avoidZones'];
 }
 /**
+ * Force nav spell/jewellery teleport injection off for one walk, overriding the Global `navTeleports` toggle (default off).
+ * @see docs/reference/nav-walker.md
+ */
+export const NAV_PURE_WALK: {
+    useTeleportCatalog: false;
+    policy: {
+        useTeleports: false;
+    };
+};
+/** Force nav teleport injection on for one walk, overriding Global `navTeleports`; ClueSolver and harnesses use it when the toggle stays off. */
+export const NAV_WITH_TELES: {
+    useTeleportCatalog: true;
+    policy: {
+        useTeleports: true;
+    };
+};
+/**
  * World-scale movement over the baked collision pack and the door/transport
  * graph.
  * @see docs/reference/api-movement.md
@@ -3652,6 +3886,7 @@ export const Traversal: {
 }
 
 declare module '*data/cookLocations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
 import { BankLocation } from "*api/bank/BankLocations.js";
 import Tile from "*geometry/Tile.js";
 /**
@@ -3659,6 +3894,16 @@ import Tile from "*geometry/Tile.js";
  * Why: only `cooking_oven` reads `successchance_range`, so an oven burns less than a fire at the same level and wins the pairing when both are a similar walk.
  */
 type CookSurfaceKind = 'oven' | 'fire';
+/** One cook surface placed in the map pack (`category=cooking_oven` / `cooking_fire`). */
+interface CookSurfaceLoc {
+    x: number;
+    z: number;
+    level: number;
+    /** Loc query name: Range / Fireplace / Cooking pot / Cooking range. */
+    name: string;
+    debugname: string;
+    kind: CookSurfaceKind;
+}
 /**
  * Pairs a bank with the cook surface nearest to it, for CookBot's Range mode. Fire mode lights its own, so a bank with no surface still earns a row.
  * @see api/cooking/CookLocations.ts for the table bound to the live bank list.
@@ -3690,6 +3935,8 @@ export interface CookLocation {
     /** True only for stands checked in game. */
     verified: boolean;
 }
+/** Closest cookable loc to `origin`, ovens first so the lower burn rate wins ties. */
+export function nearestCookSurface(origin: WorldTile, maxCheb?: number): CookSurfaceLoc | null;
 export function buildCookLocations(banks?: readonly BankLocation[]): CookLocation[];
 export function findCookLocation(locs: readonly CookLocation[], name: string): CookLocation | null;
 export const COOK_LOCATIONS: CookLocation[];
@@ -3706,11 +3953,19 @@ export interface CowLocation {
     usesAlKharidToll: boolean;
     bankDestination?: BankDestination;
 }
+export const DRAYNOR_BANK: Tile;
+export const FALADOR_EAST_BANK: Tile;
+export const ARDOUGNE_WEST_BANK: Tile;
 export const COW_LOCATIONS: CowLocation[];
 export const COW_LOCATION_OPTIONS: string[];
 export const AL_KHARID_BANK: Tile;
-export function resolveCowLocation(setting: string, start?: WorldTile): CowLocation | null;
-export function nearestCowLocation(tile: WorldTile): CowLocation | null | undefined;
+export const TOLL_COIN_TARGET = 20;
+export function isCowFieldLootTile(anchor: WorldTile, leashRadius: number, tile: WorldTile): boolean;
+export function resolveCowLocation(setting: string, start: WorldTile): CowLocation | null;
+export function nearestCowLocation(tile: WorldTile): CowLocation;
+export function needsTollCoins(location: CowLocation | null, enabled: boolean): boolean;
+export function cowBankDestination(location: CowLocation | null, tollEnabled: boolean): BankDestination | null;
+export function shouldBootstrapTollCoins(location: CowLocation | null, start: WorldTile, coins: number, enabled: boolean): boolean;
 
 }
 
@@ -3781,10 +4036,14 @@ export const ROCK_TYPES: Record<string, number[]>;
  */
 export const QUEST_ROCK_TYPES: Record<string, number[]>;
 export const ROCK_OPTIONS: string[];
+/** Ore ladder by mining level, best last. */
+export const ROCK_TIER_ORDER: readonly string[];
+/** Tier index for a rock loc id; higher is better, -1 for ids outside ROCK_TYPES. */
+export function rockTierById(id: number): number;
 export const GAS_ROCK_IDS: Set<number>;
 export const GAS_ROCK_TICKS = 60;
 export const BROKEN_PICKAXE = "Broken pickaxe";
-export function resolveRockIds(names?: string[]): never;
+export function resolveRockIds(names: string[]): Set<number>;
 
 }
 
@@ -4081,9 +4340,16 @@ export interface WalkOpeningOptions {
     /** Server ticks between a door showing open and the step through it; omitted leaves the crossing to the next walk segment. */
     doorStepTicks?: number;
 }
-export function isOpenableObstacle(name?: string | null, actions?: string[], obstacles?: string[]): never;
+/** Which of a door tile's four faces can be stepped across right now. */
+export function faceSteps(door: WorldTile, canStep: (from: WorldTile, to: WorldTile) => boolean): boolean[];
+/** The neighbour across the face an open swung free, or null while none has. */
+export function openedNeighbour(door: WorldTile, before: readonly boolean[], after: readonly boolean[]): WorldTile | null;
+/** Of the two tiles a passage joins, the one the player is not on. */
+export function farSide(door: WorldTile, across: WorldTile, here: WorldTile): WorldTile;
+export function isOpenableObstacle(name: string | null, actions: string[], obstacles: string[]): boolean;
 export function openOp(actions: string[]): string | null;
-export function towardDest(door?: WorldTile, here?: WorldTile, dest?: WorldTile): never;
+export function closeOp(actions: string[]): string | null;
+export function towardDest(door: WorldTile, here: WorldTile, dest: WorldTile): boolean;
 /**
  * Walk toward a destination, opening obstacles that block the way.
  * @see docs/reference/nav-doors.md
@@ -4141,7 +4407,15 @@ export const Input: {
     takeObj(lx: number, lz: number, objId: number, op: number): boolean;
     heldOp(objId: number, slot: number, comId: number, op: number): boolean;
     invButton(objId: number, slot: number, comId: number, op: number): boolean;
+    useItemOnLoc(useObjId: number, useSlot: number, useComId: number, lx: number, lz: number, typecode: number): boolean;
+    useItemOnNpc(useObjId: number, useSlot: number, useComId: number, index: number): boolean;
+    useItemOnObj(useObjId: number, useSlot: number, useComId: number, targetObjId: number, lx: number, lz: number): boolean;
+    useItemOnItem(useObjId: number, useSlot: number, useComId: number, targetObjId: number, targetSlot: number, targetComId: number): boolean;
+    castOnNpc(spellComId: number, index: number): boolean;
+    castOnLoc(spellComId: number, lx: number, lz: number, typecode: number): boolean;
+    castOnItem(spellComId: number, itemId: number, itemSlot: number, itemComId: number): boolean;
     walk(lx: number, lz: number): boolean;
+    continueDialog(): boolean;
 };
 
 }
@@ -4364,6 +4638,8 @@ export interface PaintState {
     set(key: string, value: string): void;
     reset(): void;
 }
+/** Wrap text to `cols`, indenting continuation lines by `indent` spaces. */
+export function wrapText(text: string, cols: number, indent?: number): string[];
 export interface ListScrollState {
     offset: number;
     /** True once the user has scrolled, which detaches the list from `focus`. */

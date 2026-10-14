@@ -36,6 +36,17 @@ pub(crate) fn settings(bag: &serde_json::Map<String, Value>) {
 pub(crate) fn banks() -> Vec<NamedBank> {
     BANKS.with(|banks| banks.borrow().banks().to_vec())
 }
+/// Resolve one selected catalog bank without allocating the full bank list.
+pub(crate) fn bank_tile(name: &str) -> Option<WorldTile> {
+    BANKS.with(|banks| {
+        banks
+            .borrow()
+            .banks()
+            .iter()
+            .find(|bank| bank.name == name)
+            .map(|bank| bank.tile)
+    })
+}
 
 fn eligible(bank: &NamedBank, preferences: BankPreferences) -> bool {
     observed::with(|scene| {
@@ -328,10 +339,7 @@ mod tests {
         ));
         assert!(!within_locked_bank_radius(
             bank,
-            WorldTile {
-                level: 1,
-                ..bank
-            }
+            WorldTile { level: 1, ..bank }
         ));
     }
 

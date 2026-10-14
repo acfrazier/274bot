@@ -435,12 +435,12 @@ fn lit(probe: &Probe<'_>, start_xp: Option<i32>) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Plot {
-    x0: i32,
-    x1: i32,
-    z0: i32,
-    z1: i32,
-    level: i32,
+pub(crate) struct Plot {
+    pub(crate) x0: i32,
+    pub(crate) x1: i32,
+    pub(crate) z0: i32,
+    pub(crate) z1: i32,
+    pub(crate) level: i32,
 }
 
 fn i32_field(value: &Value, key: &str) -> Option<i32> {
@@ -669,6 +669,52 @@ fn next_tile(input: &Value) -> Value {
         }
     })
 }
+pub(crate) struct BurnLaneCandidate {
+    pub(crate) start: WorldTile,
+    pub(crate) direction: (i32, i32),
+    pub(crate) run: i32,
+}
+
+/// Selects a burn lane from the posted walkability/canlight view.
+///
+/// Used by the Load adapter when upstream callers omit their required
+/// walkability callbacks; explicit callbacks still use the V8 helper.
+pub(crate) fn find_burn_lane_from_snapshot(
+    plot: Plot,
+    here: Option<WorldTile>,
+    refused: &HashSet<(i32, i32)>,
+    want: i32,
+    directions: &[(i32, i32)],
+) -> Result<Option<BurnLaneCandidate>, &'static str> {
+    observed::with(|scene| {
+        let reach = reach_of(scene);
+        if !reach.available {
+            return Err("missing walkable");
+        }
+        if !reach.canlight_available() {
+            return Err("missing canlight");
+        }
+        let fire_locs = fire_locs(scene);
+        let here = here.map(|tile| Tile {
+            x: tile.x,
+            z: tile.z,
+            level: tile.level,
+        });
+        Ok(
+            select_burn_tile(plot, here, refused, &fire_locs, reach, want, directions).map(
+                |(tile, direction, run)| BurnLaneCandidate {
+                    start: WorldTile {
+                        x: tile.x,
+                        z: tile.z,
+                        level: tile.level,
+                    },
+                    direction,
+                    run,
+                },
+            ),
+        )
+    })
+}
 
 fn in_fire_plot(input: &Value) -> Value {
     let (Some(tile), Some(plot)) = (
@@ -699,6 +745,89 @@ fn burn_lane_want(input: &Value) -> Value {
 fn is_burn_west(input: &Value) -> Value {
     let dir = input.get("dir").unwrap_or(&Value::Null);
     json!(i32_field(dir, "dx") == Some(-1) && i32_field(dir, "dz") == Some(0))
+}
+
+pub(crate) fn parse_burn_mode(normalized_label: &str) -> &'static str {
+    if normalized_label == "chop then burn" {
+        "chop-then-burn"
+    } else {
+        "off"
+    }
+}
+
+pub(crate) fn logs_for_tree(normalized_name: &str) -> &'static str {
+    if matches!(normalized_name, "tree" | "dead tree" | "evergreen") {
+        return "Logs";
+    }
+    if normalized_name.contains("oak") {
+        "Oak logs"
+    } else if normalized_name.contains("willow") {
+        "Willow logs"
+    } else if normalized_name.contains("maple") {
+        "Maple logs"
+    } else if normalized_name.contains("yew") {
+        "Yew logs"
+    } else if normalized_name.contains("magic") {
+        "Magic logs"
+    } else {
+        "Logs"
+    }
+}
+
+pub(crate) fn firemaking_level_for_logs(log_name: &str) -> Option<i32> {
+    crate::content::LOG_LEVELS
+        .iter()
+        .find_map(|(name, level)| (*name == log_name).then_some(*level))
+}
+
+pub(crate) fn should_burn_full_load(
+    mode_matches: bool,
+    inventory_full: bool,
+    log_count_positive: bool,
+    has_tinderbox: bool,
+) -> bool {
+    mode_matches && inventory_full && log_count_positive && has_tinderbox
+}
+
+pub(crate) fn resolve_fire_spot(
+    normalized_name: &str,
+) -> Option<&'static crate::content::FirePlot> {
+    crate::content::FIRE_PLOTS
+        .iter()
+        .find(|plot| plot.name.eq_ignore_ascii_case(normalized_name))
+}
+
+pub(crate) fn nearest_fire_spot(x: f64, z: f64) -> Option<&'static crate::content::FirePlot> {
+    let mut best = None;
+    let mut best_distance = 0.0;
+    for plot in crate::content::FIRE_PLOTS {
+        let dx = (x - f64::from(plot.bank.x)).abs();
+        let dz = (z - f64::from(plot.bank.z)).abs();
+        let distance = js_max(dx, dz);
+        if best.is_none() || distance < best_distance {
+            best = Some(plot);
+            best_distance = distance;
+        }
+    }
+    best
+}
+
+pub(crate) fn expanded_local_fire_half(half_x: f64, half_z: f64, grow_by: f64) -> f64 {
+    js_max(half_x, half_z) + js_max(1.0, grow_by)
+}
+
+fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == 0.0 && b == 0.0 {
+        if a.is_sign_positive() || b.is_sign_positive() {
+            0.0
+        } else {
+            -0.0
+        }
+    } else {
+        a.max(b)
+    }
 }
 
 /// Half-width of the frozen `localFirePlot` box when the caller omits `half`.

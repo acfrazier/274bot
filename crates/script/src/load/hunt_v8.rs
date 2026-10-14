@@ -85,17 +85,21 @@ fn enclave_target_value<'s>(
     let target: v8::Local<v8::Value> = clone.into();
     callback_v8::call(scope, assign, object, &[target, site], "Object.assign")?;
 
-    let target = if demons { "Greater demon" } else { "Blue dragon" };
+    let target = if demons {
+        "Greater demon"
+    } else {
+        "Blue dragon"
+    };
     let bones = if demons { "Ashes" } else { "Dragon bones" };
-    let target_name = callback_v8::string(scope, target).into();
+    let target_name = callback_v8::string(scope, target);
     set_enclave_property(scope, clone, "target", target_name)?;
-    let bones_name = callback_v8::string(scope, bones).into();
+    let bones_name = callback_v8::string(scope, bones);
     set_enclave_property(scope, clone, "bones", bones_name)?;
     if demons || dragons {
         let also_hunt = v8::undefined(scope).into();
         set_enclave_property(scope, clone, "alsoHunt", also_hunt)?;
     } else {
-        let greater_demon = callback_v8::string(scope, "Greater demon").into();
+        let greater_demon = callback_v8::string(scope, "Greater demon");
         let also_hunt = v8::Array::new_with_elements(scope, &[greater_demon]).into();
         set_enclave_property(scope, clone, "alsoHunt", also_hunt)?;
     }
@@ -109,7 +113,7 @@ fn set_enclave_property<'s>(
     value: v8::Local<'s, v8::Value>,
 ) -> callback_v8::JsResult<'s, ()> {
     let name = callback_v8::string(scope, name);
-    callback_v8::catching(scope, |s| target.set(s, name.into(), value)).map(|_| ())
+    callback_v8::catching(scope, |s| target.set(s, name, value)).map(|_| ())
 }
 
 /// Frozen `doseToDrink(count, doses)`: the smallest held dose form, the

@@ -15,6 +15,7 @@ export const SUPER_ATTACK = BOOST_POTIONS[0];
 export const SUPER_STRENGTH = BOOST_POTIONS[1];
 export const SUPER_DEFENCE = TABLE.super_defence;
 export const SUPER_SET = TABLE.super_set;
+export const RANGING_POTION = TABLE.ranging_potion;
 export const EMPTY_VIAL = TABLE.empty_vial;
 export const BOOST_FLOOR = TABLE.floor;
 
@@ -23,12 +24,16 @@ export function boostFaded(base, effective, floor) {
     return native('boostFaded', base, effective, floor);
 }
 
-/** The potions to carry, taking the dose form and count from the loadout and falling back to one 3-dose flask of each. */
-export function plannedPotions(carry) {
-    return native('plannedPotions', carry, BOOST_POTIONS);
+/** Plan the selected potion descriptors, defaulting to the melee pair. */
+export function plannedPotions(carry, potions = BOOST_POTIONS) {
+    return native('plannedPotions', carry, potions);
 }
 
 /** The one potion to drink this tick, or null. */
 export function potionToSip(s) {
     return native('potionToSip', s);
+}
+
+export function rangingPlan(carry) {
+    return native('rangingPlan', RANGING_POTION, carry);
 }
