@@ -1025,6 +1025,8 @@ pub struct Session {
     /// The rs2b0t profile import in the Profiles window: whether it is
     /// open, its flow (shared with the TUI), the text it shows (rebuilt on
     /// each step and while its writes settle) and the delete-file confirm.
+    /// The text is the flow's own lines, which the flow redacts as it
+    /// builds them, so no export password is held here.
     pub profile_import_open: bool,
     pub profile_import: frontend_core::rs2b0t_import::ProfileImport,
     pub profile_import_lines: Vec<String>,

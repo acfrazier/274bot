@@ -1500,3 +1500,290 @@ fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     assert_no_password(&flow.report_lines(&core).join("\n"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---- round 4: a password repeated in another field (review R3-H3) ----------
+// The redaction registry is process-wide, so each test (and each matrix
+// case) uses its own password and checks only that it is absent.
+
+/// A one-account export: `rvr4probe` with password `secret`, then `edit`.
+fn export_with_password(secret: &str, edit: impl FnOnce(&mut Value, &str)) -> String {
+    let mut raw = json!({
+        "kind": PROFILE_FILE_KIND,
+        "v": 1,
+        "profiles": [{ "username": "rvr4probe", "password": secret }],
+        "tabs": [],
+        "activeTab": "Main",
+        "storage": { "rvr4probe": {} },
+    });
+    edit(&mut raw, secret);
+    raw.to_string()
+}
+
+/// Every place a test's password showed. All surfaces are checked before
+/// the test fails, so a failure names each one.
+#[derive(Default)]
+struct Leaks(Vec<String>);
+
+impl Leaks {
+    fn check(&mut self, secret: &str, what: &str, text: &str) {
+        if text.contains(secret) {
+            self.0.push(format!("{what}: {text}"));
+        }
+    }
+
+    fn assert_none(self) {
+        assert!(
+            self.0.is_empty(),
+            "the password shows in:\n{}",
+            self.0.join("\n")
+        );
+    }
+}
+
+/// Review input A: the account's password repeated as its tab. The tab is
+/// reported as not imported, without the password, in the preview, the
+/// `Skipped` values and the report after the real write.
+#[test]
+fn r3_h3_a_password_repeated_in_a_tab_reaches_no_preview_report_or_debug() {
+    const SECRET: &str = "r4a-tab-pw-60231";
+    let file = parse_profile_file(&export_with_password(SECRET, |raw, secret| {
+        raw["profiles"][0]["tab"] = json!(secret);
+    }))
+    .unwrap();
+    let mut core = session(vault_with("r4-input-a", &[]));
+    let mut leaks = Leaks::default();
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        &FakeCatalog::new(),
+        ConflictPolicy::Skip,
+    );
+    let preview = plan.lines().join("\n");
+    assert!(preview.contains("not imported: tab"), "{preview}");
+    leaks.check(SECRET, "the preview", &preview);
+    let skipped = format!(
+        "{:?} {:?}",
+        plan.file_skipped(),
+        account(&plan, "rvr4probe").skipped()
+    );
+    leaks.check(SECRET, "Skipped Debug", &skipped);
+    let run = apply_import(&mut core, plan).unwrap();
+    core.flush_writes();
+    assert!(run.succeeded(&core));
+    let report = run.lines(&core).join("\n");
+    assert!(report.contains("rvr4probe: tab"), "{report}");
+    leaks.check(SECRET, "the report", &report);
+    // The vault still gets the real password.
+    let row = core.vault().unwrap().get("rvr4probe").unwrap();
+    assert_eq!(row.password.as_str(), SECRET);
+    leaks.assert_none();
+}
+
+/// Review input B: a skipped account's password as another account's clue
+/// duel partner, through the real shared flow. No line of the process log
+/// shows it, and the vault holds the partner as the file gives it.
+#[test]
+fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
+    const SECRET: &str = "r4b-skip-pw-60232";
+    let store = crate::log::global();
+    let dir = temp_dir("r4-input-b");
+    let path = dir.join(PROFILE_FILE_NAME);
+    std::fs::write(
+        &path,
+        json!({
+            "kind": PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [
+                { "username": "r4bsource", "password": SECRET },
+                { "username": "r4btarget", "password": "r4b-generic-pass" },
+            ],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": { "r4btarget": { "set:Global:clueDuelPartner": SECRET } },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut core = session(vault_with(
+        "r4-input-b-vault",
+        &[("r4bsource", 274_000_041)],
+    ));
+    let scripts = Scripts::new(
+        script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+    );
+    let mut flow = ProfileImport::new();
+    *flow.path_mut() = path.display().to_string();
+    flow.preview(&core, &scripts);
+    assert_eq!(flow.error(), None);
+    let mut leaks = Leaks::default();
+    let plan = flow.plan().unwrap();
+    assert_eq!(account(plan, "r4bsource").status(), AccountStatus::Exists);
+    assert_eq!(account(plan, "r4btarget").status(), AccountStatus::New);
+    leaks.check(SECRET, "the preview", &flow.preview_lines().join("\n"));
+    flow.confirm(&mut core, &scripts);
+    core.flush_writes();
+    assert!(flow.settled(&core));
+    leaks.check(SECRET, "the report", &flow.report_lines(&core).join("\n"));
+
+    let mut view = crate::log::LogView::new(crate::log::LogScope::All);
+    store.refresh(&mut view);
+    let messages: Vec<&str> = view.rows().iter().map(|row| &*row.message).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("create profile r4btarget")),
+        "the import logged no line for its write"
+    );
+    for message in &messages {
+        leaks.check(SECRET, "a log line", message);
+    }
+    let row = core.vault().unwrap().get("r4btarget").unwrap();
+    assert_eq!(row.settings.clue_duel_partner, SECRET);
+    let _ = std::fs::remove_dir_all(dir);
+    leaks.assert_none();
+}
+
+/// The review's Thiever card for the residual matrix: one parameter of
+/// each kind a stored value can be refused or imported as.
+struct ResidualCatalog(Vec<script::SettingDef>);
+
+impl ImportCatalog for ResidualCatalog {
+    fn loaded(&self) -> bool {
+        true
+    }
+
+    fn card(&self, name: &str) -> Option<CatalogCard<'_>> {
+        (name == "Thiever").then(|| CatalogCard {
+            schema: &self.0,
+            unloadable: None,
+            assignment: ScriptAssignment {
+                source_kind: "catalog".into(),
+                identity: name.into(),
+                display_name: name.into(),
+                unavailable: None,
+            },
+        })
+    }
+}
+
+/// The rest of the review's matrix: the password in each other field the
+/// import shows reaches no preview line, no `Skipped` or imported line, no
+/// report line after the real write and no log line; an imported value
+/// still reaches the vault as the file gives it.
+#[test]
+fn r3_h3_a_password_repeated_in_any_other_field_reaches_no_text() {
+    type Edit = fn(&mut Value, &str);
+    let cases: [(&str, Edit); 20] = [
+        ("tab list", |raw, s| raw["tabs"] = json!([s])),
+        ("active tab", |raw, s| raw["activeTab"] = json!(s)),
+        ("unlisted storage owner", |raw, s| {
+            raw["storage"][s] = json!({ "k": "x" });
+        }),
+        ("unknown storage key", |raw, s| {
+            raw["storage"]["rvr4probe"][s] = json!("x");
+        }),
+        ("unknown Global setting", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:Global:{s}")] = json!("x");
+        }),
+        ("unknown script", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:{s}:k")] = json!("x");
+        }),
+        ("unknown parameter", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:Thiever:{s}")] = json!("x");
+        }),
+        ("malformed settings key", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:{s}")] = json!("x");
+        }),
+        ("MapPicker setting", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:MapPicker:{s}")] = json!("x");
+        }),
+        ("Loadouts setting", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:Loadouts:{s}")] = json!("x");
+        }),
+        ("PriceBooks setting", |raw, s| {
+            raw["storage"]["rvr4probe"][format!("set:PriceBooks:{s}")] = json!("x");
+        }),
+        ("rejected renderer value", |raw, s| {
+            raw["storage"]["rvr4probe"]["rendererEnabled"] = json!(s);
+        }),
+        ("unknown selected script", |raw, s| {
+            raw["storage"]["rvr4probe"]["selectedScript"] = json!(s);
+        }),
+        ("rejected lamp skill", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Global:lampSkill"] = json!(s);
+        }),
+        ("rejected number", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Thiever:number"] = json!(s);
+        }),
+        ("rejected tile", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Thiever:tile"] = json!(s);
+        }),
+        ("rejected option", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Thiever:choice"] = json!(s);
+        }),
+        ("dropped list entry", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Thiever:list"] = json!(s);
+        }),
+        ("imported clue duel partner", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Global:clueDuelPartner"] = json!(s);
+        }),
+        ("imported string parameter", |raw, s| {
+            raw["storage"]["rvr4probe"]["set:Thiever:text"] = json!(s);
+        }),
+    ];
+    let catalog = ResidualCatalog(vec![
+        def("number", "number", &[], None, None),
+        def("tile", "tile", &[], None, None),
+        def("text", "string", &[], None, None),
+        def("choice", "string", &["yes"], None, None),
+        def("list", "list", &["yes"], None, None),
+    ]);
+    let store = crate::log::global();
+    let mut leaks = Leaks::default();
+    let mut secrets = Vec::new();
+    for (index, (label, edit)) in cases.into_iter().enumerate() {
+        let secret = format!("r4m{index:02}-pw-60233");
+        let file = parse_profile_file(&export_with_password(&secret, edit)).unwrap();
+        let mut core = session(vault_with(&format!("r4-matrix-{index}"), &[]));
+        let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+        let what = |part: &str| format!("{label}: {part}");
+        leaks.check(&secret, &what("preview"), &plan.lines().join("\n"));
+        let probe = account(&plan, "rvr4probe");
+        assert_eq!(probe.status(), AccountStatus::New, "{label}");
+        let kept = format!(
+            "{:?} {:?} {:?}",
+            plan.file_skipped(),
+            probe.skipped(),
+            probe.imported()
+        );
+        leaks.check(&secret, &what("Skipped Debug"), &kept);
+        let run = apply_import(&mut core, plan).unwrap();
+        core.flush_writes();
+        assert!(run.succeeded(&core), "{label}");
+        leaks.check(&secret, &what("report"), &run.lines(&core).join("\n"));
+        let row = core.vault().unwrap().get("rvr4probe").unwrap();
+        match label {
+            "imported clue duel partner" => {
+                assert_eq!(row.settings.clue_duel_partner, secret);
+            }
+            "imported string parameter" => assert_eq!(
+                row.settings
+                    .script_settings
+                    .get("catalog:Thiever")
+                    .and_then(|bag| bag.get("text")),
+                Some(&json!(secret))
+            ),
+            _ => {}
+        }
+        secrets.push((label, secret));
+    }
+    let mut view = crate::log::LogView::new(crate::log::LogScope::All);
+    store.refresh(&mut view);
+    for row in view.rows() {
+        for (label, secret) in &secrets {
+            leaks.check(secret, &format!("{label}: log line"), &row.message);
+        }
+    }
+    leaks.assert_none();
+}

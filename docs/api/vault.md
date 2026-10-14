@@ -199,6 +199,21 @@ profile the import writes logs one line (profile, create or overwrite,
 operation id, old → new). The log line says only whether the password was set
 or changed.
 
+No password from the export is shown in what the import writes out. When a
+file is previewed, every non-empty password in it is registered for log
+redaction (`api::hostlog::register_secret`), including the passwords of
+accounts the import skips (already in the vault, listed twice, unusable)
+and of a preview you never confirm. Every line of the preview and the
+report, every skipped item and its reason, and every refusal is redacted
+(`api::hostlog::redact`) when it is built, so a password that turns up in
+another field (a tab, the tab list, the active tab, a stored setting's name
+or value, a clue duel partner, another account's name) shows as `***`
+there. The panel and the TUI show copies of those lines, and every log line
+is redacted the same way. The data written to the vault is the file's,
+unchanged: a clue duel partner equal to some password is saved as it is.
+Like the vault's own passwords, a registered password stays registered
+until the process exits.
+
 An account counts as imported only when the import's own write of it is
 saved. The report says "not confirmed" for a write that a later save of the
 same profile replaced before it was saved, or whose result the session no
