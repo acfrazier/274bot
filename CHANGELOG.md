@@ -33,10 +33,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   your passwords in plain text: once every account you imported is
   confirmed saved, 274bot offers to delete it (it asks you to confirm
   first). If a save fails, the report says so and keeps the file. A
-  password from the file never appears in the preview, the report or the
-  log: where it turns up in another field, such as a tab name or a clue
-  duel partner, it shows as `***` (the vault still gets the field's real
-  value).
+  password from the file never appears in the text of the preview, the
+  report or a log message: where it turns up in another field, such as a
+  tab name or a clue duel partner, it shows as `***` (the vault still gets
+  the field's real value). The log's account column always shows the
+  account name, so an account named the same as a password shows it there.
 
 ### Quests and dialogues
 

@@ -208,11 +208,14 @@ report, every skipped item and its reason, and every refusal is redacted
 (`api::hostlog::redact`) when it is built, so a password that turns up in
 another field (a tab, the tab list, the active tab, a stored setting's name
 or value, a clue duel partner, another account's name) shows as `***`
-there. The panel and the TUI show copies of those lines, and every log line
-is redacted the same way. The data written to the vault is the file's,
-unchanged: a clue duel partner equal to some password is saved as it is.
-Like the vault's own passwords, a registered password stays registered
-until the process exits.
+there. The panel and the TUI show copies of those lines, and every log
+message is redacted the same way. A log line's account column is not: it
+always names the account the line is about (the slot), so an account whose
+name equals some password shows that name there, in the panel's and the
+TUI's log views, in copied log lines and in the session log file. The data
+written to the vault is the file's, unchanged: a clue duel partner equal to
+some password is saved as it is. Like the vault's own passwords, a
+registered password stays registered until the process exits.
 
 An account counts as imported only when the import's own write of it is
 saved. The report says "not confirmed" for a write that a later save of the
