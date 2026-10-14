@@ -1695,6 +1695,40 @@ def _type_parameter_names(node: dict[str, Any]) -> frozenset[str]:
     return frozenset(names)
 
 
+def _defaulted_type_parameters_in_fields(
+    node: dict[str, Any], path: str, owner: str
+) -> frozenset[str]:
+    """Return defaulted type parameters referenced by this item's field types."""
+    defaulted: set[str] = set()
+    for parameter_list in _direct_children(node, "GENERIC_PARAM_LIST"):
+        for parameter in _direct_children(parameter_list, "TYPE_PARAM"):
+            name = _first_name(parameter)
+            after_equals = False
+            has_type_default = False
+            for child in _children(parameter):
+                if child.get("kind") == "EQ":
+                    after_equals = True
+                elif after_equals and str(child.get("kind", "")).endswith("_TYPE"):
+                    has_type_default = True
+                    break
+            if name is not None and has_type_default:
+                defaulted.add(name)
+    if not defaulted:
+        return frozenset()
+
+    used: set[str] = set()
+    for field, _, _, _, _ in _walk_ast(node, "production", ()):
+        if field.get("kind") not in {"RECORD_FIELD", "TUPLE_FIELD"}:
+            continue
+        field_type = _field_type_node(field, path, owner)
+        for child, _, _, _, _ in _walk_ast(field_type, "production", ()):
+            if child.get("kind") == "PATH_TYPE":
+                segments = _path_segments(child)
+                if segments and segments[0] in defaulted:
+                    used.add(segments[0])
+    return frozenset(used)
+
+
 def _type_alias_target(
     node: dict[str, Any], path: str, owner: str
 ) -> dict[str, Any]:
@@ -2210,10 +2244,6 @@ def _seam_records(
             search_module = module_path
 
         candidates = [search_module + normalized]
-        # frontend-core keeps its crate-root fallback; a loaded workspace crate
-        # resolves Rust 2021 paths only.
-        if search_module and not root_path:
-            candidates.append(normalized)
         for target in dict.fromkeys(candidates):
             if target:
                 origin = (target[:-1], target[-1])
@@ -2270,6 +2300,41 @@ def _seam_records(
                 return ("ambiguous", tuple(sorted(glob_matches, key=repr)), segments[0])
             if glob_matches:
                 return next(iter(glob_matches))
+
+        # Only after local and glob bindings fail may frontend-core use its
+        # crate-root fallback; workspace crates resolve Rust 2021 paths.
+        if search_module and not root_path:
+            target = normalized
+            if target:
+                origin = (target[:-1], target[-1])
+                if origin in ambiguous_type_items:
+                    return ("ambiguous", origin, origin[1])
+                issue = workspace_issue(origin[0], origin[1])
+                if issue is not None:
+                    return ("workspace_error", issue, origin[1])
+            if target in modules:
+                return ("module", target, None)
+            if target:
+                if origin in type_items:
+                    return ("type", origin, origin[1])
+                if origin in unsupported_types:
+                    return ("unsupported_type", origin, origin[1])
+                if origin in non_value_types:
+                    return ("non_value_type", origin, origin[1])
+                if origin in non_type_items:
+                    return ("non_type_item", origin, origin[1])
+            for split in range(len(target) - 1, 0, -1):
+                module_candidate = target[:split]
+                if module_candidate in modules:
+                    resolved = resolve_path(
+                        module_candidate,
+                        target[split:],
+                        seen_imports,
+                        seen_paths,
+                        seen_globs,
+                    )
+                    if resolved is not None:
+                        return resolved
 
         canonical = "::".join(segments)
         # A built-in entry keeps precedence for its exact path.  Any other path
@@ -2336,6 +2401,15 @@ def _seam_records(
         absolute = target[0] == ""
         if not absolute and target[0] in local_bindings.get(module_path, {}):
             return False
+        for glob_target in module_globs.get(module_path, []):
+            glob_module = resolve_path(module_path, glob_target)
+            if glob_module is None or glob_module[0] != "module":
+                return False
+            glob_binding = resolve_path(
+                module_path, glob_target + target[:1]
+            )
+            if glob_binding is not None:
+                return False
         if "::".join(target[1:] if absolute else target) in STD_LEAF_TYPE_PATHS:
             return True
         if absolute or target != segments or len(target) != 1 or target[0] not in PRELUDE_LEAF_TYPE_NAMES:
@@ -2428,6 +2502,15 @@ def _seam_records(
             )
 
         try:
+            defaulted_fields = _defaulted_type_parameters_in_fields(
+                item, file_key, name
+            )
+            if defaulted_fields:
+                parameter = sorted(defaulted_fields)[0]
+                raise _InventoryError(
+                    f"{file_key}::{name}: generic type defaults are unsupported "
+                    f"({parameter})"
+                )
             if item.get("kind") == "TYPE_ALIAS":
                 if _type_parameter_names(item):
                     raise _InventoryError(
