@@ -1,0 +1,21 @@
+# Nightly VM: one nightly live run (every branch in tools/nightly/branches.conf).
+# Install: /etc/systemd/system/274bot-nightly.service (see tools/nightly/README.md).
+[Unit]
+Description=274bot nightly live-cell run
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=bot
+Group=bot
+WorkingDirectory=/srv/nightly
+Environment=NIGHTLY_ROOT=/srv/nightly
+Environment=PATH=/home/bot/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/etc/274bot-nightly.env
+ExecStart=/usr/bin/python3 /srv/nightly/runner/tools/nightly/run_nightly.py
+# Two branches with every cell can take hours; the per-cell cap bounds each cell.
+TimeoutStartSec=20h
+KillMode=mixed
+TimeoutStopSec=120
+Nice=5
