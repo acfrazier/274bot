@@ -66,9 +66,9 @@ pub(crate) fn records(items: &[GameItem]) -> impl Iterator<Item = (&GameItem, &s
         .filter_map(|item| Some((item, item.name.as_deref()?)))
 }
 
-/// Frozen `equippable`: the obj has a worn slot.
+/// Frozen `equippable`: the obj has a worn model (`manwear != -1`).
 pub(crate) fn equippable(item: &GameItem) -> bool {
-    item.wear_position >= 0
+    item.worn_model
 }
 
 /// Frozen `buildCatalog(...).items`: named unnoted objs that are not a pile

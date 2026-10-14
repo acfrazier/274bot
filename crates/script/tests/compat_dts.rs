@@ -1,7 +1,7 @@
 // Compat (JS API v1) declarations — generated declarations gated against the live shim.
 use script::compat_dts::{
     check_compat_dts_drift, collect_compat_surface_from, compat_dts_path, drift_against_shim,
-    load_authored_dts, load_authored_dts_from, shim_source_pairs,
+    load_authored_dts, load_authored_dts_from, shim_source_pairs, CompatExport, Member, MemberKind,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,6 +115,54 @@ fn authored_tree_preserves_header_and_sibling_imports() {
 #[test]
 fn compat_dts_is_fresh() {
     check_compat_dts_drift().unwrap_or_else(|e| panic!("{e}"));
+}
+fn paint_frame_members(authored: &mut script::compat_dts::AuthoredSurface) -> &mut Vec<Member> {
+    let module = authored
+        .modules
+        .iter_mut()
+        .find(|module| module.specifier.ends_with("paint/Paint.js"))
+        .expect("authored Paint declaration module");
+    module
+        .exports
+        .iter_mut()
+        .find_map(|export| match export {
+            CompatExport::Class { name, members, .. } if name == "PaintFrame" => Some(members),
+            _ => None,
+        })
+        .expect("authored PaintFrame declaration")
+}
+
+#[test]
+fn preserve_members_rejects_an_unbacked_extra_member() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    paint_frame_members(&mut authored).push(Member {
+        name: "unbackedProbe".to_string(),
+        kind: MemberKind::Method,
+        params: Vec::new(),
+        is_async: false,
+        allows_non_promise: true,
+        is_static: false,
+    });
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("PaintFrame extra authored member unbackedProbe")),
+        "preserveMembers must not waive unbacked methods: {drifts:?}"
+    );
+}
+
+#[test]
+fn preserve_members_rejects_an_emptied_class() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    paint_frame_members(&mut authored).clear();
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("PaintFrame missing member constructor")),
+        "an emptied preserveMembers class must fail the drift guard: {drifts:?}"
+    );
 }
 
 /// Re-run the frozen emitter and named runtime overlay without rewriting index.d.ts.

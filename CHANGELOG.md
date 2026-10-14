@@ -25,10 +25,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
 - A script that imports an unsupported rs2b0t value now loads; using that value
   stops the script with a named `not impl` message instead of a missing-export
   error at Start.
-- The Jive Dragons, Jive Demons and Jive KBD scripts can now get past the
-  compatibility imports that previously stopped them. Jive loot checks can
-  read the selected object catalog; CowKiller uses its supported locations
-  and bank choices.
+- Jive Dragons, Jive Demons and Jive KBD imports now pass, and their loot
+  checks know which held items stack, including noted, poisoned and
+  untradeable items. CowKiller uses its supported locations and bank choices.
 - Script authors can call combat and bank helpers such as `facingPlayer`,
   `resolveCombatStyle` and `resolveBankOpenRoute`.
 - Firemaking supports `parseBurnMode`, `findBurnLane`, spot selection and
@@ -44,9 +43,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.1` 
   `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
 - Paladin and Hero pickpocket leashes now cover their 289 roaming areas.
   Quest-only mining rocks stay out of the regular ore options.
-- Public TypeScript declarations cover script completion hooks, task labels and
-  current task names, the supported `InvItem.noted` flag, and `Paint.begin()`
-  frame methods.
+  Public TypeScript declarations cover script completion hooks, task labels and
+  current task names, and the supported `InvItem.noted` flag.
 
 ### Not in this release
 

@@ -64,6 +64,7 @@ const categoryObj = (id: number, category?: number) => ({
     wearpos: -1,
     wearpos2: -1,
     wearpos3: -1,
+    manwear: -1,
     ...(category === undefined ? {} : { category }),
 });
 assert.equal(categoryName(categoryObj(2961, 14), itemCategories), 'weapon_slash');
@@ -2024,9 +2025,58 @@ assert.throws(() => assertTrailPins(droppedCasketFixture, 274), /missing trail_c
 
 const pinTrail274Root = pinContentRoot(274);
 const pinTrail289Root = pinContentRoot(289);
+type DecodedItemRow = {
+    alias: string | null;
+    id: number;
+    name: string | null;
+    cost: number;
+    stackable: boolean;
+    members: boolean;
+    certificate_link: number;
+    certificate_template: number;
+    wear_position: number;
+    wear_position_2: number;
+    wear_position_3: number;
+    worn_model: boolean;
+};
+function isDecodedItemRow(value: unknown): value is DecodedItemRow {
+    return value !== null && typeof value === 'object'
+        && 'alias' in value && (value.alias === null || typeof value.alias === 'string')
+        && 'id' in value && typeof value.id === 'number'
+        && 'name' in value && (value.name === null || typeof value.name === 'string')
+        && 'cost' in value && typeof value.cost === 'number'
+        && 'stackable' in value && typeof value.stackable === 'boolean'
+        && 'members' in value && typeof value.members === 'boolean'
+        && 'certificate_link' in value && typeof value.certificate_link === 'number'
+        && 'certificate_template' in value && typeof value.certificate_template === 'number'
+        && 'wear_position' in value && typeof value.wear_position === 'number'
+        && 'wear_position_2' in value && typeof value.wear_position_2 === 'number'
+        && 'wear_position_3' in value && typeof value.wear_position_3 === 'number'
+        && 'worn_model' in value && typeof value.worn_model === 'boolean';
+}
+
 function pinDecodedItems(revision: number) {
-    const payload = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8')) as { items: any[] };
-    return payload.items.filter((item: any) => item.alias !== null).map((item: any) => ({ id: item.id, debugname: item.alias, name: item.name, cost: item.cost, stackable: item.stackable, members: item.members, certlink: item.certificate_link, certtemplate: item.certificate_template, wearpos: item.wear_position, wearpos2: item.wear_position_2, wearpos3: item.wear_position_3 })) as any;
+    const payload: unknown = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8'));
+    if (payload === null || typeof payload !== 'object' || !('items' in payload) || !Array.isArray(payload.items)) {
+        throw new Error(`invalid selected item data for revision ${revision}`);
+    }
+    const rawItems: unknown[] = payload.items;
+    const items = rawItems.filter(isDecodedItemRow);
+    if (items.length !== rawItems.length) throw new Error(`invalid selected item row for revision ${revision}`);
+    return items.flatMap((item) => item.alias === null ? [] : [{
+        id: item.id,
+        debugname: item.alias,
+        name: item.name,
+        cost: item.cost,
+        stackable: item.stackable,
+        members: item.members,
+        certlink: item.certificate_link,
+        certtemplate: item.certificate_template,
+        wearpos: item.wear_position,
+        wearpos2: item.wear_position_2,
+        wearpos3: item.wear_position_3,
+        manwear: item.worn_model ? 0 : -1,
+    }]);
 }
 function pinTrailInputs(root: string) {
     const enums = ['easy', 'medium', 'hard'].flatMap((tier) => parseTrailEnumAliases(fs.readFileSync(path.join(root, `${TRAIL_CONFIG}/trail_${tier}.enum`), 'utf8')));

@@ -1570,7 +1570,7 @@ mod tests {
 
     fn gather_game_data() -> api::game_data::SelectedGameData {
         serde_json::from_value(serde_json::json!({
-            "schema_version": 4,
+            "schema_version": 5,
             "revision": 289,
             "provenance": {"cache_identity": {"cache_id": "x"}, "inputs": [], "content_inputs": [], "decoder_sources": []},
             "items": [],

@@ -130,6 +130,55 @@ function members(node, live) {
 }
 const overlayFiles = ['overlay.json', 'overlay-native.json', 'overlay-scene.json', 'overlay-not-impl.json'];
 const overlay = overlayFiles.flatMap(f => JSON.parse(fs.readFileSync(path.join(here, f), 'utf8')));
+checkUnconditionalRefusalOverlays();
+function refusalBody(body) {
+    return body && ts.isBlock(body) && body.statements.length === 1 &&
+        ts.isThrowStatement(body.statements[0]) &&
+        ts.isCallExpression(body.statements[0].expression) &&
+        body.statements[0].expression.expression.getText() === 'notImpl';
+}
+function checkUnconditionalRefusalOverlays() {
+    for (const entry of registry) {
+        if (entry.shim.endsWith('_kernel.js')) continue; // Internal dispatch helpers have no upstream declaration surface.
+        const sourcePath = path.join(crate, 'src/shim', entry.shim);
+        const source = fs.readFileSync(sourcePath, 'utf8');
+        const sf = parse(source, entry.shim);
+        const relativeSource = path.posix.join('crates/script/src/shim', entry.shim.replaceAll(path.sep, '/'));
+        const visit = (node, owner) => {
+            let nextOwner = owner;
+            if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) nextOwner = node.name ? node.name.text : owner;
+            if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) nextOwner = node.name.text;
+            const functionLike = ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
+                ts.isGetAccessor(node) || ts.isSetAccessor(node) ||
+                ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+                    (ts.isPropertyAssignment(node.parent) || ts.isPropertyDeclaration(node.parent) ||
+                        ts.isVariableDeclaration(node.parent)));
+            if (functionLike && !ts.isConstructorDeclaration(node) && refusalBody(node.body)) {
+                const call = node.body.statements[0].expression;
+                const argument = call.arguments[0];
+                if (argument && ts.isStringLiteralLike(argument)) {
+                    const member = node.name?.getText(sf) || node.parent.name?.getText(sf);
+                    const selector = ts.isFunctionDeclaration(node) && node.parent === sf
+                        ? member
+                        : owner ? `${owner}.${member}` : member;
+                    const candidates = new Set([selector, argument.text]);
+                    const covered = overlay.some(candidate =>
+                        candidate.operation === 'not-impl' &&
+                        typeof candidate.runtime === 'string' &&
+                        candidate.runtime.startsWith(`${relativeSource}:`) &&
+                        candidates.has(candidate.selector),
+                    );
+                    if (!covered) {
+                        const line = sf.getLineAndCharacterOfPosition(node.body.statements[0].getStart(sf)).line + 1;
+                        throw new Error(`Unconditional refusal ${relativeSource}:${line} (${selector}) lacks a not-impl overlay.`);
+                    }
+                }
+            }
+            ts.forEachChild(node, child => visit(child, nextOwner));
+        };
+        visit(sf, null);
+    }
+}
 const typeNamesByModule = new Map();
 const used = new Set();
 function objectTypes(sf, live) {
@@ -354,6 +403,7 @@ function checkPaintDeclarations(index, scratch) {
     fs.writeFileSync(declarations, index);
     fs.writeFileSync(probe, `
 import { Paint } from '*paint/Paint.js';
+import { Input } from '*input/Input.js';
 import type { PaintState } from '*paint/paintLogic.js';
 import { GameMessages } from '*api/chatbox/gameMessages.js';
 function onPaint(ctx: CanvasRenderingContext2D): void {
@@ -379,7 +429,30 @@ function onPaint(ctx: CanvasRenderingContext2D): void {
     frame.footer('footer');
     frame.gap();
     frame.end();
+    type _frameColsNever = AssertNever<ReturnType<typeof frame.cols>>;
+    type _frameWrapNever = AssertNever<ReturnType<typeof frame.wrap>>;
+    type _frameListNever = AssertNever<ReturnType<typeof frame.list>>;
+    type _frameFillNever = AssertNever<ReturnType<typeof frame.fill>>;
+    type _frameGridNever = AssertNever<ReturnType<typeof frame.grid>>;
+    type _frameStepperNever = AssertNever<ReturnType<typeof frame.stepper>>;
 }
+type AssertNever<T extends never> = T;
+Input.useItemOnLoc(0, 0, 0, 0, 0, 0);
+Input.useItemOnNpc(0, 0, 0, 0);
+Input.useItemOnObj(0, 0, 0, 0, 0, 0);
+Input.useItemOnItem(0, 0, 0, 0, 0, 0);
+Input.castOnNpc(0, 0);
+Input.castOnLoc(0, 0, 0, 0);
+Input.castOnItem(0, 0, 0, 0);
+Input.continueDialog();
+type _inputUseItemOnLocNever = AssertNever<ReturnType<typeof Input.useItemOnLoc>>;
+type _inputUseItemOnNpcNever = AssertNever<ReturnType<typeof Input.useItemOnNpc>>;
+type _inputUseItemOnObjNever = AssertNever<ReturnType<typeof Input.useItemOnObj>>;
+type _inputUseItemOnItemNever = AssertNever<ReturnType<typeof Input.useItemOnItem>>;
+type _inputCastOnNpcNever = AssertNever<ReturnType<typeof Input.castOnNpc>>;
+type _inputCastOnLocNever = AssertNever<ReturnType<typeof Input.castOnLoc>>;
+type _inputCastOnItemNever = AssertNever<ReturnType<typeof Input.castOnItem>>;
+type _inputContinueDialogNever = AssertNever<ReturnType<typeof Input.continueDialog>>;
 declare const state: PaintState;
 state.publishRegions([]);
 state.pointerDown(0, 0);
@@ -413,7 +486,7 @@ GameMessages.firstSince(0);
     });
     const diagnostics = ts.getPreEmitDiagnostics(program);
     if (diagnostics.length) {
-        throw new Error(`Paint declaration check failed:\\n${diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\\n')).join('\\n')}`);
+        throw new Error(`Paint declaration check failed:\n${diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('\n')}`);
     }
 }
 
