@@ -270,6 +270,7 @@ fn error_reason(error: &ActionError) -> Arc<str> {
         ActionError::Unavailable(why) => Arc::from(format!("unavailable:{why}")),
         ActionError::Failed(why) => Arc::from(format!("failed:{why}")),
         ActionError::Blocked(why) => Arc::from(format!("blocked:{why}")),
+        ActionError::CombatInterrupted => Arc::from("combat-interrupted"),
         ActionError::NeedsEvidence(_) => Arc::from("needs-evidence"),
     }
 }

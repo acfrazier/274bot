@@ -743,7 +743,7 @@ fn visible_continue_without_chat_root_is_not_a_combat_close() {
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
-        Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
+        Poll::Ready(Err(ActionError::CombatInterrupted))
     ));
 }
 
