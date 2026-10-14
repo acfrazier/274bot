@@ -417,12 +417,17 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] step
-    /// only. Latched when the step begins (the post-relog snapshot, before
-    /// the reseed send goes out) and cleared at every step and session
-    /// boundary, so a chat line latched before the relog cannot satisfy the
-    /// post-relog reseed wait.
-    fresh_tutorial_baseline: Option<i32>,
+    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] or
+    /// [`Proof::FreshChat`] step only. Latched when the step begins (the
+    /// post-relog snapshot, before the reseed or getvar send goes out) and
+    /// cleared at every step and session boundary, so a chat line latched
+    /// before the relog cannot satisfy the post-relog wait.
+    fresh_chat_baseline: Option<i32>,
+    /// Latched per step for [`Proof::VisitedWithin`]: set once the player
+    /// stands inside the proof's rectangle on an observed tick of the current
+    /// step. Cleared at every step and session boundary, like the chat
+    /// baseline above.
+    visited_within: bool,
     /// Native host-hold + snapshot facts for the current lamp witness step.
     /// This is deliberately not part of [`GameSnapshot`].
     lamp_episode: Option<LampEpisodeObservation>,
@@ -534,7 +539,8 @@ impl ScenarioRunner {
             evidence: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
-            fresh_tutorial_baseline: None,
+            fresh_chat_baseline: None,
+            visited_within: false,
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
@@ -861,12 +867,13 @@ impl ScenarioRunner {
         }
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
-            self.fresh_tutorial_baseline = None;
+            self.fresh_chat_baseline = None;
+            self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
         }
         self.retry_xp_baselines();
-        self.retry_tutorial_baseline();
+        self.retry_chat_baseline();
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -963,6 +970,7 @@ impl ScenarioRunner {
                 if let Some(window) = self.protect_window.as_mut() {
                     window.observe(&self.snapshot);
                 }
+                self.observe_visited();
             }
             if let Some(message) = self
                 .protect_window
@@ -1112,8 +1120,9 @@ impl ScenarioRunner {
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
-        self.fresh_tutorial_baseline = None;
-        self.capture_tutorial_baseline(self.current_step().wait.arm);
+        self.fresh_chat_baseline = None;
+        self.visited_within = false;
+        self.capture_chat_baseline(self.current_step().wait.arm);
         self.lamp_episode = match self.current_step().kind {
             StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
                 reward_baseline: self.stat_xp(reward_stat),
@@ -1193,10 +1202,17 @@ impl ScenarioRunner {
                 }
                 None => Proof::WorldSpeedChanged { ms }.check(&self.snapshot, None),
             },
-            Proof::FreshTutorial => match self.fresh_tutorial_baseline {
+            Proof::FreshTutorial => match self.fresh_chat_baseline {
                 Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
                 None => false,
             },
+            Proof::FreshChat { needle } => match self.fresh_chat_baseline {
+                Some(baseline) => {
+                    crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+                }
+                None => false,
+            },
+            Proof::VisitedWithin { .. } => self.visited_within,
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
@@ -1459,28 +1475,51 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`]
-    /// step: the newest chat `sequence` in the step-start snapshot, before
-    /// the reseed send goes out. A stale pre-relog `1000` line at or below
-    /// this sequence cannot satisfy the wait.
-    fn capture_tutorial_baseline(&mut self, proof: Proof) {
-        if !matches!(proof, Proof::FreshTutorial) {
+    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`] or
+    /// [`Proof::FreshChat`] step: the newest chat `sequence` in the step-start
+    /// snapshot, before the reseed or getvar send goes out. A stale line at or
+    /// below this sequence cannot satisfy the wait.
+    fn capture_chat_baseline(&mut self, proof: Proof) {
+        if !matches!(proof, Proof::FreshTutorial | Proof::FreshChat { .. }) {
             return;
         }
-        if self.fresh_tutorial_baseline.is_some() {
+        if self.fresh_chat_baseline.is_some() {
             return;
         }
-        self.fresh_tutorial_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+        self.fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
     }
 
-    fn retry_tutorial_baseline(&mut self) {
+    /// Latch [`Proof::VisitedWithin`] for the current step: the first observed
+    /// tick on which the player stands inside the proof's rectangle sets it.
+    /// Runs on every dirty tick before the step's arm is evaluated.
+    fn observe_visited(&mut self) {
+        if self.visited_within {
+            return;
+        }
+        let Proof::VisitedWithin {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level,
+        } = self.current_step().wait.arm
+        else {
+            return;
+        };
+        if crate::proof::visited_within_contains(&self.snapshot, min_x, max_x, min_z, max_z, level)
+        {
+            self.visited_within = true;
+        }
+    }
+
+    fn retry_chat_baseline(&mut self) {
         if !matches!(self.phase, Phase::Running) {
             return;
         }
         if !self.snapshot.ingame() {
             return;
         }
-        self.capture_tutorial_baseline(self.current_step().wait.arm);
+        self.capture_chat_baseline(self.current_step().wait.arm);
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {
