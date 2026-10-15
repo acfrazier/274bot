@@ -63,6 +63,58 @@ pub const MAX_DEPOSITS: u8 = 32;
 /// Cap on caller id lists (keep, only, memo, withdrawals).
 pub const MAX_MEMO: usize = 64;
 
+/// A deposit dispatch or content refusal, distinct from an observed transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DepositFailure {
+    #[error("{}", self.message())]
+    DispatchRefused,
+    #[error("{}", self.message())]
+    DispatchMissing,
+    #[error("{}", self.message())]
+    NoCountFall,
+    #[error("{}", self.message())]
+    FullStack,
+    #[error("{}", self.message())]
+    BankFull,
+    #[error("{}", self.message())]
+    Unbankable,
+}
+
+impl DepositFailure {
+    /// Shared user-facing text for status, traces and `Display`, without allocation.
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::DispatchRefused => "bank deposit dispatch was refused",
+            Self::DispatchMissing => "bank deposit dispatch receipt was not observed",
+            Self::NoCountFall => "bank deposit did not move inventory",
+            Self::FullStack => "bank deposit refused: full stack in bank",
+            Self::BankFull => "bank deposit refused: bank is full",
+            Self::Unbankable => "bank deposit refused: item cannot be banked",
+        }
+    }
+}
+
+/// Exact messages emitted by `interface_bank/scripts/bank.rs2:87-98,129-159`.
+/// Callers must scope these to game messages newer than the dispatch baseline.
+pub fn deposit_content_refusal(message: &str) -> Option<DepositFailure> {
+    if message.eq_ignore_ascii_case("You already have a full stack of that item in the bank.") {
+        Some(DepositFailure::FullStack)
+    } else if message.eq_ignore_ascii_case("You don't have enough space in your bank account.")
+        || message
+            .eq_ignore_ascii_case("You need to subscribe for a members account if you want to")
+        || message.eq_ignore_ascii_case("store any more items in the bank.")
+    {
+        Some(DepositFailure::BankFull)
+    } else if message.eq_ignore_ascii_case("A magical force prevents you from banking this item!")
+        || message.eq_ignore_ascii_case("You have more urgent things to do with this anthem!")
+        || message.eq_ignore_ascii_case("Sorry, you can't bank the monkey!")
+    {
+        Some(DepositFailure::Unbankable)
+    } else {
+        None
+    }
+}
+
 // --- borrowed row ----------------------------------------------------------
 
 pub trait BankRow {

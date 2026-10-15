@@ -3767,6 +3767,7 @@ impl AcquireRun {
             ActionError::Unavailable(reason)
             | ActionError::Failed(reason)
             | ActionError::Blocked(reason) => Arc::clone(reason),
+            ActionError::BankDeposit(reason) => Arc::from(reason.message()),
             ActionError::NeedsEvidence(_) => Arc::from("needs evidence"),
             ActionError::CombatInterrupted => Arc::from("dialogue interrupted by combat"),
             ActionError::UserInput => Arc::from(MANUAL_MOVEMENT_MESSAGE),
