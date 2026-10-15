@@ -5226,7 +5226,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ItemNeed",
@@ -5279,7 +5279,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "held",
@@ -5297,7 +5297,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "hasAll",
@@ -5315,7 +5315,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "AcquireTask",
@@ -5370,7 +5370,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "TaskBot",
@@ -6161,7 +6161,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ToolReq",
@@ -6307,7 +6307,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "PICKAXES",
@@ -6322,7 +6322,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "AXES",
@@ -6337,7 +6337,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "TINDERBOX",
@@ -6352,7 +6352,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "HAMMER",
@@ -6367,7 +6367,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "KNIFE",
@@ -6382,7 +6382,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "CHISEL",
@@ -6397,7 +6397,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "NEEDLE",
@@ -6412,7 +6412,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "pickaxeReq",
@@ -6432,7 +6432,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "axeReq",
@@ -6452,7 +6452,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "exactTool",
@@ -6472,7 +6472,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "tinderboxReq",
@@ -6492,7 +6492,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "toolAttackLevel",
@@ -6512,7 +6512,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "canWieldTool",
@@ -6532,7 +6532,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestFromTiers",
@@ -6552,7 +6552,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestPickaxe",
@@ -6572,7 +6572,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestAxe",
@@ -6592,7 +6592,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "toolKeepNames",
@@ -6612,7 +6612,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "hasToolReq",
@@ -6632,7 +6632,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "hasAllTools",
@@ -6652,7 +6652,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "missingToolLabels",
@@ -6672,7 +6672,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "toolKitLabel",
@@ -6692,7 +6692,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ToolRestockStep",
@@ -6747,7 +6747,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "toolRestockPlan",
@@ -6767,7 +6767,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bankHasBetterGatherTool",
@@ -6787,7 +6787,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "toolsNeedingEquip",
@@ -6807,7 +6807,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestHeldToolNames",
@@ -6827,7 +6827,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "surplusHeldToolNames",
@@ -6847,7 +6847,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "COINS",
@@ -6862,7 +6862,7 @@
       "source_modules": [
         "api/combat/hunting/supply.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "BROKEN_PICKAXE",
@@ -6877,7 +6877,7 @@
       "source_modules": [
         "data/miningRocks.js"
       ],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "BROKEN_AXE",
@@ -6890,7 +6890,7 @@
       "family_id": "acquisition",
       "declaration_type": "string",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ToolAcquireMode",
@@ -6903,7 +6903,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "parseToolAcquireMode",
@@ -6921,7 +6921,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "TOOL_ACQUIRE_OPTIONS",
@@ -6934,7 +6934,7 @@
       "family_id": "acquisition",
       "declaration_type": "readonly string[]",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "TOOL_ACQUIRE_SETTING",
@@ -6947,7 +6947,7 @@
       "family_id": "acquisition",
       "declaration_type": "SettingDef",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "FORGETFUL_BANK_ODDS",
@@ -6960,7 +6960,7 @@
       "family_id": "acquisition",
       "declaration_type": "number",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "FORGETFUL_BANK_SETTING",
@@ -6973,7 +6973,7 @@
       "family_id": "acquisition",
       "declaration_type": "SettingDef",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ToolVendor",
@@ -7065,7 +7065,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ShopOffer",
@@ -7118,7 +7118,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "BOB_VENDOR",
@@ -7131,7 +7131,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "NURMOF_VENDOR",
@@ -7144,7 +7144,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "GERRANT_VENDOR",
@@ -7157,7 +7157,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "HARRY_VENDOR",
@@ -7170,7 +7170,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "GERRANT_ONLY_FISHING",
@@ -7196,7 +7196,7 @@
       "family_id": "acquisition",
       "declaration_type": "Tile",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "VARROCK_ANVIL_BANK",
@@ -7209,7 +7209,7 @@
       "family_id": "acquisition",
       "declaration_type": "Tile",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "PICKAXE_SHOP_COSTS",
@@ -7222,7 +7222,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "AXE_SHOP_COSTS",
@@ -7235,7 +7235,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "FISHING_SHOP_COSTS",
@@ -7261,7 +7261,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "AXE_BAR_FOR",
@@ -7274,7 +7274,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, string>>",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "ToolAcquirePlan",
@@ -7548,7 +7548,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "AcquireWorld",
@@ -7627,7 +7627,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestOwnedTier",
@@ -7645,7 +7645,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "pickaxeShopOffers",
@@ -7663,7 +7663,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "axeShopOffers",
@@ -7681,7 +7681,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestAffordableShopTier",
@@ -7699,7 +7699,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "bestSmithableAxe",
@@ -7717,7 +7717,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "planBrokenToolRepair",
@@ -7735,7 +7735,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "planPickaxeAcquire",
@@ -7753,7 +7753,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "planAxeAcquire",
@@ -7771,7 +7771,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "FishingVendorNear",
@@ -8026,7 +8026,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "coinsToWithdraw",
@@ -8044,7 +8044,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "canFundPlan",
@@ -8062,7 +8062,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "acquireKeepNames",
@@ -8080,7 +8080,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": false
+      "nav_consuming": true
     },
     {
       "name": "shopableMissingFishingGear",
@@ -9850,7 +9850,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9863,7 +9863,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9876,7 +9876,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9889,7 +9889,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9902,7 +9902,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9915,7 +9915,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9928,7 +9928,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9941,7 +9941,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9954,7 +9954,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9967,7 +9967,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9980,7 +9980,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9993,7 +9993,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10006,7 +10006,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10019,7 +10019,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10032,7 +10032,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10045,7 +10045,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10058,7 +10058,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10071,7 +10071,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10084,7 +10084,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10097,7 +10097,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10110,7 +10110,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10123,7 +10123,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10136,7 +10136,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10149,7 +10149,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10162,7 +10162,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10175,7 +10175,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10708,7 +10708,7 @@
       "module": "data/miningRocks.js",
       "family_id": "acquisition",
       "shim": "mining_rocks.js",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "source_modules": [
         "data/miningRocks.js"
       ],
@@ -10902,7 +10902,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10913,7 +10913,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10924,7 +10924,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10935,7 +10935,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-class"
     },
@@ -10946,7 +10946,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10957,7 +10957,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10983,7 +10983,7 @@
         "api/combat/hunting/supply.js"
       ],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11071,7 +11071,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11082,7 +11082,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11104,7 +11104,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11115,7 +11115,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11183,7 +11183,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11194,7 +11194,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11205,7 +11205,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11216,7 +11216,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11227,7 +11227,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11238,7 +11238,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11308,7 +11308,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11330,7 +11330,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11341,7 +11341,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11352,7 +11352,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11363,7 +11363,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11396,7 +11396,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11407,7 +11407,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11495,7 +11495,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11517,7 +11517,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11585,7 +11585,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11596,7 +11596,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11607,7 +11607,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11618,7 +11618,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11651,7 +11651,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11662,7 +11662,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -24853,7 +24853,7 @@
   "family_counts": [
     {
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "declarations": 69,
       "members": 63,
       "overloads": 0,

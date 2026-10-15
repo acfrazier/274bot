@@ -44,9 +44,41 @@ test('the generated ABI contract and family graph are complete', () => {
     const nav = new Set(predecessors.families.filter(row => row.nav_consuming).map(row => row.family_id));
     assert.deepEqual(
         [...nav].sort(),
-        ['bank', 'clues', 'duel', 'hunt', 'quests', 'runtime', 'shop', 'tasks', 'thieving', 'walking'],
-        'nav families are exactly those reached from served ABI sources and called native backends',
+        ['acquisition', 'bank', 'clues', 'duel', 'hunt', 'quests', 'runtime', 'shop', 'tasks', 'thieving', 'walking'],
+        'nav families are exactly those reached from served or declared ABI sources and called native backends',
     );
+});
+
+test('a declared-only runtime member roots its implementation for nav scanning', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-declared-nav-'));
+    const sourceRoot = path.join(scratch, 'src');
+    const botRoot = path.join(sourceRoot, 'bot');
+    const packageRoot = path.join(scratch, 'packages/rs2b0t-api');
+    const acquisition = path.join(botRoot, 'api/acquisition/ItemAcquisition.ts');
+    const nativeRoot = path.join(scratch, 'native');
+    try {
+        fs.mkdirSync(path.dirname(acquisition), { recursive: true });
+        fs.mkdirSync(path.join(botRoot, 'runtime'), { recursive: true });
+        fs.mkdirSync(packageRoot, { recursive: true });
+        fs.mkdirSync(nativeRoot, { recursive: true });
+        fs.writeFileSync(acquisition, "import { Traversal } from '../walking/Traversal.js';\nexport class AcquireTask { execute() { return Traversal.walkResilient(); } }\n");
+        fs.writeFileSync(
+            path.join(botRoot, 'runtime/abi.ts'),
+            "import { AcquireTask } from '../api/acquisition/ItemAcquisition.js';\nfunction installAbi() { const abi = Object.freeze({ AcquireTask }); }\n",
+        );
+        fs.writeFileSync(path.join(packageRoot, 'index.d.ts'), 'export class AcquireTask { execute(): void; }\n');
+        fs.writeFileSync(path.join(packageRoot, 'index.js'), 'export const { AcquireTask } = abi;\n');
+
+        const derived = deriveNavFamilies({
+            frozenSourceRoot: sourceRoot,
+            nativeSourceRoot: nativeRoot,
+            nativeFamilyFamilies: new Map(),
+            registry: [],
+        });
+        assert.deepEqual([...derived].sort(), ['acquisition']);
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
 });
 
 test('code-derived nav evidence agrees with the family graph', { skip: !navFamilies }, () => {
@@ -233,6 +265,48 @@ test('the real generator rejects a seeded nav classification drift', { skip: !fr
         fs.rmSync(scratch, { recursive: true, force: true });
     }
 });
+test('the real generator follows same-family #/ imports when classifying navigation', { skip: !frozenRoot }, () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-nav-hash-alias-seed-'));
+    const sourceCopy = path.join(scratch, 'frozen');
+    try {
+        fs.mkdirSync(sourceCopy, { recursive: true });
+        const archive = execFileSync('git', [
+            '-C',
+            frozenRoot,
+            'archive',
+            frozenRevision,
+            'LICENSE',
+            'src',
+            'packages/rs2b0t-api',
+        ], { maxBuffer: 64 * 1024 * 1024 });
+        execFileSync('tar', ['-x', '-C', sourceCopy], { input: archive });
+        fs.writeFileSync(path.join(scratch, 'REFERENCE.json'), JSON.stringify({
+            repository: frozenRepository,
+            commit: frozenRevision,
+            method: `git archive ${frozenRevision} | tar -x`,
+            export: fs.realpathSync(sourceCopy),
+        }, null, 2));
+        const partnerTrade = path.join(sourceCopy, 'src/bot/api/trade/PartnerTrade.ts');
+        const source = fs.readFileSync(partnerTrade, 'utf8');
+        assert.doesNotMatch(source, /import\s*['"]#\/bot\/api\/trade\/PartnerHandoff\.js['"]/);
+        fs.writeFileSync(partnerTrade, `import '#/bot/api/trade/PartnerHandoff.js';\n${source}`);
+        assert.throws(
+            () => execFileSync(process.execPath, [path.join(here, 'generate.cjs'), '--check'], {
+                cwd: here,
+                env: { ...process.env, RS2B0T: sourceCopy, npm_config_offline: 'true' },
+                stdio: 'pipe',
+            }),
+            error => {
+                const output = `${error.stdout || ''}${error.stderr || ''}`;
+                return error.status === 1
+                    && /Navigation classification disagrees with code evidence for family trade/.test(output);
+            },
+        );
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+});
+
 test('the real generator rejects a walking backend without callback rows', { skip: !frozenRoot }, () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-no-callback-nav-seed-'));
     const crateCopy = path.join(scratch, 'script');

@@ -18,7 +18,7 @@ const SECTION_FAMILIES = new Map([
     ['movement', { id: 'walking', nav: true }],
     ['events', { id: 'events', nav: false }],
     ['bot base classes', { id: 'bot', nav: false }],
-    ['item acquisition', { id: 'acquisition', nav: false }],
+    ['item acquisition', { id: 'acquisition', nav: true }],
     ['manifest', { id: 'bot', nav: false }],
     ['world catalogs (data tables and pure helpers)', { id: 'world-catalogs', nav: false }],
 ]);
@@ -94,7 +94,7 @@ const MODULE_RULES = [
     ['api/locs/', { id: 'entities', nav: false }],
     ['api/grounditems/', { id: 'entities', nav: false }],
     ['api/model/', { id: 'entities', nav: false }],
-    ['api/acquisition/', { id: 'acquisition', nav: false }],
+    ['api/acquisition/', { id: 'acquisition', nav: true }],
     ['api/thieving/', { id: 'thieving', nav: true }],
     ['api/firemaking/', { id: 'firemaking', nav: false }],
     ['api/cooking/', { id: 'cooking', nav: false }],
@@ -417,6 +417,29 @@ function sourceModuleFamilyId(botRoot, file) {
     return rule?.[1].id || null;
 }
 
+function frozenSourceImportCandidates(botRoot, file, specifier) {
+    const sourceRoot = path.dirname(botRoot);
+    const unresolved = specifier.startsWith('.')
+        ? path.resolve(path.dirname(file), specifier)
+        : specifier.startsWith('#/')
+            ? path.resolve(sourceRoot, specifier.slice(2))
+            : null;
+    if (!unresolved || !unresolved.startsWith(`${botRoot}${path.sep}`)) return [];
+    const extension = path.extname(unresolved);
+    const candidates = extension === '.js'
+        ? [`${unresolved.slice(0, -3)}.ts`]
+        : extension === '.ts'
+            ? [unresolved]
+            : extension
+                ? []
+                : [`${unresolved}.ts`, path.join(unresolved, 'index.ts')];
+    return candidates.filter(candidate =>
+        candidate.startsWith(`${botRoot}${path.sep}`) &&
+        fs.existsSync(candidate) &&
+        fs.statSync(candidate).isFile(),
+    );
+}
+
 function frozenSourceImportTargets(botRoot, file, source, familyId) {
     const targets = new Set();
     const visit = node => {
@@ -424,25 +447,10 @@ function frozenSourceImportTargets(botRoot, file, source, familyId) {
             (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
             hasRuntimeModuleBinding(node) &&
             node.moduleSpecifier &&
-            ts.isStringLiteralLike(node.moduleSpecifier) &&
-            node.moduleSpecifier.text.startsWith('.')
+            ts.isStringLiteralLike(node.moduleSpecifier)
         ) {
-            const unresolved = path.resolve(path.dirname(file), node.moduleSpecifier.text);
-            const extension = path.extname(unresolved);
-            const candidates = extension === '.js'
-                ? [`${unresolved.slice(0, -3)}.ts`]
-                : extension === '.ts'
-                    ? [unresolved]
-                    : extension
-                        ? []
-                        : [`${unresolved}.ts`, path.join(unresolved, 'index.ts')];
-            for (const candidate of candidates) {
-                if (
-                    candidate.startsWith(`${botRoot}${path.sep}`) &&
-                    fs.existsSync(candidate) &&
-                    fs.statSync(candidate).isFile() &&
-                    sourceModuleFamilyId(botRoot, candidate) === familyId
-                ) targets.add(candidate);
+            for (const candidate of frozenSourceImportCandidates(botRoot, file, node.moduleSpecifier.text)) {
+                if (sourceModuleFamilyId(botRoot, candidate) === familyId) targets.add(candidate);
             }
         }
         ts.forEachChild(node, visit);
@@ -451,16 +459,115 @@ function frozenSourceImportTargets(botRoot, file, source, familyId) {
     return targets;
 }
 
-// Registered modules.json entries are the served and declared ABI roots.
-// Follow reachable relative imports only within the root family; cross-family
-// dependencies remain classified by their own ABI, and unserved siblings are not roots.
+function frozenDeclaredSourceRoots(root, botRoot) {
+    const frozenRoot = path.dirname(root);
+    const declarationsFile = path.join(frozenRoot, 'packages/rs2b0t-api/index.d.ts');
+    const runtimeIndexFile = path.join(frozenRoot, 'packages/rs2b0t-api/index.js');
+    const abiFile = path.join(botRoot, 'runtime/abi.ts');
+    const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+    const declaredRuntimeRecords = new Map(
+        declarations(parseSource(fs.readFileSync(declarationsFile, 'utf8'), declarationsFile), printer)
+            .filter(record => record.runtime)
+            .map(record => [record.name, record]),
+    );
+    const runtimeNames = new Set(runtimeExports(
+        fs.readFileSync(runtimeIndexFile, 'utf8'),
+        runtimeIndexFile,
+    ));
+    for (const name of declaredRuntimeRecords.keys()) {
+        if (!runtimeNames.has(name)) declaredRuntimeRecords.delete(name);
+    }
+
+    const abiSource = parseSource(fs.readFileSync(abiFile, 'utf8'), abiFile);
+    const imports = new Map();
+    const namespaceImports = new Map();
+    for (const statement of abiSource.statements) {
+        if (
+            !ts.isImportDeclaration(statement) ||
+            !statement.importClause ||
+            !ts.isStringLiteralLike(statement.moduleSpecifier)
+        ) continue;
+        const clause = statement.importClause;
+        if (clause.isTypeOnly) continue;
+        const specifier = statement.moduleSpecifier.text;
+        if (clause.name) imports.set(clause.name.text, specifier);
+        const bindings = clause.namedBindings;
+        if (bindings && ts.isNamespaceImport(bindings)) {
+            namespaceImports.set(bindings.name.text, specifier);
+        } else if (bindings && ts.isNamedImports(bindings)) {
+            for (const element of bindings.elements) {
+                if (!element.isTypeOnly) imports.set(element.name.text, specifier);
+            }
+        }
+    }
+
+    let abiObject = null;
+    const findAbiObject = node => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'abi') {
+            const initializer = node.initializer;
+            if (
+                initializer &&
+                ts.isCallExpression(initializer) &&
+                ts.isPropertyAccessExpression(initializer.expression) &&
+                initializer.expression.expression.getText(abiSource) === 'Object' &&
+                initializer.expression.name.text === 'freeze' &&
+                initializer.arguments[0] &&
+                ts.isObjectLiteralExpression(initializer.arguments[0])
+            ) {
+                abiObject = initializer.arguments[0];
+            }
+        }
+        if (!abiObject) ts.forEachChild(node, findAbiObject);
+    };
+    findAbiObject(abiSource);
+    if (!abiObject) fail(`Unable to locate frozen runtime ABI object in ${abiFile}`);
+
+    const roots = new Map();
+    for (const property of abiObject.properties) {
+        const name = ts.isShorthandPropertyAssignment(property)
+            ? property.name.text
+            : ts.isPropertyAssignment(property)
+                ? nodeName(property.name, abiSource)
+                : null;
+        if (!name || !declaredRuntimeRecords.has(name)) continue;
+        const record = declaredRuntimeRecords.get(name);
+        const value = ts.isShorthandPropertyAssignment(property)
+            ? property.name
+            : ts.isPropertyAssignment(property)
+                ? property.initializer
+                : null;
+        const specifier = value && ts.isIdentifier(value)
+            ? imports.get(value.text)
+            : value && ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
+                ? namespaceImports.get(value.expression.text)
+                : null;
+        if (!specifier) continue;
+        for (const file of frozenSourceImportCandidates(botRoot, abiFile, specifier)) {
+            const familyId = sourceModuleFamilyId(botRoot, file) || familyForDeclaration(name, record.section).id;
+            roots.set(`${file}\0${familyId}`, { file, familyId });
+        }
+    }
+    return [...roots.values()];
+}
+
+// Registered modules.json entries are served roots. Runtime-declared ABI members
+// without a served source module add roots; only same-family imports are followed.
+// Cross-family dependencies remain classified by their own ABI, and unserved siblings are not roots.
 function frozenSourceNavFamilies(root, registry) {
     const botRoot = path.resolve(root, 'bot');
     const navFamilies = new Set();
+    const roots = [];
+    const servedRootFiles = new Set();
     for (const entry of registry) {
         const rootFile = frozenSourceModuleFile(botRoot, entry.module);
         if (!rootFile) continue;
-        const familyId = moduleFamilyId(entry.module);
+        roots.push({ file: rootFile, familyId: moduleFamilyId(entry.module) });
+        servedRootFiles.add(rootFile);
+    }
+    for (const declaredRoot of frozenDeclaredSourceRoots(root, botRoot)) {
+        if (!servedRootFiles.has(declaredRoot.file)) roots.push(declaredRoot);
+    }
+    for (const { file: rootFile, familyId } of roots) {
         const pending = [rootFile];
         const visited = new Set();
         while (pending.length) {
