@@ -330,6 +330,14 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/quester_paths.rs|QuesterPathsController",
+      "path": "crates/frontend-core/src/quester_paths.rs",
+      "symbol": "QuesterPathsController",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0 baseline seam classification."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/quester_paths.rs|QuesterPathsView",
       "path": "crates/frontend-core/src/quester_paths.rs",
       "symbol": "QuesterPathsView",
@@ -517,6 +525,14 @@
       "id": "seam_type|crates/frontend-core/src/scripts/mod.rs|Notice",
       "path": "crates/frontend-core/src/scripts/mod.rs",
       "symbol": "Notice",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0 baseline seam classification."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/mod.rs|Scripts",
+      "path": "crates/frontend-core/src/scripts/mod.rs",
+      "symbol": "Scripts",
       "classification": "owning",
       "owner": "T3",
       "reason": "F0 baseline seam classification."
@@ -2472,6 +2488,50 @@
       "category": "owning_public_field",
       "path": "crates/frontend-core/src/scripts/mod.rs",
       "symbol": "Notice::Show::0",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "F0 baseline debt; remove at T3.1.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|cfg(any(test,feature=\"test-support\"))|Scripts::fail_reload_start_for|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/mod.rs",
+      "symbol": "Scripts::fail_reload_start_for",
+      "cfg_or_target": "cfg(any(test,feature=\"test-support\"))",
+      "owner": "T3",
+      "reason": "F0 baseline debt; remove at T3.1.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|production|Scripts::inject|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/mod.rs",
+      "symbol": "Scripts::inject",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "F0 baseline debt; remove at T3.1.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|production|Scripts::js|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/mod.rs",
+      "symbol": "Scripts::js",
+      "cfg_or_target": "production",
+      "owner": "T3",
+      "reason": "F0 baseline debt; remove at T3.1.",
+      "removal_endpoint": "T3.1",
+      "classification": "public_field_of_owning_view"
+    },
+    {
+      "id": "owning_public_field|crates/frontend-core/src/scripts/mod.rs|production|Scripts::legacy|public_field_of_owning_view",
+      "category": "owning_public_field",
+      "path": "crates/frontend-core/src/scripts/mod.rs",
+      "symbol": "Scripts::legacy",
       "cfg_or_target": "production",
       "owner": "T3",
       "reason": "F0 baseline debt; remove at T3.1.",
