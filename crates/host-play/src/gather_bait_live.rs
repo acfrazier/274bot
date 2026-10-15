@@ -356,17 +356,19 @@ fn run_cell(variant: Variant) {
         PROFILE,
         "the hint path is keyed by this profile"
     );
-    let hint = script::bank_hints::HintFile::for_account(PROFILE, &account)
-        .expect("a minted live name is a login name");
+    let account_key = api::local_state::AccountKey::try_new(PROFILE, &account)
+        .expect("a minted live name is a login identity");
+    let hint_path = crate::local_state::StateRoot::new(PathBuf::from(&home).join(".274bot"))
+        .bank_hint_file(PROFILE, &account_key.account().to_string());
     assert!(
-        hint.path().starts_with(&home),
+        hint_path.starts_with(&home),
         "the hint path {} must sit under HOME {home}",
-        hint.path().display()
+        hint_path.display()
     );
     let trace = Arc::new(Mutex::new(BaitTrace {
         variant: Some(variant),
         home: Some(home.clone()),
-        hint_path: Some(hint.path().display().to_string()),
+        hint_path: Some(hint_path.display().to_string()),
         ..BaitTrace::default()
     }));
     if variant == Variant::StaleHint {
@@ -375,14 +377,14 @@ fn run_cell(variant: Variant) {
         let contents = serde_json::json!({
             "schema_version": 1,
             "profile": PROFILE,
-            "account": hint.account(),
+            "account": account_key.account(),
             "observed_at_unix": epoch,
             "rows": [[FISHING_BAIT, HINTED_BAIT]],
         })
         .to_string();
-        let parent = hint.path().parent().expect("hint parent");
+        let parent = hint_path.parent().expect("hint parent");
         std::fs::create_dir_all(parent).expect("create the hint directory");
-        std::fs::write(hint.path(), &contents).expect("write the stale hint");
+        std::fs::write(&hint_path, &contents).expect("write the stale hint");
         trace.lock().hint_written = Some(contents);
     }
     let _ = api::hostlog::install_sink(&SLOT_LOG);
