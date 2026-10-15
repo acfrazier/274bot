@@ -385,6 +385,14 @@ impl ReadyImages {
     ) -> Result<Option<usize>, MapCacheError> {
         Ok(self.inner.read_tile_into(key, buffer)?)
     }
+
+    /// Read one listed PNG into receipt-verified immutable shared custody.
+    pub fn read_tile_arc(
+        &self,
+        key: nav::map::spatial::TileKey,
+    ) -> Result<Option<Arc<[u8]>>, MapCacheError> {
+        Ok(self.inner.read_tile_arc(key)?)
+    }
 }
 
 /// How long [`retry_while_denied`] waits for a Windows refusal to clear before

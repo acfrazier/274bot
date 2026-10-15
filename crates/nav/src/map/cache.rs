@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const CHECKPOINT_SCHEMA: u16 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +235,40 @@ impl ReadyImages {
             buffer,
         )?;
         Ok(Some(receipt.verify_png(buffer)?))
+    }
+
+    /// Read one receipt-verified PNG directly into immutable shared custody.
+    /// Unlisted keys have no art; a missing or corrupt listed file is an error.
+    pub fn read_tile_arc(&self, key: TileKey) -> Result<Option<Arc<[u8]>>, MapError> {
+        let Some(receipt) = self.manifest.tile(key) else {
+            return Ok(None);
+        };
+        let path = self.directory.join(key.relative_path()?);
+        let mut file = File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(MapError::Path);
+        }
+        if metadata.len() != u64::from(receipt.payload.bytes) {
+            return Err(MapError::Invalid("file changed while reading"));
+        }
+        // RepeatN is exact-length: Arc collects directly into its slice.
+        // The bytes are initialized before Read receives a mutable u8 slice.
+        let mut bytes: Arc<[u8]> =
+            std::iter::repeat_n(0u8, receipt.payload.bytes as usize).collect();
+        file.read_exact(Arc::get_mut(&mut bytes).expect("new Arc is uniquely owned"))
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    MapError::Truncated
+                } else {
+                    error.into()
+                }
+            })?;
+        if file.read(&mut [0])? != 0 {
+            return Err(MapError::Invalid("file changed while reading"));
+        }
+        receipt.verify_png(&bytes)?;
+        Ok(Some(bytes))
     }
 }
 

@@ -9,8 +9,8 @@ use api::work::{
     WalkMapDecodePhase, WorkCharge,
 };
 use host_play::map_bind::{
-    WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_PNG_LIMIT,
-    WALK_MAP_DECODE_SCRATCH_LIMIT,
+    WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_INPUT_OVERHEAD,
+    WALK_MAP_DECODE_PNG_LIMIT, WALK_MAP_DECODE_SCRATCH_LIMIT,
 };
 use nav::map::formats::ImageManifest;
 use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
@@ -56,7 +56,7 @@ fn slice_budget(start: Instant) -> SliceBudget {
 fn declared_charge(png_bytes: usize) -> WorkCharge {
     WorkCharge::new(
         png_bytes
-            .checked_add(std::mem::size_of::<WalkMapDecodeJob>())
+            .checked_add(WALK_MAP_DECODE_INPUT_OVERHEAD)
             .expect("bounded input charge"),
         WALK_MAP_DECODE_SCRATCH_LIMIT,
         TILE_RGBA_BYTES,
@@ -68,7 +68,7 @@ fn maximum_declared_charge() -> WorkCharge {
     declared_charge(WALK_MAP_DECODE_PNG_LIMIT)
 }
 
-fn largest_published_tile() -> Vec<u8> {
+fn published_manifest() -> (std::path::PathBuf, ImageManifest) {
     let root = std::path::PathBuf::from(
         std::env::var_os("BOT_WALK_MAP_DECODE_CORPUS")
             .expect("BOT_WALK_MAP_DECODE_CORPUS must name the published image artifact"),
@@ -79,6 +79,11 @@ fn largest_published_tile() -> Vec<u8> {
         serde_json::from_slice(&manifest_bytes).expect("read declared image identity");
     let manifest =
         ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
+    (root, manifest)
+}
+
+fn largest_published_tile() -> Vec<u8> {
+    let (root, manifest) = published_manifest();
     let receipt = manifest
         .tiles
         .as_slice()
@@ -93,6 +98,54 @@ fn largest_published_tile() -> Vec<u8> {
     assert_eq!(verified_len, TILE_RGBA_BYTES);
     assert!(png.len() <= WALK_MAP_DECODE_PNG_LIMIT);
     png
+}
+
+#[test]
+#[ignore = "requires BOT_WALK_MAP_DECODE_CORPUS to point at a published image artifact"]
+fn largest_png_loads_directly_into_one_shared_allocation() {
+    let (root, manifest) = published_manifest();
+    let receipt = manifest
+        .tiles
+        .as_slice()
+        .iter()
+        .max_by_key(|tile| tile.payload.bytes)
+        .expect("published image has terrain tiles");
+    let ready = nav::map::cache::ReadyImages::open(&root, manifest.identity)
+        .expect("open verified image artifact");
+    let overhead = allocation_counter::measure(|| {
+        let path = root.join(receipt.key.relative_path().expect("validated tile path"));
+        let _file = std::fs::File::open(path).expect("open listed PNG");
+    });
+    let allocations = allocation_counter::measure(|| {
+        let shared = ready
+            .read_tile_arc(receipt.key)
+            .expect("read verified PNG")
+            .expect("listed tile has PNG bytes");
+        assert_eq!(shared.len(), receipt.payload.bytes as usize);
+        receipt
+            .verify_png(&shared)
+            .expect("shared PNG matches its receipt");
+        drop(shared);
+    });
+    assert_eq!(allocations.count_current, 0);
+    assert_eq!(allocations.bytes_current, 0);
+    assert_eq!(
+        allocations.count_total,
+        overhead.count_total + 1,
+        "loading must allocate only the shared PNG, not a temporary Vec copy"
+    );
+    assert_eq!(
+        allocations.bytes_total - overhead.bytes_total,
+        u64::from(receipt.payload.bytes) + 2 * std::mem::size_of::<usize>() as u64,
+        "the PNG allocation includes exactly the two Arc reference counts"
+    );
+    eprintln!(
+        "direct PNG={}B, allocations={}, total={}B, path/open overhead={}B",
+        receipt.payload.bytes,
+        allocations.count_total,
+        allocations.bytes_total,
+        overhead.bytes_total
+    );
 }
 
 /// Count the production cooperative job itself on this thread. The panel's
