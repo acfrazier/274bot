@@ -96,6 +96,13 @@ pub struct WalkSendRow {
     pub checked: bool,
 }
 
+impl WalkSendRow {
+    /// Profile name for this send row.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WalkSendState {
     pub mode: WalkSendMode,
@@ -615,7 +622,7 @@ impl TuiApp {
     pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
         let path = path.into();
         self.quester_paths_controller.restore_at(&path);
-        self.quester_paths = self.quester_paths_controller.settings().clone();
+        self.quester_paths = self.quester_paths_controller.settings().duplicate();
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
             &path,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
@@ -682,7 +689,7 @@ impl TuiApp {
         let name = self.focused_name()?;
         self.detail
             .as_ref()
-            .filter(|detail| detail.row.name == name)
+            .filter(|detail| detail.row().name() == name)
     }
 
     /// The focused slot's username.
@@ -722,7 +729,7 @@ impl TuiApp {
     pub fn refresh(&mut self) {
         self.here = self
             .focused_detail()
-            .and_then(|detail| detail.ready_tile)
+            .and_then(|detail| detail.ready_tile())
             .map(|(x, z, level)| WorldTile { x, z, level });
         if !self.map_active {
             if let Some(here) = self.here {
@@ -1012,7 +1019,7 @@ impl TuiApp {
         let names: Vec<String> = if !self.names.is_empty() {
             self.names.clone()
         } else {
-            self.fleet.iter().map(|row| row.name.clone()).collect()
+            self.fleet.iter().map(|row| row.name().to_owned()).collect()
         };
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
@@ -1045,7 +1052,7 @@ impl TuiApp {
                 .rows
                 .iter()
                 .filter(|row| row.status.is_eligible())
-                .map(|row| self.profile_id_for_name(&row.name))
+                .map(|row| self.profile_id_for_name(row.name()))
                 .collect::<Vec<_>>();
             for row in &mut self.walk_send.rows {
                 if row.status.is_eligible() {
@@ -1067,7 +1074,7 @@ impl TuiApp {
             .walk_send
             .rows
             .iter_mut()
-            .find(|row| row.name == focused)
+            .find(|row| row.name() == focused)
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
@@ -1778,10 +1785,10 @@ impl TuiApp {
                         let mark = if row.checked { "*" } else { " " };
                         match row.status {
                             WalkSlotStatus::Eligible(_) => {
-                                format!("{mark}{}", row.name)
+                                format!("{mark}{}", row.name())
                             }
                             WalkSlotStatus::Excluded(reason) => {
-                                format!("{mark}{} ({reason})", row.name)
+                                format!("{mark}{} ({reason})", row.name())
                             }
                         }
                     })
@@ -2025,15 +2032,17 @@ impl TuiApp {
             !self.params_schema.is_empty(),
             None,
         )
-        .with_reload_confirm(self.reload_confirm)
-        .with_native_status(
-            self.focused_detail()
-                .and_then(|detail| detail.native_status()),
-        )
-        .with_walk_risk(
-            self.focused_detail()
-                .and_then(|detail| detail.walk_risk.as_deref()),
-        );
+        .with_reload_confirm(self.reload_confirm);
+        let native = self
+            .focused_detail()
+            .and_then(|detail| detail.native_status_arc());
+        let walk_risk = self
+            .focused_detail()
+            .and_then(|detail| detail.walk_risk())
+            .map(str::to_owned);
+        let pane = pane
+            .with_native_status(native.as_deref())
+            .with_walk_risk(walk_risk.as_deref());
         frame.render_widget(pane, area);
     }
 }

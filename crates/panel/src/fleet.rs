@@ -125,7 +125,7 @@ fn contains_ci(value: &str, query: &str) -> bool {
 }
 
 fn row_matches(row: &FleetRow, filter: &str) -> bool {
-    contains_ci(&row.name, filter) || contains_ci(&row.brief, filter)
+    contains_ci(row.name(), filter) || contains_ci(row.brief(), filter)
 }
 
 fn sorted_rows<'a>(rows: &'a [FleetRow], filter: &str, sort: FleetSort) -> Vec<&'a FleetRow> {
@@ -134,12 +134,12 @@ fn sorted_rows<'a>(rows: &'a [FleetRow], filter: &str, sort: FleetSort) -> Vec<&
         .filter(|row| row_matches(row, filter))
         .collect::<Vec<_>>();
     visible.sort_by(|left, right| match sort {
-        FleetSort::Name => left.name.cmp(&right.name),
+        FleetSort::Name => left.name().cmp(right.name()),
         FleetSort::Status => left
-            .phase
+            .phase()
             .label()
-            .cmp(right.phase.label())
-            .then_with(|| left.name.cmp(&right.name)),
+            .cmp(right.phase().label())
+            .then_with(|| left.name().cmp(right.name())),
     });
     visible
 }
@@ -155,16 +155,13 @@ fn profile_rows(session: &Session) -> Vec<FleetRow> {
                 .map(|profile| {
                     projected
                         .iter()
-                        .find(|row| row.name == profile.username)
-                        .cloned()
-                        .unwrap_or_else(|| FleetRow {
-                            name: profile.username.clone(),
-                            ..FleetRow::default()
-                        })
+                        .find(|row| row.name() == profile.username)
+                        .map(FleetRow::snapshot)
+                        .unwrap_or_else(|| FleetRow::for_profile(&profile.username))
                 })
                 .collect()
         })
-        .unwrap_or_else(|| projected.to_vec())
+        .unwrap_or_else(|| projected.iter().map(FleetRow::snapshot).collect())
 }
 
 const ASSIGN_LABEL: &str = "Assign selected card";
@@ -327,31 +324,31 @@ fn restart_confirm(ui: &Ui, session: &mut Session) {
     let mut decision = None;
     ui.popup(RESTART_POPUP, || {
         let scope = session.fleet_restart_scope();
-        if scope.interrupted.is_empty() && scope.starting.is_empty() {
+        if scope.interrupted().is_empty() && scope.starting().is_empty() {
             ui.text_wrapped("No loaded marked bot to start the card on.");
         } else {
-            if !scope.interrupted.is_empty() {
+            if !scope.interrupted().is_empty() {
                 ui.text_wrapped(format!(
                     "Stop and restart {} running {}: {}",
-                    scope.interrupted.len(),
-                    if scope.interrupted.len() == 1 {
+                    scope.interrupted().len(),
+                    if scope.interrupted().len() == 1 {
                         "bot"
                     } else {
                         "bots"
                     },
-                    scope.interrupted.join(", ")
+                    scope.interrupted().join(", ")
                 ));
             }
-            if !scope.starting.is_empty() {
+            if !scope.starting().is_empty() {
                 ui.text_wrapped(format!(
                     "Start the card on {} idle {}: {}",
-                    scope.starting.len(),
-                    if scope.starting.len() == 1 {
+                    scope.starting().len(),
+                    if scope.starting().len() == 1 {
                         "bot"
                     } else {
                         "bots"
                     },
-                    scope.starting.join(", ")
+                    scope.starting().join(", ")
                 ));
             }
         }
@@ -504,7 +501,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
         }
         ui.table_headers_row();
         for row in visible {
-            let marked_id = identity(session, &row.name);
+            let marked_id = identity(session, row.name());
             let mut marked = session.fleet_selection.contains(marked_id);
             ui.table_next_row();
             ui.table_next_column();
@@ -516,8 +513,8 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             ui.table_next_column();
             #[cfg(test)]
             record_cell(ui);
-            ui.text(&row.name);
-            if session.scripts.has_restart_badge(&row.name) {
+            ui.text(row.name());
+            if session.scripts.has_restart_badge(row.name()) {
                 ui.same_line();
                 ui.text_colored(WARN, "[restart]");
                 ui.set_item_tooltip("saved settings need a restart to apply");
@@ -526,7 +523,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
                 session
                     .core
                     .play()
-                    .and_then(|play| play.script_progress(&row.name))
+                    .and_then(|play| play.script_progress(row.name()))
             } else {
                 None
             };
@@ -537,18 +534,18 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
                 match column {
                     FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
                     FleetColumn::Card => cell(ui, |out| {
-                        match Scripts::assignment(&session.core, &row.name) {
+                        match Scripts::assignment(&session.core, row.name()) {
                             Some(assignment) => out.push_str(&assignment.display_name),
                             None => out.push_str(NONE),
                         };
                     }),
                     FleetColumn::Run => {
-                        ui.text(frontend_core::views::run_state_label(row.script));
+                        ui.text(frontend_core::views::run_state_label(row.script()));
                         if ui.is_item_hovered() {
                             if let Some(error) = session
                                 .core
                                 .play()
-                                .and_then(|play| play.script_last_error(&row.name))
+                                .and_then(|play| play.script_last_error(row.name()))
                             {
                                 ui.set_item_tooltip(&error);
                             }
@@ -559,7 +556,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
                     }),
                     FleetColumn::LastLog => cell(ui, |out| {
                         if needs_last_line
-                            && !frontend_core::log::global().slot_last_message(&row.name, out)
+                            && !frontend_core::log::global().slot_last_message(row.name(), out)
                         {
                             out.push_str(NONE);
                         }
@@ -687,7 +684,7 @@ mod tests {
             FleetRow::fixture("alice", Phase::Preparing, Some(302), None),
         ];
         assert!(row_matches(&rows[0], "idle"));
-        assert_eq!(sorted_rows(&rows, "", FleetSort::Name)[0].name, "alice");
+        assert_eq!(sorted_rows(&rows, "", FleetSort::Name)[0].name(), "alice");
         assert_eq!(sorted_rows(&rows, "starting", FleetSort::Status).len(), 1);
     }
 

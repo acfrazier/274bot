@@ -132,7 +132,7 @@ impl<Io> OperatorSession<Io> {
             self.settings_writes.push(SettingsWrite {
                 op,
                 profile: name,
-                result: SettingsResult::Saved(LiveDelivery::Stale),
+                result: SettingsResult::saved(LiveDelivery::Stale),
             });
             return;
         }
@@ -159,7 +159,7 @@ impl<Io> OperatorSession<Io> {
             Err(error) => self.settings_writes.push(SettingsWrite {
                 op,
                 profile: name,
-                result: SettingsResult::Saved(LiveDelivery::Rejected(error)),
+                result: SettingsResult::saved(LiveDelivery::rejected(error)),
             }),
         }
     }
@@ -189,7 +189,7 @@ impl<Io> OperatorSession<Io> {
                                 pending.live.prepared = Some(config);
                                 deliver_settings(play, &pending.name, Some(pending.live))
                             }
-                            Err(error) => LiveDelivery::Rejected(error),
+                            Err(error) => LiveDelivery::rejected(error),
                         }
                     }
                 } else {
@@ -198,7 +198,7 @@ impl<Io> OperatorSession<Io> {
             self.settings_writes.push(SettingsWrite {
                 op: pending.op,
                 profile: pending.name,
-                result: SettingsResult::Saved(delivery),
+                result: SettingsResult::saved(delivery),
             });
         }
     }
@@ -300,7 +300,7 @@ impl<Io> OperatorSession<Io> {
             Ok(worker) => worker,
             Err(error) => {
                 self.operations
-                    .set(op, &profile.username, Outcome::Failed(error.clone()));
+                    .set(op, &profile.username, Outcome::failed(error.clone()));
                 return Err(error);
             }
         };
@@ -411,19 +411,19 @@ impl<Io> OperatorSession<Io> {
                 Ok(config) => config,
                 Err(error) => {
                     self.operations
-                        .set(op, &name, Outcome::Failed(error.clone()));
+                        .set(op, &name, Outcome::failed(error.clone()));
                     self.write_failures
-                        .push(crate::profile_saves::WriteFailure {
+                        .push(crate::profile_saves::WriteFailure::new(
                             op,
-                            target: name.clone(),
-                            label: pending.label,
-                            error: error.clone(),
-                        });
+                            name.clone(),
+                            pending.label,
+                            error.clone(),
+                        ));
                     if pending.mirror.is_native_settings() {
                         self.settings_writes.push(SettingsWrite {
                             op,
                             profile: name.clone(),
-                            result: SettingsResult::Failed(error),
+                            result: SettingsResult::failed(error),
                         });
                     }
                     continue;
@@ -521,17 +521,17 @@ impl<Io> OperatorSession<Io> {
             pending.copy_start_hold = None;
             pending.copy_abandoned = true;
             self.operations
-                .set(*op, &pending.member, Outcome::Failed(error.clone()));
-            self.write_failures.push(WriteFailure {
-                op: *op,
-                target: pending.member.clone(),
-                label: pending.label,
-                error: error.clone(),
-            });
+                .set(*op, &pending.member, Outcome::failed(error.clone()));
+            self.write_failures.push(WriteFailure::new(
+                *op,
+                pending.member.clone(),
+                pending.label,
+                error.clone(),
+            ));
             self.settings_writes.push(SettingsWrite {
                 op: *op,
                 profile: pending.member.clone(),
-                result: SettingsResult::Failed(error),
+                result: SettingsResult::failed(error),
             });
         }
     }

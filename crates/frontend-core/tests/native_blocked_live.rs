@@ -237,11 +237,11 @@ fn gatherer_blocked_stops_with_shared_status() {
             script_status_reason(&blocked),
             Some(failure.message.as_ref())
         );
-        let mut log = LogView::new(LogScope::Slot(account.clone()));
+        let mut log = LogView::new(LogScope::slot(account.clone()));
         global().refresh(&mut log);
         let reason_logged = log.rows().iter().any(|row| {
-            row.source == api::hostlog::Source::Script
-                && row.message.contains(failure.message.as_ref())
+            row.source() == api::hostlog::Source::Script
+                && row.message().contains(failure.message.as_ref())
         });
         let observation = state.lock().unwrap();
         let snapshot = &observation.snapshot;

@@ -143,7 +143,7 @@ impl Session {
     /// Operator opted into warming every unwarmed card. Still one
     /// `ensure_js` per armed frame — never a catalog-wide click.
     pub fn queue_transpile_all(&mut self) {
-        let need = self.scripts.js.cards_needing_transpile();
+        let need = self.scripts.js().cards_needing_transpile();
         if need.is_empty() {
             return;
         }
@@ -166,9 +166,9 @@ impl Session {
     pub fn pump_script_transpile(&mut self) {
         if self.transpile_armed {
             if let Some((source, name)) = self.transpile_queue.pop_front() {
-                match self.scripts.js.ensure_js(source, &name) {
+                match self.scripts.js_mut().ensure_js(source, &name) {
                     Ok(()) => {
-                        if self.scripts.js.load_failures().is_empty() {
+                        if self.scripts.js().load_failures().is_empty() {
                             self.error = None;
                         }
                         self.transpile_done = self.transpile_done.saturating_add(1);
@@ -192,14 +192,14 @@ impl Session {
         name: String,
         to_front: bool,
     ) {
-        if self.scripts.js.js_is_ready(source, &name) {
+        if self.scripts.js().js_is_ready(source, &name) {
             return;
         }
-        let Some(card) = self.scripts.js.get(source, &name) else {
+        let Some(card) = self.scripts.js().get(source, &name) else {
             return;
         };
-        if self.scripts.js.cache().is_cached(card.origin.as_bytes()) {
-            if let Err(e) = self.scripts.js.ensure_js(source, &name) {
+        if self.scripts.js().cache().is_cached(card.origin.as_bytes()) {
+            if let Err(e) = self.scripts.js_mut().ensure_js(source, &name) {
                 self.error = Some(format!("transpile {name}: {e}"));
             }
             return;
@@ -232,7 +232,7 @@ impl Session {
         &self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        host_play::live_start::card_siblings(&self.scripts.js, card)
+        host_play::live_start::card_siblings(self.scripts.js(), card)
     }
 
     /// Load a local JS/TS file into the library (registers a picker card,
@@ -243,7 +243,7 @@ impl Session {
             self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.scripts.js.load(path) {
+        match self.scripts.js_mut().load(path) {
             Ok(card) => {
                 self.error = None;
                 let sel = script::ScriptSel::Loaded(card.source, card.identity_id());

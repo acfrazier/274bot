@@ -87,7 +87,7 @@ impl Fixture {
     fn card(&mut self, file: &str, src: &str) -> script::JsCard {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
-        self.scripts.js.load(&path).unwrap()
+        self.scripts.js_mut().load(&path).unwrap()
     }
 
     fn assign(&mut self, name: &str, card: &script::JsCard) {
@@ -263,7 +263,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         &card.settings_schema,
     );
     f.core.flush_writes();
-    let before = f.core.last_operation().map(|report| report.id);
+    let before = f.core.last_operation().map(|report| report.id());
 
     for text in ["1", "12", "123"] {
         let buffer = f.scripts.parameter_text_mut_for(
@@ -286,7 +286,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             ),
             Ok(json!(text.parse::<u64>().unwrap()))
         );
-        assert_eq!(f.core.last_operation().map(|report| report.id), before);
+        assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     }
 
     let buffer = f.scripts.parameter_text_mut_for(
@@ -310,7 +310,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         )
         .is_err());
     assert_eq!(
-        f.core.last_operation().map(|report| report.id),
+        f.core.last_operation().map(|report| report.id()),
         before,
         "an invalid partial number never creates a save operation"
     );
@@ -340,7 +340,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
     assert!(start_error.contains("uncommitted"));
-    assert_eq!(f.core.last_operation().map(|report| report.id), before);
+    assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     assert!(
         f.scripts.parameter_edit_blocks_start("alice"),
         "a valid but uncommitted draft must hold Start"
@@ -363,12 +363,12 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         other => panic!("expected one queued profile save, got {other:?}"),
     };
     assert_eq!(
-        f.core.last_operation().map(|report| report.id),
+        f.core.last_operation().map(|report| report.id()),
         Some(op),
         "the explicit commit adds exactly one operation"
     );
     assert_eq!(
-        f.core.operation(op).unwrap().action,
+        f.core.operation(op).unwrap().action(),
         ActionKind::SaveProfile
     );
     assert_eq!(
@@ -385,7 +385,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         ParameterCommit::Pending(op),
         "the same in-flight value must reuse its operation"
     );
-    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+    assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
 
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -407,7 +407,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             .unwrap(),
         ParameterCommit::Unchanged
     );
-    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+    assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
 }
 
 #[test]
@@ -458,7 +458,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
         json!(["coppe"]),
         "the typo is syntactically valid but not a known Mining resource"
     );
-    let before = f.core.last_operation().map(|report| report.id);
+    let before = f.core.last_operation().map(|report| report.id());
     let result = f.scripts.commit_parameter_value(
         &mut f.core,
         &key,
@@ -475,7 +475,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     let report = f.core.operation(op).unwrap();
-    assert_eq!(report.action, ActionKind::SaveProfile);
+    assert_eq!(report.action(), ActionKind::SaveProfile);
     assert_eq!(
         report.outcome("alice"),
         Some(&Outcome::Completed),
@@ -498,7 +498,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
             ),
             Ok(ParameterCommit::Unchanged)
         ));
-        assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+        assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
     }
 
     let current_bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
@@ -546,7 +546,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     let radius_report = f.core.operation(radius_op).unwrap();
-    assert_eq!(radius_report.action, ActionKind::SaveProfile);
+    assert_eq!(radius_report.action(), ActionKind::SaveProfile);
     assert_eq!(radius_report.outcome("alice"), Some(&Outcome::Completed));
     let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
     assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
@@ -647,14 +647,14 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     );
     let report = f.scripts.last_settings_sync().unwrap();
     assert_eq!(
-        (report.saved, report.failed.len(), report.skipped.len()),
+        (report.saved, report.failed.len(), report.skipped().len()),
         (2, 0, 1)
     );
     assert_eq!((report.delivered, report.not_running), (1, 1));
     let operation = f.core.operation(op).unwrap();
     assert!(matches!(
         operation.outcome("carol"),
-        Some(Outcome::Skipped(_))
+        Some(o) if o.is_skipped()
     ));
     assert_eq!(operation.outcome("bob"), Some(&Outcome::Completed));
     assert_eq!(operation.outcome("dave"), Some(&Outcome::Completed));
@@ -664,7 +664,7 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
         "carol's run of another card was never posted"
     );
     let summary = report.summary().to_string();
-    assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
+    assert_eq!(f.scripts.take_notice(), Some(Notice::show(summary)));
 }
 
 /// Wall-wide Apply to all copies same-card members only: unassigned members
@@ -1053,7 +1053,13 @@ fn coalesced_partner_saves_settle_on_the_newest_partner() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    let outcome = |op| f.core.operation(op).unwrap().outcome("alice").cloned();
+    let outcome = |op| {
+        f.core
+            .operation(op)
+            .unwrap()
+            .outcome("alice")
+            .map(|o| o.duplicate())
+    };
     assert_eq!(outcome(saves[0]), Some(Outcome::Cancelled));
     assert_eq!(outcome(saves[1]), Some(Outcome::Completed));
     assert!(f.run_has_bag("alice", &bag(&[("clueDuelPartner", json!("Second"))])));
@@ -1211,9 +1217,8 @@ fn start_all_and_stop_all_cover_every_member() {
     f.scripts.start_all(&mut f.core, None);
     assert_eq!(
         f.scripts.take_notice(),
-        Some(Notice::Show(
-            "Start all: started 1, skipped 1, failed 1: carol: no assignment; skipped bob: already active"
-                .into(),
+        Some(Notice::show(
+            "Start all: started 1, skipped 1, failed 1: carol: no assignment; skipped bob: already active",
         ))
     );
     f.settle();
@@ -1265,7 +1270,7 @@ fn a_parameter_edit_reaches_the_run_once_durable() {
     // Delivered, not Unchanged: the run had not received it while queued.
     assert_eq!(
         writes[0].result,
-        super::SettingsResult::Saved(super::LiveDelivery::Delivered)
+        super::SettingsResult::saved(super::LiveDelivery::Delivered)
     );
     assert!(f.run_has_bag("alice", &bag(&[("target", json!("Guard"))])));
 }
@@ -1352,7 +1357,7 @@ fn overlapping_syncs_each_settle_their_own_operation() {
     }
     assert!(matches!(
         f.core.operation(second).unwrap().outcome("bob"),
-        Some(Outcome::Completed)
+        Some(&Outcome::Completed)
     ));
     assert_eq!(f.scripts.last_settings_sync().unwrap().op, second);
     assert_eq!(
@@ -1374,16 +1379,16 @@ fn a_ready_start_keeps_the_start_all_report_shown() {
     f.assign("alice", &card);
     f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
     f.settle();
-    assert!(f.scripts.js.load_failure(&card.identity_key()).is_some());
+    assert!(f.scripts.js().load_failure(&card.identity_key()).is_some());
     std::fs::write(f.dir.join("gate.ts"), "export const fail = false;").unwrap();
     f.scripts.take_notice();
 
     f.scripts.start_all(&mut f.core, None);
-    let report = Notice::Show("Start all: started 1, skipped 0".into());
+    let report = Notice::show("Start all: started 1, skipped 0");
     assert_eq!(f.scripts.take_notice(), Some(report));
     f.settle();
     f.core.flush_writes();
-    assert!(f.scripts.js.load_failure(&card.identity_key()).is_none());
+    assert!(f.scripts.js().load_failure(&card.identity_key()).is_none());
     assert_eq!(f.scripts.take_notice(), None, "the report is not replaced");
     f.core.play().unwrap().script_stop("alice");
 }
@@ -1448,7 +1453,7 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
         f.core
             .fleet_view()
             .row(name)
-            .and_then(|row| row.last_op.clone())
+            .and_then(|row| row.last_op().map(|op| op.duplicate()))
             .expect(name)
     };
 
@@ -1461,39 +1466,43 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.core.poll();
     let accepted = op_of(&f, "opid-alice");
     // Accepted (it may already have settled if the isolate was quick).
-    assert_eq!(accepted.action, crate::ActionKind::ScriptStart);
+    assert_eq!(accepted.action(), crate::ActionKind::ScriptStart);
     f.settle();
     f.core.poll();
 
     let alice = op_of(&f, "opid-alice");
     assert_eq!(
-        (alice.id, &alice.outcome),
-        (accepted.id, &Outcome::Completed)
+        (alice.id(), alice.outcome()),
+        (accepted.id(), &Outcome::Completed)
     );
     let bob = op_of(&f, "opid-bob");
     assert!(
-        matches!(&bob.outcome, Outcome::Failed(reason) if reason.contains("setup-fails")),
+        bob.outcome().is_failed()
+            && bob
+                .outcome()
+                .reason()
+                .is_some_and(|reason| reason.contains("setup-fails")),
         "{bob:?}"
     );
     let failed = f.core.fleet_view().row("opid-bob").unwrap().has_failure();
     assert!(failed, "a failed Start is a visible row failure");
 
     let lines = |slot: &str| {
-        let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+        let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
         crate::log::global().refresh(&mut view);
         view.rows()
             .iter()
-            .map(|e| (e.level, e.message.to_string()))
+            .map(|e| (e.level(), e.message().to_string()))
             .collect::<Vec<_>>()
     };
     let alice_log = lines("opid-alice");
     let at = |text: String| alice_log.iter().position(|(_, line)| *line == text);
     let (start, done) = (
-        at(format!("op#{} Start accepted", alice.id.0)),
-        at(format!("op#{} Start completed", alice.id.0)),
+        at(format!("op#{} Start accepted", alice.id().0)),
+        at(format!("op#{} Start completed", alice.id().0)),
     );
     assert!(start.is_some() && start < done, "{alice_log:?}");
-    let prefix = format!("op#{} Start failed: ", bob.id.0);
+    let prefix = format!("op#{} Start failed: ", bob.id().0);
     assert!(
         lines("opid-bob").iter().any(|(level, line)| {
             *level == api::hostlog::Level::Error
@@ -1558,13 +1567,13 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     }
 
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!((stop.stopped, stop.cancelled), (3, 0));
+    assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
     let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!(duplicate_stop.stopped, 0);
+    assert_eq!(duplicate_stop.stopped(), 0);
     assert!(duplicate_stop
-        .skipped
+        .skipped()
         .iter()
-        .any(|skip| skip.reason.contains("stopping")));
+        .any(|skip| skip.reason().contains("stopping")));
 }
 
 fn native_fixture(test: &str, members: &[&str]) -> Fixture {
@@ -1834,10 +1843,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     f.core.flush_writes();
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Failed(_),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }] if result.error().is_some()
     ));
     assert_eq!(
         f.saved_bag("alice", &script::compiled_identity_key(id)),
@@ -2061,10 +2067,7 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
             f.core
                 .start_script(
                     "alice",
-                    crate::ScriptStart::Compiled {
-                        id: script::CompiledId("Sherlock"),
-                        bag: Map::new(),
-                    },
+                    crate::ScriptStart::compiled(script::CompiledId("Sherlock"), Map::new()),
                     None,
                 )
                 .unwrap();
@@ -2075,8 +2078,8 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
         assert_eq!(saved.settings.clue_duel_partner, "Bob");
         assert!(
             matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
-            op: saved_op, result: super::SettingsResult::Saved(super::LiveDelivery::Stale), ..
-        }] if *saved_op == op)
+            op: saved_op, result, ..
+        }] if *saved_op == op && result.delivery() == Some(&super::LiveDelivery::Stale))
         );
     }
 }
@@ -2128,7 +2131,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
             .core
             .take_write_failures()
             .iter()
-            .any(|failure| failure.error.contains("unknown")));
+            .any(|failure| failure.error().contains("unknown")));
         f.core.stop_script("alice");
         start_sherlock(&mut f, "alice");
     }
@@ -2203,13 +2206,11 @@ fn valid_native_draft_survives_unrelated_writes() {
             expected,
             "{writer}"
         );
-        assert!(
-            f.core
-                .take_settings_writes()
-                .iter()
-                .any(|write| write.op == op
-                    && matches!(write.result, super::SettingsResult::Saved(_)))
-        );
+        assert!(f
+            .core
+            .take_settings_writes()
+            .iter()
+            .any(|write| write.op == op && write.result.is_saved()));
     }
 }
 
@@ -2236,10 +2237,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .take_settings_writes()
         .iter()
         .any(|write| write.op == op
-            && matches!(
-                write.result,
-                super::SettingsResult::Saved(super::LiveDelivery::Applied)
-            )));
+            && write.result.delivery() == Some(&super::LiveDelivery::Applied)));
 }
 
 #[test]
@@ -2264,10 +2262,8 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     assert_eq!(saved.settings.clue_duel_partner, "Bob");
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Saved(super::LiveDelivery::Rejected(_)),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }]
+            if result.delivery().and_then(|live| live.rejection()).is_some()
     ));
 }
 
@@ -2312,10 +2308,8 @@ fn durable_native_reply_never_configures_a_replacement_run() {
     f.core.flush_writes();
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Saved(super::LiveDelivery::Stale),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }]
+            if result.delivery() == Some(&super::LiveDelivery::Stale)
     ));
     assert_eq!(
         f.core
@@ -2546,7 +2540,7 @@ fn restart_prompt_skips_stopped_profile_at_click() {
     assert!(f.scripts.pending_restart_prompt().is_none());
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+        Some(notice) if notice.text() == Some("Skipped alice: not running")
     ));
 }
 
@@ -2580,7 +2574,7 @@ fn restart_prompt_skips_run_that_ends_after_click_check() {
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+        Some(notice) if notice.text() == Some("Skipped alice: not running")
     ));
 }
 
@@ -2598,7 +2592,7 @@ fn restart_prompt_skips_logout_latch_at_click() {
     assert!(f.scripts.pending_restart_prompt().is_none());
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message.starts_with("Skipped alice:")
+        Some(notice) if notice.text().is_some_and(|text| text.starts_with("Skipped alice:"))
     ));
 }
 
@@ -2629,7 +2623,7 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     assert!(!f.scripts.restart_required_for("alice", &selection));
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: reassigned"
+        Some(notice) if notice.text() == Some("Skipped alice: reassigned")
     ));
 }
 
@@ -2892,7 +2886,7 @@ fn start_accepted(f: &Fixture, name: &str) -> usize {
     (1..)
         .map_while(|id| f.core.operation(crate::OperationId(id)))
         .filter(|report| {
-            report.action == crate::ActionKind::ScriptStart && report.outcome(name).is_some()
+            report.action() == crate::ActionKind::ScriptStart && report.outcome(name).is_some()
         })
         .count()
 }
@@ -2953,8 +2947,8 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
             .core
             .fleet_view()
             .row(name)
-            .map(|row| row.brief.clone())
-            .unwrap_or_default();
+            .map(|row| row.brief())
+            .unwrap_or("");
         assert!(
             brief.starts_with("queued "),
             "{name} should reuse the login-queue brief, got {brief:?}"
@@ -2975,8 +2969,8 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
         "the second frame exceeded the permit budget: {admitted}"
     );
     let notice = f.scripts.take_notice();
-    let text = match &notice {
-        Some(Notice::Show(text)) => text.as_str(),
+    let text = match notice.as_ref().and_then(Notice::text) {
+        Some(text) => text,
         other => panic!("{other:?}"),
     };
     assert!(
@@ -3370,11 +3364,11 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
 }
 
 fn slot_lines(slot: &str) -> Vec<(api::hostlog::Level, String)> {
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .map(|e| (e.level, e.message.to_string()))
+        .map(|e| (e.level(), e.message().to_string()))
         .collect()
 }
 
@@ -3453,7 +3447,7 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
     let mut f = fixture("deleted-canonical", &["alice"]);
     let path = f.dir.canonicalize().unwrap().join("gone-later.ts");
     std::fs::write(&path, LOOPING).unwrap();
-    let card = f.scripts.js.load(&path).unwrap();
+    let card = f.scripts.js_mut().load(&path).unwrap();
     assert_eq!(card.path, path, "the stored path is the canonical one");
     f.assign("alice", &card);
     std::fs::remove_file(&path).unwrap();
@@ -3577,7 +3571,7 @@ fn a_ready_js_settings_save_is_admitted_and_written_under_a_work_outage() {
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].result,
-        super::SettingsResult::Saved(super::LiveDelivery::NotRunning)
+        super::SettingsResult::saved(super::LiveDelivery::NotRunning)
     );
     assert_eq!(
         f.saved_bag("alice", &thiever.identity_key()),
@@ -3692,7 +3686,7 @@ fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
     f.core.poll();
     let writes = f.core.take_settings_writes();
     assert_eq!(writes.len(), 1, "{writes:?}");
-    assert!(matches!(writes[0].result, super::SettingsResult::Saved(_)));
+    assert!(writes[0].result.is_saved());
     let saved = f.saved_bag("alice", &key).unwrap();
     let (_, values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
     assert_eq!(values["targetPreference"], json!("Nearest"));

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 /// Ordered membership plus the logout latch. The latch is the set of names
 /// an explicit logout placed on the title screen, so the next Login (not a
 /// spawn-time auto-login) brings them back.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Fleet {
     members: Vec<String>,
     latch: HashSet<String>,

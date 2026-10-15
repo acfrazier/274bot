@@ -71,43 +71,193 @@ struct DeferredSpawn {
     arm: Option<Arc<SlotArm>>,
 }
 
-/// One observed status change since the previous poll.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Transition {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransitionKind {
     SlotUp,
-    LoginError(String),
+    LoginError,
     Ingame,
-    Scene(i32),
-    Welcome(String),
-    WelcomeFailure(String),
+    Scene,
+    Welcome,
+    WelcomeFailure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One observed status change since the previous poll.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Transition {
+    kind: TransitionKind,
+    error: Option<String>,
+    state: Option<i32>,
+    text: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl Transition {
+    pub const SlotUp: Self = Self {
+        kind: TransitionKind::SlotUp,
+        error: None,
+        state: None,
+        text: None,
+    };
+    pub const Ingame: Self = Self {
+        kind: TransitionKind::Ingame,
+        error: None,
+        state: None,
+        text: None,
+    };
+
+    /// Scene-state change.
+    pub fn scene(state: i32) -> Self {
+        Self {
+            kind: TransitionKind::Scene,
+            error: None,
+            state: Some(state),
+            text: None,
+        }
+    }
+
+    /// Login error text.
+    pub fn login_error(error: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::LoginError,
+            error: Some(error.into()),
+            state: None,
+            text: None,
+        }
+    }
+
+    /// Welcome-modal line.
+    pub fn welcome(text: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::Welcome,
+            error: None,
+            state: None,
+            text: Some(text.into()),
+        }
+    }
+
+    /// Welcome-modal dismiss failure.
+    pub fn welcome_failure(error: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::WelcomeFailure,
+            error: Some(error.into()),
+            state: None,
+            text: None,
+        }
+    }
+
+    pub(crate) fn kind(&self) -> TransitionKind {
+        self.kind
+    }
+
+    /// Login or welcome-failure text, when this carries one.
+    pub fn error(&self) -> Option<&str> {
+        match self.kind {
+            TransitionKind::LoginError | TransitionKind::WelcomeFailure => self.error.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Scene state, when this is a scene change.
+    pub fn state(&self) -> Option<i32> {
+        self.state
+    }
+
+    /// Welcome line, when this is a welcome.
+    pub fn text(&self) -> Option<&str> {
+        match self.kind {
+            TransitionKind::Welcome => self.text.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct SlotTransition {
-    pub slot: String,
-    pub transition: Transition,
+    pub(crate) slot: String,
+    pub(crate) transition: Transition,
+}
+
+impl SlotTransition {
+    /// The slot that changed.
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
+
+    /// What changed.
+    pub fn transition(&self) -> &Transition {
+        &self.transition
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionKind {
+    Unchanged,
+    Changed,
 }
 
 /// Selection change result. `previous` is the bot that lost selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Selection {
-    Unchanged,
-    Changed { previous: Option<String> },
+#[derive(Debug, PartialEq, Eq)]
+pub struct Selection {
+    kind: SelectionKind,
+    previous: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl Selection {
+    pub const Unchanged: Self = Self {
+        kind: SelectionKind::Unchanged,
+        previous: None,
+    };
+
+    pub(crate) fn changed(previous: Option<String>) -> Self {
+        Self {
+            kind: SelectionKind::Changed,
+            previous,
+        }
+    }
+
+    /// Whether selection stayed the same.
+    pub fn is_unchanged(&self) -> bool {
+        self.kind == SelectionKind::Unchanged
+    }
+
+    /// The bot that lost selection, when selection changed.
+    pub fn previous(&self) -> Option<&str> {
+        match self.kind {
+            SelectionKind::Changed => self.previous.as_deref(),
+            SelectionKind::Unchanged => None,
+        }
+    }
 }
 
 /// What a removal did to the selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Removal {
-    pub op: OperationId,
+    pub(crate) op: OperationId,
     /// The removed member was selected and its neighbour is now selected.
-    pub reselected: Option<String>,
+    pub(crate) reselected: Option<String>,
     /// The removed member was selected and no member remains to select.
-    pub selection_cleared: bool,
+    pub(crate) selection_cleared: bool,
 }
 
-/// A script Start request. Native configuration/factory preparation and Load
-/// isolate setup both settle asynchronously through the host.
-pub enum ScriptStart {
+impl Removal {
+    /// The removal's operation.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// The neighbour now selected, when the removed member was selected.
+    pub fn reselected(&self) -> Option<&str> {
+        self.reselected.as_deref()
+    }
+
+    /// Whether the removed member was selected and no member remains.
+    pub fn selection_cleared(&self) -> bool {
+        self.selection_cleared
+    }
+}
+
+enum ScriptStartKind {
     Compiled {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
@@ -120,14 +270,64 @@ pub enum ScriptStart {
     },
 }
 
+/// A script Start request. Native configuration/factory preparation and Load
+/// isolate setup both settle asynchronously through the host.
+pub struct ScriptStart(ScriptStartKind);
+
+impl ScriptStart {
+    /// Start a compiled card.
+    pub fn compiled(
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self(ScriptStartKind::Compiled { id, bag })
+    }
+
+    /// Start a loaded JS/TS card.
+    pub fn load(
+        js: String,
+        shape: script::LoadShape,
+        bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+    ) -> Self {
+        Self(ScriptStartKind::Load {
+            js,
+            shape,
+            bag,
+            siblings,
+        })
+    }
+
+    pub(crate) fn is_compiled(&self) -> bool {
+        matches!(self.0, ScriptStartKind::Compiled { .. })
+    }
+}
+
 /// A Load Start whose isolate setup settled (or was cancelled by removal:
 /// `outcome == None`). Front ends consume these to commit assignments and
 /// record load diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StartSettled {
-    pub slot: String,
-    pub op: OperationId,
-    pub outcome: Option<script::StartOutcome>,
+    pub(crate) slot: String,
+    pub(crate) op: OperationId,
+    pub(crate) outcome: Option<script::StartOutcome>,
+}
+
+impl StartSettled {
+    /// The slot whose Start settled.
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
+
+    /// The Start operation.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// Isolate setup outcome, or `None` if removal cancelled it.
+    pub fn outcome(&self) -> Option<&script::StartOutcome> {
+        self.outcome.as_ref()
+    }
 }
 
 /// What a running slot learns once a profile write is durable. Writes of
@@ -717,7 +917,7 @@ impl<Io> OperatorSession<Io> {
                 play.wake(old);
             }
         }
-        Selection::Changed { previous }
+        Selection::changed(previous)
     }
 
     /// Control arm for a vault profile: auto-login remains a saved policy,
@@ -771,6 +971,7 @@ impl<Io> OperatorSession<Io> {
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
         let attach = surface.attach(name, &mut profile, retained);
+        let (io, input, mailbox) = attach.into_parts();
         if let Some(arm) = arm.as_ref() {
             // The surface may apply a session-only override to the disposable
             // spawn profile. Queue that mode for this lifetime's next login.
@@ -781,7 +982,7 @@ impl<Io> OperatorSession<Io> {
             if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
                 play.attach_arm(name, Arc::clone(arm));
             }
-            self.slots.insert(name.to_string(), attach.io);
+            self.slots.insert(name.to_string(), io);
             return Ok(());
         }
         #[cfg(any(test, feature = "test-support"))]
@@ -797,24 +998,24 @@ impl<Io> OperatorSession<Io> {
                 name.to_string(),
                 DeferredSpawn {
                     profile,
-                    input: attach.input,
-                    mailbox: attach.mailbox,
+                    input,
+                    mailbox,
                     arm,
                 },
             );
-            self.slots.insert(name.to_string(), attach.io);
+            self.slots.insert(name.to_string(), io);
             return Ok(());
         }
         if self.play.is_some() {
             self.old_lifetime_retired(name);
         }
         if let Some(play) = self.play.as_mut() {
-            if let Err(error) = play.try_spawn_slot(profile, attach.input, attach.mailbox, arm) {
-                self.slots.insert(name.to_string(), attach.io);
+            if let Err(error) = play.try_spawn_slot(profile, input, mailbox, arm) {
+                self.slots.insert(name.to_string(), io);
                 return Err(error);
             }
         }
-        self.slots.insert(name.to_string(), attach.io);
+        self.slots.insert(name.to_string(), io);
         Ok(())
     }
 
@@ -909,8 +1110,7 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> bool {
         if self.profile_saving(name) {
-            self.operations
-                .set(op, name, Outcome::Skipped(SAVING.into()));
+            self.operations.set(op, name, Outcome::skipped(SAVING));
             return false;
         }
         let cancelled_removal = self.cancel_removal(name);
@@ -1028,13 +1228,13 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Logout, name);
         self.operations.cancel_pending(ActionKind::Login, name);
         let outcome = match result {
-            Err(error) => Outcome::Failed(error),
-            Ok(()) if self.play.is_none() => Outcome::Failed("vault locked".into()),
+            Err(error) => Outcome::failed(error),
+            Ok(()) if self.play.is_none() => Outcome::failed("vault locked"),
             Ok(())
                 if self.play.as_ref().and_then(|p| p.arm(name)).is_none()
                     && !self.deferred.contains_key(name) =>
             {
-                Outcome::Failed(format!("no profile {name}"))
+                Outcome::failed(format!("no profile {name}"))
             }
             Ok(()) => Outcome::Pending,
         };
@@ -1268,8 +1468,7 @@ impl<Io> OperatorSession<Io> {
     ) -> Removal {
         let op = self.operations.open(ActionKind::Remove);
         if self.profile_saving(name) {
-            self.operations
-                .set(op, name, Outcome::Failed(SAVING.into()));
+            self.operations.set(op, name, Outcome::failed(SAVING));
             return Removal {
                 op,
                 reselected: None,
@@ -1514,20 +1713,28 @@ impl<Io> OperatorSession<Io> {
         let log = crate::log::global();
         for change in &self.transitions {
             let (source, level, text): (Source, Level, std::borrow::Cow<'_, str>) =
-                match &change.transition {
-                    Transition::SlotUp => (Source::Host, Level::Info, "slot up".into()),
-                    Transition::LoginError(e) => {
+                match change.transition.kind() {
+                    TransitionKind::SlotUp => (Source::Host, Level::Info, "slot up".into()),
+                    TransitionKind::LoginError => {
+                        let e = change.transition.error().unwrap_or_default();
                         (Source::Login, Level::Error, format!("login {e}").into())
                     }
                     // Visible by default: the operator reads a stuck bot's
-                    // story (logged in, which scene) at a glance. The host's
+                    // scene from the log; the same bot's
                     // LoadingScene/Ready phase lines say the same at Debug.
-                    Transition::Ingame => (Source::Login, Level::Info, "ingame".into()),
-                    Transition::Scene(scene) => {
+                    TransitionKind::Ingame => (Source::Login, Level::Info, "ingame".into()),
+                    TransitionKind::Scene => {
+                        let scene = change.transition.state().unwrap_or_default();
                         (Source::Host, Level::Info, format!("scene {scene}").into())
                     }
-                    Transition::Welcome(line) => (Source::Login, Level::Info, line.into()),
-                    Transition::WelcomeFailure(line) => (Source::Login, Level::Warn, line.into()),
+                    TransitionKind::Welcome => {
+                        let line = change.transition.text().unwrap_or_default();
+                        (Source::Login, Level::Info, line.into())
+                    }
+                    TransitionKind::WelcomeFailure => {
+                        let line = change.transition.error().unwrap_or_default();
+                        (Source::Login, Level::Warn, line.into())
+                    }
                 };
             log.slot_line(&change.slot, source, level, &text);
         }
@@ -1673,8 +1880,8 @@ impl<Io> OperatorSession<Io> {
             self.starts.remove(&slot);
             let result = match &outcome {
                 Some(script::StartOutcome::Ready) => Outcome::Completed,
-                Some(script::StartOutcome::Failed(error)) => Outcome::Failed(error.clone()),
-                Some(script::StartOutcome::Rejected(error)) => Outcome::Failed(error.to_string()),
+                Some(script::StartOutcome::Failed(error)) => Outcome::failed(error.clone()),
+                Some(script::StartOutcome::Rejected(error)) => Outcome::failed(error.to_string()),
                 Some(script::StartOutcome::Cancelled) | None => Outcome::Cancelled,
             };
             self.operations.set(op, &slot, result);
@@ -1702,9 +1909,9 @@ impl<Io> OperatorSession<Io> {
                     if row.ingame {
                         Some(Outcome::Completed)
                     } else if let Some(error) = row.terminal_startup_error() {
-                        Some(Outcome::Failed(error.to_string()))
+                        Some(Outcome::failed(error.to_string()))
                     } else if row.worker_terminal.is_some() {
-                        Some(Outcome::Failed(
+                        Some(Outcome::failed(
                             row.error.clone().unwrap_or_else(|| "worker ended".into()),
                         ))
                     } else if arm.as_ref().is_some_and(|arm| arm.login_latched()) {
@@ -1733,7 +1940,7 @@ impl<Io> OperatorSession<Io> {
                     match play.map_or(script::RunState::Idle, |p| p.script_state(slot)) {
                         script::RunState::Paused => Some(Outcome::Completed),
                         script::RunState::Idle | script::RunState::Error => {
-                            Some(Outcome::Skipped("no running script".into()))
+                            Some(Outcome::skipped("no running script"))
                         }
                         _ => None,
                     }
@@ -1742,7 +1949,7 @@ impl<Io> OperatorSession<Io> {
                     match play.map_or(script::RunState::Idle, |p| p.script_state(slot)) {
                         script::RunState::Paused => None,
                         script::RunState::Idle | script::RunState::Error => {
-                            Some(Outcome::Skipped("no script".into()))
+                            Some(Outcome::skipped("no script"))
                         }
                         _ => Some(Outcome::Completed),
                     }
@@ -1772,10 +1979,10 @@ impl<Io> OperatorSession<Io> {
             .play
             .as_ref()
             .ok_or_else(|| script::StartLoadError::Refused("no play".into()))?;
-        let compiled = matches!(start, ScriptStart::Compiled { .. });
-        match start {
-            ScriptStart::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
-            ScriptStart::Load {
+        let compiled = start.is_compiled();
+        match start.0 {
+            ScriptStartKind::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
+            ScriptStartKind::Load {
                 js,
                 shape,
                 bag,
@@ -1809,8 +2016,7 @@ impl<Io> OperatorSession<Io> {
             Some(play) if paused => play.script_resume(name),
             Some(play) => play.script_pause(name),
             None => {
-                self.operations
-                    .set(op, name, Outcome::Failed("no play".into()));
+                self.operations.set(op, name, Outcome::failed("no play"));
                 return op;
             }
         }
@@ -1827,9 +2033,7 @@ impl<Io> OperatorSession<Io> {
                 play.script_stop(name);
                 self.operations.set(op, name, Outcome::Pending);
             }
-            None => self
-                .operations
-                .set(op, name, Outcome::Failed("no play".into())),
+            None => self.operations.set(op, name, Outcome::failed("no play")),
         }
         op
     }
@@ -1857,7 +2061,7 @@ impl<Io> OperatorSession<Io> {
                     stopped += 1;
                     Outcome::Pending
                 }
-                _ => Outcome::Skipped("no script".into()),
+                _ => Outcome::skipped("no script"),
             };
             self.operations.set(op, name, outcome);
         }
@@ -2335,7 +2539,7 @@ impl<Io> OperatorSession<Io> {
                                 play.remember_profile(profile);
                             }
                         }
-                        self.queue_native_delivery(written.op, member, live.clone());
+                        self.queue_native_delivery(written.op, member, live.duplicate());
                         return;
                     }
                 }
@@ -2349,7 +2553,7 @@ impl<Io> OperatorSession<Io> {
                 } else {
                     self.apply_mirror(&member, pending.mirror, committed)
                 };
-                SettingsResult::Saved(delivery)
+                SettingsResult::saved(delivery)
             }
             Err(error) if !written.superseded => {
                 // A failed memory toggle put the arm ahead of the restored
@@ -2381,32 +2585,28 @@ impl<Io> OperatorSession<Io> {
                         }
                     }
                 }
-                let failure = WriteFailure {
-                    op: written.op,
-                    target: member.clone(),
-                    label: pending.label,
-                    error: error.clone(),
-                };
+                let failure =
+                    WriteFailure::new(written.op, member.clone(), pending.label, error.clone());
                 if tracked {
                     self.saves
-                        .settle(written.op, SaveResult::Failed(failure.clone()));
+                        .settle(written.op, SaveResult::failed(failure.duplicate()));
                 }
                 self.write_failures.push(failure);
                 self.operations
-                    .set(written.op, &member, Outcome::Failed(error.clone()));
-                SettingsResult::Failed(error)
+                    .set(written.op, &member, Outcome::failed(error.clone()));
+                SettingsResult::failed(error)
             }
             _ => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
                 if tracked {
                     // Reported once, through the write that owns the row.
                     let result = match commit_error {
-                        Some(error) => SaveResult::Failed(WriteFailure {
-                            op: written.op,
-                            target: member.clone(),
-                            label: pending.label,
+                        Some(error) => SaveResult::failed(WriteFailure::new(
+                            written.op,
+                            member.clone(),
+                            pending.label,
                             error,
-                        }),
+                        )),
                         None if durable_row => SaveResult::Saved,
                         None => SaveResult::Gone,
                     };
@@ -2416,11 +2616,8 @@ impl<Io> OperatorSession<Io> {
             }
         };
         if settings {
-            self.settings_writes.push(SettingsWrite {
-                op: written.op,
-                profile: member,
-                result,
-            });
+            self.settings_writes
+                .push(SettingsWrite::new(written.op, member, result));
         }
     }
 
@@ -2492,7 +2689,7 @@ impl<Io> OperatorSession<Io> {
                 return deliver_settings(play, name, live)
             }
             ArmMirrorKind::NativeSettings { .. } => {
-                return LiveDelivery::Rejected("native settings were not prepared".into())
+                return LiveDelivery::rejected("native settings were not prepared")
             }
         }
         LiveDelivery::NotRunning
@@ -2513,7 +2710,7 @@ fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> Live
     }
     if let Some(target) = live.run {
         let Some(config) = live.prepared else {
-            return LiveDelivery::Rejected("native settings were not prepared".into());
+            return LiveDelivery::rejected("native settings were not prepared");
         };
         return match play.script_configure_compiled(name, config, target) {
             script::CompiledDelivery::Applied => LiveDelivery::Applied,
@@ -2522,7 +2719,7 @@ fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> Live
             script::CompiledDelivery::Unchanged => LiveDelivery::Unchanged,
             script::CompiledDelivery::Stale => LiveDelivery::Stale,
             script::CompiledDelivery::NotRunning => LiveDelivery::NotRunning,
-            script::CompiledDelivery::Rejected(error) => LiveDelivery::Rejected(format!(
+            script::CompiledDelivery::Rejected(error) => LiveDelivery::rejected(format!(
                 "{}: {} ({})",
                 error.field, error.message, error.code
             )),
@@ -2600,7 +2797,7 @@ impl<Io> OperatorSession<Io> {
 fn completed_or_failed(result: Result<(), String>) -> Outcome {
     match result {
         Ok(()) => Outcome::Completed,
-        Err(error) => Outcome::Failed(error),
+        Err(error) => Outcome::failed(error),
     }
 }
 
@@ -2626,29 +2823,29 @@ fn record_transitions(
             None => {
                 push(name, Transition::SlotUp);
                 if let Some(e) = &s.error {
-                    push(name, Transition::LoginError(e.clone()));
+                    push(name, Transition::login_error(e.clone()));
                 }
             }
             Some(p) => {
                 if p.error.is_none() {
                     if let Some(e) = &s.error {
-                        push(name, Transition::LoginError(e.clone()));
+                        push(name, Transition::login_error(e.clone()));
                     }
                 }
                 if !p.ingame && s.ingame {
                     push(name, Transition::Ingame);
                 }
                 if p.scene_state != s.scene_state {
-                    push(name, Transition::Scene(s.scene_state));
+                    push(name, Transition::scene(s.scene_state));
                 }
                 if p.welcome_notice != s.welcome_notice {
                     if let Some(line) = &s.welcome_notice {
-                        push(name, Transition::Welcome(line.clone()));
+                        push(name, Transition::welcome(line.clone()));
                     }
                 }
                 if p.welcome_failure.is_none() {
                     if let Some(line) = &s.welcome_failure {
-                        push(name, Transition::WelcomeFailure(line.clone()));
+                        push(name, Transition::welcome_failure(line.clone()));
                     }
                 }
             }

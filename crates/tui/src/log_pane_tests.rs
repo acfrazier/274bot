@@ -118,7 +118,7 @@ fn scrolling_up_pauses_follow_and_end_resumes_it() {
     let newest = screen(&state, slot, 80, 24).join("\n");
     assert!(newest.contains("hop 59"));
     state.on_key(key(KeyCode::PageUp), Some(slot));
-    assert!(!state.view.follow);
+    assert!(!state.view.follow());
     push(slot, Source::Nav, Level::Info, "hop 60");
     state.refresh(Some(slot));
     let paused = screen(&state, slot, 80, 24).join("\n");

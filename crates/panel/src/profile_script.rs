@@ -279,7 +279,7 @@ impl Session {
         };
         let Some((name, path)) = self
             .scripts
-            .js
+            .js()
             .get(source, &lookup)
             .map(|card| (card.name.clone(), card.path.clone()))
         else {

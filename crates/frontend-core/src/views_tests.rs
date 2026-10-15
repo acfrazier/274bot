@@ -492,12 +492,12 @@ fn an_operation_failure_outlives_the_operation_history() {
     s.poll();
     let ghost = row(&s, "vo-ghost");
     assert_eq!(
-        ghost.last_op,
-        Some(OpBrief {
-            id: failed,
-            action: ActionKind::Login,
-            outcome: Outcome::Failed("no profile vo-ghost".into()),
-        })
+        ghost.last_op(),
+        Some(&OpBrief::new(
+            failed,
+            ActionKind::Login,
+            Outcome::failed("no profile vo-ghost")
+        ))
     );
     assert!(ghost.has_failure());
 
@@ -507,7 +507,7 @@ fn an_operation_failure_outlives_the_operation_history() {
     s.poll();
     assert!(s.operation(failed).is_none(), "the history rolled");
     assert_eq!(
-        row(&s, "vo-ghost").last_op.as_ref().map(|op| op.id),
+        row(&s, "vo-ghost").last_op().map(|op| op.id()),
         Some(failed),
         "the row keeps it"
     );
@@ -515,10 +515,7 @@ fn an_operation_failure_outlives_the_operation_history() {
 
     let later = s.logout("vo-ghost");
     s.poll();
-    assert_eq!(
-        row(&s, "vo-ghost").last_op.as_ref().map(|op| op.id),
-        Some(later)
-    );
+    assert_eq!(row(&s, "vo-ghost").last_op().map(|op| op.id()), Some(later));
     assert!(!row(&s, "vo-ghost").has_failure());
 }
 
@@ -533,9 +530,9 @@ fn operation_outcomes_reach_the_slot_log_with_their_id() {
         (r.ingame, r.connected, r.scene_state) = (true, true, 2);
     });
     s.poll();
-    let mut view = LogView::new(LogScope::Slot("vl-gina".into()));
+    let mut view = LogView::new(LogScope::slot("vl-gina"));
     crate::log::global().refresh(&mut view);
-    let lines: Vec<&str> = view.rows().iter().map(|e| &*e.message).collect();
+    let lines: Vec<&str> = view.rows().iter().map(|e| e.message()).collect();
     let accepted = format!("op#{} Log in accepted", login.0);
     let completed = format!("op#{} Log in completed", login.0);
     let at = |text: &str| lines.iter().position(|line| *line == text);
@@ -725,22 +722,22 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     for frame in 0..60u64 {
         s.poll_at(start + Duration::from_millis(frame * 15));
     }
-    settle_meter(&mut s, last_frame, |view| view.ram != Metric::Measuring);
+    settle_meter(&mut s, last_frame, |view| view.ram() != &Metric::Measuring);
     assert_eq!(PROBES.load(Ordering::SeqCst), 1, "one sample in 885 ms");
-    let first = s.resources().clone();
-    assert_eq!((first.bots, first.background), (40, 39));
-    assert_eq!(first.cpu, Metric::Measuring, "a rate needs two samples");
+    let first = s.resources();
+    assert_eq!((first.bots(), first.background()), (40, 39));
+    assert_eq!(first.cpu(), &Metric::Measuring, "a rate needs two samples");
     assert_eq!(
-        first.ram,
-        Metric::Available("64.0 MB process, peak 80.0 MB".into())
+        first.ram(),
+        &Metric::available("64.0 MB process, peak 80.0 MB")
     );
 
     let generation = s.resource_generation();
     let second = start + Duration::from_secs(1);
     s.poll_at(second);
-    settle_meter(&mut s, second, |view| view.cpu != Metric::Measuring);
+    settle_meter(&mut s, second, |view| view.cpu() != &Metric::Measuring);
     assert_eq!(PROBES.load(Ordering::SeqCst), 2);
-    assert!(matches!(s.resources().cpu, Metric::Available(_)));
+    assert!(s.resources().cpu().is_available());
     assert!(s.resource_generation() > generation);
 }
 
@@ -749,7 +746,7 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
 #[test]
 fn world_login_uses_the_login_phase_not_script_idle() {
     let local = FleetRow::fixture("alice", Phase::Ready, None, None);
-    assert_eq!(local.brief, "idle");
+    assert_eq!(local.brief(), "idle");
     let mut out = String::new();
     local.write_world_login(&mut out);
     assert_eq!(out, "ready");
@@ -1012,18 +1009,15 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
         "retention reuses the same Arc"
     );
     let mut copy = SlotDetail::default();
-    copy.clone_from(detail(&session));
-    assert!(Arc::ptr_eq(
-        copy.manual_walk_risk.as_ref().unwrap(),
-        &assessment.reason
-    ));
+    copy.copy_from(detail(&session));
+    assert_eq!(copy.manual_walk_risk(), Some(assessment.reason.as_ref()));
     session.select("vr-bob");
     session.poll();
-    assert!(detail(&session).manual_walk_risk.is_none());
+    assert!(detail(&session).manual_walk_risk().is_none());
     session.select("vr-alice");
     session.poll();
     assert_eq!(
-        detail(&session).manual_walk_risk.as_deref(),
+        detail(&session).manual_walk_risk(),
         Some(assessment.reason.as_ref())
     );
 }

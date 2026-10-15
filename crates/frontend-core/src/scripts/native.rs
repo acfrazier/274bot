@@ -22,16 +22,51 @@ pub enum NativeCommand {
     Resume,
     Stop,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NativeTarget {
-    pub profile: String,
-    pub run: RunKey,
+    pub(crate) profile: String,
+    pub(crate) run: RunKey,
 }
+
+impl NativeTarget {
+    /// Profile this native command targets.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Run key this native command targets.
+    pub fn run(&self) -> RunKey {
+        self.run
+    }
+}
+
 pub struct NativeDetail {
-    pub lifecycle: RunState,
-    pub status: Option<Arc<ScriptStatus>>,
-    pub paint: Option<Arc<ScriptPaint>>,
-    pub terminal: Option<ScriptLifecycleReceipt>,
+    pub(crate) lifecycle: RunState,
+    pub(crate) status: Option<Arc<ScriptStatus>>,
+    pub(crate) paint: Option<Arc<ScriptPaint>>,
+    pub(crate) terminal: Option<ScriptLifecycleReceipt>,
+}
+
+impl NativeDetail {
+    /// Script lifecycle on this slot.
+    pub fn lifecycle(&self) -> RunState {
+        self.lifecycle
+    }
+
+    /// Native status, when present.
+    pub fn status(&self) -> Option<&ScriptStatus> {
+        self.status.as_deref()
+    }
+
+    /// Native paint, when present.
+    pub fn paint(&self) -> Option<&ScriptPaint> {
+        self.paint.as_deref()
+    }
+
+    /// Terminal receipt, when the run has ended.
+    pub fn terminal(&self) -> Option<&ScriptLifecycleReceipt> {
+        self.terminal.as_ref()
+    }
 }
 
 impl Scripts {
