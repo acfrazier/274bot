@@ -1123,7 +1123,7 @@ impl Gatherer {
         match error {
             ActionError::Held | ActionError::BudgetExhausted => {}
             ActionError::BankDeposit(failure) => {
-                self.fail("bank-deposit-failed", failure.to_string());
+                self.fail("bank-deposit-failed", failure.message());
             }
             error => self.fail("action-error", format!("native action failed: {error:?}")),
         }
@@ -1132,7 +1132,7 @@ impl Gatherer {
     fn deposit_failure(&mut self, error: ActionError) {
         match error {
             ActionError::BankDeposit(failure) => {
-                self.fail("bank-deposit-failed", failure.to_string());
+                self.fail("bank-deposit-failed", failure.message());
             }
             error => self.fail(
                 "bank-deposit-failed",

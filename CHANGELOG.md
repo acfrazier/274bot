@@ -44,10 +44,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Gatherer that stalls on its return from the bank now replans once from
   its current position before stopping. It still requires arrival at the
   gathering site and reports routes that remain blocked.
-- Banking now checks the current inventory and retries once after a refused
-  or ineffective deposit. Items already deposited are not counted twice,
-  and protected items remain protected. A full bank or full item stack now
-  reports that reason instead of a generic transfer timeout.
+- Gatherer and Quester banking now check the current inventory and retry once
+  after a refused or ineffective deposit. Items already deposited are not
+  counted twice, and protected items remain protected. Both scripts report a
+  full bank, full item stack or unbankable item instead of a generic timeout.
 
 ### Saved state
 
