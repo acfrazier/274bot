@@ -66,8 +66,42 @@ fn validate_non_yielding_module_is_bounded() {
         let baseline = live_runtime_count();
         for attempt in 1..=3 {
             let started = Instant::now();
-            let result =
-                LoadIsolate::validate_source("while (true) {}", LoadShape::NativeTick, &[]);
+            let card = super::super::library::PreparedCard {
+                card: super::super::library::JsCard {
+                    name: "runaway".into(),
+                    path: "runaway.ts".into(),
+                    shape: LoadShape::NativeTick,
+                    origin: "while (true) {}".into(),
+                    js: "while (true) {}".into(),
+                    kind: crate::rs2b0t_registry::ScriptKind::NativeTick,
+                    source: crate::rs2b0t_registry::ScriptSource::File,
+                    sha256: String::new(),
+                    description: String::new(),
+                    category: String::new(),
+                    tags: Vec::new(),
+                    settings_schema: Vec::new(),
+                    unloadable: None,
+                    api_family: super::super::ApiFamily::Unversioned,
+                },
+                siblings: Vec::new(),
+                fingerprint: String::new(),
+            };
+            let batch = LoadIsolate::validate_prepared_batch(vec![card]).unwrap();
+            let result = loop {
+                match batch.try_recv() {
+                    Ok(rows) => break rows.into_iter().next().unwrap().1,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        assert!(
+                            started.elapsed() < Duration::from_secs(3),
+                            "validation batch did not settle"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        panic!("validation coordinator disconnected")
+                    }
+                }
+            };
             assert!(
                 result.is_err(),
                 "attempt {attempt}: non-yielding source must be rejected"

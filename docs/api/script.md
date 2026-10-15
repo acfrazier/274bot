@@ -199,10 +199,9 @@ its one pending batch on the receipt and retries non-blockingly on later
 polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
 receipt cancels a held pending batch or skips an already-queued one. The
 current generation alone can apply the returned prepared cards.
-The synchronous `validate_source`/`PreparedCard::validate` one-off helpers
-are `#[cfg(test)]`-gated compatibility shims for tests, not public product
-APIs: product builds have no synchronous validation path and no queue-full
-refusal.
+The former synchronous `validate_source`/`PreparedCard::validate` one-off
+helpers and their `Single` queue job are removed; tests and product use the
+same bounded batch/receipt path, so no one-off queue-full refusal remains.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and

@@ -471,17 +471,6 @@ impl LoadIsolate {
         Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
-    #[cfg(test)]
-    /// Synchronous compatibility helper; remove with remaining test callers.
-    /// Product refreshes use [`Self::validate_prepared_batch`] instead.
-    pub fn validate_source(
-        js: &str,
-        shape: LoadShape,
-        siblings: &[(String, String)],
-    ) -> Result<(), String> {
-        validation::validate(js, shape, siblings)
-    }
-
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
     pub fn validate_prepared_batch(
