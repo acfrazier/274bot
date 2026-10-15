@@ -161,6 +161,7 @@ impl RegistryIndex {
         Ok(Self { imports, registers })
     }
 
+    #[cfg(any(feature = "load", test))]
     pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
         self.cards_with_sources(&HashMap::new())
     }
@@ -189,6 +190,7 @@ impl RegistryIndex {
         .ok_or_else(|| format!("catalog {name}: registry entry no longer resolves"))
     }
 
+    #[cfg(any(feature = "load", test))]
     pub(crate) fn card_with_sources_bounded(
         &self,
         sources: &HashMap<String, String>,

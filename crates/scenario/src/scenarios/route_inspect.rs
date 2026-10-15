@@ -1,14 +1,6 @@
 use super::script_basics::script_live_seed_steps;
 use crate::*;
 
-/// Frozen field tile from `config.ts` @ rs2b0t `beecd912`. Not a v1 seed or
-/// harness PASS predicate (field sit / fallback arrival is Core FAIL).
-#[allow(dead_code)]
-pub(crate) const BRIMHAVEN_FIELD: WorldTile = WorldTile {
-    x: 2698,
-    z: 3206,
-    level: 0,
-};
 pub(crate) const BRIMHAVEN_BANK: WorldTile = WorldTile {
     x: 2655,
     z: 3283,
