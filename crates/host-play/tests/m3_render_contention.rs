@@ -251,26 +251,33 @@ fn delta(a: &[u64], b: &[u64]) -> Vec<u64> {
     a.iter().zip(b).map(|(x, y)| y - x).collect()
 }
 
+/// Per-group (focused / background) accumulation for one interval.
+#[derive(Default)]
+struct Group {
+    paint_fps: Vec<f64>,
+    raster_ms: Vec<f64>,
+    histogram: Vec<u64>,
+}
+
 fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> Value {
     let secs = to.at.duration_since(from.at).as_secs_f64();
     let mut rows = Vec::new();
-    let mut groups: HashMap<&str, (Vec<f64>, Vec<f64>, Vec<u64>)> = HashMap::new();
+    let mut groups: HashMap<&str, Group> = HashMap::new();
     for (i, head) in heads.iter().enumerate() {
         let paints = to.paints[i] - from.paints[i];
         let raster_ns = to.raster_ns[i] - from.raster_ns[i];
         let frames = to.frames[i] - from.frames[i];
         let histogram = delta(&from.histograms[i], &to.histograms[i]);
         let raster_ms = (paints > 0).then(|| raster_ns as f64 / paints as f64 / 1e6);
-        let group = if focused[i] { "focused" } else { "background" };
-        let entry = groups.entry(group).or_default();
-        entry.0.push(paints as f64 / secs);
-        if let Some(ms) = raster_ms {
-            entry.1.push(ms);
+        let group = groups
+            .entry(if focused[i] { "focused" } else { "background" })
+            .or_default();
+        group.paint_fps.push(paints as f64 / secs);
+        group.raster_ms.extend(raster_ms);
+        if group.histogram.is_empty() {
+            group.histogram = vec![0; BUCKETS];
         }
-        if entry.2.is_empty() {
-            entry.2 = vec![0; BUCKETS];
-        }
-        for (sum, count) in entry.2.iter_mut().zip(&histogram) {
+        for (sum, count) in group.histogram.iter_mut().zip(&histogram) {
             *sum += count;
         }
         rows.push(json!({
@@ -290,18 +297,18 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
     let max = |v: &[f64]| v.iter().copied().reduce(f64::max);
     let groups: serde_json::Map<String, Value> = groups
         .into_iter()
-        .map(|(name, (fps, raster, histogram))| {
+        .map(|(name, group)| {
             (
                 name.to_string(),
                 json!({
-                    "heads": fps.len(),
-                    "paint_fps_mean": mean(&fps),
-                    "paint_fps_min": fps.iter().copied().reduce(f64::min),
-                    "raster_ms_per_paint_mean": mean(&raster),
-                    "raster_ms_per_paint_max": max(&raster),
-                    "frame_interval_ms_p50": quantile(&histogram, 0.50),
-                    "frame_interval_ms_p95": quantile(&histogram, 0.95),
-                    "frame_interval_ms_p99": quantile(&histogram, 0.99),
+                    "heads": group.paint_fps.len(),
+                    "paint_fps_mean": mean(&group.paint_fps),
+                    "paint_fps_min": group.paint_fps.iter().copied().reduce(f64::min),
+                    "raster_ms_per_paint_mean": mean(&group.raster_ms),
+                    "raster_ms_per_paint_max": max(&group.raster_ms),
+                    "frame_interval_ms_p50": quantile(&group.histogram, 0.50),
+                    "frame_interval_ms_p95": quantile(&group.histogram, 0.95),
+                    "frame_interval_ms_p99": quantile(&group.histogram, 0.99),
                 }),
             )
         })
