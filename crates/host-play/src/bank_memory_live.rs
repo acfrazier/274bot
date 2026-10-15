@@ -427,9 +427,10 @@ fn live_bank_memory_hint_and_relog_at_draynor() {
     );
     // The path the slot thread was handed at spawn, resolved the same way
     // here (the test thread shares the process `HOME`).
-    let hint_path = script::bot_file("bank-hints")
-        .join(PROFILE)
-        .join(format!("{account}.json"));
+    let identity = api::local_state::AccountKey::try_new(PROFILE, &account)
+        .expect("a minted live name is a login identity");
+    let hint_path = crate::local_state::StateRoot::new(PathBuf::from(&home).join(".274bot"))
+        .bank_hint_file(PROFILE, identity.account());
     assert!(
         hint_path.starts_with(&home),
         "the hint path {} must sit under HOME {home}",
@@ -763,7 +764,7 @@ fn read_hint(path: &std::path::Path, account: &str) -> Result<HintRead, String> 
         .map_err(|error| format!("read {}: {error}", path.display()))?;
     let document: serde_json::Value = serde_json::from_str(&contents)
         .map_err(|error| format!("parse {}: {error}", path.display()))?;
-    if document["schema_version"] != serde_json::json!(script::bank_hints::SCHEMA_VERSION) {
+    if document["schema_version"] != serde_json::json!(crate::local_state::HINT_SCHEMA_VERSION) {
         return Err(format!("schema_version: {contents}"));
     }
     if document["profile"] != serde_json::json!(PROFILE)
