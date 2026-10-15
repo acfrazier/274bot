@@ -1,9 +1,9 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.3] — 2026-10-15 — Beta 1 patch
 
 ### Profiles
 
@@ -56,50 +56,51 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
 - When a chopped tree becomes an Ent, the Guardian stops chopping and waits
-  for the tree to return before the Gatherer resumes. This prevents the Ent
-  from breaking the axe.
-- Lost-tool recovery no longer abandons a pickaxe or axe after one refused
-  click. It retries on the next game tick within the existing recovery
-  limit.
+  for the tree to return before the Gatherer resumes, so the Ent can't break
+  the axe.
+- Lost-tool recovery no longer gives up on a pickaxe or axe after one
+  refused click. It retries on the next game tick, within the existing
+  recovery limit.
 
 ### Scripts
 
-- The Gatherer continues message boxes before waiting for its inventory tab.
-  A Mime emote-unlock message after the return teleport no longer prevents
+- **More rs2b0t scripts and helpers work.** This release is checked against
+  a newer rs2b0t:
+  - JiveDragons, JiveDemons and JiveKBD now start. Their loot checks know
+    which held items stack, including noted, poisoned and untradeable items.
+  - CowKiller uses its supported locations and bank choices.
+  - Banking: `shouldBankNow`, `isDisposableGatherJunk` and `waitBankReady`.
+    The junk check covers gems, strange fruit, beer, kebabs, the
+    random-event casket, fliers and half-eaten pies. `waitBankReady` returns
+    as soon as the bank's item list has arrived, without rs2b0t's extra
+    short pause. `parseBankStrategy('Loot count')` now returns the declared
+    `items` strategy rather than `loot`.
+  - Combat and banking: `facingPlayer`, `resolveCombatStyle` and
+    `resolveBankOpenRoute`. Ranged plans honour caller-selected potions.
+  - Tools: Attack gates (`toolAttackLevel`, `toolsNeedingEquip`) stay
+    separate from held-tool selection (`bestHeldToolNames`,
+    `surplusHeldToolNames`), and axe requirements use rs2b0t's level-1
+    default.
+  - Firemaking: `parseBurnMode`, `findBurnLane`, spot selection and
+    tree-log helpers.
+  - Hunting: `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and `chasesTarget`.
+    Paladin and Hero pickpocket leashes cover their 289 roaming areas.
+  - Clues and dialogues: `pickByLine`, `isUnderground`, `needsHop`,
+    `trailKit` and `nextCoordTool`; cake stalls get `classifySteal`.
+  - Food checks, ranged plans, trade and shop batching, clue distance,
+    door walking and mining helpers. Quest-only mining rocks stay out of
+    the regular ore options.
+  - TypeScript declarations cover script completion hooks, task labels,
+    current task names and the `InvItem.noted` flag.
+- A script that imports an rs2b0t value the bot doesn't support now loads;
+  using that value stops the script with a `not impl` message naming it,
+  instead of a missing-export error at Start.
+- When a catalog script uses an rs2b0t member this version doesn't provide,
+  Start names the member, without claiming the catalog is newer than this
+  version (some older members are missing too).
+- The Gatherer continues message boxes before waiting for its inventory tab,
+  so a Mime emote-unlock message after the return teleport no longer stops
   gathering from resuming.
-- Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
-  `waitBankReady`. The junk check covers gems, strange fruit, beer, kebabs,
-  the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
-  as soon as the bank's item list has arrived; it does not add rs2b0t's extra
-  short pause.
-- `parseBankStrategy('Loot count')` now returns the declared `items` strategy
-  rather than `loot`.
-- A script that imports an unsupported rs2b0t value now loads; using that value
-  stops the script with a named `not impl` message instead of a missing-export
-  error at Start.
-- When a catalog script uses an rs2b0t API member this version doesn't
-  provide, Start names the member, without claiming the catalog is newer than
-  this version (some older members are missing too).
-- Jive Dragons, Jive Demons and Jive KBD imports now pass, and their loot
-  checks know which held items stack, including noted, poisoned and
-  untradeable items. CowKiller uses its supported locations and bank choices.
-- Script authors can call combat and bank helpers such as `facingPlayer`,
-  `resolveCombatStyle` and `resolveBankOpenRoute`.
-- Firemaking supports `parseBurnMode`, `findBurnLane`, spot selection and
-  tree-log helpers.
-- Hunting scripts can use `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and
-  `chasesTarget`. Food checks, ranged plans, trade/shop batching, clue-distance,
-  door-walking and mining helpers are also available.
-- Tool helpers keep Attack gates (`toolAttackLevel`, `toolsNeedingEquip`)
-  separate from held-tool selection (`bestHeldToolNames`,
-  `surplusHeldToolNames`). Axe requirements use the upstream level-1 default,
-  and ranged plans honor caller-selected potion choices.
-- Clue and dialog helpers include `pickByLine`, `isUnderground`, `needsHop`,
-  `trailKit` and `nextCoordTool`; cake-stall logic exposes `classifySteal`.
-- Paladin and Hero pickpocket leashes now cover their 289 roaming areas.
-  Quest-only mining rocks stay out of the regular ore options.
-- Public TypeScript declarations cover script completion hooks, task labels and
-  current task names, and the supported `InvItem.noted` flag.
 
 ### Panel
 
@@ -115,50 +116,169 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ### Not in this release
 
-- Banking: `purgePackAtBank`, `withdrawCoins`, `bankPace`, `bankPaceTicks`,
-  live `bankSort.sortBank` and walk-cost selectors remain unavailable.
-- Inventory: `backpackSnapshots` and `backpackCapacity` remain unavailable.
-- Woodcutting: script-specific camp data (`WOODCUTTING_LOCATIONS`,
-  `WOODCUTTING_LOCATION_OPTIONS`, `resolveWoodcuttingLocation`) still needs a
-  verified native location catalog.
-- Shop and market: `buildCatalog`, `searchCatalog`, `resolveByName` and
-  `resetLiveCatalog` remain unavailable.
-- Combat: `Fight.hasChaseTarget` remains unavailable.
-- Chatbox: `GameMessages.record`, `reset`, `firstSince` and `recent` remain
-  unavailable. `mark`, `since` and `sawSince` read the host-backed chat
-  snapshot, not a mutable message ring.
-- Paint: direct `PaintFrame` construction, `PaintState`, `paintState`, the
-  frame layout helpers (`cols`, `wrap`, `list`, `fill`, `grid`, `stepper`) and
-  hit-testing helpers remain unavailable; the mutable paint-state family is
-  deferred to the compat rearchitecture.
-- Client adapter: snapshot invalidation, attach/detach, packet listeners,
-  object-catalog reset, loc-model extents, readiness checks, retaliation and
-  modal-control reads, combat-showing threshold and `WELCOME_SCREEN` remain
-  unavailable.
-- Runtime: settings catalogs, `settingOptionLabel`, run-policy helpers,
-  runner lifecycle helpers and `BotHostImpl` remain unavailable.
-- Quest and clue data: murder/suspect tables, clue-visit locations and quest
-  coin/bank rules lack a verified native content source. Their exports remain
-  declared, but using them fails with a named error.
-- Quest, clue and duel behavior: `trailWalkOpts`, `extraItemShop`,
-  `gateItemShop`, `ClueDuelSearch` and `resetClueDuelSearch` remain
-  unavailable.
-- Bot and pacing helpers: `resolveLoopCadence`, `BranchTask`, `LeafTask` and
-  `stableClosedPoll` remain unavailable; rs2b0t timing is not carried forward.
-- Input: target-use and spell-target methods (`useItemOnLoc`, `useItemOnNpc`,
-  `useItemOnObj`, `useItemOnItem`, `castOnNpc`, `castOnLoc`, `castOnItem`) and
-  `continueDialog` still refuse pending native interaction support.
-- A script that calls one of these stops with a `not impl` message naming it.
-- Fight and Ignore in the random-event Policies control can be chosen but
-  aren't available yet; a saved Fight or Ignore is treated as Flee.
-- Running from an angry Strange plant doesn't cure its poison.
+Planned work that didn't make this release, plus options and script calls
+that visibly refuse. Where a fix is planned, the item says so.
+
+**Quests and combat**
+
+- Quest guides cover 25 of 69 quests. Haunted Mine is unavailable on the
+  supported server. The guides that ship are still beta rather than all
+  checked end to end. More quest coverage is planned for a later release.
+- The Quester doesn't yet pick quest-aware supplies or pick up every quest
+  where you left off: earned quest items, some mid-conversation resumes,
+  following up on some quest targets, and coin costs in quest requirements
+  aren't handled. Quest resume and recipe work is planned for a later
+  release.
+- Prayer flicking, safespots, luring around corners, attacking other players,
+  range-aware standing spots, automatic gear switching and face-tank fallbacks
+  aren't here. Combat settings the game doesn't support still refuse to start,
+  and fights without progress still use the existing time limits. Combat
+  tactics are planned for later combat work.
+- Hunt keeps its two-minute fight limit and retreat behaviour; it hasn't moved
+  to the full combat system. Hunt parity is planned for later combat work.
+
+**Walking, gathering and clues**
+
+- Walks into quest areas that unlock as a quest progresses, regional
+  entrances and transports such as boats and gliders, the land route over
+  White Wolf Mountain below level 51, and some traveller and cosmetic walks
+  aren't fully handled yet. Fuller routing is planned for a later release.
+- Gathering sites the route finder can't reach yet stay hidden: 90 on 289 and
+  71 on 274. They're in Morytania, Tirannwn, the islands and boat or glider
+  trips, places behind gates and fences, and caves and underground areas. A
+  saved Gatherer card that names one refuses to start with an "unknown" site
+  error; pick another site. They come back as the route finder learns the
+  entrances, which is planned for a later release. A few enclosed spots have
+  no known way in yet, so those may stay hidden.
+- Apart from random events, the bot doesn't yet react when something attacks
+  it during non-combat work: it doesn't run from, for example, an aggressive
+  monster near a gathering spot, so a bot on a very long session can
+  occasionally die. Every hit, even a miss, also closes an open shop or bank
+  window. Reacting to other attackers is planned for later combat work; if a
+  bot dies, its log around the death helps us look into it.
+- In the random-event Policies control, Fight and Ignore can be chosen but
+  aren't available yet; a saved Fight or Ignore is treated as Flee. Running
+  from an angry Strange plant doesn't cure its poison.
+- Faster interactions aren't here: acting on the nearest thing first, not
+  walking through the thing you're acting on, shorter follow-ups when using an
+  item on something next to you, and reaching a clue's usable side in one walk.
+- The Gatherer gets no closest-site option, no shop tool buying, and no tool
+  provisioning while a quest route is holding the inventory. Finding locked
+  areas and matching gather timing are unchanged. More Gatherer work is
+  planned for a later release.
+- Clues that need a key you don't carry, locked chests, and Kharazi and
+  Tirannwn coverage stay incomplete, and clue conversations still go one step
+  at a time. The wider clue backlog is planned for a later release.
+- The WalkTo town list is unchanged, and map redraw work is planned for a
+  later release.
+
+**Scripts and compatibility**
+
+- Some catalog scripts are dimmed in the script picker and can't be started:
+  AIOQuester and Barcrawl (the built-in Quester replaces them, and Barcrawl
+  is planned for it); GatheringBot's Woodcutter, Miner and Fisher, and
+  EssMiner (the built-in Gatherer replaces them); MarketMaker and BankSorter
+  (both planned as built-in features); ArravSupplier and RoguesPurse (they use
+  rs2b0t quest helpers the bot doesn't provide yet); JiveKQ (its four-player
+  setup isn't qualified yet); and one BrimhavenAgility version that retries a
+  broken plank instead of taking another route.
+- Scripts that use these rs2b0t helpers still refuse to start, or stop with
+  a `not impl` message naming the helper when they reach it:
+  - Walking and NPCs: `Traversal.remaining`, `requestRepath`, `walkApproach`,
+    `gotoNpc`, `talkChoosingBy`, the walk destination list, and the
+    nearest-walkable-bank and walk-cost selectors.
+  - Banking: `sortBank`, `findQuestJunk`, `coinsToWithdraw`,
+    `purgePackAtBank`, `withdrawCoins`, `withdrawTo`, `bankPace` and
+    `bankPaceTicks`.
+  - Inventory: `backpackSnapshots`, `backpackCapacity` and
+    `acquireKeepNames`.
+  - Gathering: the woodcutting, mining and fishing location lists and
+    pickers, tool and fishing-gear buying and repair plans, and the checks
+    for walking back to a gathering spot.
+  - Shops and market: `Shop.buyById`, `buildCatalog`, `searchCatalog`,
+    `resolveByName` and `resetLiveCatalog`.
+  - Combat and spells: `Fight.hasChaseTarget`, `Game.castOnNpc`, and the
+    `Input` methods that use an item on something or cast a spell
+    (`useItemOnLoc`, `useItemOnNpc`, `useItemOnObj`, `useItemOnItem`,
+    `castOnNpc`, `castOnLoc`, `castOnItem`).
+  - Chat and objects: `ChatDialog.makeOne`, `Input.continueDialog`,
+    `EntityQuery.inside` and `nearestPreferLocal`, and `GameMessages.record`,
+    `reset`, `firstSince` and `recent`. `GameMessages.mark`, `since` and
+    `sawSince` read the chat the bot has seen, not a message list the script
+    can change.
+  - Paint: building a `PaintFrame` directly, `PaintState` and `paintState`,
+    the frame layout helpers (`cols`, `wrap`, `list`, `fill`, `grid`,
+    `stepper`) and the hit-testing helpers.
+  - Client access: snapshot invalidation, attach and detach, packet
+    listeners, object-catalog reset, object model sizes, readiness checks,
+    retaliate and modal-button reads, the combat-showing threshold and
+    `WELCOME_SCREEN`.
+  - Script runtime: settings catalogs, `settingOptionLabel`, run-policy and
+    runner lifecycle helpers, `BotHostImpl`, script events (`events.on`/`off`,
+    `registerScript`), the task classes (`AcquireTask`, `BranchTask`,
+    `LeafTask`), `resolveLoopCadence` and `stableClosedPoll`. rs2b0t's timing
+    isn't carried over.
+  - Quests, clues and duels: `Quests.journal`, the quest engine, the murder
+    and suspect tables, clue-visit locations, quest coin and bank rules,
+    `trailWalkOpts`, `extraItemShop`, `gateItemShop`, `ClueDuelSearch` and
+    `resetClueDuelSearch`.
+
+  Some other helpers refuse only a request they can't handle, with the same
+  message and the reason.
+- Scripts written against rs2b0t releases newer than the one this release
+  was checked against can use calls the bot doesn't know yet: they fail to
+  start, or stop when they reach the call.
+- The clearer Start messages don't yet separate "can't do that right now"
+  from "not implemented" everywhere in scripts.
+- FlourCollector, the Zanaris cook, JiveDemons and JiveKBD stay unqualified,
+  and the stronger pair-trade checks don't qualify every pair setup.
+- A Duel script that remembers the wrong opponent can still wait in a Duel
+  Arena fight pen until the fight moves on. Correct opponent tracking is
+  planned for a later release.
+
+**Panel, TUI, memory and host**
+
 - The rs2b0t import doesn't bring over rs2b0t's profile tabs and groups,
   its account-wide run, bank and walking settings (auto-run, run energy,
   bank junk, the Zanaris and Mage Arena banks, teleports, route drawing),
-  loadouts, or order books. Scripts that 274bot hides or can't run, and
-  scripts it replaces with its own versions (such as Woodcutter or
-  CowKiller), aren't matched to a 274bot script either. The preview lists
-  each of these with the reason.
+  loadouts or order books. A selected script that's dimmed in 274bot (such
+  as Woodcutter, which the built-in Gatherer replaces) or missing from your
+  catalog isn't selected. The preview lists each of these with the reason.
+- No quick world switch from the world bubble, no Fleet bulk world switch
+  with script pause and resume, no game-window resizing, no script-window
+  auto-sizing, and no custom profile ordering. These controls are planned for
+  a later release.
+- Grid cells don't each paint their script, the terminal shows no game
+  pixels, GPU sampling stays approximate, and the pickpocket wall-clip fix
+  isn't in this release. Rendering work is planned for a later release.
+- The Mac memory readout still shows RSS rather than physical footprint, and
+  turning render-all off can leave counted-but-reclaimable memory behind; the
+  capacity warning doesn't change that accounting. Readout improvements are
+  planned for a later release.
+- Waking bots together and using fewer connection resources per bot are
+  planned for later host work; this release brings no broader CPU or memory
+  optimization.
+- Copying settings onto a profile with no bot can still save without
+  assigning when a later copy fails or is cancelled, and there is no saved
+  quest-route knowledge yet. Saved-state work is planned for a later release.
+- Full audit logging of operator actions, frame-stall diagnostics and
+  lock-order checking aren't here; the Gatherer and watchdog messages are
+  specific fixes, not that project. Region-load lines still appear under the
+  login category.
+
+**Testing and supported versions**
+
+- CowKiller, EdgevilleMonkeyBars, JiveMarketDumper and ShopRunner have no
+  live test scenario, so their behaviour on a live server is untested.
+- 289 is the supported server version; 274 stays best-effort and unqualified.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a
+  Ryzen with built-in graphics plus a separate graphics card), the panel can
+  close right after it starts with "importing the supplied dmabufs failed".
+  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
+  0.2.0.2, 0.2.1, 0.2.2 and 0.2.3 have the same problem.
 
 ### Fixed during development
 
