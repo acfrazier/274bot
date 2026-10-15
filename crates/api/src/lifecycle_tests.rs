@@ -1648,3 +1648,36 @@ fn current_client_transport_failures_keep_typed_stage_and_session_envelope() {
         assert_eq!(gate.ready(), Some(key));
     }
 }
+
+#[test]
+fn response_sixteen_queue_hold_has_its_own_typed_slot_event() {
+    use crate::identity::{Deadline, Event, Scope};
+    let until = Deadline::at(std::time::Instant::now() + std::time::Duration::from_secs(17));
+    let event = Event::new(
+        Scope::Slot(slot()),
+        None,
+        SessionEventOut::Queued {
+            place: 1,
+            total: 2,
+            blocker: Some(QueueBlocker::ServerHold { until }),
+        },
+    );
+    assert_eq!(event.scope(), Scope::Slot(slot()));
+    assert_eq!(
+        event.payload(),
+        &SessionEventOut::Queued {
+            place: 1,
+            total: 2,
+            blocker: Some(QueueBlocker::ServerHold { until }),
+        }
+    );
+    assert_ne!(
+        event.payload(),
+        &SessionEventOut::Queued {
+            place: 1,
+            total: 2,
+            blocker: Some(QueueBlocker::Spacing { until }),
+        },
+        "a server response 16 is not the slot's start-spacing rule"
+    );
+}

@@ -1241,6 +1241,13 @@ pub enum QueueBlocker {
     /// A previous attempt's socket is not yet acknowledged closed; no grant
     /// until it is (one handshake at a time).
     Retiring,
+    /// The server refused login response 16 ("too many login attempts").
+    /// The shared hold ends at this instant (`play_login::server_hold`,
+    /// `host::login_queue::{hold_for,head_blocker}`), not an address/device TTL.
+    ServerHold {
+        /// When the server-imposed hold ends.
+        until: Deadline,
+    },
 }
 
 /// The failed step of the current Client::login transport. The client reports
