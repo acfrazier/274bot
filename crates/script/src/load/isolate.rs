@@ -27,6 +27,13 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// A failed isolate may poison a shared lock before the supervisor can
+/// retire it. Keep its state available for teardown rather than propagating
+/// that isolate-local failure to the process-wide supervisor.
+fn lock_after_isolate_failure<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 /// Failures before an isolate thread has been created.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadIsolateError {
@@ -464,6 +471,7 @@ impl LoadIsolate {
         Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
+    #[cfg(test)]
     /// Synchronous compatibility helper; remove with remaining test callers.
     /// Product refreshes use [`Self::validate_prepared_batch`] instead.
     pub fn validate_source(
@@ -1311,7 +1319,7 @@ impl LoadIsolate {
     }
 
     fn resolve_setup(&self, block_until: Option<Instant>) -> Ready {
-        let mut setup = self.setup.lock().unwrap();
+        let mut setup = lock_after_isolate_failure(&self.setup);
         let (rx, deadline) = match &*setup {
             SetupState::Ready => return Ready::Ready,
             SetupState::Failed(e) => return Ready::Failed(e.clone()),
@@ -1336,7 +1344,7 @@ impl LoadIsolate {
                     // Ready/Failed result. A startup eval can now be
                     // interrupted even if it never returns to send Ready.
                     let _ = self.terminate.set(handle);
-                    let st = self.teardown.lock().unwrap();
+                    let st = lock_after_isolate_failure(&self.teardown);
                     if st.phase == TeardownPhase::UnwindingTick {
                         // Serialized with Hook entry: join can never fire
                         // this startup/tick interrupt after onStop begins.
@@ -1347,7 +1355,7 @@ impl LoadIsolate {
                     // A tick queued before setup finished starts running
                     // now: measure its budget from actual V8 readiness, not
                     // from the send time.
-                    if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
+                    if let Some(entry) = lock_after_isolate_failure(&self.in_flight).as_mut() {
                         entry.2 = Instant::now();
                     }
                     break Ready::Ready;
@@ -1422,7 +1430,7 @@ impl LoadIsolate {
 
     /// Terminate setup/tick failure while it is still before Hook.
     fn fire_before_hook(&self) {
-        let st = self.teardown.lock().unwrap();
+        let st = lock_after_isolate_failure(&self.teardown);
         if matches!(
             st.phase,
             TeardownPhase::Running | TeardownPhase::UnwindingTick
@@ -1441,7 +1449,7 @@ impl LoadIsolate {
         self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
         {
-            let mut st = self.teardown.lock().unwrap();
+            let mut st = lock_after_isolate_failure(&self.teardown);
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
             }
@@ -1482,23 +1490,21 @@ impl LoadIsolate {
     fn pump_logs(&self) {
         loop {
             let msg = {
-                let rx = self.rx.lock().unwrap();
+                let rx = lock_after_isolate_failure(&self.rx);
                 rx.try_recv().ok()
             };
             let Some(msg) = msg else {
                 break;
             };
             match msg {
-                ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                ThreadMsg::Log(line) => lock_after_isolate_failure(&self.logs).push(line),
                 ThreadMsg::TickError {
                     tick,
                     generation,
                     message,
                 } => {
                     self.revoke_compat_journal();
-                    self.tick_errors
-                        .lock()
-                        .unwrap()
+                    lock_after_isolate_failure(&self.tick_errors)
                         .entry((tick, generation))
                         .or_default()
                         .push(message);
@@ -1510,10 +1516,11 @@ impl LoadIsolate {
                 }
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     self.revoke_compat_journal();
-                    *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
+                    *lock_after_isolate_failure(&self.script_stop) =
+                        Some(ScriptStopReceipt { tick, reason });
                 }
                 ThreadMsg::SessionReset { generation } => {
-                    let mut fence = self.held_fence.lock().unwrap();
+                    let mut fence = lock_after_isolate_failure(&self.held_fence);
                     if *fence == Some(generation) {
                         *fence = None;
                     }
@@ -1522,16 +1529,16 @@ impl LoadIsolate {
                     self.revoke_compat_journal();
                     self.stopped
                         .store(true, std::sync::atomic::Ordering::Release);
-                    *self.in_flight.lock().unwrap() = None;
-                    self.interacts.lock().unwrap().clear();
-                    self.lifecycle.lock().unwrap().clear();
+                    *lock_after_isolate_failure(&self.in_flight) = None;
+                    lock_after_isolate_failure(&self.interacts).clear();
+                    lock_after_isolate_failure(&self.lifecycle).clear();
                 }
                 ThreadMsg::Interact {
                     bytes,
                     generation,
                     observed_walk_outcome_seq,
                 } => {
-                    let mut interacts = self.interacts.lock().unwrap();
+                    let mut interacts = lock_after_isolate_failure(&self.interacts);
                     if generation
                         != self
                             .work_generation
@@ -1545,7 +1552,7 @@ impl LoadIsolate {
                         {
                             if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
                                 hold_walk_requests(
-                                    &mut self.held_walks.lock().unwrap(),
+                                    &mut lock_after_isolate_failure(&self.held_walks),
                                     reqs.into_iter().map(|req| QueuedInteract {
                                         req,
                                         observed_walk_outcome_seq,
@@ -1557,7 +1564,7 @@ impl LoadIsolate {
                     }
                     match crate::isolate_fb::decode_interact_batch(&bytes) {
                         Ok(reqs) => {
-                            let mut lifecycle = self.lifecycle.lock().unwrap();
+                            let mut lifecycle = lock_after_isolate_failure(&self.lifecycle);
                             for req in reqs {
                                 if req.is_watchdog_lifecycle() {
                                     lifecycle.push(req);
@@ -1569,7 +1576,9 @@ impl LoadIsolate {
                                 }
                             }
                         }
-                        Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
+                        Err(e) => {
+                            lock_after_isolate_failure(&self.logs).push(format!("interact: {e}"))
+                        }
                     }
                 }
                 ThreadMsg::Paint(frame) => {
@@ -1587,10 +1596,10 @@ impl LoadIsolate {
                         restamped.generation = generation;
                         std::sync::Arc::new(restamped)
                     };
-                    *self.paint.lock().unwrap() = Some(frame);
+                    *lock_after_isolate_failure(&self.paint) = Some(frame);
                 }
                 ThreadMsg::IgnoredRandoms(list) => {
-                    *self.ignored_randoms.lock().unwrap() = list;
+                    *lock_after_isolate_failure(&self.ignored_randoms) = list;
                 }
                 ThreadMsg::Completed {
                     tick,
@@ -1598,10 +1607,11 @@ impl LoadIsolate {
                     successful,
                     report_errors,
                 } => {
-                    let error = self.tick_errors.lock().unwrap().remove(&(tick, generation));
+                    let error =
+                        lock_after_isolate_failure(&self.tick_errors).remove(&(tick, generation));
                     if report_errors {
                         if let Some(messages) = error.as_ref() {
-                            let mut logs = self.logs.lock().unwrap();
+                            let mut logs = lock_after_isolate_failure(&self.logs);
                             logs.extend(
                                 messages
                                     .iter()
@@ -1614,7 +1624,8 @@ impl LoadIsolate {
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire);
                     if current {
-                        let mut active = self.tick_outcome_error_generation.lock().unwrap();
+                        let mut active =
+                            lock_after_isolate_failure(&self.tick_outcome_error_generation);
                         let outcome = match error {
                             Some(messages) if report_errors => {
                                 *active = Some(generation);
@@ -1631,13 +1642,13 @@ impl LoadIsolate {
                             _ => None,
                         };
                         if let Some(outcome) = outcome {
-                            self.tick_outcomes.lock().unwrap().push(outcome);
+                            lock_after_isolate_failure(&self.tick_outcomes).push(outcome);
                         }
                     }
                     if !current {
                         continue;
                     }
-                    let mut in_flight = self.in_flight.lock().unwrap();
+                    let mut in_flight = lock_after_isolate_failure(&self.in_flight);
                     #[cfg(feature = "memory-profile")]
                     self.last_completed
                         .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
@@ -1653,7 +1664,7 @@ impl LoadIsolate {
                     {
                         continue;
                     }
-                    let mut in_flight = self.in_flight.lock().unwrap();
+                    let mut in_flight = lock_after_isolate_failure(&self.in_flight);
                     if in_flight.is_some_and(|(g, t, _)| g == generation && t == tick) {
                         *in_flight = None;
                     }
@@ -1669,7 +1680,7 @@ impl Drop for LoadIsolate {
         // Revoke the handle's authority even if its owner omitted join.
         // A live thread remains charged to the supervisor until real exit.
         {
-            let mut st = self.teardown.lock().unwrap();
+            let mut st = lock_after_isolate_failure(&self.teardown);
             if st.phase != TeardownPhase::Done {
                 st.phase = TeardownPhase::Done;
             }

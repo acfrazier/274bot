@@ -43,6 +43,10 @@ pub struct ValidationBatch {
 impl ValidationBatch {
     pub fn try_recv(&self) -> Result<Batch, TryRecvError> {
         let seat = SEAT.as_ref().map_err(|_| TryRecvError::Disconnected)?;
+        self.try_recv_on(seat)
+    }
+
+    fn try_recv_on(&self, seat: &SyncSender<Job>) -> Result<Batch, TryRecvError> {
         try_admit_pending(seat, &self.pending)?;
         self.receiver.try_recv()
     }
@@ -72,6 +76,9 @@ impl Drop for ValidationBatch {
 }
 
 enum Job {
+    /// Synchronous one-off validation. Test-only: product refreshes submit
+    /// a cancellable `Batch` through `validate_batch` instead.
+    #[cfg(test)]
     Single {
         js: String,
         shape: LoadShape,
@@ -97,6 +104,9 @@ static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
     Ok(tx)
 });
 
+/// Synchronous test-compatibility helper (including its queue-full refusal).
+/// Product refreshes submit a cancellable batch through `validate_batch`.
+#[cfg(test)]
 pub(super) fn validate(
     js: &str,
     shape: LoadShape,
@@ -190,6 +200,7 @@ fn run(rx: Receiver<Job>) {
             continue;
         }
         match job {
+            #[cfg(test)]
             Job::Single {
                 js,
                 shape,
@@ -243,6 +254,7 @@ fn retiring_pending(retiring: &mut Option<Receiver<Vec<String>>>) -> bool {
 
 fn refuse(job: Job, reason: &str) {
     match job {
+        #[cfg(test)]
         Job::Single { reply, .. } => {
             let _ = reply.send(Err(reason.into()));
         }
@@ -317,6 +329,43 @@ mod tests {
         try_admit_pending(&seat, &pending).unwrap();
         assert!(pending.borrow_mut().take().is_none());
         assert!(matches!(rx.try_recv(), Ok(Job::Batch { .. })));
+    }
+
+    #[test]
+    fn batch_receipt_holds_pending_until_seat_admits_and_cancels_on_drop() {
+        // A local 1-slot seat stands in for the process seat: no JS engine
+        // and no global-seat races. The receipt under test owns its pending
+        // batch and polls it through the public `try_recv` path.
+        let (seat, rx) = mpsc::sync_channel(1);
+        assert!(seat.try_send(batch_job()).is_ok());
+
+        let (reply, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let batch = ValidationBatch {
+            receiver,
+            cancelled: Arc::clone(&cancelled),
+            pending: RefCell::new(Some(Job::Batch {
+                cards: Vec::new(),
+                reply,
+                cancelled: Arc::clone(&cancelled),
+            })),
+        };
+
+        // Full seat: the poll reports Empty and the owner keeps the batch.
+        assert!(matches!(batch.try_recv_on(&seat), Err(TryRecvError::Empty)));
+        assert!(batch.pending.borrow().is_some());
+
+        // A later poll retries and admits the held batch. The result channel
+        // is still empty, so the receipt still reports Empty.
+        drop(rx.try_recv().unwrap());
+        assert!(matches!(batch.try_recv_on(&seat), Err(TryRecvError::Empty)));
+        assert!(batch.pending.borrow().is_none());
+        assert!(matches!(rx.try_recv(), Ok(Job::Batch { .. })));
+
+        // Dropping the receipt flags cancellation for the worker, which
+        // skips the queued batch; the held-or-queued batch never delivers.
+        drop(batch);
+        assert!(cancelled.load(Ordering::Acquire));
     }
 
     #[test]

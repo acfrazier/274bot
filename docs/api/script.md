@@ -183,18 +183,26 @@ retirement log line `JS isolate quarantined after join deadline` means physical
 join did not occur by the setup (10 s when still starting) plus join (2 s)
 allowance, not that the isolate or permit has been freed. It is not a process
 shutdown; at saturation the JS Start/restart/validation refusal remains visible.
+The supervisor processes retirement outside its process registry lock and
+recovers poisoned isolate-local locks during cleanup: a failed isolate cannot
+poison the process registry or stop admissions for unrelated accounts.
 If the independent execution deadline supervisor is stopped or at capacity,
 the current execution is cut immediately and its tick error names the actual
 cause rather than labelling healthy work runaway. Pause normally allows
 already-entered healthy work to finish, except when no independent deadline
 could be registered; an unbounded execution is never allowed to continue.
 Catalog refresh validation uses one serialized process seat with a bounded
-16-job queue. When that queue is full, the refresh owner retains its one
-pending batch and retries non-blockingly on later polls instead of failing
-Reload; cancellation drops a pending batch or skips a queued one. The current
-generation alone can apply the returned prepared cards.
-The synchronous `validate_source`/`PreparedCard::validate` helpers are test
-compatibility paths marked for removal with their callers, not product admission.
+16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
+is `LoadIsolate::validate_prepared_batch`, which returns an owning
+`ValidationBatch` receipt. When that queue is full, the refresh owner retains
+its one pending batch on the receipt and retries non-blockingly on later
+polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
+receipt cancels a held pending batch or skips an already-queued one. The
+current generation alone can apply the returned prepared cards.
+The synchronous `validate_source`/`PreparedCard::validate` one-off helpers
+are `#[cfg(test)]`-gated compatibility shims for tests, not public product
+APIs: product builds have no synchronous validation path and no queue-full
+refusal.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and

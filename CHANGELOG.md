@@ -9,6 +9,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   merely because multiple refreshes submit together. If the independent JS
   deadline service refuses a running execution, its tick error identifies
   the service condition instead of calling the execution runaway.
+- A poisoned Load-script isolate can now retire without stopping the shared
+  deadline supervisor or refusing new scripts for other accounts.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

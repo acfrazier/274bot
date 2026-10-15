@@ -139,9 +139,10 @@ fn ten_isolates_share_one_deadline_supervisor() {
             .collect::<Vec<_>>();
         let count = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
         assert_eq!(count("js-deadline"), 1, "one OS deadline supervisor");
+        assert_eq!(count("script-bridge"), 1, "exactly one async bridge worker");
         assert!(
-            (1..=2).contains(&count("script-async")),
-            "one async worker plus at most one optional blocking bridge worker"
+            count("script-blk") <= 1,
+            "at most one optional blocking bridge thread"
         );
         assert_eq!(
             count("js-isolate"),
