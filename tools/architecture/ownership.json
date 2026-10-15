@@ -499,6 +499,14 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/rs2b0t_import_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/scripts/marked.rs",
       "owner": "T3"
     },
@@ -1471,6 +1479,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host/src/random/ent.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host/src/random/guardian.rs",
       "owner": "T1"
     },
@@ -1484,6 +1496,14 @@
     },
     {
       "path": "crates/host/src/random/maze_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host/src/random_ent_regressions.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host/src/random_fix_regressions.rs",
       "owner": "T1"
     },
     {
@@ -2267,6 +2287,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/scenario/src/random_episode.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/random_episode_tests.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/scenario/src/render_betty_views.rs",
       "owner": "T2"
     },
@@ -2355,7 +2383,19 @@
       "owner": "T2"
     },
     {
+      "path": "crates/scenario/src/scenarios/guardian_events.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/scenarios/guardian_events_tests.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/scenario/src/scenarios/hold_spot.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/scenarios/jive.rs",
       "owner": "T2"
     },
     {
@@ -2436,6 +2476,10 @@
     },
     {
       "path": "crates/scenario/src/scenarios/production/flax.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/scenarios/production/flour_collector.rs",
       "owner": "T2"
     },
     {
@@ -3367,6 +3411,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/load/shop_ops_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/snapshot.rs",
       "owner": "T1"
     },
@@ -3385,6 +3433,10 @@
     {
       "path": "crates/script/src/load/wait_clock.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/load/walk_opening_v8.rs",
+      "owner": "T2"
     },
     {
       "path": "crates/script/src/loadout_plan.rs",
@@ -3708,6 +3760,10 @@
     },
     {
       "path": "crates/script/src/reach_entity.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/reach_route.rs",
       "owner": "T2"
     },
     {
@@ -4232,6 +4288,10 @@
     },
     {
       "path": "crates/script/src/shop.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/shop_open.rs",
       "owner": "T2"
     },
     {
@@ -4839,6 +4899,214 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/tests/upstream/2de6bb23/api/acquisition/Tools.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/acquisition/woodcutting-axes.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/ai/clues/data/toolAcquire.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/ai/clues/toolAcquire.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/ai/quests/driveDialogGap.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/ai/quests/exec/primitives.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bank-withdraw-op.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bankQuestJunk.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bankSortRules.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking-common.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking-route.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/chatbox/gameMessages.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/boostPotions.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/combat-style.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/combatStyleLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/eatTiming.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/food-heal.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/food-notes.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/meleeWeapons.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/combat/special.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/cooking/cookLocations.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/game/combat-signals.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/market/catalog.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/shop/buyout-logic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/shop/shopOpBatch.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/sustain/sustain.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/tasks/Anchor.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/trade/PartnerTrade.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/api/trade/TradePartner.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/data/CowKillerLocations.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/data/WoodcuttingLocations.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/data/itemParse.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/data/mining-rocks.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/data/spelldb-drift.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/script-travel-corpus.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/scriptRouteCorpus.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/stairsParse.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/walkOpening.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/input/input.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/paint/Paint.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/paint/jive.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/paint/levelProgress.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/paint/paintLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ArdyFighterLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/CakeStallLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ThievingBotLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ardythiever-logic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/GatheringBot/FiremakingLogic.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/2de6bb23/scripts/JiveDragons/scheduler.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream/harness/bun_test.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/upstream_tier1.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/v8_platform.rs",
       "owner": "T1"
     },
@@ -4940,6 +5208,10 @@
     },
     {
       "path": "crates/tui/src/palette.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/tui/src/profile_import.rs",
       "owner": "T3"
     },
     {
