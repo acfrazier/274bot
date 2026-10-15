@@ -4579,3 +4579,61 @@ fn import_overlay_debug_holds_no_export_password() {
     let shown = format!("{view:?}");
     assert!(!shown.contains(SECRET), "{shown}");
 }
+
+/// One headless fleet session end to end: type a filter, mark the shown
+/// rows, then run a marked bulk action (Assign) and read its report.
+#[test]
+fn fleet_session_filters_marks_shown_and_assigns_marked() {
+    let iso = IsolatedEnv::enter("tui-fleet-session");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob", "carol", "bobby"]);
+    let looping = iso.dir.join("looping.ts");
+    std::fs::write(&looping, LOOPING_TS).unwrap();
+    let card = session.scripts.js_mut().load(&looping).unwrap();
+    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    session.pump(&mut app);
+
+    // Filter by a typed term: only bob and bobby stay shown.
+    let open = app.run_command(crate::commands::Command::FilterFleet);
+    dispatch(&mut session, &mut app, open);
+    for c in "bob".chars() {
+        app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+    }
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    let shown: Vec<&str> = app
+        .table
+        .shown()
+        .iter()
+        .map(|&i| app.names[i].as_str())
+        .collect();
+    assert_eq!(shown, ["bob", "bobby"]);
+    for (w, h) in SIZES {
+        let text = screen_text(&mut app, w, h);
+        assert!(text.contains("2/4 shown"), "{w}x{h}: {text}");
+    }
+
+    // Mark all shown marks exactly the filtered rows.
+    let mark = app.run_command(crate::commands::Command::MarkAllShown);
+    dispatch(&mut session, &mut app, mark);
+    assert_eq!(app.table.selection.len(), 2);
+    for name in ["bob", "bobby"] {
+        let id = session.core.profile_identity(name).unwrap();
+        assert!(app.table.selection.contains(id), "{name} is marked");
+    }
+    let alice = session.core.profile_identity("alice").unwrap();
+    assert!(!app.table.selection.contains(alice));
+
+    // Assign the card to the marked bots through the bulk confirmation.
+    let action = app.run_command(crate::commands::Command::ScriptAssignMarked);
+    dispatch(&mut session, &mut app, action);
+    let run = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, run);
+    session.core.flush_writes();
+    let assigned =
+        |name: &str| frontend_core::Scripts::assignment(&session.core, name).map(|a| a.key());
+    assert_eq!(assigned("bob"), Some(card.identity_key()));
+    assert_eq!(assigned("bobby"), Some(card.identity_key()));
+    assert_eq!(assigned("alice"), None, "the filtered-out bot is untouched");
+    assert_eq!(assigned("carol"), None, "the filtered-out bot is untouched");
+    let report = app.error.clone().expect("the assign report is shown");
+    assert!(report.contains("assigned"), "{report}");
+}

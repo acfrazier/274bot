@@ -989,7 +989,12 @@ pub struct Session {
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
     pub fleet_filter: String,
-    pub fleet_sort: crate::fleet::FleetSort,
+    pub fleet_sort: frontend_core::FleetOrder,
+    /// Reused buffer for the Fleet window's shown-row indices.
+    pub(crate) fleet_shown: Vec<usize>,
+    /// Reused buffer for the sorted mark universe [`Self::prune_fleet_marks`]
+    /// prunes against; kept so a steady frame allocates nothing there.
+    pub(crate) fleet_universe: Vec<frontend_core::ProfileIdentity>,
     pub fleet_report: Option<String>,
     /// Set by a marked Start: the fleet report follows the running Start
     /// report (and a later Stop all) until the next marked Stop.
@@ -1463,7 +1468,9 @@ impl Session {
             fleet_open: false,
             fleet_selection: frontend_core::MarkedSelection::default(),
             fleet_filter: String::new(),
-            fleet_sort: crate::fleet::FleetSort::Name,
+            fleet_sort: frontend_core::FleetOrder::Name,
+            fleet_shown: Vec::new(),
+            fleet_universe: Vec::new(),
             fleet_report: None,
             fleet_report_follows_start: false,
             fleet_restart_confirm: false,
@@ -3258,6 +3265,9 @@ impl Session {
             frontend_core::RenderPolicyLabel::RenderAll
         });
         self.core.advance_removals(Instant::now());
+        // Fleet marks follow the profile universe at this sync, not at
+        // the Fleet window's draw: a closed window prunes the same.
+        self.prune_fleet_marks();
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;
         }
@@ -3464,10 +3474,7 @@ impl Session {
             .profile_names()
             .into_iter()
             .map(|name| {
-                let identity = self
-                    .core
-                    .profile_identity(&name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&name));
+                let identity = self.core.profile_identity_or_synthetic(&name);
                 (identity, name)
             })
             .collect()
@@ -4872,9 +4879,40 @@ impl Session {
     }
 
     fn fleet_identity(&self, name: &str) -> frontend_core::ProfileIdentity {
-        self.core
-            .profile_identity(name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+        self.core.profile_identity_or_synthetic(name)
+    }
+
+    /// Prune the fleet marks to this surface's universe — every vault
+    /// profile, or the projected rows while no vault is open (the same
+    /// universe the Fleet window rows are built over). Runs at the
+    /// per-frame sync (`pump_status`), whether or not the Fleet window
+    /// is drawn, and allocates nothing once the kept universe buffer
+    /// is warm: identities come straight off the vault profiles, are
+    /// sorted in place, and membership is the core's binary search.
+    pub(crate) fn prune_fleet_marks(&mut self) {
+        if self.fleet_selection.is_empty() {
+            return;
+        }
+        let mut universe = std::mem::take(&mut self.fleet_universe);
+        universe.clear();
+        match self.core.vault() {
+            Some(vault) => universe.extend(
+                vault
+                    .profiles()
+                    .map(|profile| frontend_core::ProfileIdentity::uid(profile.uid)),
+            ),
+            None => universe.extend(
+                self.core
+                    .fleet_view()
+                    .rows()
+                    .iter()
+                    .map(|row| self.fleet_identity(row.name())),
+            ),
+        }
+        universe.sort_unstable();
+        universe.dedup();
+        self.fleet_selection.retain_sorted(&universe);
+        self.fleet_universe = universe;
     }
 
     pub fn refresh_walk_send(&mut self) {

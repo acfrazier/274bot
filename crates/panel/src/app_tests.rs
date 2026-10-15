@@ -5975,17 +5975,20 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
     let mut choices = Vec::new();
     for _ in 0..8 {
         choices = fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), false).sort_choices;
-        if choices.len() == crate::fleet::FleetSort::ALL.len() {
+        if choices.len() == frontend_core::FleetOrder::PANEL_CHOICES.len() {
             break;
         }
     }
-    assert_eq!(choices.len(), crate::fleet::FleetSort::ALL.len());
-    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Name);
+    assert_eq!(
+        choices.len(),
+        frontend_core::FleetOrder::PANEL_CHOICES.len()
+    );
+    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Name);
     let status = rect_centre(choices[1]);
     for pressed in [false, false, true, false] {
         fleet_frame(&mut ctx, &mut session, size, status, pressed);
     }
-    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Status);
+    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Status);
 }
 
 /// The Send window opens inside the screen and, for a short list, shows every
