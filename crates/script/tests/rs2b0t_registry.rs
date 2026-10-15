@@ -410,6 +410,63 @@ fn parse_registry_resolves_settings_schema_via_import_alias() {
 }
 
 #[test]
+fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
+    let mut sources = HashMap::new();
+    sources.insert(
+        "./ChickenKiller/ChickenKiller.js".to_string(),
+        CHICKEN_KILLER_TS.to_string(),
+    );
+    let full =
+        script::parse_registry_with_sources(CHICKEN_INDEX, &sources).expect("full fixture parse");
+    for card in &full {
+        let targeted = script::rs2b0t_registry::parse_registry_card_with_sources(
+            CHICKEN_INDEX,
+            &sources,
+            &card.name,
+        )
+        .expect("targeted fixture parse");
+        assert_eq!(&targeted, card);
+    }
+    assert!(script::rs2b0t_registry::parse_registry_card_with_sources(
+        CHICKEN_INDEX,
+        &sources,
+        "missing card",
+    )
+    .is_err());
+}
+
+#[test]
+#[ignore = "manual characterization: run against frozen upstream 2de6bb2397ceb9ffd05f2354f67dde328e324531 with RS2B0T set"]
+fn targeted_registry_parser_matches_every_frozen_real_catalogue_card() {
+    let root = std::env::var_os("RS2B0T")
+        .map(PathBuf::from)
+        .expect("RS2B0T must point at the frozen real catalogue checkout");
+    let index_path = script::registry_index_path(&root);
+    let index_ts = std::fs::read_to_string(&index_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", index_path.display()));
+    let registrations = script::parse_registry(&index_ts).expect("real registry parses");
+    let mut sources = HashMap::new();
+    for card in &registrations {
+        let source_path = script::script_file_path(&root, &card.rel_path)
+            .unwrap_or_else(|| panic!("invalid real registry source path: {}", card.rel_path));
+        let source = std::fs::read_to_string(&source_path)
+            .or_else(|_| std::fs::read_to_string(source_path.with_extension("ts")))
+            .unwrap_or_else(|error| panic!("read real source {}: {error}", source_path.display()));
+        sources.insert(card.rel_path.clone(), source);
+    }
+    let full =
+        script::parse_registry_with_sources(&index_ts, &sources).expect("full real registry parse");
+    assert_eq!(full.len(), registrations.len());
+    for card in &full {
+        let targeted = script::rs2b0t_registry::parse_registry_card_with_sources(
+            &index_ts, &sources, &card.name,
+        )
+        .unwrap_or_else(|error| panic!("target real card {}: {error}", card.name));
+        assert_eq!(&targeted, card, "targeted parse differs for {}", card.name);
+    }
+}
+
+#[test]
 fn parse_registry_identifier_options_does_not_execute_ts() {
     let index = r#"
 import Alcher, { ALCHER_SETTINGS } from './Alcher/Alcher.js';
@@ -1430,7 +1487,7 @@ fn register_rs2b0t_missing_shopdb_stays_empty() {
 }
 
 #[test]
-fn diff_catalog_loads_shopdb_from_refresh_root() {
+fn cooperative_catalog_fill_loads_shopdb_from_refresh_root() {
     let iso = script::IsolatedEnv::enter("diff-shopdb-root");
     let intended = iso.dir.join("intended");
     let ambient = iso.dir.join("ambient");
@@ -1440,8 +1497,29 @@ fn diff_catalog_loads_shopdb_from_refresh_root() {
 
     let dir = scratch("diff_shopdb_intended");
     let mut lib = test_library(&dir);
-    let diff = lib.diff_catalog(&intended).expect("diff intended root");
+    let snapshot = std::sync::Arc::new(
+        lib.catalog_preparation_snapshot(&intended)
+            .expect("capture the refresh catalogue"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let diff = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_diff(),
+    )
+    .expect("admit the refresh catalogue")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue diff completes");
     lib.apply_catalog_diff(diff);
+    lib.set_catalog_root(&intended);
     let opts = shop_buy_items(&lib);
     assert_eq!(opts, &["RootA Elixir".to_string()]);
     assert!(!opts.iter().any(|n| n == "RootB Tonic"));

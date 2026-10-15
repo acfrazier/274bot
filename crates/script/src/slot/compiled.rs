@@ -7,6 +7,7 @@ use crate::native::{
     PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
     ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason,
 };
+use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
 use api::selected::{FamilyPreparation, RunKey, SelectedPin};
 use std::sync::Mutex;
@@ -20,6 +21,7 @@ pub(super) struct CompiledRun {
     pub pin: Arc<SelectedPin>,
     pub output: Output,
     pub actions: NativeActions,
+    pending_registry: Option<Box<crate::quester::registry::PreparedRegistry>>,
 }
 
 pub(super) struct PendingConfig {
@@ -80,9 +82,45 @@ impl Drop for ScriptOwner {
     }
 }
 
+pub(super) enum PrepareRunError {
+    Full,
+    Other(StartError),
+}
+
+impl From<StartError> for PrepareRunError {
+    fn from(error: StartError) -> Self {
+        Self::Other(error)
+    }
+}
+
+/// One operator Start retained while the bounded work ledger is temporarily
+/// full. The slot owns exactly one demand and retries on an ordinary turn.
+pub(super) struct PendingCompiledStart {
+    card: &'static crate::native::CompiledCard,
+    run: RunKey,
+    bag: Arc<SettingsBag>,
+    selected: Arc<api::game_data::SelectedGameData>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+    retained: Arc<Mutex<RetainedMemory>>,
+    account: String,
+}
+
+impl PendingCompiledStart {
+    fn try_admit(&self) -> Result<Preparation, PrepareRunError> {
+        prepare_run(
+            self.card,
+            self.run,
+            Arc::clone(&self.bag),
+            Arc::clone(&self.selected),
+            Arc::clone(&self.banks),
+            Arc::clone(&self.retained),
+            self.account.clone(),
+        )
+    }
+}
 pub(super) struct Preparation {
     generation: u64,
-    worker: std::thread::JoinHandle<PreparationResult>,
+    worker: PreparedTask<PreparationResult>,
 }
 
 impl Preparation {
@@ -93,19 +131,15 @@ impl Preparation {
     pub(super) fn join(self) -> Result<CompiledRun, StartError> {
         self.worker
             .join()
-            .map_err(|payload| {
-                StartError::Unavailable(
-                    format!("preparation worker panic: {}", panic_message(&payload)).into(),
-                )
-            })?
+            .map_err(|error| StartError::Unavailable(error.to_string().into()))?
             .0
             .take()
             .expect("preparation result")
     }
 }
 
-/// A detached thread packet may be destroyed on either thread. Never let a
-/// card-owned configuration destructor unwind through std's packet destructor.
+/// An unconsumed WorkAdmission result may be destroyed on the service
+/// worker. Never let a card-owned configuration destructor unwind there.
 struct PreparationResult(Option<Result<CompiledRun, StartError>>);
 
 impl Drop for PreparationResult {
@@ -131,8 +165,8 @@ pub enum CompiledDelivery {
 pub(super) struct Output {
     pub status: Option<Arc<ScriptStatus>>,
     pub paint: Option<Arc<crate::shim::ScriptPaint>>,
-    pub applied: Option<u64>,
-    pub account: String,
+    pub applied: Option<std::num::NonZeroU64>,
+    pub account: Option<Box<str>>,
 }
 struct StatusDetails<'a> {
     failure_message: Option<&'a str>,
@@ -305,7 +339,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
 impl NativeOutput for Output {
     fn status(&mut self, status: ScriptStatus) {
         let previous = self.status.as_deref();
-        log_status_change(&self.account, previous, &status);
+        log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
         if previous != Some(&status) {
             self.status = Some(Arc::new(status));
         }
@@ -316,7 +350,8 @@ impl NativeOutput for Output {
         }
     }
     fn log(&mut self, level: api::hostlog::Level, message: &str) {
-        if self.account.is_empty() {
+        let account = self.account.as_deref().unwrap_or("");
+        if account.is_empty() {
             api::hostlog::emit(
                 api::hostlog::Emit {
                     category: api::hostlog::Category::ScriptLifecycle,
@@ -329,15 +364,15 @@ impl NativeOutput for Output {
             return;
         }
         api::hostlog::record(&api::hostlog::Record {
-            slot: Some(&self.account),
-            tick: api::hostlog::slot_tick(&self.account),
+            slot: Some(account),
+            tick: api::hostlog::slot_tick(account),
             source: api::hostlog::Source::Script,
             level,
             message,
         });
     }
     fn settings_applied(&mut self, revision: u64) {
-        self.applied = Some(revision);
+        self.applied = std::num::NonZeroU64::new(revision);
     }
 }
 
@@ -483,7 +518,7 @@ impl CompiledRun {
             if self
                 .pending
                 .as_ref()
-                .is_some_and(|next| next.boundary && next.revision() == revision)
+                .is_some_and(|next| next.boundary && next.revision() == revision.get())
             {
                 self.config = self
                     .pending
@@ -557,6 +592,7 @@ pub fn prepare_config(
     bag: Arc<SettingsBag>,
     selected: Arc<api::game_data::SelectedGameData>,
     banks: Arc<api::named_banks::NamedBankFacts>,
+    quester: Option<crate::quester::card::QuesterRegistryReady>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
@@ -567,12 +603,23 @@ pub fn prepare_config(
         banks,
         families: worker,
     };
-    let config = catch_unwind(AssertUnwindSafe(|| (card.prepare)(&mut cx, revision, bag)))
-        .map_err(|payload| {
-            StartError::Unavailable(
-                format!("preparation panic: {}", panic_message(&payload)).into(),
-            )
-        })??;
+    let config = catch_unwind(AssertUnwindSafe(|| {
+        if card.id == crate::quester::card::CARD.id {
+            let ready = quester.ok_or_else(|| {
+                StartError::Unavailable("Quester registry preparation is missing".into())
+            })?;
+            crate::quester::card::prepare_with_registry(&mut cx, revision, bag, ready)
+        } else if quester.is_some() {
+            Err(StartError::Unavailable(
+                "unexpected Quester registry for another card".into(),
+            ))
+        } else {
+            (card.prepare)(&mut cx, revision, bag)
+        }
+    }))
+    .map_err(|payload| {
+        StartError::Unavailable(format!("preparation panic: {}", panic_message(&payload)).into())
+    })??;
     if config.card() != card.id
         || config.schema_version() != card.schema_version
         || config.revision() != revision
@@ -587,6 +634,20 @@ pub fn prepare_config(
     Ok(config)
 }
 
+/// WorkAdmission never waits for a slot-owned lock. In normal slot
+/// sequencing, the factory runs between ticks and this lock is free.
+fn try_retained(
+    retained: &Mutex<RetainedMemory>,
+) -> Result<std::sync::MutexGuard<'_, RetainedMemory>, StartError> {
+    match retained.try_lock() {
+        Ok(value) => Ok(value),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => Err(StartError::Unavailable(
+            "retained memory is still in use during preparation".into(),
+        )),
+    }
+}
+
 /// The single off-pump registration transaction used by Browse and API seats.
 pub(super) fn prepare_run(
     card: &'static crate::native::CompiledCard,
@@ -596,38 +657,285 @@ pub(super) fn prepare_run(
     banks: Arc<api::named_banks::NamedBankFacts>,
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
-) -> Result<Preparation, StartError> {
-    let worker = FamilyPreparation::run(move |worker| {
-        PreparationResult(Some((|| {
-            let config = prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
-            let pin = selected.selected_pin().map_err(StartError::Facts)?;
-            let mut retained = retained
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let script = catch_unwind(AssertUnwindSafe(|| {
-                (card.create)(run, Arc::clone(&config), &mut retained)
-            }))
-            .map_err(|payload| {
-                StartError::Unavailable(
-                    format!("factory panic: {}", panic_message(&payload)).into(),
-                )
-            })??;
-            Ok(CompiledRun {
-                script: ScriptOwner(Some(script)),
-                config,
-                pending: None,
-                run,
-                selected,
-                pin,
-                output: Output {
-                    account,
-                    ..Default::default()
+) -> Result<Preparation, PrepareRunError> {
+    let quester = card.id == crate::quester::card::CARD.id;
+    let cold_gathering =
+        card.id == crate::CompiledId("Gatherer") && selected.try_gathering().is_none();
+    let settings_input =
+        PreparationInput::for_settings(run.run, &bag).map_err(StartError::WorkRefused)?;
+    // Charge folder retention only for an enabled source. Keep that exact
+    // source for the worker; a later settings change fails the publish fence.
+    // The Quester-only state lives in its Stage variant. Other cards pay no
+    // per-profile registry allocation or pointer in their admission closure.
+    struct QuesterState {
+        bag: Option<Arc<SettingsBag>>,
+        banks: Option<Arc<api::named_banks::NamedBankFacts>>,
+        source: Option<crate::quester::registry::FolderSource>,
+        preparation: Option<Box<crate::quester::registry::RegistryPreparation<'static>>>,
+        quests: Option<Arc<api::quest_facts::QuestCatalog>>,
+        pending: Option<Box<crate::quester::registry::PreparedRegistry>>,
+        actions: u32,
+    }
+    let quester_state = quester.then(|| {
+        Box::new(QuesterState {
+            bag: Some(Arc::clone(&bag)),
+            banks: Some(Arc::clone(&banks)),
+            source: Some(crate::quester::registry::source_for_preparation()),
+            preparation: None,
+            quests: None,
+            pending: None,
+            actions: 0,
+        })
+    });
+    let input = if let Some(state) = quester_state.as_ref() {
+        PreparationInput::for_quester_folder(
+            run.run,
+            settings_input,
+            state.source.as_ref().expect("Quester source captured"),
+        )
+        .map_err(StartError::WorkRefused)?
+    } else if cold_gathering {
+        settings_input.with_gathering_family_decode()
+    } else {
+        settings_input
+    };
+    let slot = api::identity::SlotKey::from_incarnation(run.slot)
+        .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
+    enum Stage {
+        Quester {
+            state: Box<QuesterState>,
+            configuring: bool,
+        },
+        Decode {
+            bag: Arc<SettingsBag>,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        },
+        Configure {
+            bag: Arc<SettingsBag>,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        },
+        Construct {
+            config: Arc<PreparedConfig>,
+            quester: Option<Box<QuesterState>>,
+        },
+        Done,
+    }
+    let mut stage = if let Some(state) = quester_state {
+        Stage::Quester {
+            state,
+            configuring: false,
+        }
+    } else if cold_gathering {
+        Stage::Decode { bag, banks }
+    } else {
+        Stage::Configure { bag, banks }
+    };
+    let mut account = Some(account.into_boxed_str());
+    let worker = preparation::submit_cooperative(
+        PreparationKind::Profile,
+        api::identity::Scope::Slot(slot),
+        input,
+        move |worker| {
+            let regular_total = if cold_gathering { 3 } else { 2 };
+            let (mut completed, mut total) = match &stage {
+                Stage::Quester {
+                    state,
+                    configuring: false,
+                } => (state.actions, None),
+                Stage::Quester {
+                    state,
+                    configuring: true,
+                } => (state.actions + 1, Some(state.actions + 2)),
+                Stage::Decode { .. } => (0, Some(regular_total)),
+                Stage::Configure { .. } => (u32::from(cold_gathering), Some(regular_total)),
+                Stage::Construct {
+                    quester: Some(state),
+                    ..
+                } => (state.actions + 1, Some(state.actions + 2)),
+                Stage::Construct { quester: None, .. } => (regular_total - 1, Some(regular_total)),
+                Stage::Done => unreachable!("terminal preparation step is not dispatched"),
+            };
+            let result = (|| -> Result<Option<CompiledRun>, StartError> {
+                match std::mem::replace(&mut stage, Stage::Done) {
+                    Stage::Quester {
+                        mut state,
+                        configuring: false,
+                    } => {
+                        state.actions = state
+                            .actions
+                            .checked_add(1)
+                            .expect("bounded Quester registry action count");
+                        completed = state.actions;
+                        if state.preparation.is_none() {
+                            let quests = Arc::new(
+                                api::quest_facts::QuestCatalog::from_identity(
+                                    selected.quest_identity(),
+                                )
+                                .map_err(StartError::Facts)?,
+                            );
+                            state.preparation = Some(Box::new(
+                                crate::quester::registry::RegistryPreparation::from_source(
+                                    state.source.take().expect("Quester folder source captured"),
+                                    Arc::clone(&selected),
+                                    Arc::clone(&quests),
+                                )
+                                .map_err(|error| {
+                                    StartError::Unavailable(
+                                        format!(
+                                            "{}: {}",
+                                            error.code,
+                                            error.detail.as_deref().unwrap_or("Path reload failed")
+                                        )
+                                        .into(),
+                                    )
+                                })?,
+                            ));
+                            state.quests = Some(quests);
+                        }
+                        let preparation = state
+                            .preparation
+                            .as_mut()
+                            .expect("registry preparation initialized");
+                        match preparation.step(worker).map_err(|error| {
+                            StartError::Unavailable(
+                                format!(
+                                    "{}: {}",
+                                    error.code,
+                                    error.detail.as_deref().unwrap_or("Path reload failed")
+                                )
+                                .into(),
+                            )
+                        })? {
+                            Some(candidate) => {
+                                state.preparation = None;
+                                state.pending = Some(Box::new(candidate));
+                                total = Some(state.actions);
+                                stage = Stage::Quester {
+                                    state,
+                                    configuring: true,
+                                };
+                            }
+                            None => {
+                                stage = Stage::Quester {
+                                    state,
+                                    configuring: false,
+                                };
+                            }
+                        }
+                        Ok(None)
+                    }
+                    Stage::Quester {
+                        mut state,
+                        configuring: true,
+                    } => {
+                        let ready = crate::quester::card::QuesterRegistryReady::new(
+                            state
+                                .pending
+                                .as_ref()
+                                .expect("Quester registry prepared")
+                                .registry()
+                                .clone(),
+                            state.quests.take().expect("Quester quest facts prepared"),
+                        );
+                        let config = prepare_config(
+                            worker,
+                            card.id,
+                            1,
+                            state.bag.take().expect("Quester settings retained"),
+                            Arc::clone(&selected),
+                            state.banks.take().expect("Quester banks retained"),
+                            Some(ready),
+                        )?;
+                        completed = state.actions + 1;
+                        stage = Stage::Construct {
+                            config,
+                            quester: Some(state),
+                        };
+                        Ok(None)
+                    }
+                    Stage::Decode { bag, banks } => {
+                        selected
+                            .prepare_gathering(worker)
+                            .map_err(StartError::Facts)?;
+                        completed = 1;
+                        stage = Stage::Configure { bag, banks };
+                        Ok(None)
+                    }
+                    Stage::Configure { bag, banks } => {
+                        let config = prepare_config(
+                            worker,
+                            card.id,
+                            1,
+                            bag,
+                            Arc::clone(&selected),
+                            banks,
+                            None,
+                        )?;
+                        completed = regular_total - 1;
+                        stage = Stage::Construct {
+                            config,
+                            quester: None,
+                        };
+                        Ok(None)
+                    }
+                    Stage::Construct {
+                        config,
+                        mut quester,
+                    } => {
+                        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                        let mut retained = try_retained(&retained)?;
+                        let script = catch_unwind(AssertUnwindSafe(|| {
+                            (card.create)(run, Arc::clone(&config), &mut retained)
+                        }))
+                        .map_err(|payload| {
+                            StartError::Unavailable(
+                                format!("factory panic: {}", panic_message(&payload)).into(),
+                            )
+                        })??;
+                        Ok(Some(CompiledRun {
+                            script: ScriptOwner(Some(script)),
+                            config,
+                            pending: None,
+                            pending_registry: quester
+                                .as_mut()
+                                .and_then(|state| state.pending.take()),
+                            run,
+                            selected: Arc::clone(&selected),
+                            pin,
+                            output: Output {
+                                account: account.take(),
+                                ..Default::default()
+                            },
+                            actions: NativeActions { _private: () },
+                        }))
+                    }
+                    Stage::Done => unreachable!("terminal preparation step is not dispatched"),
+                }
+            })();
+            match result {
+                Ok(None) => preparation::CooperativePreparationStep::Continue { completed, total },
+                Ok(Some(run)) => preparation::CooperativePreparationStep::Complete {
+                    output: PreparationResult(Some(Ok(run))),
+                    completed: total.expect("completed preparation has a known total"),
+                    total,
                 },
-                actions: NativeActions { _private: () },
-            })
-        })()))
-    })
-    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+                Err(error) => preparation::CooperativePreparationStep::Complete {
+                    output: PreparationResult(Some(Err(error))),
+                    completed,
+                    total,
+                },
+            }
+        },
+    )
+    .map_err(|error| match error {
+        preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+            PrepareRunError::Full
+        }
+        preparation::PreparationError::Refused(refusal) => {
+            PrepareRunError::Other(StartError::WorkRefused(refusal))
+        }
+        other => PrepareRunError::Other(StartError::Unavailable(other.to_string().into())),
+    })?;
     Ok(Preparation {
         generation: run.run,
         worker,
@@ -647,32 +955,56 @@ pub(super) fn prepare_native_run(
         ) -> Result<(Box<dyn Script>, Arc<PreparedConfig>), StartError>
         + Send
         + 'static,
-) -> Result<Preparation, StartError> {
-    let worker = FamilyPreparation::run(move |_| {
-        PreparationResult(Some((|| {
-            let pin = selected.selected_pin().map_err(StartError::Facts)?;
-            let (script, config) =
-                catch_unwind(AssertUnwindSafe(|| build(&selected))).map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("preparation panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-            Ok(CompiledRun {
-                script: ScriptOwner(Some(script)),
-                config,
-                pending: None,
-                run,
-                selected,
-                pin,
-                output: Output {
-                    account,
-                    ..Default::default()
-                },
-                actions: NativeActions { _private: () },
-            })
-        })()))
-    })
-    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+) -> Result<Preparation, PrepareRunError> {
+    let slot = api::identity::SlotKey::from_incarnation(run.slot).ok_or_else(|| {
+        PrepareRunError::Other(StartError::Unavailable("slot worker is not bound".into()))
+    })?;
+    let input = PreparationInput::new(
+        run.run,
+        account.capacity(),
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+    )
+    .map_err(|error| PrepareRunError::Other(StartError::WorkRefused(error)))?;
+    let worker = preparation::submit(
+        PreparationKind::Card,
+        api::identity::Scope::Slot(slot),
+        input,
+        move |_| {
+            PreparationResult(Some((|| {
+                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let (script, config) = catch_unwind(AssertUnwindSafe(|| build(&selected)))
+                    .map_err(|payload| {
+                        StartError::Unavailable(
+                            format!("preparation panic: {}", panic_message(&payload)).into(),
+                        )
+                    })??;
+                Ok(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    pending_registry: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account: Some(account.into_boxed_str()),
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                })
+            })()))
+        },
+    )
+    .map_err(|error| match error {
+        preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+            PrepareRunError::Full
+        }
+        preparation::PreparationError::Refused(refusal) => {
+            PrepareRunError::Other(StartError::WorkRefused(refusal))
+        }
+        other => PrepareRunError::Other(StartError::Unavailable(other.to_string().into())),
+    })?;
     Ok(Preparation {
         generation: run.run,
         worker,
@@ -741,14 +1073,28 @@ impl SlotScript {
         let job = prepare_run(
             card,
             run,
-            bag,
-            selected,
-            banks,
-            retained,
+            Arc::clone(&bag),
+            Arc::clone(&selected),
+            Arc::clone(&banks),
+            Arc::clone(&retained),
             account.to_owned(),
-        )?;
+        );
+        match job {
+            Ok(job) => self.preparing = Some(Box::new(job)),
+            Err(PrepareRunError::Full) => {
+                self.pending_compiled_start = Some(PendingCompiledStart {
+                    card,
+                    run,
+                    bag,
+                    selected,
+                    banks,
+                    retained,
+                    account: account.to_owned(),
+                });
+            }
+            Err(PrepareRunError::Other(error)) => return Err(error),
+        }
         self.control_generation = generation;
-        self.preparing = Some(Box::new(job));
         self.terminal_native_status = None;
         self.want_run = true;
         self.start_pending = true;
@@ -784,41 +1130,55 @@ impl SlotScript {
         let pin = Arc::clone(&current.pin);
         let account = current.output.account.clone();
         let retained = Arc::clone(self.retained.as_ref().ok_or("no retained memory")?);
-        self.revoke_native_input();
-        self.teardown_compiled(StopReason::Replaced);
-        let worker = FamilyPreparation::run(move |_| {
-            PreparationResult(Some((|| {
-                let mut retained = retained
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let script = catch_unwind(AssertUnwindSafe(|| {
-                    (card.create)(run, Arc::clone(&config), &mut retained)
-                }))
-                .map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("factory panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-                let mut script = ScriptOwner(Some(script));
-                let mut output = Output {
-                    account,
-                    ..Default::default()
-                };
-                let (config, pending) = reoffer_pending(&mut script, &mut output, config, pending)?;
-                Ok(CompiledRun {
-                    script,
-                    config,
-                    pending,
-                    run,
-                    selected,
-                    pin,
-                    output,
-                    actions: NativeActions { _private: () },
-                })
-            })()))
-        });
+        let input = PreparationInput::for_settings(generation, config.bag())
+            .map_err(|error| error.to_string())?;
+        let slot =
+            api::identity::SlotKey::from_incarnation(run.slot).ok_or("slot worker is not bound")?;
+        // Do not tear down the running identity until replacement admission
+        // actually succeeds. Full retains one retry demand on this slot.
+        let worker = preparation::submit(
+            PreparationKind::Card,
+            api::identity::Scope::Slot(slot),
+            input,
+            move |_| {
+                PreparationResult(Some((|| {
+                    let mut retained = try_retained(&retained)?;
+                    let script = catch_unwind(AssertUnwindSafe(|| {
+                        (card.create)(run, Arc::clone(&config), &mut retained)
+                    }))
+                    .map_err(|payload| {
+                        StartError::Unavailable(
+                            format!("factory panic: {}", panic_message(&payload)).into(),
+                        )
+                    })??;
+                    let mut script = ScriptOwner(Some(script));
+                    let mut output = Output {
+                        account,
+                        ..Default::default()
+                    };
+                    let (config, pending) =
+                        reoffer_pending(&mut script, &mut output, config, pending)?;
+                    Ok(CompiledRun {
+                        script,
+                        config,
+                        pending,
+                        pending_registry: None,
+                        run,
+                        selected,
+                        pin,
+                        output,
+                        actions: NativeActions { _private: () },
+                    })
+                })()))
+            },
+        );
         let worker = match worker {
             Ok(worker) => worker,
+            Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                self.pending_compiled_restart = true;
+                self.revoke_native_input();
+                return Ok(());
+            }
             Err(error) => {
                 let message = error.to_string();
                 self.fail_compiled(ScriptFailure {
@@ -828,6 +1188,9 @@ impl SlotScript {
                 return Err(message);
             }
         };
+        self.pending_compiled_restart = false;
+        self.revoke_native_input();
+        self.teardown_compiled(StopReason::Replaced);
         self.control_generation = generation;
         self.preparing = Some(Box::new(Preparation { generation, worker }));
         self.state = RunState::Starting;
@@ -836,6 +1199,31 @@ impl SlotScript {
     }
 
     fn poll_compiled(&mut self) {
+        if let Some(pending) = self.pending_compiled_start.take() {
+            if pending.run.run != self.control_generation || !self.want_run {
+                return;
+            }
+            match pending.try_admit() {
+                Ok(job) => self.preparing = Some(Box::new(job)),
+                Err(PrepareRunError::Full) => {
+                    self.pending_compiled_start = Some(pending);
+                    return;
+                }
+                Err(PrepareRunError::Other(error)) => {
+                    self.last_error = Some(error.to_string());
+                    self.want_run = false;
+                    self.state = RunState::Idle;
+                    self.settle_start(StartOutcome::Rejected(error));
+                    return;
+                }
+            }
+        }
+        if self.pending_compiled_restart && self.compiled.is_some() {
+            if let Err(error) = self.restart_compiled(Instant::now()) {
+                self.last_error = Some(error);
+            }
+            return;
+        }
         if !self.preparing.as_ref().is_some_and(|job| job.is_finished()) {
             return;
         }
@@ -845,7 +1233,25 @@ impl SlotScript {
             let _ = job.join();
             return;
         }
-        match job.join() {
+        let identity = job.worker.identity();
+        let result = job.join().and_then(|mut run| {
+            if let Some(candidate) = run.pending_registry.take() {
+                crate::quester::registry::commit_snapshot(*candidate, identity, identity).map_err(
+                    |error| {
+                        StartError::Unavailable(
+                            format!(
+                                "{}: {}",
+                                error.code,
+                                error.detail.as_deref().unwrap_or("Path reload failed")
+                            )
+                            .into(),
+                        )
+                    },
+                )?;
+            }
+            Ok(run)
+        });
+        match result {
             Ok(run) => {
                 self.install_compiled(run);
                 self.settle_start(StartOutcome::Ready);
@@ -1114,6 +1520,7 @@ impl SlotScript {
                 (),
             ),
             pending: None,
+            pending_registry: None,
             run: RunKey {
                 slot: self.incarnation,
                 run: self.control_generation,

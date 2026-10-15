@@ -198,10 +198,27 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
         .get(ScriptSource::Catalog, "FlourCollector")
         .expect("FlourCollector listed");
     assert_eq!(flour.unloadable, None);
-    let prepared = library
-        .prepare_card_unvalidated(ScriptSource::Catalog, "FlourCollector")
-        .expect("FlourCollector transpiles and instantiates");
-    assert_eq!(prepared.card.unloadable, None);
+    let mut source = std::fs::read_to_string(&flour.path).expect("read FlourCollector source");
+    source.push('\n');
+    std::fs::write(&flour.path, source).expect("change FlourCollector source");
+    let prepared = match library
+        .card_preparation_snapshot(ScriptSource::Catalog, "FlourCollector", None)
+        .expect("capture bounded card snapshot")
+        .prepare()
+        .expect("FlourCollector preparation completes")
+    {
+        script::load::CardPreparationOutcome::Prepared(prepared) => prepared,
+        script::load::CardPreparationOutcome::Failed { error, .. } => {
+            panic!("FlourCollector preparation failed: {error}")
+        }
+        script::load::CardPreparationOutcome::Unchanged
+        | script::load::CardPreparationOutcome::Confirmed => {
+            panic!("FlourCollector remained unchanged after its source edit")
+        }
+    };
+    assert_eq!(prepared.card.name, "FlourCollector");
+    assert!(prepared.card.origin.ends_with('\n'));
+    assert!(prepared.card.unloadable.is_none());
 
     let ess = library
         .get(ScriptSource::Catalog, "EssMiner")

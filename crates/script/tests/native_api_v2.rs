@@ -1231,6 +1231,12 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let prepared = std::sync::Arc::clone(&data);
+    api::selected::FamilyPreparation::run(move |worker| prepared.prepare_gathering(worker))
+        .unwrap()
+        .join()
+        .unwrap()
+        .expect("prepare the real gathering family before probing its sync helpers");
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);

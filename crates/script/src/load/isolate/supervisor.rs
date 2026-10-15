@@ -340,6 +340,7 @@ impl Supervisor {
         let mut retiring = Vec::new();
         let mut still_retiring = Vec::new();
         let mut credited = Vec::new();
+        let mut receipts = Vec::new();
         loop {
             let mut registry = self
                 .state
@@ -431,7 +432,7 @@ impl Supervisor {
                             .lock()
                             .unwrap_or_else(|poison| poison.into_inner()),
                     );
-                    let _ = row.done.send(lines);
+                    receipts.push((row.done, lines));
                     // Drop the LoadIsolate here, before reacquiring registry.
                 } else if now >= row.deadline && quarantine_room != 0 {
                     // A gameplay slot releases J only with this credited A
@@ -457,7 +458,7 @@ impl Supervisor {
                                 handle,
                                 validation_done: None,
                             });
-                            let _ = row.done.send(lines);
+                            receipts.push((row.done, lines));
                         }
                     }
                 } else {
@@ -472,6 +473,16 @@ impl Supervisor {
             registry.processing_validation = 0;
             registry.retiring.append(&mut still_retiring);
             registry.quarantined.append(&mut credited);
+            drop(registry);
+            // A receipt is authoritative only after capacity and quarantine
+            // state reflect it. Never send while holding the process registry.
+            for (done, lines) in receipts.drain(..) {
+                let _ = done.send(lines);
+            }
+            let registry = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             if let Some(duration) = registry.wait_budget() {
                 drop(
                     self.changed
@@ -657,24 +668,16 @@ mod tests {
         let _lines = receipt
             .recv_timeout(Duration::from_secs(3))
             .expect("poisoned isolate must complete retirement");
-        // The receipt precedes the final row drop. Wait until that drop is
-        // accounted for, then assert the worker survived it. On the old path,
-        // reacquiring the registry waits for the supervisor's poisoned drop.
-        let until = Instant::now() + Duration::from_secs(3);
-        loop {
-            let registry = get()
-                .unwrap()
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            let retired = registry.retiring.is_empty() && registry.processing_gameplay == 0;
-            drop(registry);
-            if retired {
-                break;
-            }
-            assert!(Instant::now() < until, "retirement never settled");
-            std::thread::yield_now();
-        }
+        // The receipt is the authority boundary: every row and processing
+        // count must already be published in the registry when it arrives.
+        let registry = get()
+            .unwrap()
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert!(registry.retiring.is_empty());
+        assert_eq!(registry.processing_gameplay, 0);
+        drop(registry);
         assert_eq!(worker_count(), 1, "one poisoned isolate cannot stop JS");
         let peer = LoadIsolate::spawn(
             "export function tick() {}".into(),

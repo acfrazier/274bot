@@ -16,19 +16,29 @@ impl Scripts {
         &mut self,
         sel: &script::ScriptSel,
         catalog_root: Option<&Path>,
-    ) -> Result<ScriptAssignment, String> {
+    ) -> Result<Option<ScriptAssignment>, String> {
         match sel {
             script::ScriptSel::Compiled(id) => script::compiled_card(*id)
-                .map(|_| script::compiled_assignment(*id))
+                .map(|_| Some(script::compiled_assignment(*id)))
                 .ok_or_else(|| "unavailable card".to_string()),
             script::ScriptSel::Loaded(source, lookup) => {
                 if *source == script::ScriptSource::Catalog {
-                    self.fill_catalog_once(catalog_root);
+                    if self.catalog_work_pending() {
+                        return Ok(None);
+                    }
+                    if !self.catalog_filled() || self.catalog_scan_root().is_none() {
+                        let root = catalog_root
+                            .ok_or_else(|| "catalog root is not available".to_string())?;
+                        self.request_catalog_fill(root, &script::default_rs2b0t_path_file())?;
+                        if self.catalog_work_pending() {
+                            return Ok(None);
+                        }
+                    }
                 }
                 let card = self.startable_card(*source, lookup)?;
                 match &card.unloadable {
                     Some(reason) => Err(format!("unloadable import: {reason}")),
-                    None => Ok(card.assignment()),
+                    None => Ok(Some(card.assignment())),
                 }
             }
         }

@@ -14,6 +14,7 @@ const LISTED: usize = 6;
 enum BulkOutcomeKind {
     Done,
     Skipped,
+    Pending,
     Failed,
 }
 
@@ -32,11 +33,19 @@ impl BulkOutcome {
         reason: None,
     };
 
+    /// The command is retained for completion after an asynchronous
+    /// prerequisite.
+    pub const Pending: Self = Self {
+        kind: BulkOutcomeKind::Pending,
+        reason: None,
+    };
+
     fn rank(&self) -> u8 {
         match self.kind {
             BulkOutcomeKind::Failed => 0,
             BulkOutcomeKind::Skipped => 1,
-            BulkOutcomeKind::Done => 2,
+            BulkOutcomeKind::Pending => 2,
+            BulkOutcomeKind::Done => 3,
         }
     }
 
@@ -62,6 +71,11 @@ impl BulkOutcome {
     /// Whether the bot was not eligible.
     pub fn is_skipped(&self) -> bool {
         self.kind == BulkOutcomeKind::Skipped
+    }
+
+    /// Whether the command is retained for an asynchronous prerequisite.
+    pub fn is_pending(&self) -> bool {
+        self.kind == BulkOutcomeKind::Pending
     }
 
     /// Whether the command was refused.
@@ -198,12 +212,16 @@ impl BulkReport {
         self.count(BulkOutcome::is_failed)
     }
 
+    pub fn pending_count(&self) -> usize {
+        self.count(BulkOutcome::is_pending)
+    }
+
     fn count(&self, pick: impl Fn(&BulkOutcome) -> bool) -> usize {
         self.rows.iter().filter(|row| pick(&row.outcome)).count()
     }
 
-    /// `Label: verb D, skipped K[, failed F]`, then the failure reasons and
-    /// the skip reasons plus any per-row host detail. Successful detailed rows
+    /// `Label: verb D, skipped K[, pending P][, failed F]`, then each
+    /// failure, skip and retained pending reason. Successful detailed rows
     /// are also named. A refused command names its one cause instead.
     pub fn summary(&self) -> String {
         if let Some(reason) = &self.refusal {
@@ -216,12 +234,19 @@ impl BulkReport {
         if self.rows.is_empty() {
             return format!("{}: no bots marked", self.label);
         }
-        let (done, skipped, failed) =
-            (self.done_count(), self.skipped_count(), self.failed_count());
+        let (done, skipped, pending, failed) = (
+            self.done_count(),
+            self.skipped_count(),
+            self.pending_count(),
+            self.failed_count(),
+        );
         let mut text = format!(
             "{}: {} {done}, skipped {skipped}",
             self.label, self.done_verb
         );
+        if pending > 0 {
+            let _ = write!(text, ", pending {pending}");
+        }
         if failed > 0 {
             let _ = write!(text, ", failed {failed}");
         }
@@ -253,7 +278,28 @@ impl BulkReport {
             write_row_reason(&mut text, row, reason);
             sep = ", ";
         }
-        let mut detail_sep = if failed > 0 || skipped > 0 {
+        if pending > 0 {
+            let mut sep = if failed > 0 || skipped > 0 {
+                "; "
+            } else {
+                ": "
+            };
+            for row in self
+                .rows
+                .iter()
+                .filter(|row| row.outcome.is_pending())
+                .take(LISTED)
+            {
+                let _ = write!(
+                    text,
+                    "{sep}{}: {}",
+                    row.profile,
+                    row.detail.as_deref().unwrap_or("pending")
+                );
+                sep = ", ";
+            }
+        }
+        let mut detail_sep = if failed > 0 || skipped > 0 || pending > 0 {
             "; "
         } else {
             ": "
@@ -310,6 +356,23 @@ mod tests {
                 .map(|r| r.profile.as_str())
                 .collect::<Vec<_>>(),
             ["zed", "bob", "alice"]
+        );
+    }
+
+    #[test]
+    fn pending_demands_are_counted_and_named_without_becoming_failures() {
+        let report = BulkReport::new(
+            "Assign marked",
+            "assigned",
+            vec![BulkRow::new("alice", BulkOutcome::Pending).with_detail("catalog scan pending")],
+            None,
+        );
+
+        assert_eq!(report.pending_count(), 1);
+        assert_eq!(report.failed_count(), 0);
+        assert_eq!(
+            report.summary(),
+            "Assign marked: assigned 0, skipped 0, pending 1: alice: catalog scan pending"
         );
     }
 }

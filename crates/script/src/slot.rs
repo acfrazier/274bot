@@ -153,6 +153,11 @@ pub struct SlotScript {
     /// Diagnostic only: a blocked run has no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
+    /// One bounded native Start retained across temporary Full admission.
+    pending_compiled_start: Option<compiled::PendingCompiledStart>,
+    /// A watchdog restart awaiting capacity keeps its current instance until
+    /// the replacement job is accepted on a later slot turn.
+    pending_compiled_restart: bool,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
@@ -285,6 +290,8 @@ impl SlotScript {
             compiled: None,
             terminal_native_status: None,
             preparing: None,
+            pending_compiled_start: None,
+            pending_compiled_restart: false,
             #[cfg(feature = "load")]
             api: None,
             retained: None,
@@ -951,7 +958,9 @@ impl SlotScript {
 
     fn stop_with_reason(&mut self, reason: StopReason, message: &'static str) {
         self.terminal_native_status = None;
-        let native = self.compiled.is_some() || self.preparing.is_some();
+        let native = self.compiled.is_some()
+            || self.preparing.is_some()
+            || self.pending_compiled_start.is_some();
         if native {
             self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
                 runtime_generation: self.control_generation.max(self.runtime_generation),
@@ -962,6 +971,8 @@ impl SlotScript {
         }
         self.control_generation = self.control_generation.saturating_add(1);
         self.preparing = None;
+        self.pending_compiled_start = None;
+        self.pending_compiled_restart = false;
         #[cfg(feature = "load")]
         self.teardown_api(reason);
         self.native_runtime.revoke();
@@ -2638,6 +2649,7 @@ impl SlotScript {
 impl Drop for SlotScript {
     fn drop(&mut self) {
         self.preparing = None;
+        self.pending_compiled_start = None;
         self.teardown_compiled(StopReason::Removed);
         #[cfg(feature = "load")]
         self.teardown_api(StopReason::Removed);
