@@ -1048,8 +1048,14 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
                 paints.iter().all(|&paints| paints >= 20),
                 "both GPU heads keep painting: {paints:?}"
             );
+            // The two counters are read at slightly different instants while
+            // both heads paint, so a paint in flight at either window edge
+            // can be leased on one side of the edge and published on the
+            // other: at most one paint per head per edge. Every other
+            // painted scene ran under a lease.
+            let edges = 2 * paints.len() as u64;
             assert!(
-                leased >= paints.iter().sum::<u64>(),
+                leased + edges >= paints.iter().sum::<u64>(),
                 "every painted scene ran under a lease ({leased} for {paints:?})"
             );
             assert_eq!(after.unleased(), before.unleased());
