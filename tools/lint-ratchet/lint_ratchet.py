@@ -2,12 +2,13 @@
 """Lint-suppression ratchet: fail when `#[allow]`/`#[expect]` counts grow.
 
 Scans `crates/**/*.rs` for `#[allow(...)]`, `#[expect(...)]`,
-`#![allow(...)]`, `#![expect(...)]` and `#[cfg_attr(.., allow(..))]` /
-`#[cfg_attr(.., expect(..))]` suppressions, bucketed per crate x lint with
-test files counted separately, and compares against `baseline.json`.
+`#![allow(...)]`, `#![expect(...)]` and `#[cfg_attr(.., ...)]` suppressions,
+bucketed per crate x lint with test files counted separately, and compares
+against `baseline.json`.
 
-  python3 -B tools/lint-ratchet/lint_ratchet.py            # check, exit 1 on growth
-  python3 -B tools/lint-ratchet/lint_ratchet.py --update   # rebaseline, exit 0
+  python3 -B tools/lint-ratchet/lint_ratchet.py              # check, exit 1 on growth
+  python3 -B tools/lint-ratchet/lint_ratchet.py --update     # rebaseline, exit 0
+  python3 -B tools/lint-ratchet/lint_ratchet.py --self-test  # parser tests, exit 1 on failure
 
 Rules: any (crate, lint, bucket) count above its baseline fails, as does a
 suppression for a lint absent from that crate's baseline entry. Lowering a
@@ -15,10 +16,24 @@ count (including removing suppressions) is free and needs no baseline edit.
 `--update` rewrites the baseline; land the rewritten file in the same diff
 as the suppression change. Failure output names every offending file:line.
 
+Fail-closed parsing: any suppression-like item the scanner cannot read is an
+error (exit non-zero, with file:line), never a warning. That covers lint
+paths that do not parse (`#[allow(some thing)]`), unbalanced attributes,
+macro metavariables in suppression position (`#[allow($lint:meta)]` in a
+`macro_rules!` matcher), and files that cannot be read. `--update` refuses
+to write a baseline while such errors exist. Bare `#[allow]` / `#[allow()]`
+carry no lint and are not errors.
+
 Counting is lexical, not cfg-evaluated: a `cfg_attr(not(test), allow(..))`
-counts once wherever it is written, and macros that expand to suppressions
-are invisible (only literally written attributes count). A "test" file is
-one with a `tests`/`test` path component or `test` in the file stem
+counts once wherever it is written. Nested `cfg_attr` is followed to any
+depth (`cfg_attr(pred, cfg_attr(pred, allow(..)))`), and lint paths tolerate
+whitespace around `::` (`clippy :: needless_collect` counts as
+`clippy::needless_collect`), as does a space before the paren
+(`allow (dead_code)`). Suppressions written inside macro bodies, or passed
+as macro arguments (`macro_rules!` arms, `stringify!(#[allow(..)])`), are
+counted: over-counting hides nothing, while ignoring them would, and a
+macro-emitted suppression is real. A "test" file is one with a
+`tests`/`test` path component or `test` in the file stem
 (`*_tests.rs`, `tests.rs`, `test_support.rs`, ...). Only `crates/` is
 scanned; `tools/` members are out of scope.
 """
@@ -49,6 +64,14 @@ TEST = "test"
 
 LINT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\Z")
 REASON_RE = re.compile(r"reason\s*=")
+# `clippy :: needless_collect` is a valid path; collapse space around `::`.
+COLON_WS_RE = re.compile(r"\s*::\s*")
+# Suppression keyword heads: `allow(`/`expect(` plus the spaced forms
+# (`allow (`, tab, newline). The lookahead keeps `allowance`/`expected` out.
+SUPPRESSION_HEAD_RES = {
+    keyword: re.compile(re.escape(keyword) + r"(?![A-Za-z0-9_])") for keyword in ("allow", "expect")
+}
+CFG_ATTR_HEAD_RE = re.compile(r"cfg_attr(?![A-Za-z0-9_])")
 
 
 def find_workspace_root() -> Path:
@@ -228,59 +251,82 @@ def split_top_level(text: str) -> list[str]:
 
 
 def lints_in_allow_or_expect(args: str, problems: list[str], where: str) -> list[str]:
-    """Extract lint paths from an `allow(...)` / `expect(...)` argument list."""
+    """Extract lint paths from an `allow(...)` / `expect(...)` argument list.
+
+    Anything that is not a lint path or a `reason = "..."` pair is a parse
+    error: fail closed (the caller turns `problems` into an exit code).
+    """
     found: list[str] = []
     for part in split_top_level(args):
-        item = part.strip()
-        if not item or REASON_RE.match(item):
+        raw = part.strip()
+        if not raw or REASON_RE.match(raw):
             continue
+        item = COLON_WS_RE.sub("::", raw)
         if LINT_RE.match(item):
             found.append(item)
         else:
-            problems.append(f"{where}: cannot parse suppression item {item!r}; skipped")
+            problems.append(f"{where}: cannot parse suppression item {raw!r}")
     return found
+
+
+def _lints_in_suppression_call(
+    body: str, keyword: str, problems: list[str], where: str
+) -> list[str] | None:
+    """Parse `allow ...` / `expect ...` at the start of `body`, if present.
+
+    Returns None when `body` is not that keyword (the caller tries the next
+    shape). A bare keyword with no parens carries no lint and is not an
+    error, matching `#[allow]` / `#[allow()]`. Whitespace (including
+    newlines) may sit between the keyword and the paren.
+    """
+    head = SUPPRESSION_HEAD_RES[keyword].match(body)
+    if not head:
+        return None
+    rest = body[head.end() :].strip()
+    if not rest.startswith("("):
+        return []
+    try:
+        end = match_balanced(rest, 0)
+    except ValueError:
+        problems.append(f"{where}: unbalanced {keyword}(...)")
+        return []
+    return lints_in_allow_or_expect(rest[1 : end - 1], problems, where)
 
 
 def lints_in_attribute(inner: str, problems: list[str], where: str) -> list[str]:
     """Extract suppressed lints from one `[...]` attribute body (comments/strings blanked)."""
     body = inner.strip()
     for keyword in ("allow", "expect"):
-        if body == keyword or body.startswith(keyword + "(") or body.startswith(keyword + " "):
-            rest = body[len(keyword) :].strip()
-            if rest.startswith("("):
-                try:
-                    end = match_balanced(rest, 0)
-                except ValueError:
-                    problems.append(f"{where}: unbalanced {keyword}(...); skipped")
-                    return []
-                return lints_in_allow_or_expect(rest[1 : end - 1], problems, where)
-            return []
-    if body == "cfg_attr" or body.startswith("cfg_attr(") or body.startswith("cfg_attr "):
-        rest = body[len("cfg_attr") :].strip()
-        if not rest.startswith("("):
-            return []
-        try:
-            end = match_balanced(rest, 0)
-        except ValueError:
-            problems.append(f"{where}: unbalanced cfg_attr(...); skipped")
-            return []
-        items = split_top_level(rest[1 : end - 1])
-        found: list[str] = []
-        for item in items[1:]:  # items[0] is the cfg predicate
-            item = item.strip()
-            for keyword in ("allow", "expect"):
-                if item == keyword or item.startswith(keyword + "("):
-                    arg = item[len(keyword) :].strip()
-                    if arg.startswith("("):
-                        try:
-                            arg_end = match_balanced(arg, 0)
-                        except ValueError:
-                            problems.append(f"{where}: unbalanced {keyword}(...) in cfg_attr; skipped")
-                            break
-                        found.extend(lints_in_allow_or_expect(arg[1 : arg_end - 1], problems, where))
-                    break
-        return found
-    return []
+        result = _lints_in_suppression_call(body, keyword, problems, where)
+        if result is not None:
+            return result
+    if not CFG_ATTR_HEAD_RE.match(body):
+        return []
+    rest = body[len("cfg_attr") :].strip()
+    if not rest.startswith("("):
+        return []
+    try:
+        end = match_balanced(rest, 0)
+    except ValueError:
+        problems.append(f"{where}: unbalanced cfg_attr(...)")
+        return []
+    items = split_top_level(rest[1 : end - 1])
+    found: list[str] = []
+    for item in items[1:]:  # items[0] is the cfg predicate
+        item = item.strip()
+        if not item:
+            continue
+        for keyword in ("allow", "expect"):
+            result = _lints_in_suppression_call(item, keyword, problems, where)
+            if result is not None:
+                found.extend(result)
+                break
+        else:
+            # A nested `cfg_attr` (to any depth) or an unrelated attribute
+            # such as `cfg_attr(test, derive(Debug))`: recurse, which counts
+            # the former and ignores the latter.
+            found.extend(lints_in_attribute(item, problems, where))
+    return found
 
 
 def is_test_file(rel: Path) -> bool:
@@ -301,7 +347,7 @@ def scan_file(root: Path, path: Path, problems: list[str]) -> list[tuple[str, st
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        problems.append(f"{rel}: cannot read ({exc}); skipped")
+        problems.append(f"{rel}: cannot read ({exc})")
         return []
     clean = blank_comments_and_strings(text)
     occurrences: list[tuple[str, str, str, int]] = []
@@ -313,7 +359,7 @@ def scan_file(root: Path, path: Path, problems: list[str]) -> list[tuple[str, st
             end = match_balanced(clean, open_index)
         except ValueError:
             line = clean.count("\n", 0, match.start()) + 1
-            problems.append(f"{rel}:{line}: unbalanced attribute; skipped")
+            problems.append(f"{rel}:{line}: unbalanced attribute")
             continue
         inner = clean[open_index + 1 : end - 1]
         line = clean.count("\n", 0, match.start()) + 1
@@ -378,18 +424,24 @@ def check(counts, baseline, hits) -> list[str]:
     return failures
 
 
+def report_problems(problems: list[str]) -> None:
+    """Print parse errors (each carries file:line, except unreadable files)."""
+    for problem in problems:
+        print(f"lint-ratchet: error: {problem}", file=sys.stderr)
+
+
 def cmd_check(root: Path, baseline_path: Path) -> int:
     problems: list[str] = []
     hits = scan_tree(root, problems)
     counts = summarize(hits)
     baseline = load_baseline(baseline_path)
     failures = check(counts, baseline, hits)
-    for warning in problems:
-        print(f"lint-ratchet: warning: {warning}", file=sys.stderr)
+    report_problems(problems)
     total = len(hits)
     crates = len(counts)
-    if failures:
-        print(f"lint-ratchet: FAIL ({len([f for f in failures if not f.startswith('  ')])} problem(s))")
+    n_problems = len([f for f in failures if not f.startswith("  ")]) + len(problems)
+    if failures or problems:
+        print(f"lint-ratchet: FAIL ({n_problems} problem(s))")
         for line in failures:
             print(line)
         print(f"lint-ratchet: {total} suppression(s) across {crates} crate(s)")
@@ -402,9 +454,16 @@ def cmd_update(root: Path, baseline_path: Path) -> int:
     problems: list[str] = []
     hits = scan_tree(root, problems)
     counts = summarize(hits)
+    report_problems(problems)
+    if problems:
+        # Fail closed: a baseline written now would silently drop the
+        # unreadable suppressions. Fix the source first, then re-run.
+        print(
+            f"lint-ratchet: refusing to write {baseline_path}"
+            f" with {len(problems)} parse error(s)"
+        )
+        return 1
     old_counts = load_baseline(baseline_path) if baseline_path.is_file() else {}
-    for warning in problems:
-        print(f"lint-ratchet: warning: {warning}", file=sys.stderr)
     for crate in sorted(set(old_counts) | set(counts)):
         for lint in sorted(set(old_counts.get(crate, {})) | set(counts.get(crate, {}))):
             for bucket in (NON_TEST, TEST):
@@ -428,12 +487,27 @@ def cmd_update(root: Path, baseline_path: Path) -> int:
     return 0
 
 
+def cmd_self_test() -> int:
+    """Run the permanent parser tests in `test_lint_ratchet.py`; exit 1 on failure."""
+    import unittest
+
+    sys.path.insert(0, str(SCRIPT_DIR))
+    import test_lint_ratchet
+
+    suite = unittest.defaultTestLoader.loadTestsFromModule(test_lint_ratchet)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    return 0 if result.wasSuccessful() else 1
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Fail when lint suppressions grow above the baseline.")
     parser.add_argument("--root", type=Path, default=None, help="workspace checkout root")
     parser.add_argument("--baseline", type=Path, default=None, help="baseline file")
     parser.add_argument("--update", action="store_true", help="rewrite the baseline")
+    parser.add_argument("--self-test", action="store_true", help="run the parser tests and exit")
     args = parser.parse_args(argv)
+    if args.self_test:
+        return cmd_self_test()
     root = args.root.resolve() if args.root else find_workspace_root()
     baseline_path = args.baseline.resolve() if args.baseline else DEFAULT_BASELINE
     if not (root / "crates").is_dir():
