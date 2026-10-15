@@ -1327,6 +1327,17 @@ pub(crate) fn script_observe_cached_with_channels(
                                             && *bank_generation == trace.generation
                                     );
                                     if matches {
+                                        #[cfg(test)]
+                                        if super::gatherer_recovery_live::refuse_deposit_once(
+                                            name, &authority, trace, tick,
+                                        ) {
+                                            return BankDepositDispatch {
+                                                accepted: false,
+                                                refusal: Some(
+                                                    "bank deposit dispatch was refused".to_owned(),
+                                                ),
+                                            };
+                                        }
                                         dispatch_native_bank_deposit(driver, snapshot, trace)
                                     } else {
                                         BankDepositDispatch {
@@ -1945,17 +1956,21 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     {
         return;
     }
-    let end = if bot.walk_outcome_blocked {
-        script::native::WalkEnd::Blocked
-    } else if bot.walk_outcome_failed {
-        bot.native_walk_failure
-            .as_ref()
-            .filter(|(request, _)| *request == owner.request_id().get())
-            .map_or(script::native::WalkEnd::Failed, |(_, end)| end.clone())
-    } else {
-        script::native::WalkEnd::RouteEnded
-    };
     let request_id = owner.request_id().get();
+    let typed_failure = bot
+        .native_walk_failure
+        .as_ref()
+        .filter(|(request, _)| *request == request_id)
+        .map(|(_, end)| end.clone());
+    let end = typed_failure.unwrap_or({
+        if bot.walk_outcome_blocked {
+            script::native::WalkEnd::Blocked
+        } else if bot.walk_outcome_failed {
+            script::native::WalkEnd::Failed
+        } else {
+            script::native::WalkEnd::RouteEnded
+        }
+    });
     let blocked = bot
         .native_walk_blocked
         .as_ref()

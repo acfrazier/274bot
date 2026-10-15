@@ -398,6 +398,38 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
     })
 }
 
+#[test]
+fn typed_bank_deposit_failure_keeps_user_text_in_acquisition_trace() {
+    struct RefusedDeposit;
+    impl StepRun for RefusedDeposit {
+        fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+            Poll::Ready(Err(ActionError::BankDeposit(
+                crate::bank::ops::DepositFailure::FullStack,
+            )))
+        }
+        fn cancel(&mut self, _: &mut NativeActions) {}
+    }
+
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = policy_s2_recipe_run(Box::new(RefusedDeposit));
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Err(ActionError::BankDeposit(
+            crate::bank::ops::DepositFailure::FullStack
+        )))
+    ));
+    assert!(matches!(
+        run.take_trace_event(),
+        Some(StepTraceEvent::Acquisition {
+            outcome: AcquisitionTraceOutcome::Failed(reason),
+            ..
+        }) if reason.as_ref() == "bank deposit refused: full stack in bank"
+    ));
+}
+
 pub(crate) fn post_user_input_walk_receipt(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,

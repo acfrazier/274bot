@@ -25,11 +25,12 @@ use vault::Profile;
 use crate::memory;
 use crate::play_bootstrap::{bot_client_config, PlayConnection};
 use crate::play_login::{
-    configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
+    capture_login_authorization, configure_slot_world, drop_queue_place, enqueue_queue_place,
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
-    publish_login_latched_from_arm, refresh_slot_world_preference, server_hold, should_handshake,
+    publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
     sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
     wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
+    SlotLogin,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -1056,10 +1057,6 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
-                    arm.prepared();
-                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
-                    #[cfg(test)]
-                    arm.panic_after_queue_for_test();
                     if let Some(round) = world_round.as_mut() {
                         let worlds = connection
                             .profile()
@@ -1088,6 +1085,17 @@ fn spawn_slot_thread(
                             }
                         }
                     }
+                    let Some((login_command, login_world_generation)) =
+                        capture_login_authorization(&arm, client.ingame)
+                    else {
+                        continue;
+                    };
+                    // The slot can outlive a profile uid edit. Prepare the
+                    // next handshake and its queue accounting from the live
+                    // identity; K4's publication fence rejects an edit that
+                    // races this snapshot.
+                    let uid = arm.uid.load(Ordering::Acquire);
+                    client.login_uid = uid;
                     if world_dirty {
                         let round = world_round.as_ref().expect("public world round");
                         let worlds = connection.profile().and_then(|p| p.public_worlds())
@@ -1123,6 +1131,11 @@ fn spawn_slot_thread(
                         world_dirty = false;
                         refresh_key = false;
                     }
+                    // Publish only the command that selected this world.
+                    arm.prepared();
+                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
+                    #[cfg(test)]
+                    arm.panic_after_queue_for_test();
                     if let Some(until) = arm.clean_release_admission_at(
                         &client.config.host,
                         client.config.port,
@@ -1150,22 +1163,19 @@ fn spawn_slot_thread(
                         continue;
                     };
                     if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
+                        drop(permit);
+                        // A returned grant must not immediately re-enter the
+                        // queue while the world preference stays mismatched.
+                        arm.wait_for_retry(
+                            Duration::from_millis(50),
+                            None,
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        );
                         continue;
                     }
-                    // A withdrawal or stop that lands after the granting poll
-                    // releases the unused reservation before any login call,
-                    // as does a relog wanted only by a script that has since
-                    // stopped.
+                    // Script demand may change during the FIFO wait. Reduce
+                    // it without replacing the captured authorization.
                     sync_script_login(&arm, &slot_scripts, &username);
-                    let Some(login_command) =
-                        granted_permit_may_start_login(&arm, client.ingame)
-                    else {
-                        if arm.stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        continue;
-                    };
-                    let login_world_generation = arm.world_generation();
                     let reconnect = arm.reconnects();
                     host_log!(
                         Category::Login,
@@ -1190,39 +1200,38 @@ fn spawn_slot_thread(
                         }
                     }
                     let handshake_lowmem = client.config.lowmem;
-                    // Spacing counts from the attempt's start; the client
-                    // stops all handshake I/O at the deadline the queue gives,
-                    // and the queue shuts the socket if the lease ends first.
+                    // Publication is still an unused permit. A Logout or Stop
+                    // before it must not charge start spacing or UID/IP TTLs.
+                    let hold = Cell::new(None);
                     let Some(login) = permit.attempt(
+                        |cancel| arm.begin_attempt(login_command, login_world_generation, cancel),
                         |deadline, cancel| {
-                            if !arm.begin_attempt(login_command, login_world_generation, cancel.clone()) {
-                                return Ok(false);
-                            }
                             mark_login_started(&slot_statuses, &username);
-                            client.set_login_deadline(deadline);
-                            client.set_login_cancel(cancel.clone());
-                            let result = client.login(&username, &password, reconnect);
-                            let current = arm.finish_attempt(
-                                login_command,
-                                login_world_generation,
-                                deadline,
-                                &cancel,
-                                &result,
-                            );
-                            if !current {
-                                // Client::login may have already installed a live
-                                // stream and ingame state before returning Ok.
-                                if client.ingame {
-                                    client.logout();
-                                } else if let Some(mut stream) = client.stream.take() {
-                                    stream.close();
-                                }
-                                return Ok(false);
+                            let (result, server_hold) = SlotLogin {
+                                client: &mut client,
+                                arm: &arm,
+                                command: login_command,
+                                world_generation: login_world_generation,
+                                username: &username,
+                                password: &password,
+                                reconnect,
+                                backoff: &backoff,
                             }
-                            result.map(|()| true)
+                            .run(deadline, cancel, |_| {});
+                            hold.set(server_hold);
+                            result
                         },
-                        |result| server_hold(result, &backoff),
+                        |_| hold.get(),
                     ) else {
+                        arm.clear_unused_attempt();
+                        drop(permit);
+                        // Refusal returns the unused grant before a bounded
+                        // park; a stable stale capture cannot spin the queue.
+                        arm.wait_for_retry(
+                            Duration::from_millis(50),
+                            None,
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        );
                         continue;
                     };
                     match login {

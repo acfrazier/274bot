@@ -2374,6 +2374,20 @@ fn memory_relog_posts_one_atomic_intent_and_waits_for_owner_session() {
 }
 
 #[test]
+fn completed_relog_clears_the_pending_notice_after_new_owner_session() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-relog-complete");
+    let alice = arm(&s, "alice");
+    alice.complete_login_for_test();
+    let previous = alice.session_key().unwrap();
+    s.request_memory_relog("alice", &mut surface);
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+    alice.complete_login_for_test();
+    assert!(alice.session_key().unwrap().epoch() > previous.epoch());
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().relog_pending);
+}
+
+#[test]
 fn failed_memory_relog_login_clears_the_queued_state() {
     let (mut s, mut surface) = memory_ingame_toggled("mem-relog-login-failed");
     s.request_memory_relog("alice", &mut surface);
