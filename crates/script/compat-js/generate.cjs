@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const ts = require('typescript');
 const { rollup } = require('rollup');
 const { dts } = require('rollup-plugin-dts');
+const { assertGenerated, buildArtifacts } = require('./abi-contract.cjs');
 const here = __dirname;
 const crate = path.resolve(here, '..');
 const frozen = process.env.RS2B0T;
@@ -556,11 +557,22 @@ async function main() {
         let index = header + `declare module '@rs2b0t/api' {\n${define ? define.declaration : ''}\n${barrel}\n}\n`;
         for (const m of modules.sort((a,b) => a.module.localeCompare(b.module))) index += `\ndeclare module '*${m.module}' {\n${m.body}\n}\n`;
         checkPaintDeclarations(index, scratch);
-        const products = { 'index.d.ts': index, 'modules.json': JSON.stringify(registry, null, 2) + '\n' };
+        const abiArtifacts = buildArtifacts({
+            frozenRevision,
+            frozenIndex: fs.readFileSync(path.join(frozen, 'packages/rs2b0t-api/index.d.ts'), 'utf8'),
+            frozenRuntimeIndex: fs.readFileSync(path.join(frozen, 'packages/rs2b0t-api/index.js'), 'utf8'),
+            currentIndex: index,
+            rootSource: fs.readFileSync(path.join(crate, 'src/shim/declared_surface.js'), 'utf8'),
+            registry,
+            overlays: overlay,
+            callbackSnapshot: JSON.parse(fs.readFileSync(path.join(here, 'abi-callbacks.json'), 'utf8')),
+        });
+        const products = { 'index.d.ts': index, 'modules.json': JSON.stringify(registry, null, 2) + '\n', ...abiArtifacts };
         for (const [file, content] of Object.entries(products)) {
             const dest = path.join(here, file);
             if (process.argv.includes('--check')) {
-                if (!fs.existsSync(dest) || fs.readFileSync(dest, 'utf8') !== content) throw new Error(`${file} differs from fresh emit; run node generate.cjs`);
+                const actual = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : null;
+                assertGenerated(actual, content, file);
             } else fs.writeFileSync(dest, content);
         }
         console.log(`${process.argv.includes('--check') ? 'Verified' : 'Generated'} ${modules.length} served modules (${registry.filter(r => r.module.startsWith('api/')).length} api/ URLs) with ${overlay.length} named overlay entries.`);

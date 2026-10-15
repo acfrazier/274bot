@@ -1,7 +1,7 @@
 {
   "name": "274bot-script-api-declarations",
   "private": true,
-  "scripts": { "generate": "node generate.cjs", "check": "node generate.cjs --check" },
+  "scripts": { "generate": "node generate.cjs", "check": "node generate.cjs --check", "test": "node --test abi-contract.test.cjs" },
   "devDependencies": {
     "@types/node": "22.18.6",
     "fflate": "0.8.2",
