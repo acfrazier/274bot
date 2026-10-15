@@ -1116,6 +1116,149 @@ fn bounded_quester_actions_each_qualify_but_seal_returns_to_ordinary_allowance()
     }
 }
 
+#[derive(Debug)]
+struct MissingProgressQualification {
+    clock: Arc<ManualClock>,
+    stage: u8,
+    decisions: Arc<Mutex<Vec<Checkpoint>>>,
+}
+
+impl CooperativeJob for MissingProgressQualification {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        match self.stage {
+            0 => {
+                context.publish_progress(PreparationPhase::Load, 1, Some(1));
+                self.stage = 1;
+                StepOutcome::Yielded
+            }
+            1 => {
+                self.clock.advance(Duration::from_millis(20));
+                self.decisions.lock().push(context.checkpoint());
+                self.stage = 2;
+                StepOutcome::Yielded
+            }
+            2 => {
+                self.clock.advance(Duration::from_millis(20));
+                self.decisions.lock().push(context.checkpoint());
+                context.publish_progress(PreparationPhase::Prepare, 1, None);
+                self.stage = 3;
+                StepOutcome::Yielded
+            }
+            3 => StepOutcome::Completed(5),
+            _ => unreachable!("bounded qualified probe"),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn no_progress_yield_does_not_renew_one_shot_qualified_allowance() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let ticket = {
+        let mut service = shared.lock();
+        let identity = service.mint_identity(Scope::Process, None).unwrap();
+        service
+            .try_submit_qualified::<ProfileSpec, _>(
+                identity,
+                &TestInput {
+                    charge: WorkCharge::new(0, 0, 0, 0),
+                },
+                MissingProgressQualification {
+                    clock,
+                    stage: 0,
+                    decisions: Arc::clone(&decisions),
+                },
+                &conditions,
+                QualifiedUnit::GatheringFamilyDecode,
+            )
+            .expect("one-shot pinned decode admitted")
+    };
+    WorkService::wait_terminal(&shared, &ticket).expect("one-shot unit settles");
+    assert!(matches!(
+        shared.lock().consume(&ticket),
+        Ok(Settlement::Completed(5))
+    ));
+    assert_eq!(*decisions.lock(), [Checkpoint::Continue, Checkpoint::Yield]);
+}
+
+#[test]
+fn registry_qualification_is_debited_without_progress_and_exhaustion_fails_one_job() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let gate = submit(
+        &shared,
+        &TestInput {
+            charge: WorkCharge::new(0, 0, 0, 0),
+        },
+        QueueJob::new(
+            1,
+            Arc::new(Mutex::new(Vec::new())),
+            0,
+            Some((entered_tx, release_rx)),
+        ),
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker enters the gated first job");
+    let ticket = {
+        let mut service = shared.lock();
+        let identity = service.mint_identity(Scope::Process, None).unwrap();
+        let ticket = service
+            .try_submit_qualified::<CatalogueSpec, _>(
+                identity,
+                &TestInput {
+                    charge: WorkCharge::new(0, 0, 0, 0),
+                },
+                MissingProgressQualification {
+                    clock,
+                    stage: 0,
+                    decisions: Arc::clone(&decisions),
+                },
+                &conditions,
+                QualifiedUnit::QuesterRegistryAction,
+            )
+            .expect("bounded registry admitted");
+        service
+            .jobs
+            .get(&ticket.job())
+            .expect("queued registry entry")
+            .control
+            .lock()
+            .qualified_dispatches = MAX_QUALIFIED_DISPATCHES_PER_JOB - 1;
+        ticket
+    };
+    release_tx.send(()).expect("release gated worker");
+    WorkService::wait_terminal(&shared, &ticket).expect("exhausted registry settles");
+    assert!(matches!(
+        shared.lock().consume(&ticket),
+        Ok(Settlement::Failed(JobError::Cooperation(
+            CooperativeViolation::ChargeExceeded
+        )))
+    ));
+    assert_eq!(*decisions.lock(), [Checkpoint::Continue, Checkpoint::Yield]);
+    WorkService::wait_terminal(&shared, &gate).expect("earlier gate settles");
+    assert!(matches!(
+        shared.lock().consume(&gate),
+        Ok(Settlement::Completed(1))
+    ));
+    assert!(shared.lock().worker_available());
+}
+
 struct StrandedJob {
     entered: SyncSender<()>,
     resume: Receiver<()>,
