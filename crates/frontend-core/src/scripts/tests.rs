@@ -6,7 +6,9 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
+use super::{
+    parse_parameter_text, CatalogError, Notice, ParameterCommit, ParameterEditKey, Scripts,
+};
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
 };
@@ -3374,6 +3376,55 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .get(script::ScriptSource::Catalog, "PresentBot")
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
+    );
+}
+
+#[test]
+fn catalog_request_refusals_name_their_failure_kind() {
+    let mut f = fixture("catalog-typed-errors", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    let other = f.dir.join("other-catalog-root");
+    let path_file = script::default_rs2b0t_path_file();
+    f.scripts
+        .request_catalog_import(&root, &path_file)
+        .expect("first import queues");
+    assert!(
+        matches!(
+            f.scripts.request_catalog_import(&root, &path_file),
+            Err(CatalogError::Busy)
+        ),
+        "a second import while work is queued must report Busy"
+    );
+    assert!(
+        matches!(
+            f.scripts.request_catalog_fill(&other, &path_file),
+            Err(CatalogError::BusyForAnotherRoot)
+        ),
+        "a fill for another root while work is queued must report BusyForAnotherRoot"
+    );
+    assert_eq!(
+        CatalogError::Busy.to_string(),
+        "catalog preparation is already pending"
+    );
+    assert_eq!(
+        CatalogError::BusyForAnotherRoot.to_string(),
+        "catalog preparation is already pending for another root"
+    );
+    f.settle_catalog_work();
+    assert!(
+        matches!(
+            f.scripts.request_catalog_fill(&other, &path_file),
+            Err(CatalogError::UncollectedImportResult)
+        ),
+        "a fill must report UncollectedImportResult until the import receipt is taken"
+    );
+    assert_eq!(
+        CatalogError::UncollectedImportResult.to_string(),
+        "the previous catalog import result has not been collected"
+    );
+    assert!(
+        f.scripts.take_catalog_import_result().is_some(),
+        "the settled import receipt stays available as a typed result"
     );
 }
 

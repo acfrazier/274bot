@@ -994,6 +994,8 @@ pub enum CardPreparationOutcome {
     Failed { error: String, failure: LoadFailure },
 }
 
+// `Clone` is needed: `catalog.rs` clones the retained template out of the
+// snapshot map once per card it prepares (`existing.get(&name).cloned()`).
 #[cfg(feature = "load")]
 #[derive(Debug, Clone)]
 struct CardPreparationTemplate {
