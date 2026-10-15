@@ -640,24 +640,54 @@ mod tests {
         assert!(loaded.collapsed.is_empty());
     }
 
-    /// A preferences file the service refused (unreadable) is never written
-    /// over: no save lands, no side file takes the panel's state, and the
-    /// panel starts from defaults.
+    /// A corrupt preferences file (not JSON) is moved aside byte for byte
+    /// to `panel-ui.json.corrupt-<time>` when it is read (T5.2 r4), and the
+    /// panel then saves into fresh preferences; no `.new` side file.
     #[test]
-    fn save_refuses_corrupt_prefs_and_leaves_the_file_untouched() {
+    fn corrupt_prefs_are_moved_aside_and_the_save_lands_in_fresh_preferences() {
         let (dir, prefs) = scratch("ui-corrupt");
         let corrupt = b"{ not valid json";
         std::fs::write(prefs.path(), corrupt).unwrap();
+        assert!(prefs.reload().unwrap().is_empty(), "fresh preferences");
+        let state = PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        };
+        save_to_checked(&prefs, &state).unwrap();
+        let backups: Vec<_> = std::fs::read_dir(&*dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("panel-ui.json.corrupt-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        assert_eq!(std::fs::read(&backups[0]).unwrap(), corrupt);
+        assert!(!dir.join("panel-ui.json.new").exists());
+        assert_eq!(load_from(&prefs).last_focus.as_deref(), Some("alice"));
+    }
+
+    /// A preferences file refused for the file itself (here: larger than
+    /// the bound) is never written over or moved: no save lands, no side
+    /// file takes the panel's state, and the panel starts from defaults.
+    #[test]
+    fn save_refuses_oversize_prefs_and_leaves_the_file_untouched() {
+        let (dir, prefs) = scratch("ui-oversize");
+        let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
+        std::fs::write(prefs.path(), &oversize).unwrap();
         prefs
             .reload()
-            .expect_err("a corrupt preferences file is refused");
+            .expect_err("an oversize preferences file is refused");
         let state = PanelUiState {
             last_focus: Some("alice".into()),
             ..Default::default()
         };
         save_to_checked(&prefs, &state).expect_err("a refused file takes no save");
         save_to(&prefs, &state);
-        assert_eq!(std::fs::read(prefs.path()).unwrap(), corrupt);
+        assert!(std::fs::read(prefs.path()).unwrap() == oversize);
         let siblings: Vec<_> = std::fs::read_dir(&*dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

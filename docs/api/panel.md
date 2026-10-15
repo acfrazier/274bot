@@ -505,7 +505,8 @@ presets; `optionsFrom: 'loadouts'` combos in Parameters). It saves through
 the process local-state service, the same writer the bots read: a save is a
 typed edit per changed row against the list it loaded, a change made
 meanwhile (another 274bot on the same home) is reported as a conflict and
-the edit kept, and a renamed loadout moves to the end of the list. Text and
+the edit kept, and a rename is one edit that keeps the loadout's place in
+the list (a rename onto another loadout's name is refused). Text and
 buttons wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
 is a live toggle), dim **build line** (`beta 1 ·` git short SHA,

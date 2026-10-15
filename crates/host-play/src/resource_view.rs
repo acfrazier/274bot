@@ -207,11 +207,12 @@ mod tests {
         assert_eq!(v["background_bots_ack"], true);
     }
 
-    /// T5.2 r3: a corrupt preferences file is refused like any refused
-    /// store: the acknowledgement fails visibly and the bytes stay as they
-    /// are (no longer moved aside and replaced).
+    /// T5.2 r4: a corrupt preferences file is moved aside, byte for byte,
+    /// to `panel-ui.json.corrupt-<time>` (the pre-T5.2 recovery, now under
+    /// the file's lock and flushed), and the acknowledgement is saved in
+    /// fresh preferences.
     #[test]
-    fn a_corrupt_panel_ui_is_refused_and_never_written() {
+    fn persist_moves_a_corrupt_panel_ui_aside_before_writing() {
         let scratch = script::IsolatedEnv::enter("ack-corrupt");
         let preferences = preferences(&scratch);
         let path = preferences.path();
@@ -219,16 +220,21 @@ mod tests {
         let corrupt = b"{not valid json";
         std::fs::write(&path, corrupt).unwrap();
 
-        assert!(persist_background_bots_ack(&preferences).is_err());
+        persist_background_bots_ack(&preferences).unwrap();
 
-        assert_eq!(std::fs::read(&path).unwrap(), corrupt);
-        let names: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        assert!(background_bots_acked(&preferences));
+        let mut backups = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with("panel-ui.json") && name != "panel-ui.json.lock")
-            .collect();
-        assert_eq!(names, ["panel-ui.json"], "nothing moved aside or staged");
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("panel-ui.json.corrupt-")
+            });
+        let backup = backups.next().expect("corrupt panel-ui backup");
+        assert!(backups.next().is_none(), "one backup");
+        assert_eq!(std::fs::read(backup.path()).unwrap(), corrupt);
     }
 
     #[test]

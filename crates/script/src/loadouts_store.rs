@@ -12,8 +12,10 @@
 //! process local-state service (T5.2), so a form save and a slot's lease go
 //! through one writer. A save is a list of typed edits against the version
 //! the form loaded: an edit made meanwhile by another writer is a conflict,
-//! never overwritten. Slots and native cards read operator loadouts
-//! through the same service ([`crate::local_state::SlotState`]).
+//! never overwritten. A renamed row is one [`LoadoutOp::Rename`], so it
+//! keeps its place and is never removed in one write and re-added in
+//! another. Slots and native cards read operator loadouts through the
+//! same service ([`crate::local_state::SlotState`]).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -91,6 +93,10 @@ pub trait LoadoutsBacking: Send + Sync {
 pub struct LoadoutsStore {
     backing: Option<Arc<dyn LoadoutsBacking>>,
     loadouts: Vec<Loadout>,
+    /// For each row of `loadouts`, the name of the `base` row it edits
+    /// (`None` for a row the form added): a row whose name differs from
+    /// its origin is a rename of that row.
+    origins: Vec<Option<String>>,
     /// What the store held at `version` when this form last loaded or
     /// saved: a save writes the difference from it.
     base: Vec<Loadout>,
@@ -126,6 +132,7 @@ impl LoadoutsStore {
     pub fn detached(loadouts: Vec<Loadout>) -> Self {
         Self {
             backing: None,
+            origins: origins_of(&loadouts),
             base: loadouts.clone(),
             loadouts,
             version: StoreVersion::INITIAL,
@@ -170,6 +177,7 @@ impl LoadoutsStore {
     /// this form last loaded or saved.
     pub fn discard(&mut self) {
         self.loadouts = self.base.clone();
+        self.origins = origins_of(&self.base);
         self.dirty = false;
     }
 
@@ -179,11 +187,13 @@ impl LoadoutsStore {
             *existing = loadout;
         } else {
             self.loadouts.push(loadout);
+            self.origins.push(None);
         }
     }
 
     /// Replace the loadout at `index`, including renames (does not key on
-    /// name). Refused (`false`, nothing changes) when `index` is out of
+    /// name): the row keeps its place, and a save writes a rename as one
+    /// edit. Refused (`false`, nothing changes) when `index` is out of
     /// range or another row already has the new name: rows are keyed by
     /// name in the store, so saving that rename would replace the other row.
     pub fn replace_at(&mut self, index: usize, loadout: Loadout) -> bool {
@@ -202,14 +212,13 @@ impl LoadoutsStore {
     }
 
     pub fn remove(&mut self, name: &str) -> bool {
-        let before = self.loadouts.len();
-        self.loadouts.retain(|l| l.name != name);
-        if self.loadouts.len() != before {
-            self.dirty = true;
-            true
-        } else {
-            false
-        }
+        let Some(index) = self.loadouts.iter().position(|l| l.name == name) else {
+            return false;
+        };
+        self.loadouts.remove(index);
+        self.origins.remove(index);
+        self.dirty = true;
+        true
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -217,15 +226,18 @@ impl LoadoutsStore {
     }
 
     /// Write the form's edits through the store: one typed edit per row
-    /// added, changed or removed since the form loaded, each expecting the
-    /// version the one before left, and each durable before this returns.
-    /// On success the form holds what the store holds (a renamed row is
-    /// written as a new row, so it moves to the end). When another writer
-    /// changed the store first, nothing more is written and the conflict is
-    /// the error; the form then holds what the store holds now with its own
-    /// edits applied on top (save again to retry them against it, or
+    /// added, changed, renamed or removed since the form loaded, each
+    /// expecting the version the one before left, and each durable before
+    /// this returns. A rename is one edit that replaces the row where it
+    /// stands, so a failed save never leaves the store without the row
+    /// under either name, and a renamed row keeps its place. On success the
+    /// form holds what the store holds. When another writer changed the
+    /// store first, nothing more is written and the conflict is the error;
+    /// the form then holds what the store holds now with its own edits
+    /// applied on top (save again to retry them against it, or
     /// [`Self::discard`] them), so a retry never removes the other writer's
-    /// rows.
+    /// rows. A rename whose row the other writer removed, or whose new name
+    /// it took, is not applied, and the error says so.
     pub fn save(&mut self) -> Result<(), String> {
         if !self.dirty {
             return Ok(());
@@ -233,7 +245,7 @@ impl LoadoutsStore {
         let Some(backing) = self.backing.clone() else {
             return Err(NOT_BOUND.into());
         };
-        let ops = edits_between(&self.base, &self.loadouts);
+        let ops = edits_between(&self.base, &self.loadouts, &self.origins);
         if ops.is_empty() {
             self.dirty = false;
             return Ok(());
@@ -244,60 +256,126 @@ impl LoadoutsStore {
                 Ok(())
             }
             Err(LoadoutsSaveError::Conflict { latest, reason }) => {
-                self.loadouts = apply_edits(&latest.rows, &ops);
-                self.base = latest.rows;
-                self.version = latest.version;
-                Err(format!(
+                let notes = self.replay(latest, &ops);
+                let mut error = format!(
                     "{reason}; the loadouts changed since this list was loaded, so the rest \
                      was not written"
-                ))
+                );
+                for note in notes {
+                    error.push_str("; ");
+                    error.push_str(&note);
+                }
+                Err(error)
             }
             Err(LoadoutsSaveError::Failed(reason)) => Err(reason),
         }
     }
 
     fn adopt(&mut self, baseline: LoadoutsBaseline) {
+        self.origins = origins_of(&baseline.rows);
         self.base = baseline.rows.clone();
         self.loadouts = baseline.rows;
         self.version = baseline.version;
         self.dirty = false;
     }
+
+    /// Hold `latest` with `ops` applied the way the store applies them (an
+    /// upsert replaces the row of its name or appends, a removal drops that
+    /// name, a rename replaces its row in place), keeping the form dirty.
+    /// A rename the store would refuse is left out; what it says about each
+    /// is returned.
+    fn replay(&mut self, latest: LoadoutsBaseline, ops: &[LoadoutOp]) -> Vec<String> {
+        self.origins = origins_of(&latest.rows);
+        self.loadouts = latest.rows.clone();
+        self.base = latest.rows;
+        self.version = latest.version;
+        let mut notes = Vec::new();
+        for op in ops {
+            match op {
+                LoadoutOp::Upsert(row) => self.upsert(row.clone()),
+                LoadoutOp::Remove { name } => {
+                    self.remove(name);
+                }
+                LoadoutOp::Rename { from, loadout } => {
+                    match self.loadouts.iter().position(|row| row.name == *from) {
+                        None => notes.push(format!(
+                            "\"{from}\" is no longer saved, so renaming it to \"{}\" was not \
+                             kept",
+                            loadout.name
+                        )),
+                        Some(index) => {
+                            if !self.replace_at(index, loadout.clone()) {
+                                notes.push(format!(
+                                    "A loadout named \"{}\" already exists.",
+                                    loadout.name
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.dirty = true;
+        notes
+    }
 }
 
-/// `rows` with `ops` applied the way the store applies them: an upsert
-/// replaces the row of its name or appends, a removal drops that name.
-fn apply_edits(rows: &[Loadout], ops: &[LoadoutOp]) -> Vec<Loadout> {
-    let mut next = rows.to_vec();
-    for op in ops {
-        match op {
-            LoadoutOp::Upsert(row) => match next.iter_mut().find(|old| old.name == row.name) {
-                Some(old) => *old = row.clone(),
-                None => next.push(row.clone()),
-            },
-            LoadoutOp::Remove { name } => next.retain(|old| old.name != *name),
-        }
-    }
-    next
+fn origins_of(rows: &[Loadout]) -> Vec<Option<String>> {
+    rows.iter().map(|row| Some(row.name.clone())).collect()
 }
 
 const NOT_BOUND: &str = "loadouts are not bound to the local-state service";
 
-/// The typed edits that turn `base` into `rows`: a removal for each row
-/// name gone, then an upsert for each row added or changed, in `rows`
-/// order.
-fn edits_between(base: &[Loadout], rows: &[Loadout]) -> Vec<LoadoutOp> {
+/// The typed edits that turn `base` into `rows` (each row of `rows` from
+/// the `base` row named by its `origins` entry, or new): a removal for each
+/// base row no row comes from, then a rename for each row whose name
+/// differs from its origin's, then an upsert for each row added or
+/// changed, in `rows` order. A rename onto a name another rename frees
+/// goes after that one; a cycle of renames is left in order, and the store
+/// refuses its first (names key the rows).
+fn edits_between(base: &[Loadout], rows: &[Loadout], origins: &[Option<String>]) -> Vec<LoadoutOp> {
     let mut ops: Vec<LoadoutOp> = base
         .iter()
-        .filter(|old| !rows.iter().any(|row| row.name == old.name))
+        .filter(|old| {
+            !origins
+                .iter()
+                .any(|origin| origin.as_ref() == Some(&old.name))
+        })
         .map(|old| LoadoutOp::Remove {
             name: old.name.clone(),
         })
         .collect();
+    let mut renames: Vec<(&String, &Loadout)> = rows
+        .iter()
+        .zip(origins)
+        .filter_map(|(row, origin)| {
+            origin
+                .as_ref()
+                .filter(|from| **from != row.name)
+                .map(|from| (from, row))
+        })
+        .collect();
+    while !renames.is_empty() {
+        let ready = renames
+            .iter()
+            .position(|(_, row)| !renames.iter().any(|(from, _)| **from == row.name))
+            .unwrap_or(0);
+        let (from, row) = renames.remove(ready);
+        ops.push(LoadoutOp::Rename {
+            from: from.clone(),
+            loadout: row.clone(),
+        });
+    }
     ops.extend(
         rows.iter()
-            .filter(|row| base.iter().find(|old| old.name == row.name) != Some(*row))
-            .cloned()
-            .map(LoadoutOp::Upsert),
+            .zip(origins)
+            .filter(|(row, origin)| match origin {
+                None => true,
+                Some(from) => {
+                    *from == row.name && base.iter().find(|old| old.name == row.name) != Some(*row)
+                }
+            })
+            .map(|(row, _)| LoadoutOp::Upsert(row.clone())),
     );
     ops
 }
@@ -856,7 +934,8 @@ mod tests {
 
     /// A store held in memory: rows at a version, applying each typed edit
     /// the way the service does (an upsert replaces by name or appends, a
-    /// removal drops by name), conflicting when the expectation is stale.
+    /// removal drops by name, a rename replaces its row in place or is
+    /// refused), conflicting when the expectation is stale.
     #[derive(Default)]
     struct Memory {
         state: Mutex<(Vec<Loadout>, u64)>,
@@ -880,6 +959,13 @@ mod tests {
         fn outside(&self, row: Loadout) {
             let mut state = self.state.lock().unwrap();
             state.0.push(row);
+            state.1 += 1;
+        }
+
+        /// Another writer's removal, landing between a form's load and save.
+        fn outside_remove(&self, name: &str) {
+            let mut state = self.state.lock().unwrap();
+            state.0.retain(|row| row.name != name);
             state.1 += 1;
         }
     }
@@ -913,6 +999,19 @@ mod tests {
                         }
                     }
                     LoadoutOp::Remove { name } => state.0.retain(|old| old.name != name),
+                    LoadoutOp::Rename { from, loadout } => {
+                        let Some(at) = state.0.iter().position(|old| old.name == from) else {
+                            drop(state);
+                            return Err(LoadoutsSaveError::Conflict {
+                                latest: self.baseline(),
+                                reason: "version conflict".into(),
+                            });
+                        };
+                        if state.0.iter().any(|old| old.name == loadout.name) {
+                            return Err(LoadoutsSaveError::Failed("duplicate id".into()));
+                        }
+                        state.0[at] = loadout;
+                    }
                 }
                 state.1 += 1;
                 expected = version(state.1);
@@ -965,23 +1064,86 @@ mod tests {
         assert_eq!(memory.commits.lock().unwrap().len(), commits);
     }
 
-    /// T5.2 r3: a rename is written as the new row and the removal of the
-    /// old one, keeping the row's gear; the renamed row moves to the end.
+    /// T5.2 r4: a rename is one edit that replaces the row where it stands,
+    /// keeping the row's gear and its place in the list.
     #[test]
-    fn a_rename_keeps_the_rows_gear_and_moves_it_last() {
-        let (_memory, mut store) = form();
+    fn a_rename_is_one_edit_and_keeps_the_rows_gear_and_place() {
+        let (memory, mut store) = form();
         store.upsert(Loadout::new("old").with_carry("Lobster", 1));
         store.upsert(Loadout::new("other"));
         store.save().unwrap();
         let mut row = store.get("old").unwrap().clone();
         row.name = "old-renamed".into();
-        store.replace_at(0, row);
+        assert!(store.replace_at(0, row.clone()));
         store.save().unwrap();
-        assert_eq!(store.names(), ["other", "old-renamed"]);
+        assert_eq!(
+            memory.commits.lock().unwrap().last().unwrap(),
+            &vec![LoadoutOp::Rename {
+                from: "old".into(),
+                loadout: row,
+            }]
+        );
+        assert_eq!(store.names(), ["old-renamed", "other"]);
+        assert_eq!(memory.baseline().rows, store.loadouts());
         assert_eq!(
             store.get("old-renamed").unwrap().carry,
             vec![CarryEntry::new("Lobster", 1)]
         );
+    }
+
+    /// T5.2 r4: renames that free and take each other's names are ordered
+    /// so each lands (a → b after b → c); a removed row and a new row under
+    /// a renamed-away name are a removal and an upsert around them.
+    #[test]
+    fn chained_renames_are_ordered_and_new_rows_follow_them() {
+        let (memory, mut store) = form();
+        for name in ["a", "b", "gone"] {
+            store.upsert(Loadout::new(name));
+        }
+        store.save().unwrap();
+        assert!(store.replace_at(1, Loadout::new("c")));
+        assert!(store.replace_at(0, Loadout::new("b")));
+        assert!(store.remove("gone"));
+        store.upsert(Loadout::new("a").with_carry("Shark", 2));
+        store.save().unwrap();
+        assert_eq!(
+            memory.commits.lock().unwrap().last().unwrap(),
+            &vec![
+                LoadoutOp::Remove {
+                    name: "gone".into()
+                },
+                LoadoutOp::Rename {
+                    from: "b".into(),
+                    loadout: Loadout::new("c"),
+                },
+                LoadoutOp::Rename {
+                    from: "a".into(),
+                    loadout: Loadout::new("b"),
+                },
+                LoadoutOp::Upsert(Loadout::new("a").with_carry("Shark", 2)),
+            ]
+        );
+        assert_eq!(store.names(), ["b", "c", "a"]);
+    }
+
+    /// T5.2 r4: a rename whose row another writer removed meanwhile is not
+    /// replayed (nothing is re-inserted under the new name), and the error
+    /// names it.
+    #[test]
+    fn a_rename_of_a_row_removed_meanwhile_is_not_replayed_and_is_named() {
+        let (memory, mut store) = form();
+        store.upsert(Loadout::new("old"));
+        store.upsert(Loadout::new("other"));
+        store.save().unwrap();
+        assert!(store.replace_at(0, Loadout::new("new")));
+        memory.outside_remove("old");
+        let error = store.save().unwrap_err();
+        assert!(
+            error.contains("\"old\" is no longer saved, so renaming it to \"new\" was not kept"),
+            "{error}"
+        );
+        assert_eq!(store.names(), ["other"]);
+        assert_eq!(memory.baseline().rows, [Loadout::new("other")]);
     }
 
     /// T5.2 r3: an edit another writer made after the form loaded is never
