@@ -1918,22 +1918,31 @@ impl TuiSession {
                 .filter(|selection| self.scripts.restart_required_for(&profile, selection))
                 .map(|_| "Restart required to apply saved settings.".to_string())
         });
-        let visible_prompt = app.modal.as_ref().and_then(|modal| match modal {
+        let visible_op = app.modal.as_ref().and_then(|modal| match modal {
             Modal::Confirm(confirm) => match &confirm.kind {
-                ConfirmKind::RestartSettings(prompt) => Some(prompt.duplicate()),
+                ConfirmKind::RestartSettings { op, .. } => Some(*op),
                 _ => None,
             },
             _ => None,
         });
-        let pending_prompt = self.scripts.pending_restart_prompt().map(|p| p.duplicate());
-        match (visible_prompt, pending_prompt) {
-            (Some(current), Some(next)) if current == next => {}
-            (Some(_), Some(next)) => app.confirm(ConfirmKind::RestartSettings(next)),
-            (Some(_), None) => app.modal = None,
-            (None, Some(next)) if app.modal.is_none() => {
-                app.confirm(ConfirmKind::RestartSettings(next));
+        let pending_op = self.scripts.pending_restart_prompt().map(|p| p.operation());
+        let replace = match (visible_op, pending_op) {
+            (Some(current), Some(next)) if current == next => false,
+            (Some(_), Some(_)) => true,
+            (Some(_), None) => {
+                app.modal = None;
+                false
             }
-            _ => {}
+            (None, Some(_)) if app.modal.is_none() => true,
+            _ => false,
+        };
+        if replace {
+            if let Some(prompt) = self.scripts.pending_restart_prompt() {
+                app.confirm(ConfirmKind::RestartSettings {
+                    op: prompt.operation(),
+                    summary: prompt.summary(),
+                });
+            }
         }
     }
 
@@ -2418,13 +2427,20 @@ impl TuiSession {
                 .shared_preferences_path()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(host_play::panel_ui_path);
-            let _ = app.quester_paths_controller.apply_changed_at(
-                &path,
-                app.quester_paths.duplicate(),
-                selected.clone(),
-                self.persist_ui,
-            );
-            app.quester_paths = app.quester_paths_controller.settings().duplicate();
+            let failed = app
+                .quester_paths_controller
+                .apply_changed_at(&path, &app.quester_paths, selected.clone(), self.persist_ui)
+                .is_err();
+            if failed {
+                let enabled = app.quester_paths_controller.settings().enabled();
+                let folder = app
+                    .quester_paths_controller
+                    .settings()
+                    .folder()
+                    .to_path_buf();
+                app.quester_paths.set_enabled(enabled);
+                app.quester_paths.set_folder(folder);
+            }
         }
         app.quester_paths_controller.advance(selected);
     }

@@ -1054,13 +1054,9 @@ fn send_wires<'a, I>(
             for wire in wires {
                 command_count += 1;
                 let report = session.send_debug_command_marked_snapshot(wire, targets.clone());
-                accepted += report.accepted();
-                skipped.extend(
-                    report
-                        .skipped()
-                        .iter()
-                        .map(frontend_core::BulkSkip::duplicate),
-                );
+                let (accepted_now, skipped_now) = report.into_parts();
+                accepted += accepted_now;
+                skipped.extend(skipped_now);
             }
             let report = frontend_core::MarkedCommandReport::from_parts(accepted, skipped);
             if report.accepted() > 0 {

@@ -54,14 +54,6 @@ impl RestartPrompt {
         &self.targets
     }
 
-    /// A second owner of this prompt. Not [`Clone`].
-    pub fn duplicate(&self) -> Self {
-        Self {
-            op: self.op,
-            targets: self.targets.clone(),
-        }
-    }
-
     pub fn summary(&self) -> String {
         let mut groups: Vec<(&script::ScriptSel, &str, Vec<&str>)> = Vec::new();
         for target in &self.targets {

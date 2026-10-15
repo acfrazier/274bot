@@ -171,6 +171,20 @@ impl ResourceView {
         &self.brief
     }
 
+    /// Copy another view into this one, reusing `brief`'s buffer.
+    pub fn copy_from(&mut self, source: &Self) {
+        self.bots = source.bots;
+        self.ingame = source.ingame;
+        self.background = source.background;
+        self.cpu = source.cpu.duplicate();
+        self.ram = source.ram.duplicate();
+        self.traffic = source.traffic.duplicate();
+        self.brief.clone_from(&source.brief);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ResourceView {
     /// Fixture meter values for UI tests.
     pub fn with_metrics(cpu: Metric, ram: Metric, traffic: Metric) -> Self {
         Self {
@@ -191,17 +205,6 @@ impl ResourceView {
         self.bots = bots;
         self.ingame = ingame;
         self.background = background;
-    }
-
-    /// Copy another view into this one, reusing `brief`'s buffer.
-    pub fn copy_from(&mut self, source: &Self) {
-        self.bots = source.bots;
-        self.ingame = source.ingame;
-        self.background = source.background;
-        self.cpu = source.cpu.duplicate();
-        self.ram = source.ram.duplicate();
-        self.traffic = source.traffic.duplicate();
-        self.brief.clone_from(&source.brief);
     }
 }
 

@@ -1720,7 +1720,7 @@ impl<Io> OperatorSession<Io> {
                         (Source::Login, Level::Error, format!("login {e}").into())
                     }
                     // Visible by default: the operator reads a stuck bot's
-                    // scene from the log; the same bot's
+                    // story (logged in, which scene) at a glance. The host's
                     // LoadingScene/Ready phase lines say the same at Debug.
                     TransitionKind::Ingame => (Source::Login, Level::Info, "ingame".into()),
                     TransitionKind::Scene => {

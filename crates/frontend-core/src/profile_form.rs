@@ -114,6 +114,11 @@ impl SavedProfile {
     pub fn same_form(&self) -> bool {
         self.same_form
     }
+
+    /// Take the written profile name.
+    pub fn into_destination(self) -> String {
+        self.record.into_destination()
+    }
 }
 
 /// A save whose write failed, seen by [`ProfileFormSave::settle`].
@@ -165,6 +170,14 @@ impl FormSettled {
     /// A durable save.
     pub fn as_saved(&self) -> Option<&SavedProfile> {
         match &self.0 {
+            FormSettledKind::Saved(profile) => Some(profile),
+            FormSettledKind::Failed(_) => None,
+        }
+    }
+
+    /// Consume a durable save.
+    pub fn into_saved(self) -> Option<SavedProfile> {
+        match self.0 {
             FormSettledKind::Saved(profile) => Some(profile),
             FormSettledKind::Failed(_) => None,
         }

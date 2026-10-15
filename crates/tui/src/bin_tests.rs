@@ -2679,14 +2679,16 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(blocker.join("panel-ui.json"));
-    let before = app.quester_paths.duplicate();
+    let before_enabled = app.quester_paths.enabled();
+    let before_folder = app.quester_paths.folder().to_path_buf();
     app.quester_paths.set_enabled(true);
     app.quester_paths.set_folder(iso.dir.join("paths"));
     app.quester_paths_dirty = true;
 
     session.project_quester_paths(&mut app);
 
-    assert_eq!(app.quester_paths, before);
+    assert_eq!(app.quester_paths.enabled(), before_enabled);
+    assert_eq!(app.quester_paths.folder(), before_folder);
     assert!(!app.quester_paths_controller.is_running());
     assert!(app.quester_paths_controller.notice_is_error());
     assert!(app
@@ -3306,12 +3308,14 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
     session.poll_scripts(&mut app);
     let prompt = session.scripts.pending_restart_prompt().unwrap();
     let summary = prompt.summary();
+    let op = prompt.operation();
     assert!(matches!(
         app.modal.as_ref(),
         Some(crate::overlay::Modal::Confirm(confirm))
             if matches!(
                 &confirm.kind,
-                crate::overlay::ConfirmKind::RestartSettings(current) if current == prompt
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown }
+                    if *shown_op == op && shown == &summary
             )
     ));
 

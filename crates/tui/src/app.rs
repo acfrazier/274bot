@@ -622,7 +622,14 @@ impl TuiApp {
     pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
         let path = path.into();
         self.quester_paths_controller.restore_at(&path);
-        self.quester_paths = self.quester_paths_controller.settings().duplicate();
+        let enabled = self.quester_paths_controller.settings().enabled();
+        let folder = self
+            .quester_paths_controller
+            .settings()
+            .folder()
+            .to_path_buf();
+        self.quester_paths.set_enabled(enabled);
+        self.quester_paths.set_folder(folder);
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
             &path,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
@@ -2032,17 +2039,12 @@ impl TuiApp {
             !self.params_schema.is_empty(),
             None,
         )
-        .with_reload_confirm(self.reload_confirm);
-        let native = self
-            .focused_detail()
-            .and_then(|detail| detail.native_status_arc());
-        let walk_risk = self
-            .focused_detail()
-            .and_then(|detail| detail.walk_risk())
-            .map(str::to_owned);
-        let pane = pane
-            .with_native_status(native.as_deref())
-            .with_walk_risk(walk_risk.as_deref());
+        .with_reload_confirm(self.reload_confirm)
+        .with_native_status(
+            self.focused_detail()
+                .and_then(|detail| detail.native_status()),
+        )
+        .with_walk_risk(self.focused_detail().and_then(|detail| detail.walk_risk()));
         frame.render_widget(pane, area);
     }
 }
