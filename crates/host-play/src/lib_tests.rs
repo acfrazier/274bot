@@ -23943,6 +23943,68 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
     assert!(drv.menus.is_empty(), "a lamp is never talked to");
 }
 
+#[test]
+fn disabled_box_guardian_keeps_native_eligibility_available() {
+    struct EligibilityProbe(Arc<Mutex<Vec<bool>>>);
+    impl script::native::Script for EligibilityProbe {
+        fn tick(
+            &mut self,
+            tick: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            self.0.lock().unwrap().push(tick.cx.charge_transition());
+            Ok(script::native::ScriptFlow::Continue)
+        }
+    }
+
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(Box::new(EligibilityProbe(Arc::clone(&observed))), None)
+        .unwrap();
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = guardian_client();
+    plant_inv_item(&mut client, 3062);
+    let mut guardian = Guardian::new();
+    let mut driver = GuardRec::default();
+    let settings = ProfileSettings {
+        random_events: false,
+        ..ProfileSettings::default()
+    };
+    let mut snapshot = GameSnapshot::new();
+    for tick in 1..=3 {
+        tick_at(&mut client, &mut snapshot);
+        let status = guardian.tick(&mut driver, &snapshot, &settings, tick * 600, None);
+        assert_eq!(status.kind, Some(api::random::RandomKind::Box));
+        script_observe(
+            &mut client,
+            "alice",
+            true,
+            true,
+            tick,
+            snapshot.tile(),
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            status.hold,
+            status.ours,
+        );
+    }
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![true; 3],
+        "detect-only boxes must not freeze native scripts through the ours operand"
+    );
+    assert!(driver.menus.is_empty() && driver.actions.is_empty());
+}
+
 /// Queues a walk through the same legacy adapter as Sherlock; the host still
 /// owns admission, asynchronous route selection and execution.
 struct WalkProbe(Arc<Mutex<(i32, i32, i32)>>);

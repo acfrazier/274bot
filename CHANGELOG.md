@@ -7,6 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Disabling random-event handling no longer leaves Gatherer or other scripts
+  waiting forever on a detected event, such as a held Strange box. Events
+  remain visible, but do not pause scripts while handling is disabled.
+
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
