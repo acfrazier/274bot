@@ -25,7 +25,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use client::client::{Client, ClientConfig, ClientRevision};
-use client::dash3d::TerrainOverlayShape;
+use client::dash3d::{ClientNpc, TerrainOverlayShape};
 use client::io::ClientStream;
 use client::render::backend::{BackendKind, FrameOutput, GpuBackend};
 use client::render::Renderer;
@@ -295,6 +295,188 @@ fn scene_freeze_retains_the_last_scene_while_loading() {
         assert!(
             scene_diff(&frozen, &rebuilt) > SCENE_PIXELS / 4,
             "{head:?}: scene_state 2 must replace the frozen scene"
+        );
+    }
+}
+
+/// A ready NPC (`r#type` set; no NPC config or model is read on the
+/// freeze path) whose health bar is visible: `entity_overlays` draws it as
+/// two `fill_rect`s, 15 px green then 15 px red, 5 px high, with no sprite or
+/// font, so the fixture is cache-free.
+fn health_bar_npc(client: &mut Client, x: i32, z: i32) {
+    let mut npc = ClientNpc {
+        r#type: Some(0),
+        ..Default::default()
+    };
+    npc.entity.x = x;
+    npc.entity.z = z;
+    npc.entity.height = 100;
+    npc.entity.health = 10;
+    npc.entity.total_health = 20;
+    npc.entity.combat_cycle = client.loop_cycle + 1_000;
+    client.npc[0] = Some(Box::new(npc));
+    client.npc_ids[0] = 0;
+    client.npc_count = 1;
+}
+
+/// The scene-window pixels of `px` that differ from `base`, as a bounding
+/// box `(x0, y0, x1, y1)` (frame coordinates, exclusive end) with the count
+/// of changed pixels and how many are `Colour::GREEN` / `Colour::RED`.
+#[derive(Debug, PartialEq, Eq)]
+struct OverlayChange {
+    bbox: (usize, usize, usize, usize),
+    changed: usize,
+    green: usize,
+    red: usize,
+    in_splash: usize,
+}
+
+fn overlay_change(base: &[i32], px: &[i32]) -> OverlayChange {
+    let mut change = OverlayChange {
+        bbox: (usize::MAX, usize::MAX, 0, 0),
+        changed: 0,
+        green: 0,
+        red: 0,
+        in_splash: 0,
+    };
+    for i in (0..px.len()).filter(|&i| in_scene(i) && base[i] != px[i]) {
+        let (x, y) = (i % FRAME_W, i / FRAME_W);
+        let b = &mut change.bbox;
+        *b = (b.0.min(x), b.1.min(y), b.2.max(x + 1), b.3.max(y + 1));
+        change.changed += 1;
+        change.green += usize::from(px[i] == 0x00ff00);
+        change.red += usize::from(px[i] == 0xff0000);
+        change.in_splash += usize::from(in_splash(i));
+    }
+    change
+}
+
+/// Asserts `change` is exactly one 30×5 health bar (75 green and 75 red
+/// pixels) at `bbox`, clear of the splash box.
+fn assert_one_health_bar(
+    head: Head,
+    what: &str,
+    change: &OverlayChange,
+    bbox: (usize, usize, usize, usize),
+) {
+    assert_eq!(
+        (change.changed, change.green, change.red, change.in_splash),
+        (150, 75, 75, 0),
+        "{head:?} {what}: exactly one 30x5 health bar must change over the frozen scene ({change:?})"
+    );
+    assert_eq!(
+        change.bbox, bbox,
+        "{head:?} {what}: the bar sits where the current NPC position projects"
+    );
+}
+
+/// Frame-space boxes of the fixture's health bar. With the `scene_client`
+/// camera (x 2048, z 512, y −600, pitch 200, yaw 0, origin (256, 167)) and the
+/// bar at height 115 over flat ground, the integer projection puts the bar
+/// centre at (256, 81) for NPC x 2048 / z 1536 and at (80, 81) for x 1664;
+/// the bar spans (−15..15, −3..2) around it and `area_game` blits at (4, 4).
+const BAR_AHEAD: (usize, usize, usize, usize) = (245, 79, 275, 84);
+const BAR_LEFT: (usize, usize, usize, usize) = (69, 79, 99, 84);
+
+/// Family **scene** (overlay over a retained scene): while the slot is
+/// loading (`scene_state == 1`), a game overlay appears, moves and clears
+/// over the frozen scene. The overlay is an NPC health bar from
+/// `entity_overlays` (cache-free, like the GPU crate's overlay fixtures).
+///
+/// - **GPU** keeps the retained scene texture and redraws the entity and
+///   interface overlays every frame (`GpuBackend::scene` →
+///   `draw_scene_overlays` while `freeze_last_scene`): the bar appears, follows
+///   the NPC with the old pixels restored to the frozen scene, does not
+///   accumulate, and clears back to the exact frozen frame. The scene is not
+///   rebuilt: `reset_map` emptied the world and the camera did not move, so a
+///   rebuild would differ everywhere.
+/// - **CPU**, today, skips the whole scene stage while `scene_state != 2`
+///   (`CpuBackend::scene`), so `entity_overlays` does not run and the frozen
+///   scene window does not change at all. This pins current behaviour only;
+///   which overlays a frozen CPU head must show is T4.4's decision (§23 §2.6).
+#[test]
+fn scene_freeze_overlay_changes_and_clears_over_the_retained_scene() {
+    let _serial = serial();
+    let cache = assets();
+    for head in heads() {
+        let mut renderer = attach(head);
+        let mut client = scene_client(cache.as_deref());
+        frame(&mut renderer, &mut client);
+        let last_live = frame(&mut renderer, &mut client);
+
+        // Loading starts and the region is unloaded; the camera stays, so
+        // both health-bar positions project into the same scene window.
+        client.scene_state = 1;
+        client.world.reset_map();
+        let frozen = frame(&mut renderer, &mut client);
+        assert_eq!(
+            split_diff(&last_live, &frozen).0,
+            0,
+            "{head:?}: the frozen scene is the last live scene outside the splash"
+        );
+
+        // The overlay appears: NPC 8 tiles ahead of the camera.
+        health_bar_npc(&mut client, 16 * 128, 12 * 128);
+        let shown = frame(&mut renderer, &mut client);
+        let shown_change = overlay_change(&frozen, &shown);
+        let shown_again = frame(&mut renderer, &mut client);
+
+        // The overlay changes: the NPC moves 3 tiles to the left.
+        let loop_cycle = client.loop_cycle;
+        let npc = client.npc[0].as_mut().expect("fixture NPC");
+        npc.entity.x = 13 * 128;
+        let moved = frame(&mut renderer, &mut client);
+        let moved_change = overlay_change(&frozen, &moved);
+
+        // The overlay clears: the combat cycle expires.
+        let npc = client.npc[0].as_mut().expect("fixture NPC");
+        npc.entity.combat_cycle = loop_cycle;
+        let cleared = frame(&mut renderer, &mut client);
+        eprintln!(
+            "{head:?}: freeze overlay shown {:?} moved {:?}",
+            shown_change, moved_change
+        );
+
+        match head {
+            Head::Gpu => {
+                assert_one_health_bar(head, "shown", &shown_change, BAR_AHEAD);
+                assert_eq!(
+                    scene_diff(&shown, &shown_again),
+                    0,
+                    "GPU: an unchanged overlay over the frozen scene must not accumulate"
+                );
+                assert_one_health_bar(head, "moved", &moved_change, BAR_LEFT);
+                assert_eq!(
+                    scene_diff(&frozen, &cleared),
+                    0,
+                    "GPU: a cleared overlay must leave exactly the frozen scene"
+                );
+            }
+            Head::Cpu => {
+                for (what, px) in [
+                    ("shown", &shown),
+                    ("shown again", &shown_again),
+                    ("moved", &moved),
+                    ("cleared", &cleared),
+                ] {
+                    assert_eq!(
+                        scene_diff(&frozen, px),
+                        0,
+                        "CPU {what}: today the frozen scene window runs no entity overlays"
+                    );
+                }
+            }
+        }
+
+        // No NPC config exists in this fixture, so drop the NPC before the
+        // next live scene build would look it up.
+        client.npc[0] = None;
+        client.npc_count = 0;
+        client.scene_state = 2;
+        let rebuilt = frame(&mut renderer, &mut client);
+        assert!(
+            scene_diff(&frozen, &rebuilt) > SCENE_PIXELS / 4,
+            "{head:?}: scene_state 2 must replace the frozen scene (the world was reset)"
         );
     }
 }

@@ -14,7 +14,10 @@
 //! Per cell the harness writes a JSON summary and per-second samples:
 //! paints per head, host raster time per paint (the `performance-profile`
 //! slot timers, which `memory-profile` enables), slot frame-interval
-//! histograms, process CPU, RSS and tracked GPU bytes. Run one backend and
+//! histograms, process CPU, RSS and tracked GPU bytes. Raster time is
+//! lossless: every row carries the raw raster and paint deltas between two
+//! raster publication boundaries (see [`RasterPublications`]), so the
+//! per-second deltas sum exactly to the cell totals. Run one backend and
 //! one N per process:
 //!
 //! ```sh
@@ -33,7 +36,7 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -88,6 +91,85 @@ impl SlotFrames {
 
     fn histogram(&self) -> Vec<u64> {
         self.histogram.iter().map(|b| b.load(Relaxed)).collect()
+    }
+}
+
+/// Origin of every `t_s` this harness writes outside a cell's own clock.
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+fn since_epoch(at: Instant) -> f64 {
+    at.duration_since(*EPOCH).as_secs_f64()
+}
+
+/// One raster publication boundary: the slot's published cumulative raster
+/// time and the number of paints it covers.
+#[derive(Clone, Copy, Default)]
+struct Publication {
+    /// Publications seen so far (0 = none yet).
+    seq: u64,
+    raster_ns: u64,
+    paints: u64,
+    /// When the per-frame hook saw it.
+    at: Option<Instant>,
+}
+
+impl Publication {
+    fn json(&self) -> Value {
+        json!({
+            "seq": self.seq,
+            "raster_ns": self.raster_ns,
+            "paints": self.paints,
+            "t_s": self.at.map(since_epoch),
+        })
+    }
+}
+
+/// Raster time paired exactly with the paints it covers.
+///
+/// The host publishes a slot's cumulative raster time at most once a second
+/// (`SlotLoop::publish_profile`), inside the slot frame: after that frame's
+/// paint and before its `FrameBuf::store`. The per-frame hook runs in the
+/// next slot frame's observe, before that frame's paint, and on every slot
+/// frame. So when the hook first sees a new published total, the mailbox
+/// generation is exactly the number of paints that total covers. Both
+/// counters are written only by the slot thread, which also runs the hook.
+/// A publication with no paint since the last one repeats the last total
+/// and the same paint count, so it is not a new boundary.
+struct RasterPublications {
+    mailbox: Arc<FrameBuf>,
+    last: Mutex<Publication>,
+}
+
+impl RasterPublications {
+    fn new(mailbox: Arc<FrameBuf>) -> Self {
+        Self {
+            mailbox,
+            last: Mutex::new(Publication::default()),
+        }
+    }
+
+    /// Slot thread, every frame: record a new publication boundary.
+    fn observe(&self, name: &str) {
+        let Some(published) = host::performance_profile::snapshots()
+            .into_iter()
+            .find(|t| t.username == name)
+            .map(|t| t.raster_ns)
+        else {
+            return;
+        };
+        let mut last = self.last.lock().unwrap();
+        if published != last.raster_ns {
+            *last = Publication {
+                seq: last.seq + 1,
+                raster_ns: published,
+                paints: self.mailbox.generation(),
+                at: Some(Instant::now()),
+            };
+        }
+    }
+
+    fn last(&self) -> Publication {
+        *self.last.lock().unwrap()
     }
 }
 
@@ -197,33 +279,29 @@ struct HeadProbe {
     input: Arc<SlotInput>,
     mailbox: Arc<FrameBuf>,
     frames: Arc<SlotFrames>,
+    raster: Arc<RasterPublications>,
 }
 
-/// Cumulative counters at one instant.
+/// Cumulative counters at one instant. `paints` is the mailbox count now;
+/// `published` is the last raster publication boundary, whose own paint
+/// count pairs with its raster total.
 #[derive(Clone)]
 struct Mark {
     at: Instant,
     cpu_s: f64,
     paints: Vec<u64>,
-    raster_ns: Vec<u64>,
+    published: Vec<Publication>,
     frames: Vec<u64>,
     histograms: Vec<Vec<u64>>,
     taken: u64,
 }
 
 fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
-    let timings: HashMap<String, u64> = host::performance_profile::snapshots()
-        .into_iter()
-        .map(|t| (t.username, t.raster_ns))
-        .collect();
     Mark {
         at: Instant::now(),
         cpu_s: sample_process().1,
         paints: heads.iter().map(|h| h.mailbox.generation()).collect(),
-        raster_ns: heads
-            .iter()
-            .map(|h| timings.get(&h.name).copied().unwrap_or(0))
-            .collect(),
+        published: heads.iter().map(|h| h.raster.last()).collect(),
         frames: heads
             .iter()
             .map(|h| h.frames.frames.load(Relaxed))
@@ -256,6 +334,8 @@ fn delta(a: &[u64], b: &[u64]) -> Vec<u64> {
 struct Group {
     paint_fps: Vec<f64>,
     raster_ms: Vec<f64>,
+    published_raster_ns: u64,
+    published_paints: u64,
     histogram: Vec<u64>,
 }
 
@@ -265,15 +345,20 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
     let mut groups: HashMap<&str, Group> = HashMap::new();
     for (i, head) in heads.iter().enumerate() {
         let paints = to.paints[i] - from.paints[i];
-        let raster_ns = to.raster_ns[i] - from.raster_ns[i];
+        let (pub_from, pub_to) = (from.published[i], to.published[i]);
+        let published_raster_ns = pub_to.raster_ns - pub_from.raster_ns;
+        let published_paints = pub_to.paints - pub_from.paints;
         let frames = to.frames[i] - from.frames[i];
         let histogram = delta(&from.histograms[i], &to.histograms[i]);
-        let raster_ms = (paints > 0).then(|| raster_ns as f64 / paints as f64 / 1e6);
+        let raster_ms = (published_paints > 0)
+            .then(|| published_raster_ns as f64 / published_paints as f64 / 1e6);
         let group = groups
             .entry(if focused[i] { "focused" } else { "background" })
             .or_default();
         group.paint_fps.push(paints as f64 / secs);
         group.raster_ms.extend(raster_ms);
+        group.published_raster_ns += published_raster_ns;
+        group.published_paints += published_paints;
         if group.histogram.is_empty() {
             group.histogram = vec![0; BUCKETS];
         }
@@ -286,6 +371,12 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
             "paints": paints,
             "paint_fps": paints as f64 / secs,
             "raster_ms_per_paint": raster_ms,
+            "raster_publication": {
+                "from": pub_from.json(),
+                "to": pub_to.json(),
+                "raster_ns": published_raster_ns,
+                "paints": published_paints,
+            },
             "slot_frames": frames,
             "frame_interval_ms_p50": quantile(&histogram, 0.50),
             "frame_interval_ms_p95": quantile(&histogram, 0.95),
@@ -306,6 +397,11 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
                     "paint_fps_min": group.paint_fps.iter().copied().reduce(f64::min),
                     "raster_ms_per_paint_mean": mean(&group.raster_ms),
                     "raster_ms_per_paint_max": max(&group.raster_ms),
+                    "published_raster_ns": group.published_raster_ns,
+                    "published_paints": group.published_paints,
+                    "raster_ms_per_paint_pooled": (group.published_paints > 0).then(|| {
+                        group.published_raster_ns as f64 / group.published_paints as f64 / 1e6
+                    }),
                     "frame_interval_ms_p50": quantile(&group.histogram, 0.50),
                     "frame_interval_ms_p95": quantile(&group.histogram, 0.95),
                     "frame_interval_ms_p99": quantile(&group.histogram, 0.99),
@@ -316,6 +412,8 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
     let gpu = client::profiling::gpu_bytes();
     json!({
         "observe_s": secs,
+        "from_t_s": since_epoch(from.at),
+        "to_t_s": since_epoch(to.at),
         "process_cpu_percent": (to.cpu_s - from.cpu_s) / secs * 100.0,
         "rss_mib": current_resident_bytes().map(|b| b as f64 / 1048576.0),
         "gpu_tracked_mib": (gpu.buffers + gpu.textures) as f64 / 1048576.0,
@@ -371,6 +469,7 @@ fn live_m3_render_contention() {
         .map(str::to_string)
         .collect();
     client::profiling::enable();
+    LazyLock::force(&EPOCH);
 
     let options = ProfileOptions {
         profile: Some("local-289".into()),
@@ -414,10 +513,12 @@ fn live_m3_render_contention() {
         .map(|name| {
             let input = SlotInput::new();
             input.set_prefer_cpu(cpu);
+            let mailbox = FrameBuf::new();
             HeadProbe {
                 name: name.clone(),
                 input,
-                mailbox: FrameBuf::new(),
+                raster: Arc::new(RasterPublications::new(Arc::clone(&mailbox))),
+                mailbox,
                 frames: Arc::new(SlotFrames::new()),
             }
         })
@@ -431,10 +532,16 @@ fn live_m3_render_contention() {
             )
         })
         .collect();
-    let frame_stats: Arc<HashMap<String, Arc<SlotFrames>>> = Arc::new(
+    type HookProbes = HashMap<String, (Arc<SlotFrames>, Arc<RasterPublications>)>;
+    let hook_probes: Arc<HookProbes> = Arc::new(
         heads
             .iter()
-            .map(|h| (h.name.clone(), Arc::clone(&h.frames)))
+            .map(|h| {
+                (
+                    h.name.clone(),
+                    (Arc::clone(&h.frames), Arc::clone(&h.raster)),
+                )
+            })
             .collect(),
     );
     // Heads stay detached (headless) until the census below has run.
@@ -453,8 +560,9 @@ fn live_m3_render_contention() {
             },
             move |client, name, _| {
                 client.set_draw(draw.load(Relaxed));
-                if let Some(stats) = frame_stats.get(name) {
+                if let Some((stats, raster)) = hook_probes.get(name) {
                     stats.record(Instant::now());
+                    raster.observe(name);
                 }
                 census.observe(client, name);
             },
