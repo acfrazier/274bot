@@ -12,11 +12,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A poisoned Load-script isolate can now retire without stopping the shared
   deadline supervisor or refusing new scripts for other accounts.
 
-### Panel
-
-- Render-all draws up to 128 clients at once. A client past that shows
-  "renderer refused: render head cap of 128 is full" in its own tile.
-
 ### Saved state
 
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
@@ -95,6 +90,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the first six bots it stops
   and the first six it starts, and counts the rest ("+N more") beside
   the total for each, instead of listing every name.
+- Render-all draws up to 128 clients at once. A client past that shows
+  "renderer refused: render head cap of 128 is full" in its own tile.
 
 ### TUI
 
