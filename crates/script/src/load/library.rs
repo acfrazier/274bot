@@ -778,8 +778,9 @@ impl JsLibrary {
     }
 
     /// Build a candidate without creating a V8 runtime. UI callers use this
-    /// finite disk/transpile phase, then move [`PreparedCard::validate`] to a
-    /// worker so hostile module evaluation never owns the UI thread.
+    /// finite disk/transpile phase, then submit the candidate through the
+    /// cancellable validation batch so hostile module evaluation never owns
+    /// the UI thread.
     pub fn prepare_card_unvalidated(
         &mut self,
         source: ScriptSource,
@@ -923,11 +924,11 @@ pub struct PreparedCard {
     pub fingerprint: String,
 }
 
-#[cfg(feature = "load")]
+#[cfg(all(feature = "load", test))]
 impl PreparedCard {
-    /// Evaluate this candidate on the serialized ValidationSeat. This call
-    /// waits for a terminal result; UI refreshes submit a cancellable batch
-    /// instead of calling it on the control thread.
+    /// Synchronous test-compatibility helper (`#[cfg(test)]` only). Product
+    /// refreshes submit a cancellable batch through
+    /// `LoadIsolate::validate_prepared_batch` instead of blocking on one card.
     pub fn validate(&self) -> Result<(), String> {
         crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
             .map_err(|error| format!("prepare {}: {error}", self.card.name))
