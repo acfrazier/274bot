@@ -12,7 +12,10 @@ use dear_imgui_rs::{
     Condition, TableColumnFlags, TableFlags, TableOptions, TableSizingPolicy, Ui, WindowFlags,
 };
 use frontend_core::progress::{self, NONE};
-use frontend_core::{FleetRow, ProfileIdentity, Scripts};
+use frontend_core::{
+    fill_visible_row_indices, marked_availability, marked_startable, FleetOrder, FleetRow,
+    MarkedAction, MarkedBlock, Scripts,
+};
 
 use crate::fleet_columns::{self, FleetColumn};
 use crate::session::Session;
@@ -24,24 +27,6 @@ const RESTART_POPUP: &str = "##fleet-restart-confirm";
 /// button, so nothing runs past the edge however narrow it is dragged.
 pub(crate) const MIN_WIDTH: f32 = 360.0;
 const MIN_HEIGHT: f32 = 240.0;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FleetSort {
-    Name,
-    Status,
-}
-
-impl FleetSort {
-    pub const ALL: [FleetSort; 2] = [Self::Name, Self::Status];
-
-    /// The drop-down entry.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Name => "Name",
-            Self::Status => "Status",
-        }
-    }
-}
 
 thread_local! {
     /// One reused buffer for every formatted cell of the open window.
@@ -110,40 +95,6 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
     LAYOUT.with_borrow_mut(std::mem::take)
 }
 
-fn identity(session: &Session, name: &str) -> ProfileIdentity {
-    session
-        .core
-        .profile_identity(name)
-        .unwrap_or_else(|| ProfileIdentity::synthetic(name))
-}
-
-fn contains_ci(value: &str, query: &str) -> bool {
-    query.is_empty()
-        || value
-            .to_ascii_lowercase()
-            .contains(&query.to_ascii_lowercase())
-}
-
-fn row_matches(row: &FleetRow, filter: &str) -> bool {
-    contains_ci(row.name(), filter) || contains_ci(row.brief(), filter)
-}
-
-fn sorted_rows<'a>(rows: &'a [FleetRow], filter: &str, sort: FleetSort) -> Vec<&'a FleetRow> {
-    let mut visible = rows
-        .iter()
-        .filter(|row| row_matches(row, filter))
-        .collect::<Vec<_>>();
-    visible.sort_by(|left, right| match sort {
-        FleetSort::Name => left.name().cmp(right.name()),
-        FleetSort::Status => left
-            .phase()
-            .label()
-            .cmp(right.phase().label())
-            .then_with(|| left.name().cmp(right.name())),
-    });
-    visible
-}
-
 fn profile_rows(session: &Session) -> Vec<FleetRow> {
     let projected = session.core.fleet_view().rows();
     session
@@ -179,9 +130,13 @@ struct ActionLabels {
 }
 
 impl ActionLabels {
-    fn new(count: usize) -> Self {
+    fn new(count: usize, has_card: bool) -> Self {
         Self {
-            start: format!("Start selected card on {count} marked bots"),
+            start: if has_card {
+                format!("Start selected card on {count} marked bots")
+            } else {
+                format!("Start saved script on {count} marked bots")
+            },
             stop: format!("Stop {count} marked bots"),
             log_in: format!("Log in {count}"),
             log_out: format!("Log out {count}"),
@@ -208,43 +163,59 @@ impl ActionLabels {
 fn action_bar(ui: &Ui, session: &mut Session) {
     let count = session.fleet_selection.len();
     let has_card = session.script_sel.is_some();
-    let card_tip = |action: &str| {
-        if !has_card {
-            "select a card in Scripts first".to_string()
-        } else if count == 0 {
-            "mark at least one profile".to_string()
-        } else {
-            action.to_string()
-        }
+    let blocked = |action: MarkedAction| marked_availability(action, count, has_card, true);
+    let card_tip = |action: MarkedAction, ready: &str| match blocked(action) {
+        Err(MarkedBlock::NothingMarked) => "mark at least one profile".to_string(),
+        Err(MarkedBlock::NoCard) => "select a card in Scripts first".to_string(),
+        _ => ready.to_string(),
     };
+    let startable = marked_availability(MarkedAction::Start, count, has_card, true).is_ok()
+        && marked_startable(
+            &session.fleet_selection,
+            &session.core,
+            session.script_sel.as_ref(),
+        );
     let ActionLabels {
         start: start_label,
         stop: stop_label,
         log_in: log_in_label,
         log_out: log_out_label,
         walk: walk_label,
-    } = ActionLabels::new(count);
+    } = ActionLabels::new(count, has_card);
     {
-        let _disabled = (count == 0 || !has_card).then(|| ui.begin_disabled());
+        let _disabled = (!startable).then(|| ui.begin_disabled());
         if ui.button(start_label) {
             session.fleet_start_selected();
         }
-        ui.set_item_tooltip(card_tip("start the selected card on every marked profile"));
+        ui.set_item_tooltip(if count == 0 {
+            "mark at least one profile"
+        } else if !startable {
+            "select a card in Scripts first"
+        } else if has_card {
+            "start the selected card on every marked profile"
+        } else {
+            "start each marked profile's saved script"
+        });
     }
     continue_line_if_fits(ui, button_width(ui, &stop_label));
     {
-        let _disabled = (count == 0).then(|| ui.begin_disabled());
+        let _disabled = blocked(MarkedAction::Stop)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(stop_label) {
             session.fleet_stop_selected();
         }
         ui.set_item_tooltip("stop every marked profile; ineligible rows are reported");
     }
     {
-        let _disabled = (count == 0 || !has_card).then(|| ui.begin_disabled());
+        let _disabled = blocked(MarkedAction::Assign)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(ASSIGN_LABEL) {
             session.fleet_assign_selected();
         }
         ui.set_item_tooltip(card_tip(
+            MarkedAction::Assign,
             "save the selected card on every marked profile without starting it, \
              so each bot's settings can be adjusted first; running bots are skipped",
         ));
@@ -254,23 +225,36 @@ fn action_bar(ui: &Ui, session: &mut Session) {
             ui.open_popup(RESTART_POPUP);
         }
         ui.set_item_tooltip(card_tip(
+            MarkedAction::AssignAndRestart,
             "save the selected card and start it on every marked profile; \
              running scripts are stopped first (a confirmation names them)",
         ));
     }
     restart_confirm(ui, session);
     {
-        let _disabled = (count == 0).then(|| ui.begin_disabled());
+        let _disabled = blocked(MarkedAction::Login)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(log_in_label) {
             session.fleet_login_selected();
         }
         ui.set_item_tooltip("log in every marked profile, loading the ones not loaded yet");
-        continue_line_if_fits(ui, button_width(ui, &log_out_label));
+    }
+    continue_line_if_fits(ui, button_width(ui, &log_out_label));
+    {
+        let _disabled = blocked(MarkedAction::Logout)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(log_out_label) {
             session.fleet_logout_selected();
         }
         ui.set_item_tooltip("log out every marked profile that is logged in");
-        continue_line_if_fits(ui, button_width(ui, &walk_label));
+    }
+    continue_line_if_fits(ui, button_width(ui, &walk_label));
+    {
+        let _disabled = blocked(MarkedAction::Walk)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(walk_label) {
             session.open_walkto_for_marked();
         }
@@ -299,7 +283,13 @@ fn apply_settings_row(ui: &Ui, session: &mut Session, count: usize) {
         }
         return;
     }
-    let ready = count > 0 && session.script_sel.is_some() && session.focused_name().is_some();
+    let ready = marked_availability(
+        MarkedAction::ApplySettings,
+        count,
+        session.script_sel.is_some(),
+        session.focused_name().is_some(),
+    )
+    .is_ok();
     let _disabled = (!ready).then(|| ui.begin_disabled());
     if ui.button(APPLY_SETTINGS_LABEL) {
         session.fleet_prepare_apply_settings();
@@ -324,33 +314,8 @@ fn restart_confirm(ui: &Ui, session: &mut Session) {
     let mut decision = None;
     ui.popup(RESTART_POPUP, || {
         let scope = session.fleet_restart_scope();
-        if scope.interrupted().is_empty() && scope.starting().is_empty() {
-            ui.text_wrapped("No loaded marked bot to start the card on.");
-        } else {
-            if !scope.interrupted().is_empty() {
-                ui.text_wrapped(format!(
-                    "Stop and restart {} running {}: {}",
-                    scope.interrupted().len(),
-                    if scope.interrupted().len() == 1 {
-                        "bot"
-                    } else {
-                        "bots"
-                    },
-                    scope.interrupted().join(", ")
-                ));
-            }
-            if !scope.starting().is_empty() {
-                ui.text_wrapped(format!(
-                    "Start the card on {} idle {}: {}",
-                    scope.starting().len(),
-                    if scope.starting().len() == 1 {
-                        "bot"
-                    } else {
-                        "bots"
-                    },
-                    scope.starting().join(", ")
-                ));
-            }
+        for line in scope.prompt_lines() {
+            ui.text_wrapped(line);
         }
         if ui.button("Assign & restart") {
             decision = Some(true);
@@ -401,7 +366,7 @@ fn sort_combo(ui: &Ui, session: &mut Session) {
     #[cfg(test)]
     record_sort_combo(ui);
     if let Some(_open) = combo {
-        for sort in FleetSort::ALL {
+        for sort in FleetOrder::PANEL_CHOICES {
             let selected = sort == session.fleet_sort;
             let picked = ui
                 .selectable_config(sort.label())
@@ -450,8 +415,7 @@ fn cell(ui: &Ui, write: impl FnOnce(&mut String)) {
     });
 }
 
-fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
-    let visible = sorted_rows(rows, &session.fleet_filter, session.fleet_sort);
+fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
     let columns: Vec<FleetColumn> = FleetColumn::ALL
         .into_iter()
         .filter(|column| fleet_columns::visible(&session.ui.fleet_columns, *column))
@@ -500,8 +464,9 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             );
         }
         ui.table_headers_row();
-        for row in visible {
-            let marked_id = identity(session, row.name());
+        for &index in shown {
+            let row = &rows[index];
+            let marked_id = session.core.profile_identity_or_synthetic(row.name());
             let mut marked = session.fleet_selection.contains(marked_id);
             ui.table_next_row();
             ui.table_next_column();
@@ -607,12 +572,21 @@ pub fn window(ui: &Ui, session: &mut Session) {
                 .hint("name or status")
                 .build();
             sort_combo(ui, session);
+            // The surface's universe is every vault profile; marks are
+            // pruned to it at the session sync (see
+            // `Session::prune_fleet_marks`, run here as well so the
+            // counts below never lag it), then the core model decides
+            // the shown rows over it.
+            let rows = profile_rows(session);
+            session.prune_fleet_marks();
+            let mut shown = std::mem::take(&mut session.fleet_shown);
+            fill_visible_row_indices(&rows, &session.fleet_filter, session.fleet_sort, &mut shown);
             ui.separator();
             action_bar(ui, session);
             column_toggles(ui, session);
             ui.separator();
-            let rows = profile_rows(session);
-            table(ui, session, &rows);
+            table(ui, session, &rows, &shown);
+            session.fleet_shown = shown;
             #[cfg(test)]
             record_window_layout(ui);
         });
@@ -621,8 +595,8 @@ pub fn window(ui: &Ui, session: &mut Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{row_matches, sorted_rows, ActionLabels, FleetSort};
-    use frontend_core::{FleetRow, Phase};
+    use super::ActionLabels;
+    use frontend_core::{fill_visible_row_indices, fleet_row_matches, FleetOrder, FleetRow, Phase};
 
     /// The open window survives frames while columns come and go (the table
     /// is rebuilt with a different column count) and with a marked row:
@@ -677,26 +651,221 @@ mod tests {
         assert!(session.fleet_open, "drawing never closes the window");
     }
 
+    /// One Fleet-window session end to end: the window sorts and filters
+    /// the vault profiles, a mark whose profile is gone is pruned at the
+    /// window's sync, and Assign runs as the bulk action over the marks.
+    #[test]
+    fn fleet_window_session_filters_sorts_marks_and_assigns() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let dir = crate::test_support::TestDir::new("fleet-window-session");
+        let mut session = crate::session::Session::new();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        for (uid, name) in [(3, "carol"), (2, "bob"), (1, "alice")] {
+            vault
+                .upsert(vault::Profile {
+                    username: name.into(),
+                    password: "pw".into(),
+                    uid,
+                    settings: vault::ProfileSettings::default(),
+                })
+                .unwrap();
+        }
+        session.core.set_vault(Some(vault));
+        session.fleet_open = true;
+        let mut ctx = crate::test_support::imgui_context();
+        let mut frame = |session: &mut crate::session::Session| {
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                super::window(ui, session);
+            }
+            ctx.render();
+        };
+        let shown_names = |session: &crate::session::Session| {
+            let rows = super::profile_rows(session);
+            session
+                .fleet_shown
+                .iter()
+                .map(|&index| rows[index].name().to_string())
+                .collect::<Vec<_>>()
+        };
+        // Sort: Name order over the vault's insertion order.
+        frame(&mut session);
+        assert_eq!(shown_names(&session), ["alice", "bob", "carol"]);
+        // Filter: only bob's name matches "bob" (a bare "o" would also
+        // match the offline status of every row).
+        session.fleet_filter = "bob".into();
+        frame(&mut session);
+        assert_eq!(shown_names(&session), ["bob"]);
+        // Marks: bob's stays; a mark outside the universe is pruned.
+        let bob = session.core.profile_identity("bob").unwrap();
+        session.fleet_selection.set(bob, true);
+        session
+            .fleet_selection
+            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+        frame(&mut session);
+        assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
+        assert!(session.fleet_selection.contains(bob));
+        // Bulk action: assign the selected card to the marked bot only.
+        let path = dir.join("looper.ts");
+        std::fs::write(
+            &path,
+            "export default class T extends LoopingBot { override loop() {} }\n",
+        )
+        .unwrap();
+        let card = session.scripts.js_mut().load(&path).unwrap();
+        session.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+        session.fleet_assign_selected();
+        session.core.flush_writes();
+        assert!(session.profile_assignment("bob").is_some());
+        assert!(session.profile_assignment("carol").is_none());
+        assert!(session.profile_assignment("alice").is_none());
+        let report = session.fleet_report.clone().expect("the assign report");
+        assert!(report.contains("Assign"), "{report}");
+    }
+
+    /// Marks are pruned at the per-frame session sync, not only while
+    /// the Fleet window is drawn: with the window closed, one
+    /// `pump_status` drops the mark whose profile is gone and keeps
+    /// the vault profile's mark.
+    #[test]
+    fn marks_are_pruned_at_the_session_sync_with_the_fleet_window_closed() {
+        let dir = crate::test_support::TestDir::new("fleet-prune-closed");
+        let mut session = crate::session::Session::new();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        vault
+            .upsert(vault::Profile {
+                username: "bob".into(),
+                password: "pw".into(),
+                uid: 2,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+        session.core.set_vault(Some(vault));
+        assert!(!session.fleet_open, "the Fleet window stays closed");
+        let bob = session.core.profile_identity("bob").unwrap();
+        session.fleet_selection.set(bob, true);
+        session
+            .fleet_selection
+            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
+        assert!(session.fleet_selection.contains(bob));
+    }
+
+    /// The session-sync prune binary-searches a sorted universe, so
+    /// the in-place sort in `prune_fleet_marks` is load-bearing:
+    /// vault order here is alphabetical by username, which is not
+    /// UID order, and every mark must survive the prune. A vault
+    /// swap with no Fleet frame then prunes at the next sync.
+    #[test]
+    fn prune_keeps_marks_when_vault_order_differs_from_uid_order() {
+        let dir = crate::test_support::TestDir::new("fleet-prune-order");
+        let mut session = crate::session::Session::new();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        for (username, uid) in [("zed", 1), ("amy", 3), ("max", 2), ("bea", 5), ("kim", 4)] {
+            vault
+                .upsert(vault::Profile {
+                    username: username.into(),
+                    password: "pw".into(),
+                    uid,
+                    settings: vault::ProfileSettings::default(),
+                })
+                .unwrap();
+        }
+        session.core.set_vault(Some(vault));
+        let order: Vec<_> = session
+            .core
+            .vault()
+            .unwrap()
+            .profiles()
+            .map(|profile| profile.uid)
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_ne!(
+            order, sorted,
+            "the fixture's vault order must differ from UID order"
+        );
+        for name in ["zed", "amy", "max", "bea", "kim"] {
+            let id = session.core.profile_identity(name).unwrap();
+            session.fleet_selection.set(id, true);
+        }
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        // Universe change without a Fleet frame: a smaller vault replaces it.
+        let mut smaller = vault::Vault::create(&dir.join("vault2"), "test-passphrase-01").unwrap();
+        smaller
+            .upsert(vault::Profile {
+                username: "amy".into(),
+                password: "pw".into(),
+                uid: 3,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+        session.core.set_vault(Some(smaller));
+        session.pump_status();
+        assert_eq!(
+            session.fleet_selection.len(),
+            1,
+            "only amy's mark survives the swap"
+        );
+        assert!(session
+            .fleet_selection
+            .contains(frontend_core::ProfileIdentity::uid(3)));
+    }
+
+    fn shown_names<'a>(rows: &'a [FleetRow], filter: &str, order: FleetOrder) -> Vec<&'a str> {
+        let mut shown = Vec::new();
+        fill_visible_row_indices(rows, filter, order, &mut shown);
+        shown.iter().map(|&index| rows[index].name()).collect()
+    }
+
     #[test]
     fn filtering_and_sorting_keep_one_row_per_projection() {
         let rows = vec![
             FleetRow::fixture("bob", Phase::Ready, Some(301), None),
             FleetRow::fixture("alice", Phase::Preparing, Some(302), None),
         ];
-        assert!(row_matches(&rows[0], "idle"));
-        assert_eq!(sorted_rows(&rows, "", FleetSort::Name)[0].name(), "alice");
-        assert_eq!(sorted_rows(&rows, "starting", FleetSort::Status).len(), 1);
+        assert!(fleet_row_matches(rows[0].name(), Some(&rows[0]), "idle"));
+        assert_eq!(shown_names(&rows, "", FleetOrder::Name)[0], "alice");
+        assert_eq!(shown_names(&rows, "starting", FleetOrder::Status).len(), 1);
+    }
+
+    #[test]
+    fn status_sort_orders_by_phase_label_then_name() {
+        let rows = vec![
+            FleetRow::fixture("zoe", Phase::Ready, Some(301), None),
+            FleetRow::fixture("amy", Phase::Ready, Some(301), None),
+            FleetRow::fixture("bob", Phase::Offline, None, None),
+        ];
+        assert_eq!(
+            shown_names(&rows, "", FleetOrder::Status),
+            ["bob", "amy", "zoe"],
+            "offline < ready, then name"
+        );
+        assert!(
+            fleet_row_matches(rows[2].name(), Some(&rows[2]), "OFF"),
+            "brief matches case-insensitively"
+        );
     }
 
     /// No button of the action bar ends in an ellipsis, whatever the count.
     #[test]
     fn action_button_labels_have_no_ellipsis() {
         for count in [0, 1, 12] {
-            for label in ActionLabels::new(count).all() {
-                assert!(
-                    !label.contains('\u{2026}') && !label.contains("..."),
-                    "{label:?}"
-                );
+            for has_card in [true, false] {
+                for label in ActionLabels::new(count, has_card).all() {
+                    assert!(
+                        !label.contains('\u{2026}') && !label.contains("..."),
+                        "{label:?}"
+                    );
+                }
             }
         }
     }
