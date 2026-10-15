@@ -199,7 +199,10 @@ mod machine;
 #[cfg(feature = "load")]
 mod market_catalog;
 // The frozen JS pick helpers are reached only through the `load` isolate.
-#[cfg_attr(not(feature = "load"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "load"),
+    expect(dead_code, reason = "reached only through the `load` isolate")
+)]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;

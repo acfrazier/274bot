@@ -28,7 +28,8 @@ use std::sync::Arc;
 
 #[path = "../schema/generated/isolate_generated.rs"]
 #[rustfmt::skip]
-#[allow(dead_code, clippy::all, rustdoc::all)]
+#[expect(clippy::all, reason = "flatc 25.12.19 output is checked in byte-identical; clippy lints on generated code are upstream")]
+#[expect(rustdoc::all, reason = "flatc output carries no docs; rustdoc lints on generated code are upstream")]
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{

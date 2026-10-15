@@ -121,11 +121,20 @@ struct HostInspect {
     prev_seq: u64,
     prev_id: u64,
     prev_generation: u64,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "snapshot mirror of the running inspect id; tracked but not yet gated"
+    )]
     running_id: u64,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "snapshot mirror of the pending inspect id; tracked but not yet gated"
+    )]
     pending_id: u64,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "snapshot mirror of the accepted inspect id; tracked but not yet gated"
+    )]
     accepted_id: u64,
     replaced_id: u64,
     replaced_prev_id: u64,
