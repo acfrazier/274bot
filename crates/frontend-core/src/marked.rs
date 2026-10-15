@@ -161,7 +161,7 @@ pub fn assign_marked<Io>(
             match scripts.defer_pending_catalog_assignment(action) {
                 Ok(()) => {
                     rows.extend(names.iter().map(|name| {
-                        BulkRow::new(name, BulkOutcome::pending("catalog scan pending"))
+                        BulkRow::new(name, BulkOutcome::Pending).with_detail("catalog scan pending")
                     }));
                     BulkReport::new(LABEL, DONE, rows, None)
                 }

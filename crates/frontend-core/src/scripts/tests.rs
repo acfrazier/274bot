@@ -3482,7 +3482,7 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
     assert!(report
         .rows()
         .iter()
-        .all(|row| matches!(&row.outcome, crate::bulk::BulkOutcome::Pending(_))));
+        .all(|row| matches!(&row.outcome, crate::bulk::BulkOutcome::Pending)));
     for profile in ["alice", "bob"] {
         assert_eq!(Scripts::assignment(&f.core, profile), None);
     }
