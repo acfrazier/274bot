@@ -28,12 +28,16 @@
 //! (which settles `Cancelled(Superseded)`); the submission is made under
 //! the memory's read guard, so two slots sharing one account submit in
 //! generation order and the service's per-account FIFO is the memory's own
-//! order; the same bytes already on disk settle as durable without a
-//! write, so a stale document is never written over a newer file. A
-//! leaving slot waits for its own request, not for the generation it
-//! carries: an earlier failure at the same generation never stands in for a
-//! retry still in flight, and a superseded exit save waits for the newer
-//! document that replaced it to settle.
+//! order; the same bytes this service already made durable settle as
+//! durable without a write. Only a durable commit marks a generation saved
+//! (§21 §4.3): a superseded request marks nothing (the request that
+//! replaced it settles the generation, and if it fails the memory is still
+//! dirty for the next save point), and a settlement the service no longer
+//! holds is dropped with the memory left dirty. A leaving slot waits for
+//! its own request, not for the generation it carries: an earlier failure
+//! at the same generation never stands in for a retry still in flight, and
+//! a superseded exit save waits for the request that replaced it to become
+//! durable.
 //!
 //! `Play` keys the memories by the account's login identity
 //! ([`memory_key`]), the identity the hint identity carries, so every
@@ -43,20 +47,20 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::bank_memory::{BankMemory, FrameEvent};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Cancellation, DurableTimestamp, RequestId, Settlement};
 use api::local_state::{
-    BankHint, DomainEdit, DomainIdentity, ErrorCode, LocalStatePort, SubmitReceipt,
+    BankHint, DomainEdit, DomainIdentity, ErrorCode, LocalStatePort, SubmitReceipt, WriteSettlement,
 };
 use api::snapshot::GameSnapshot;
 use parking_lot::{Mutex, RwLock};
 use script::bank_hints::account_component;
 
-use super::local_state::LocalStateService;
+use super::local_state::{Durability, LocalStateService, RequestState};
 
 /// One account's memory, shared by `Play` (UI reads) and its slot thread.
 pub(crate) type SharedBankMemory = Arc<RwLock<BankMemory>>;
@@ -152,6 +156,17 @@ struct Pending {
     why: &'static str,
 }
 
+/// What a save point did.
+enum Saved {
+    /// Nothing unsaved (or no hint port to save through).
+    Clean,
+    /// Submitted; the settlement is applied on a later frame.
+    Submitted(Pending),
+    /// Refused by the service (one line already logged); the rows stay
+    /// pending.
+    Refused(ErrorCode),
+}
+
 impl SlotHint {
     fn new(port: SlotHintPort) -> Self {
         let path = port.path();
@@ -164,9 +179,10 @@ impl SlotHint {
 
     /// Submit the memory's rows to the service under the caller's read
     /// guard (so submissions follow generation order), answered through
-    /// the service's ledger. What was submitted, or `None` when the service
-    /// refused it (a refusal already logged).
-    fn submit(&self, memory: &BankMemory, why: &'static str) -> Option<Pending> {
+    /// the service's per-account settlements. The pending list is held
+    /// across the submission, so an accepted request is listed before
+    /// anyone can look. A refusal is logged here.
+    fn submit(&self, memory: &BankMemory, why: &'static str) -> Saved {
         let observed_at = memory.observed_at().map_or(0, |at| at.unix_secs);
         let hint = match BankHint::try_new(
             self.port.identity.clone(),
@@ -177,23 +193,25 @@ impl SlotHint {
             Ok(hint) => hint,
             Err(code) => {
                 self.refused(why, code);
-                return None;
+                return Saved::Refused(code);
             }
         };
+        let mut pending = self.pending.lock();
         match self.port.service.submit(DomainEdit::Bank(hint)) {
             SubmitReceipt::Accepted { request } => {
-                let pending = Pending {
+                let submitted = Pending {
                     request,
                     generation: memory.generation(),
                     rows: memory.rows().len(),
                     why,
                 };
-                self.pending.lock().push(pending);
-                Some(pending)
+                pending.push(submitted);
+                Saved::Submitted(submitted)
             }
             SubmitReceipt::Refused(code) => {
+                drop(pending);
                 self.refused(why, code);
-                None
+                Saved::Refused(code)
             }
         }
     }
@@ -334,8 +352,8 @@ impl SlotBankMemory {
     }
 
     /// Apply every settlement the service reached since the last frame.
-    /// One ledger read per unsettled request; nothing is allocated when
-    /// nothing was submitted.
+    /// One lookup per unsettled request; nothing is allocated when nothing
+    /// was submitted.
     fn apply_published(&self) {
         let Some(hint) = &self.hint else {
             return;
@@ -351,28 +369,38 @@ impl SlotBankMemory {
             let mut settled = Vec::new();
             let mut index = 0;
             while index < pending.len() {
-                match hint.port.service.observe(pending[index].request) {
-                    Some(settlement) => settled.push((pending.swap_remove(index), settlement)),
-                    None => index += 1,
+                match hint.port.service.request_state(pending[index].request) {
+                    RequestState::Pending => index += 1,
+                    RequestState::Settled(settlement) => {
+                        settled.push((pending.swap_remove(index), Some(settlement)));
+                    }
+                    RequestState::Forgotten => settled.push((pending.swap_remove(index), None)),
                 }
             }
             settled
         };
         for (done, settlement) in settled {
-            self.apply(hint, done, settlement);
+            match settlement {
+                Some(settlement) => self.apply(hint, done, settlement),
+                None => host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: the service no longer holds the outcome of the save why={} \
+                     generation={}; the rows stay pending for the next save point path={}",
+                    done.why,
+                    done.generation,
+                    hint.path.display()
+                ),
+            }
         }
     }
 
-    /// Apply one settlement: a document written, or replaced in the queue
-    /// by a newer generation, marks its generation saved under a short
-    /// write guard (an observation newer than the document stays pending);
-    /// a failure leaves the memory dirty for the next save point.
-    fn apply(
-        &self,
-        hint: &SlotHint,
-        pending: Pending,
-        settlement: Settlement<api::local_state::DurableReceipt, ErrorCode>,
-    ) {
+    /// Apply one settlement: only a durable write marks its generation
+    /// saved, under a short write guard (an observation newer than the
+    /// document stays pending). A superseded request marks nothing: the
+    /// request that replaced it settles the generation, whichever slot sent
+    /// it, and a failure leaves the memory dirty for the next save point.
+    fn apply(&self, hint: &SlotHint, pending: Pending, settlement: WriteSettlement) {
         match settlement {
             Settlement::Completed(receipt) => {
                 self.memory.write().mark_saved(pending.generation);
@@ -386,17 +414,14 @@ impl SlotBankMemory {
                     hint.path.display()
                 );
             }
-            Settlement::Cancelled(Cancellation::Superseded) => {
-                self.memory.write().mark_saved(pending.generation);
-                host_log!(
-                    Category::BankOp,
-                    Level::Info,
-                    "bank hints: superseded generation={} why={} path={}",
-                    pending.generation,
-                    pending.why,
-                    hint.path.display()
-                );
-            }
+            Settlement::Cancelled(Cancellation::Superseded) => host_log!(
+                Category::BankOp,
+                Level::Info,
+                "bank hints: superseded generation={} why={}; the newer request settles it path={}",
+                pending.generation,
+                pending.why,
+                hint.path.display()
+            ),
             Settlement::Cancelled(reason) => host_log!(
                 Category::BankOp,
                 Level::Warn,
@@ -414,11 +439,11 @@ impl SlotBankMemory {
         }
     }
 
-    /// A save point: submit the memory's unsaved rows, if any. What was
-    /// submitted, or `None` when nothing was (nothing pending, or a
-    /// refusal already logged).
-    fn save(&self, why: &'static str) -> Option<Pending> {
-        let hint = self.hint.as_ref()?;
+    /// A save point: submit the memory's unsaved rows, if any.
+    fn save(&self, why: &'static str) -> Saved {
+        let Some(hint) = &self.hint else {
+            return Saved::Clean;
+        };
         // A settlement that already landed is applied first, so a clean
         // memory is not queued again.
         self.apply_published();
@@ -428,33 +453,49 @@ impl SlotBankMemory {
         // slots share the account.
         let memory = self.memory.read();
         if !memory.dirty() {
-            return None;
+            return Saved::Clean;
         }
         hint.submit(&memory, why)
     }
 
-    /// The slot thread is leaving: submit what is pending and wait for the
-    /// service to finish with that request — or, when a newer document of
-    /// the account replaced it, with that one, whichever slot sent it —
-    /// bounded by `timeout`. `true` when the rows the slot last observed,
-    /// or newer ones, were on disk before it left.
+    /// The slot thread is leaving: submit what is pending and wait until
+    /// that request — or, when a newer document of the account replaced
+    /// it, the request that did, whichever slot sent it — is durable,
+    /// bounded by `timeout`. A store the service had to read again (cold)
+    /// is read within the same bound and the rows submitted once more.
+    /// `true` when the rows the slot last observed, or newer ones, were
+    /// durable before it left.
     fn finish_within(&self, timeout: Duration) -> bool {
-        let Some(pending) = self.save("slot exit") else {
+        let Some(hint) = &self.hint else {
             return true;
         };
-        let hint = self.hint.as_ref().expect("a submission came from a hint");
-        let deadline = std::time::Instant::now() + timeout;
-        let settled = hint.port.service.wait_settled(pending.request, timeout);
-        let on_disk = match &settled {
-            Some(Settlement::Completed(_)) => true,
-            Some(Settlement::Cancelled(Cancellation::Superseded)) => {
-                hint.port.service.wait_quiescent(
-                    &hint.port.identity,
-                    deadline.saturating_duration_since(std::time::Instant::now()),
-                )
+        let deadline = Instant::now() + timeout;
+        let mut hydrated = false;
+        let pending = loop {
+            match self.save("slot exit") {
+                Saved::Clean => return true,
+                Saved::Submitted(pending) => break pending,
+                Saved::Refused(ErrorCode::NotReady { .. }) if !hydrated => {
+                    hydrated = true;
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if hint
+                        .port
+                        .service
+                        .readback_lease(&hint.port.identity, left)
+                        .is_err()
+                    {
+                        return false;
+                    }
+                }
+                Saved::Refused(_) => return false,
             }
-            Some(_) => false,
-            None => {
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        let durable = hint.port.service.wait_durable(pending.request, left);
+        self.apply_published();
+        match durable {
+            Durability::Durable(_) => true,
+            Durability::Pending => {
                 host_log!(
                     Category::BankOp,
                     Level::Warn,
@@ -464,9 +505,25 @@ impl SlotBankMemory {
                 );
                 false
             }
-        };
-        self.apply_published();
-        on_disk
+            Durability::NotDurable(settlement) => {
+                host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: slot exit save did not reach the disk ({settlement:?}) path={}",
+                    hint.path.display()
+                );
+                false
+            }
+            Durability::Forgotten => {
+                host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: slot exit save outcome is no longer held path={}",
+                    hint.path.display()
+                );
+                false
+            }
+        }
     }
 }
 
@@ -601,14 +658,19 @@ mod tests {
         *pending(slot).last().expect("slot has submitted a request")
     }
 
-    fn settle(
-        slot: &SlotBankMemory,
-        service: &LocalStateService,
-    ) -> Settlement<api::local_state::DurableReceipt, ErrorCode> {
-        let request = last_request(slot).request;
-        let settled = service
-            .wait_settled(request, WAIT)
-            .unwrap_or_else(|| panic!("service did not settle request {}", request.get()));
+    /// `request`'s settlement, waiting for it.
+    fn settled(service: &LocalStateService, request: RequestId) -> WriteSettlement {
+        match service.wait_request(request, WAIT) {
+            RequestState::Settled(settlement) => settlement,
+            other => panic!(
+                "service did not settle request {}: {other:?}",
+                request.get()
+            ),
+        }
+    }
+
+    fn settle(slot: &SlotBankMemory, service: &LocalStateService) -> WriteSettlement {
+        let settled = settled(service, last_request(slot).request);
         slot.apply_published();
         settled
     }
@@ -882,7 +944,7 @@ mod tests {
         slot.observe_frame(&snapshot);
         let first = last_request(&slot).request;
         assert!(matches!(
-            state.service.wait_settled(first, WAIT).unwrap(),
+            settled(&state.service, first),
             Settlement::Failed(ErrorCode::Failed {
                 reason: api::local_state::FailureReason::Io,
                 ..
@@ -953,8 +1015,8 @@ mod tests {
         assert_eq!(
             state
                 .service
-                .wait_settled(retry_request, Duration::from_millis(100)),
-            None,
+                .wait_request(retry_request, Duration::from_millis(100)),
+            RequestState::Pending,
             "the earlier failure cannot settle the held retry"
         );
         assert!(
@@ -1311,15 +1373,10 @@ mod tests {
 
         gate.release.send(()).unwrap();
         assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
-        assert_eq!(
-            state.service.wait_settled(first_request, WAIT),
-            Some(Settlement::Completed(
-                match state.service.observe(first_request).unwrap() {
-                    Settlement::Completed(receipt) => receipt,
-                    other => panic!("the in-flight first request did not complete: {other:?}"),
-                }
-            ))
-        );
+        assert!(matches!(
+            settled(&state.service, first_request),
+            Settlement::Completed(_)
+        ));
         assert_eq!(
             state.service.observe(slot1_duplicate),
             Some(Settlement::Cancelled(Cancellation::Superseded))
@@ -1343,7 +1400,10 @@ mod tests {
             gate.entered.try_recv().is_err(),
             "only held and newest were written"
         );
-        assert!(state.service.wait_quiescent(&state.identity, WAIT));
+        assert!(matches!(
+            state.service.wait_durable(slot1_duplicate, WAIT),
+            Durability::Durable(receipt) if receipt.request() == Some(newest.request)
+        ));
     }
 
     #[test]
@@ -1421,5 +1481,241 @@ mod tests {
             slot <= 160,
             "SlotBankMemory is {slot} bytes with its service identity"
         );
+    }
+
+    /// A writer whose first publication is held until released and whose
+    /// second publication fails; later ones go through.
+    fn held_then_failing_writer(service: &LocalStateService) -> Gate {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        service.set_write_hook(Arc::new(move |path, bytes| {
+            match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    let document: serde_json::Value = serde_json::from_slice(bytes)
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let _ = entered_tx.send(rows);
+                    let _ = release_rx.lock().unwrap().recv();
+                    vault::write_private_file(path, bytes)
+                }
+                1 => Err(std::io::Error::other("disk full")),
+                _ => vault::write_private_file(path, bytes),
+            }
+        }));
+        Gate { entered, release }
+    }
+
+    /// r2 item 3 (sol P1, grok High): close queues generation G, session
+    /// end queues G again and supersedes it; the supersession marks
+    /// nothing, the replacement fails, and G stays dirty until a durable
+    /// commit: the exit save writes it.
+    #[test]
+    fn a_superseded_save_marks_nothing_and_a_failed_replacement_stays_dirty() {
+        let state = TestState::new("bank-hints-superseded-then-failed");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let gate = held_then_failing_writer(&state.service);
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
+
+        open_bank(&mut snapshot, 2, 64);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 2);
+        slot.observe_frame(&snapshot);
+        let close = last_request(&slot);
+        slot.session_ended();
+        let session_end = last_request(&slot);
+        assert_eq!(close.generation, session_end.generation, "one generation G");
+        assert_ne!(close.request, session_end.request);
+        slot.observe_frame(&snapshot);
+        assert!(
+            slot.read().dirty(),
+            "the supersession of the close is not a durable commit of G"
+        );
+
+        gate.release.send(()).unwrap();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Failed(ErrorCode::Failed { .. })
+        ));
+        assert!(
+            slot.read().dirty(),
+            "the failed replacement leaves G dirty for the next save point"
+        );
+        assert!(
+            slot.finish_within(WAIT),
+            "the exit save writes G and reports it on disk"
+        );
+        assert!(!slot.read().dirty());
+        let raw = rows_on_disk(&path);
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},64]]")), "{raw}");
+    }
+
+    /// r2 item 3: a slot whose exit save another slot's newer hint replaced
+    /// waits for that replacement, and a replacement that fails is reported
+    /// as not on disk (it used to read as saved once the store was quiet).
+    #[test]
+    fn an_exit_superseded_by_a_failing_replacement_is_not_reported_saved() {
+        let state = TestState::new("bank-hints-exit-replacement-fails");
+        let memory: SharedBankMemory = Arc::default();
+        let leaving = Arc::new(state.slot(Arc::clone(&memory)));
+        let staying = state.slot(Arc::clone(&memory));
+        let gate = held_then_failing_writer(&state.service);
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        leaving.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        leaving.observe_frame(&snapshot);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
+        open_bank(&mut snapshot, 2, 43);
+        leaving.observe_frame(&snapshot);
+
+        let exiting = Arc::clone(&leaving);
+        let exit = thread::spawn(move || exiting.finish_within(WAIT));
+        let deadline = Instant::now() + WAIT;
+        while pending(&leaving).len() < 2 {
+            assert!(Instant::now() < deadline, "the exit save was not submitted");
+            thread::yield_now();
+        }
+        open_bank(&mut snapshot, 3, 41);
+        staying.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 3);
+        staying.observe_frame(&snapshot);
+        gate.release.send(()).unwrap();
+        assert!(
+            !exit.join().unwrap(),
+            "the replacement failed: the leaving slot's rows are not on disk"
+        );
+        assert!(memory.read().dirty());
+    }
+
+    /// r2 item 2 (grok probe): a save queued when the slot leaves and the
+    /// last service handle is dropped is finished by the service, not
+    /// cancelled.
+    #[test]
+    fn a_save_still_queued_when_the_slot_and_service_go_is_finished() {
+        let state = TestState::new("bank-hints-exit-then-drop");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let bob = identity("bob");
+        assert_eq!(state.service.readback_lease(&bob, WAIT).unwrap(), None);
+        let bob_path = state.service.root().bank_hint_file(PROFILE, "bob");
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        state.service.set_write_hook(Arc::new(move |path, bytes| {
+            if path == bob_path {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+            vault::write_private_file(path, bytes)
+        }));
+        let hint = BankHint::try_new(
+            bob,
+            None,
+            vec![(COINS, 1)],
+            DurableTimestamp::from_unix_seconds(1),
+        )
+        .unwrap();
+        assert!(state
+            .service
+            .submit(DomainEdit::Bank(hint))
+            .request()
+            .is_some());
+        entered.recv_timeout(WAIT).unwrap();
+
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 64);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        slot.session_ended();
+        assert!(
+            !slot.finish_within(Duration::from_millis(200)),
+            "the held writer is reported, not waited out"
+        );
+        assert!(slot.read().dirty());
+
+        let TestState {
+            scratch: _scratch,
+            service,
+            ..
+        } = state;
+        drop(slot);
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            let _ = release.send(());
+        });
+        drop(service);
+        releaser.join().unwrap();
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("the queued save was dropped: {error}"));
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},64]]")), "{raw}");
+    }
+
+    /// r2 item 8 (sol P1): a settlement the service no longer holds is
+    /// dropped from the slot's pending list (never pending forever) and
+    /// the rows stay dirty for the next save point.
+    #[test]
+    fn a_settlement_the_service_forgot_is_dropped_and_the_rows_stay_pending() {
+        let state = TestState::new("bank-hints-forgotten");
+        let slot = state.slot(Arc::default());
+        // Hundreds of writes follow; what this checks is not durability, so
+        // they are plain unsynced writes with no directory flushes.
+        state.service.set_write_hook(Arc::new(|path, bytes| {
+            std::fs::create_dir_all(path.parent().expect("a hint has a directory"))?;
+            std::fs::write(path, bytes)
+        }));
+        state.service.set_sync_hook(Arc::new(|_| Ok(())));
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        let forgotten = last_request(&slot).request;
+        assert!(matches!(
+            settled(&state.service, forgotten),
+            Settlement::Completed(_)
+        ));
+        // Before the slot reads it, newer settlements of the account push it
+        // out of what the service keeps.
+        for count in 0..300 {
+            let hint = BankHint::try_new(
+                state.identity.clone(),
+                None,
+                vec![(COINS, 1000 + count)],
+                DurableTimestamp::from_unix_seconds(2),
+            )
+            .unwrap();
+            let request = state
+                .service
+                .submit(DomainEdit::Bank(hint))
+                .request()
+                .expect("accepted");
+            assert!(matches!(
+                settled(&state.service, request),
+                Settlement::Completed(_)
+            ));
+        }
+        slot.observe_frame(&snapshot);
+        assert!(
+            pending(&slot).is_empty(),
+            "a forgotten settlement is not pending forever"
+        );
+        assert!(slot.read().dirty(), "its outcome is unknown: still dirty");
+        slot.session_ended();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
+        assert!(!slot.read().dirty());
+        assert!(rows_on_disk(&state.hint_path()).contains(&format!("\"rows\":[[{COINS},50]]")));
     }
 }

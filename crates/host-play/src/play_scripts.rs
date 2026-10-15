@@ -199,10 +199,24 @@ impl ScriptStartHandle {
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
             StartRequest::Compiled { id, bag } => {
+                // Every compiled Start reads the operator's loadouts file
+                // again, so the run's later leases (a quester compiling a
+                // Path, the progress page) see the rows the frontend's form
+                // saved, whether or not the bag names a loadout. Only a bag
+                // that names one needs the rows now: without one, a failed
+                // read is logged and the card's own lease reports it.
+                let refreshed = self.operator_loadouts(name);
                 let validated = if bag.contains_key("loadout") {
-                    self.operator_loadouts(name)
-                        .and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
+                    refreshed.and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
                 } else {
+                    if let Err(error) = &refreshed {
+                        host_log!(
+                            Category::ScriptLifecycle,
+                            Level::Warn,
+                            slot = name,
+                            "{error}; the compiled Start goes on without fresh loadouts"
+                        );
+                    }
                     Ok(())
                 };
                 if let Err(error) = validated {

@@ -411,7 +411,10 @@ Needs are planned from the account's bank memory. The host keeps one per
 account: the rows of the bank as last seen open, saved through the process
 local-state service to `<state root>/bank-hints/<profile>/<account>.json`
 (the state root is `~/.274bot`, resolved once at launch) when the bank closes
-and loaded at login as an advisory hint. After a new login the rows stay but
+and loaded at login as an advisory hint. The file records the revision and
+content it was observed under. A hint from other content, or one the host
+can't read, is neither loaded nor overwritten: one log line names the file
+and the reason, and the memory starts unknown. After a new login the rows stay but
 count only as that hint until the bank is opened again. A bank never seen costs one scan trip,
 and a shortage that only the saved hint predicts costs one verifying trip. A
 shortage in a bank seen open this login is final: a required provisioning item

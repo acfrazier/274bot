@@ -18,6 +18,7 @@ use api::local_state::{
     AccountKey, ContentScope, DomainIdentity, DomainLease, ErrorCode, LocalStateDomain,
     LocalStatePort, StoreVersion,
 };
+use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 
 /// The capability one slot holds: the port and the identity its leases
@@ -27,6 +28,10 @@ pub struct SlotState {
     port: Arc<dyn LocalStatePort + Send + Sync>,
     account: AccountKey,
     scope: ContentScope,
+    /// The operator rows last leased, shared by every consumer of this
+    /// slot until the store's version moves: one copy and one digest per
+    /// version, not per lease.
+    loadouts: Mutex<Option<OperatorLoadouts>>,
 }
 
 impl SlotState {
@@ -40,6 +45,7 @@ impl SlotState {
             port,
             account,
             scope,
+            loadouts: Mutex::new(None),
         }
     }
 
@@ -69,10 +75,18 @@ impl SlotState {
     }
 
     /// The operator's loadout rows the slot may plan with, at their
-    /// current version. `NotReady` while the domain is cold.
+    /// current version. `NotReady` while the domain is cold; a refused file
+    /// answers its typed failure. The rows of one version are shared: a
+    /// later call at the same version hands out the same `Arc`.
     pub fn operator_loadouts(&self) -> Result<OperatorLoadouts, ErrorCode> {
-        self.lease(LocalStateDomain::LoadoutsReferences)
-            .map(|lease| OperatorLoadouts::from_lease(&lease))
+        let lease = self.lease(LocalStateDomain::LoadoutsReferences)?;
+        let mut last = self.loadouts.lock();
+        if let Some(last) = last.as_ref().filter(|last| last.version == lease.version()) {
+            return Ok(last.clone());
+        }
+        let current = OperatorLoadouts::from_lease(&lease);
+        *last = Some(current.clone());
+        Ok(current)
     }
 }
 
@@ -138,5 +152,63 @@ impl OperatorLoadouts {
     /// The content digest of the rows: a compile-cache key component.
     pub fn digest(&self) -> [u8; 32] {
         self.digest
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::identity::{DurableTimestamp, RequestId};
+    use api::local_state::{DomainEdit, LeaseSnapshot, SubmitReceipt, WriteSettlement};
+
+    /// A port whose loadouts lease is always `rows` at `version`, counting
+    /// the leases it hands out.
+    struct Port {
+        version: Mutex<StoreVersion>,
+        rows: Vec<Loadout>,
+    }
+
+    impl LocalStatePort for Port {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            DomainLease::try_new(
+                identity.clone(),
+                *self.version.lock(),
+                DurableTimestamp::from_unix_seconds(1),
+                LeaseSnapshot::loadouts(self.rows.clone()),
+            )
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+
+    /// T5.2 r2 item 7: the operator rows of one store version are copied and
+    /// digested once per slot, then shared, not once per lease.
+    #[test]
+    fn one_version_of_the_operator_rows_is_shared_not_copied_per_lease() {
+        let port = Arc::new(Port {
+            version: Mutex::new(StoreVersion::INITIAL),
+            rows: vec![Loadout::new("melee")],
+        });
+        let state = SlotState::new(
+            Arc::clone(&port) as Arc<dyn LocalStatePort + Send + Sync>,
+            AccountKey::try_new("local-289", "alice").unwrap(),
+            ContentScope::try_new(api::selected::ClientRevision::R289, "test-content").unwrap(),
+        );
+        let first = state.operator_loadouts().unwrap();
+        let again = state.operator_loadouts().unwrap();
+        assert!(Arc::ptr_eq(&first.shared(), &again.shared()));
+
+        let next = StoreVersion::INITIAL.checked_next().unwrap();
+        *port.version.lock() = next;
+        let moved = state.operator_loadouts().unwrap();
+        assert!(!Arc::ptr_eq(&first.shared(), &moved.shared()));
+        assert_eq!(moved.version(), next);
+        assert_eq!(moved.rows(), first.rows());
     }
 }

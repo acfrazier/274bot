@@ -414,3 +414,69 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
             .any(|window| window == b"folder queue activation witness"));
     }
 }
+
+/// T5.2 r2: a loadouts store the service refused (an unreadable or
+/// lossy file) does not repair itself on a tick. The Path is blocked with
+/// the typed reason, instead of waiting, and logging, on every tick.
+#[test]
+fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
+        FailureReason, LocalStatePort, SubmitReceipt, WriteSettlement,
+    };
+    struct Refusing;
+    impl LocalStatePort for Refusing {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            Err(ErrorCode::Failed {
+                domain: identity.domain(),
+                reason: FailureReason::Schema,
+            })
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+    // The tick builder quantifies over its own lifetime: the capability it
+    // borrows must outlive any of them, so it is a static.
+    static STATE: LazyLock<crate::local_state::SlotState> = LazyLock::new(|| {
+        crate::local_state::SlotState::new(
+            Arc::new(Refusing),
+            AccountKey::try_new("local-289", "alice").unwrap(),
+            ContentScope::try_new(api::selected::ClientRevision::R289, "test-content").unwrap(),
+        )
+    });
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        native.state = Some(&*STATE);
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+    assert!(queued.preparing.is_none(), "nothing compiles without rows");
+    assert_eq!(
+        queued.queue.rows()[0].status,
+        crate::quester::queue::QueueStatus::Blocked
+    );
+    let reason = queued.queue.reason(0).unwrap();
+    assert!(reason.contains("operator loadouts"), "{reason}");
+    assert!(
+        !output
+            .1
+            .iter()
+            .any(|line| line.contains("waits for operator loadouts")),
+        "a refused store is not a cold one"
+    );
+}

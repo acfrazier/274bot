@@ -3,6 +3,25 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+### Saved state
+
+- A saved bank hint or `loadouts.json` that 274bot can't read (damaged,
+  from another version, for another account, larger than its limit, or
+  writable by other users) is now left untouched and named in the log with
+  the reason. It used to be treated as empty and overwritten at the next
+  save. A JavaScript script Start is refused, with the file and the reason,
+  while `loadouts.json` can't be read; a Quester stops the Path that needs
+  it.
+- A bank hint now records the game content it was seen under, and a hint
+  from other content is not used. The log says so; remove the file to start
+  a new hint.
+- A bank hint changed on disk by something else since 274bot read it is no
+  longer overwritten by an older save, and no save is reported done before
+  the file and its folder entry are on disk. Closing 274bot finishes saves
+  still waiting (up to 10 seconds) instead of dropping them.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles
