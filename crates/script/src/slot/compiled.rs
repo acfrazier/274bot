@@ -7,6 +7,7 @@ use crate::native::{
     PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
     ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason,
 };
+use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
 use api::selected::{FamilyPreparation, RunKey, SelectedPin};
 use std::sync::Mutex;
@@ -82,7 +83,7 @@ impl Drop for ScriptOwner {
 
 pub(super) struct Preparation {
     generation: u64,
-    worker: std::thread::JoinHandle<PreparationResult>,
+    worker: PreparedTask<PreparationResult>,
 }
 
 impl Preparation {
@@ -93,19 +94,15 @@ impl Preparation {
     pub(super) fn join(self) -> Result<CompiledRun, StartError> {
         self.worker
             .join()
-            .map_err(|payload| {
-                StartError::Unavailable(
-                    format!("preparation worker panic: {}", panic_message(&payload)).into(),
-                )
-            })?
+            .map_err(|error| StartError::Unavailable(error.to_string().into()))?
             .0
             .take()
             .expect("preparation result")
     }
 }
 
-/// A detached thread packet may be destroyed on either thread. Never let a
-/// card-owned configuration destructor unwind through std's packet destructor.
+/// An unconsumed WorkAdmission result may be destroyed on the service
+/// worker. Never let a card-owned configuration destructor unwind there.
 struct PreparationResult(Option<Result<CompiledRun, StartError>>);
 
 impl Drop for PreparationResult {
@@ -585,6 +582,20 @@ pub fn prepare_config(
     Ok(config)
 }
 
+/// WorkAdmission never waits for a slot-owned lock. In normal slot
+/// sequencing, the factory runs between ticks and this lock is free.
+fn try_retained(
+    retained: &Mutex<RetainedMemory>,
+) -> Result<std::sync::MutexGuard<'_, RetainedMemory>, StartError> {
+    match retained.try_lock() {
+        Ok(value) => Ok(value),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => Err(StartError::Unavailable(
+            "retained memory is still in use during preparation".into(),
+        )),
+    }
+}
+
 /// The single off-pump registration transaction used by Browse and API seats.
 pub(super) fn prepare_run(
     card: &'static crate::native::CompiledCard,
@@ -595,36 +606,43 @@ pub(super) fn prepare_run(
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
 ) -> Result<Preparation, StartError> {
-    let worker = FamilyPreparation::run(move |worker| {
-        PreparationResult(Some((|| {
-            let config = prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
-            let pin = selected.selected_pin().map_err(StartError::Facts)?;
-            let mut retained = retained
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let script = catch_unwind(AssertUnwindSafe(|| {
-                (card.create)(run, Arc::clone(&config), &mut retained)
-            }))
-            .map_err(|payload| {
-                StartError::Unavailable(
-                    format!("factory panic: {}", panic_message(&payload)).into(),
-                )
-            })??;
-            Ok(CompiledRun {
-                script: ScriptOwner(Some(script)),
-                config,
-                pending: None,
-                run,
-                selected,
-                pin,
-                output: Output {
-                    account,
-                    ..Default::default()
-                },
-                actions: NativeActions { _private: () },
-            })
-        })()))
-    })
+    let input = PreparationInput::for_settings(run.run, &bag)
+        .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    let slot = api::identity::SlotKey::from_incarnation(run.slot)
+        .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
+    let worker = preparation::submit(
+        PreparationKind::Profile,
+        api::identity::Scope::Slot(slot),
+        input,
+        move |worker| {
+            PreparationResult(Some((|| {
+                let config = prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
+                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let mut retained = try_retained(&retained)?;
+                let script = catch_unwind(AssertUnwindSafe(|| {
+                    (card.create)(run, Arc::clone(&config), &mut retained)
+                }))
+                .map_err(|payload| {
+                    StartError::Unavailable(
+                        format!("factory panic: {}", panic_message(&payload)).into(),
+                    )
+                })??;
+                Ok(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account,
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                })
+            })()))
+        },
+    )
     .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
     Ok(Preparation {
         generation: run.run,
@@ -646,30 +664,44 @@ pub(super) fn prepare_native_run(
         + Send
         + 'static,
 ) -> Result<Preparation, StartError> {
-    let worker = FamilyPreparation::run(move |_| {
-        PreparationResult(Some((|| {
-            let pin = selected.selected_pin().map_err(StartError::Facts)?;
-            let (script, config) =
-                catch_unwind(AssertUnwindSafe(|| build(&selected))).map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("preparation panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-            Ok(CompiledRun {
-                script: ScriptOwner(Some(script)),
-                config,
-                pending: None,
-                run,
-                selected,
-                pin,
-                output: Output {
-                    account,
-                    ..Default::default()
-                },
-                actions: NativeActions { _private: () },
-            })
-        })()))
-    })
+    let slot = api::identity::SlotKey::from_incarnation(run.slot)
+        .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
+    let input = PreparationInput::new(
+        run.run,
+        account.capacity(),
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+    )
+    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    let worker = preparation::submit(
+        PreparationKind::Card,
+        api::identity::Scope::Slot(slot),
+        input,
+        move |_| {
+            PreparationResult(Some((|| {
+                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let (script, config) = catch_unwind(AssertUnwindSafe(|| build(&selected)))
+                    .map_err(|payload| {
+                        StartError::Unavailable(
+                            format!("preparation panic: {}", panic_message(&payload)).into(),
+                        )
+                    })??;
+                Ok(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account,
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                })
+            })()))
+        },
+    )
     .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
     Ok(Preparation {
         generation: run.run,
@@ -782,39 +814,47 @@ impl SlotScript {
         let pin = Arc::clone(&current.pin);
         let account = current.output.account.clone();
         let retained = Arc::clone(self.retained.as_ref().ok_or("no retained memory")?);
+        let input = PreparationInput::for_settings(generation, config.bag())
+            .map_err(|error| error.to_string())?;
+        let slot =
+            api::identity::SlotKey::from_incarnation(run.slot).ok_or("slot worker is not bound")?;
         self.revoke_native_input();
         self.teardown_compiled(StopReason::Replaced);
-        let worker = FamilyPreparation::run(move |_| {
-            PreparationResult(Some((|| {
-                let mut retained = retained
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let script = catch_unwind(AssertUnwindSafe(|| {
-                    (card.create)(run, Arc::clone(&config), &mut retained)
-                }))
-                .map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("factory panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-                let mut script = ScriptOwner(Some(script));
-                let mut output = Output {
-                    account,
-                    ..Default::default()
-                };
-                let (config, pending) = reoffer_pending(&mut script, &mut output, config, pending)?;
-                Ok(CompiledRun {
-                    script,
-                    config,
-                    pending,
-                    run,
-                    selected,
-                    pin,
-                    output,
-                    actions: NativeActions { _private: () },
-                })
-            })()))
-        });
+        let worker = preparation::submit(
+            PreparationKind::Card,
+            api::identity::Scope::Slot(slot),
+            input,
+            move |_| {
+                PreparationResult(Some((|| {
+                    let mut retained = try_retained(&retained)?;
+                    let script = catch_unwind(AssertUnwindSafe(|| {
+                        (card.create)(run, Arc::clone(&config), &mut retained)
+                    }))
+                    .map_err(|payload| {
+                        StartError::Unavailable(
+                            format!("factory panic: {}", panic_message(&payload)).into(),
+                        )
+                    })??;
+                    let mut script = ScriptOwner(Some(script));
+                    let mut output = Output {
+                        account,
+                        ..Default::default()
+                    };
+                    let (config, pending) =
+                        reoffer_pending(&mut script, &mut output, config, pending)?;
+                    Ok(CompiledRun {
+                        script,
+                        config,
+                        pending,
+                        run,
+                        selected,
+                        pin,
+                        output,
+                        actions: NativeActions { _private: () },
+                    })
+                })()))
+            },
+        );
         let worker = match worker {
             Ok(worker) => worker,
             Err(error) => {

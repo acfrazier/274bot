@@ -56,11 +56,7 @@ fn write(dir: &Path, rel: &str, src: &str) -> PathBuf {
     path
 }
 
-fn prepare_snapshot(
-    js: &JsLibrary,
-    source: ScriptSource,
-    name: &str,
-) -> CardPreparationOutcome {
+fn prepare_snapshot(js: &JsLibrary, source: ScriptSource, name: &str) -> CardPreparationOutcome {
     js.card_preparation_snapshot(source, name, None)
         .unwrap_or_else(|error| panic!("{name}: snapshot failed: {error}"))
         .prepare()
@@ -74,8 +70,7 @@ fn validate_prepared(
         .lock()
         .expect("validation test lock poisoned");
     script::bootstrap_v8_platform().expect("bootstrap validation platform");
-    let batch =
-        LoadIsolate::validate_prepared_batch(cards).expect("start validation batch");
+    let batch = LoadIsolate::validate_prepared_batch(cards).expect("start validation batch");
     loop {
         match batch.try_recv() {
             Ok(batch) => return batch,
@@ -196,11 +191,7 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
     assert!(js.load_failures().is_empty());
 
     std::fs::write(&path, BAD_RUNTIME).unwrap();
-    let prepared = match prepare_snapshot(
-        &js,
-        ScriptSource::File,
-        &path.to_string_lossy(),
-    ) {
+    let prepared = match prepare_snapshot(&js, ScriptSource::File, &path.to_string_lossy()) {
         CardPreparationOutcome::Prepared(prepared) => prepared,
         CardPreparationOutcome::Failed { error, .. } => panic!("prepare failed: {error}"),
         CardPreparationOutcome::Unchanged | CardPreparationOutcome::Confirmed => {

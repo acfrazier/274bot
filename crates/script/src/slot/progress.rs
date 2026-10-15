@@ -2,17 +2,19 @@
 use super::*;
 use crate::api_progress::{ProgressPage, QuestProgressRow};
 use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use crate::quest_journal::{title_matches, JournalMachine, JournalRequest, ROOT_289, TITLE_289};
 use crate::quester::{
     compile::CompiledPath,
     progress::{quest_colour, resolve_colour, resolve_journal},
 };
+use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
-use api::selected::{FamilyPreparation, Knowledge, SelectedPin};
+use api::selected::{Knowledge, SelectedPin};
 use api::snapshot::QuestListStatus;
 use std::{task::Poll, time::Duration};
 
-pub(super) type ProgressJob = std::thread::JoinHandle<Result<PreparedProgress, Arc<str>>>;
+pub(super) type ProgressJob = PreparedTask<Result<PreparedProgress, Arc<str>>>;
 
 pub(super) struct PreparedProgress {
     selected: Arc<api::game_data::SelectedGameData>,
@@ -55,7 +57,8 @@ impl ProgressSeat {
         }
     }
     pub(super) fn reset(&mut self, retiring: &mut Vec<ProgressJob>) {
-        if let Self::Preparing { job, .. } = std::mem::take(self) {
+        if let Self::Preparing { mut job, .. } = std::mem::take(self) {
+            job.cancel(Cancellation::Superseded);
             retiring.push(job);
         }
     }
@@ -198,23 +201,50 @@ impl SlotScript {
             run: generation,
             session: self.work_epoch,
         };
-        let job = FamilyPreparation::run(move |cap| {
-            let pin = selected
-                .selected_pin()
-                .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
-            let quests = Arc::new(
-                QuestCatalog::from_identity(selected.quest_identity())
-                    .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
-            );
-            let path = crate::quester::compile::compile_path(bytes, &selected, &quests, cap)
-                .map_err(compile_error_reason)?;
-            Ok(PreparedProgress {
-                selected,
-                pin,
-                path,
-                quests,
-            })
-        });
+        let input = match PreparationInput::new(
+            generation,
+            bytes.len(),
+            2 * 1024 * 1024,
+            2 * 1024 * 1024,
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                seat.progress_page = Some(ProgressPage::Refused {
+                    token,
+                    reason: format!("unavailable:{error}").into(),
+                });
+                return;
+            }
+        };
+        let Some(slot) = SlotKey::from_incarnation(run.slot) else {
+            seat.progress_page = Some(ProgressPage::Refused {
+                token,
+                reason: "unavailable:slot worker is not bound".into(),
+            });
+            return;
+        };
+        let job = preparation::submit(
+            PreparationKind::Profile,
+            Scope::Slot(slot),
+            input,
+            move |cap| {
+                let pin = selected
+                    .selected_pin()
+                    .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
+                let quests = Arc::new(
+                    QuestCatalog::from_identity(selected.quest_identity())
+                        .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
+                );
+                let path = crate::quester::compile::compile_path(bytes, &selected, &quests, cap)
+                    .map_err(compile_error_reason)?;
+                Ok(PreparedProgress {
+                    selected,
+                    pin,
+                    path,
+                    quests,
+                })
+            },
+        );
         match job {
             Ok(job) => {
                 self.control_generation = generation;
@@ -242,7 +272,7 @@ impl SlotScript {
             };
             match job
                 .join()
-                .unwrap_or_else(|_| Err("unavailable:preparation worker panic".into()))
+                .unwrap_or_else(|error| Err(format!("unavailable:{error}").into()))
             {
                 Ok(prepared) => {
                     run.session = self.work_epoch;

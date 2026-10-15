@@ -416,8 +416,8 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
         "./ChickenKiller/ChickenKiller.js".to_string(),
         CHICKEN_KILLER_TS.to_string(),
     );
-    let full = script::parse_registry_with_sources(CHICKEN_INDEX, &sources)
-        .expect("full fixture parse");
+    let full =
+        script::parse_registry_with_sources(CHICKEN_INDEX, &sources).expect("full fixture parse");
     for card in &full {
         let targeted = script::rs2b0t_registry::parse_registry_card_with_sources(
             CHICKEN_INDEX,
@@ -427,14 +427,12 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
         .expect("targeted fixture parse");
         assert_eq!(&targeted, card);
     }
-    assert!(
-        script::rs2b0t_registry::parse_registry_card_with_sources(
-            CHICKEN_INDEX,
-            &sources,
-            "missing card",
-        )
-        .is_err()
-    );
+    assert!(script::rs2b0t_registry::parse_registry_card_with_sources(
+        CHICKEN_INDEX,
+        &sources,
+        "missing card",
+    )
+    .is_err());
 }
 
 #[test]
@@ -456,14 +454,12 @@ fn targeted_registry_parser_matches_every_frozen_real_catalogue_card() {
             .unwrap_or_else(|error| panic!("read real source {}: {error}", source_path.display()));
         sources.insert(card.rel_path.clone(), source);
     }
-    let full = script::parse_registry_with_sources(&index_ts, &sources)
-        .expect("full real registry parse");
+    let full =
+        script::parse_registry_with_sources(&index_ts, &sources).expect("full real registry parse");
     assert_eq!(full.len(), registrations.len());
     for card in &full {
         let targeted = script::rs2b0t_registry::parse_registry_card_with_sources(
-            &index_ts,
-            &sources,
-            &card.name,
+            &index_ts, &sources, &card.name,
         )
         .unwrap_or_else(|error| panic!("target real card {}: {error}", card.name));
         assert_eq!(&targeted, card, "targeted parse differs for {}", card.name);

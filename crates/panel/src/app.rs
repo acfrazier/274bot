@@ -359,12 +359,23 @@ fn boot_failure_is_fatal(boot: &Boot) -> bool {
     !matches!(boot, Boot::Unlock { .. })
 }
 
+fn exit_after_work_shutdown(code: i32) -> ! {
+    let code = match script::work_admission::WorkService::shutdown_if_started() {
+        Ok(()) => code,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+            1
+        }
+    };
+    std::process::exit(code)
+}
+
 fn fail_startup(session: &mut Session, fatal: bool, error: String) {
     session.set_profile_preparing(false);
     session.error = Some(error.clone());
     if fatal {
         eprintln!("FAIL: {error}");
-        std::process::exit(1);
+        exit_after_work_shutdown(1);
     }
 }
 
@@ -2250,11 +2261,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     let confirming = session.script_reload_confirmation_pending();
-    let validating = session.reload_validation_pending();
+    let pending = session.reload_validation_pending();
     {
-        let _validating = validating.then(|| ui.begin_disabled());
-        let label = if validating {
-            "Validating…"
+        let _pending = pending.then(|| ui.begin_disabled());
+        let label = if pending {
+            "Reloading…"
         } else if confirming {
             "Confirm"
         } else {
@@ -2264,14 +2275,14 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.begin_script_reload_clicked();
         }
     }
-    ui.set_item_tooltip(if validating {
-        "validating candidate script off the UI thread"
+    ui.set_item_tooltip(if pending {
+        "preparing and validating candidate script off the UI thread"
     } else if confirming {
         "confirm reload: restart listed running bots and stop listed paused bots"
     } else {
         "hash source and supported siblings; unchanged skips transpile"
     });
-    if (confirming || validating) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+    if (confirming || pending) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
         session.cancel_reload();
     }
 
@@ -2589,21 +2600,21 @@ fn browse_card_grid(
 }
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    let validating = session.reload_validation_pending();
-    let label = if validating {
-        "Validating catalog…"
+    let pending = session.reload_validation_pending();
+    let label = if pending {
+        "Refreshing catalog…"
     } else if session.scripts.catalog_refresh_confirm() {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
     };
     {
-        let _validating = validating.then(|| ui.begin_disabled());
+        let _pending = pending.then(|| ui.begin_disabled());
         if ui.button_with_size(label, [w, 0.0]) {
             session.begin_refresh_catalog();
         }
     }
-    if (session.scripts.catalog_refresh_confirm() || validating)
+    if (session.scripts.catalog_refresh_confirm() || pending)
         && ui.button_with_size("Cancel reload", [w, 0.0])
     {
         session.cancel_reload();
@@ -6253,7 +6264,7 @@ fn init_panel_running(
             Ok(pass) => Some(pass),
             Err(msg) => {
                 eprintln!("FAIL: {msg}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
         }
     } else {
@@ -6272,14 +6283,14 @@ fn init_panel_running(
                 .map(|profile| profile.profile_class());
             if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
             Some(Boot::Memory(config))
         }
         Ok(None) => boot,
         Err(error) => {
             eprintln!("FAIL: {error}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     };
     Ok((state, StartupPreparation::new(boot)))
@@ -6351,7 +6362,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         });
     }
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
@@ -6373,7 +6384,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         }
         Err(e) => {
             eprintln!("panel: instance lock: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     }
     let mut presented = false;
@@ -6412,7 +6423,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                             Ok(ready) => running = Some(ready),
                             Err(e) => {
                                 eprintln!("panel: {e}");
-                                std::process::exit(1);
+                                exit_after_work_shutdown(1);
                             }
                         }
                     }
@@ -6731,12 +6742,12 @@ fn ui_frame(
             match run.poll(play) {
                 Ok(true) => {
                     eprintln!("PASS: memory panel observation complete");
-                    std::process::exit(0);
+                    exit_after_work_shutdown(0);
                 }
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!("FAIL: memory panel: {error}");
-                    std::process::exit(1);
+                    exit_after_work_shutdown(1);
                 }
             }
         }

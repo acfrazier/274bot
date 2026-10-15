@@ -5,10 +5,11 @@
 //! S2 and combat/WalkGuard cells; their bespoke stat tuples are unchanged.
 use crate::{start_compiled_step, Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
 use api::game_data::{QuestIdentityRow, SelectedGameData};
+use api::selected::ClientRevision;
 use api::selected::SkillMinimum;
-use api::selected::{ClientRevision, FamilyPreparation};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::skill::Skill;
+use script::preparation::{self, PreparationInput, PreparationKind};
 use script::quester::path::{
     LoadoutCarryDocument, PathDocument, QuestLoadoutDocument, QuestRequirementKindDocument,
 };
@@ -1212,18 +1213,29 @@ pub fn reload_quester_path_source(
     let previous = registry::source();
     registry::set_source(source.clone());
     let loaded = (|| {
-        let selected =
-            FamilyPreparation::run(|_| api::game_data::for_revision(ClientRevision::R289))
-                .map_err(|error| format!("selected data worker: {error:?}"))?
-                .join()
-                .map_err(|error| format!("selected data worker: {error:?}"))?
-                .map_err(|error| format!("selected R289 data: {error}"))?;
+        let selected = preparation::submit(
+            PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            PreparationInput::new(289, 0, 2 * 1024 * 1024, 2 * 1024 * 1024)
+                .map_err(|error| format!("selected data charge: {error}"))?,
+            |_| api::game_data::for_revision(ClientRevision::R289),
+        )
+        .map_err(|error| format!("selected data worker: {error}"))?
+        .join()
+        .map_err(|error| format!("selected data worker: {error}"))?
+        .map_err(|error| format!("selected R289 data: {error}"))?;
         let data = std::sync::Arc::clone(&selected);
-        let loaded = FamilyPreparation::run(move |worker| registry::reload(&data, worker))
-            .map_err(|error| format!("Path registry worker: {error:?}"))?
-            .join()
-            .map_err(|error| format!("Path registry worker: {error:?}"))?
-            .map_err(|error| format!("Path registry reload: {error:?}"))?;
+        let loaded = preparation::submit(
+            PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            PreparationInput::new(290, 4096, 4 * 1024 * 1024, 32 * 1024 * 1024)
+                .map_err(|error| format!("Path registry charge: {error}"))?,
+            move |worker| registry::reload(&data, worker),
+        )
+        .map_err(|error| format!("Path registry worker: {error}"))?
+        .join()
+        .map_err(|error| format!("Path registry worker: {error}"))?
+        .map_err(|error| format!("Path registry reload: {error:?}"))?;
         let path_source = loaded.path_source(quest);
         if loaded.bytes(quest).is_none() {
             return Err(format!(

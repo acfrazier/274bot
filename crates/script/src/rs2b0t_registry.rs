@@ -143,7 +143,6 @@ pub fn parse_registry_card_with_sources(
     RegistryIndex::parse(index_ts)?.card_with_sources(sources, name)
 }
 
-
 /// Parsed registry index retained while a bounded catalogue refresh prepares
 /// each changed card without rescanning the registry for every candidate.
 pub(crate) struct RegistryIndex {
@@ -158,10 +157,7 @@ impl RegistryIndex {
         if registers.is_empty() {
             return Err("no ScriptRegistry.register calls".to_string());
         }
-        Ok(Self {
-            imports,
-            registers,
-        })
+        Ok(Self { imports, registers })
     }
 
     pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
@@ -172,13 +168,7 @@ impl RegistryIndex {
         &self,
         sources: &HashMap<String, String>,
     ) -> Result<Vec<RegistryCard>, String> {
-        parse_registry_with_sources_selected(
-            &self.imports,
-            &self.registers,
-            sources,
-            None,
-            None,
-        )
+        parse_registry_with_sources_selected(&self.imports, &self.registers, sources, None, None)
     }
 
     fn card_with_sources(
@@ -242,8 +232,10 @@ fn parse_registry_with_sources_selected(
                         settings_blob(sources, &binding.rel_path)
                     };
                     match blob {
-                        Some(src) => parse_settings_export(&src, &binding.export_name, Some(sources))
-                            .map_err(|err| format!("{}: {err}", reg.name))?,
+                        Some(src) => {
+                            parse_settings_export(&src, &binding.export_name, Some(sources))
+                                .map_err(|err| format!("{}: {err}", reg.name))?
+                        }
                         None => Vec::new(),
                     }
                 }
@@ -269,10 +261,7 @@ fn parse_registry_with_sources_selected(
     Ok(cards)
 }
 
-fn lookup_source_ref<'a>(
-    sources: &'a HashMap<String, String>,
-    rel_path: &str,
-) -> Option<&'a str> {
+fn lookup_source_ref<'a>(sources: &'a HashMap<String, String>, rel_path: &str) -> Option<&'a str> {
     if let Some(src) = sources.get(rel_path) {
         return Some(src);
     }

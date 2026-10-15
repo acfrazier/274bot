@@ -71,9 +71,7 @@ fn new_service(clock: Arc<ManualClock>) -> Arc<Mutex<WorkService>> {
         NonZeroU64::new(nonce).expect("test nonce is nonzero"),
     );
     let clock: Arc<dyn MonotonicClock + Send + Sync> = clock;
-    Arc::new(Mutex::new(
-        WorkService::build(incarnation, clock).expect("test worker starts"),
-    ))
+    Arc::new(Mutex::new(WorkService::build(incarnation, clock)))
 }
 
 fn conditions(shared: &Arc<Mutex<WorkService>>) -> ProcessConditions {
@@ -185,6 +183,56 @@ impl CooperativeJob for QueueJob {
     fn retained(&self) -> RetainedState {
         RetainedState::clean(0)
     }
+}
+
+#[test]
+fn worker_start_failure_latches_typed_unavailable_without_replacement() {
+    assert_eq!(
+        WorkStartError::OsRandom.to_string(),
+        ProcessServiceCode::WorkAdmissionUnavailable.operator_text()
+    );
+    let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::new(79).unwrap());
+    let clock: Arc<dyn MonotonicClock + Send + Sync> = Arc::new(ManualClock::new());
+    let service = WorkService::build_with_spawn(incarnation, clock, |_| {
+        Err(std::io::Error::other("injected worker start failure"))
+    });
+    let condition_id = {
+        let conditions = service.conditions();
+        let condition = conditions
+            .latched(ProcessServiceCode::WorkAdmissionUnavailable)
+            .expect("start failure is a process condition");
+        assert_eq!(condition.cause(), ConditionCause::StartFailed);
+        condition.id()
+    };
+    assert!(!service.worker_available());
+    let shared = Arc::new(Mutex::new(service));
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let accepted_conditions = conditions(&shared);
+    let mut service = shared.lock();
+    let identity = service.mint_identity(Scope::Process, None).unwrap();
+    let refused = service
+        .try_submit::<TestSpec, _>(
+            identity,
+            &input,
+            QueueJob::new(79, Arc::clone(&trace), 0, None),
+            &accepted_conditions,
+        )
+        .expect_err("failed start never accepts work");
+    assert!(matches!(
+        refused.refusal(),
+        SubmissionRefusal::Unavailable(_)
+    ));
+    assert_eq!(
+        service.health(),
+        Some(condition_id),
+        "startup condition remains sticky"
+    );
+    assert!(trace.lock().is_empty(), "no fallback executed the job");
+    drop(service);
+    WorkService::shutdown(&shared).expect("there is no worker to retire");
 }
 
 #[test]
@@ -336,6 +384,44 @@ fn unconsumed_terminals_hold_all_job_slots_until_consumed() {
     }
     drop(service);
     wait_for_jobs(&shared, 0);
+}
+
+/// The terminal's UnsafeCell is published once, borrowed immutably under
+/// service custody, then moved out exactly once under exclusive custody.
+#[test]
+fn terminal_borrow_and_take_preserve_single_publication() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let conditions = conditions(&shared);
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let ticket = submit(
+        &shared,
+        &input,
+        QueueJob::new(37, trace, 0, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &ticket).expect("job publishes one terminal");
+    let mut service = shared.lock();
+    let first = service
+        .borrow_terminal(&ticket)
+        .expect("matching ticket")
+        .expect("published terminal");
+    assert!(matches!(first, Settlement::Completed(37)));
+    let second = service
+        .borrow_terminal(&ticket)
+        .expect("matching ticket")
+        .expect("published terminal");
+    assert!(std::ptr::eq(first, second));
+    assert!(matches!(
+        service.consume(&ticket).expect("single terminal transfer"),
+        Settlement::Completed(37)
+    ));
+    assert!(
+        service.consume(&ticket).is_err(),
+        "no second terminal exists"
+    );
 }
 
 #[test]

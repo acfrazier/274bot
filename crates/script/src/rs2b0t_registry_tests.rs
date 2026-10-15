@@ -845,10 +845,8 @@ ScriptRegistry.register({
         .card_with_sources_bounded(&sources, "Target", 8 * 1024)
         .expect("schema fits source bound");
     assert_eq!(bounded, unbounded);
-    assert!(
-        registry
-            .card_with_sources_bounded(&sources, "Target", 1)
-            .expect_err("oversized schema source is refused")
-            .contains("preparation byte bound")
-    );
+    assert!(registry
+        .card_with_sources_bounded(&sources, "Target", 1)
+        .expect_err("oversized schema source is refused")
+        .contains("preparation byte bound"));
 }

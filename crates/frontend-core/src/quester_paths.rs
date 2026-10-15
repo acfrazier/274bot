@@ -1,8 +1,8 @@
 //! Durable operator configuration and asynchronous reload for Quester Paths.
 
+use api::identity::{Scope, WorkIdentity};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 
 /// Shared settings label used by panel and TUI.
@@ -95,65 +95,95 @@ impl QuesterPathsView {
     }
 }
 
-/// Non-blocking owner for one Path-registry reload.
+enum ReloadValue {
+    Prepared(script::quester::registry::PreparedRegistry),
+    #[cfg(test)]
+    Summary(Arc<str>),
+}
+
+/// Non-blocking owner for one Path-registry reload. Only a consumed
+/// WorkAdmission terminal may publish the current snapshot.
 #[derive(Default)]
 struct ReloadPaths {
-    receiver: Option<Receiver<Result<Arc<str>, String>>>,
+    worker: Option<script::preparation::PreparedTask<Result<ReloadValue, String>>>,
+    current: Option<WorkIdentity>,
+    revision: u64,
 }
 
 impl ReloadPaths {
-    /// Re-read the configured source and publish its snapshot on a
-    /// FamilyPreparation worker, never on the caller.
     fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
         self.start_with(move |worker| {
-            let registry = script::quester::registry::reload(&selected, worker)
-                .map_err(|error| compile_error_message(&error))?;
-            Ok(registry.report().cloned().unwrap_or_else(|| {
-                Arc::from(format!(
-                    "Reload Paths: bundled release registry active ({} rows)",
-                    registry.rows().len()
-                ))
-            }))
+            script::quester::registry::prepare_snapshot(&selected, worker)
+                .map(ReloadValue::Prepared)
+                .map_err(|error| compile_error_message(&error))
         })
     }
 
     fn start_with(
         &mut self,
-        work: impl FnOnce(&mut api::selected::FamilyPreparation) -> Result<Arc<str>, String>
+        work: impl FnOnce(&mut api::selected::FamilyPreparation) -> Result<ReloadValue, String>
             + Send
             + 'static,
     ) -> Result<(), String> {
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
-        let (sender, receiver) = mpsc::channel();
-        let worker = api::selected::FamilyPreparation::run(move |worker| {
-            let _ = sender.send(work(worker));
-        })
-        .map_err(|error| format!("could not start Path reload worker: {error}"))?;
-        drop(worker);
-        self.receiver = Some(receiver);
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or("Path reload revision exhausted")?;
+        let input = script::preparation::PreparationInput::new(
+            revision,
+            4096,
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+        )
+        .map_err(|error| format!("could not admit Path reload: {error}"))?;
+        let worker = script::preparation::submit(
+            script::preparation::PreparationKind::Catalogue,
+            Scope::Process,
+            input,
+            work,
+        )
+        .map_err(|error| format!("could not start Path reload: {error}"))?;
+        self.current = Some(worker.identity());
+        self.worker = Some(worker);
+        self.revision = revision;
         Ok(())
     }
 
     /// Take a completed summary or error without blocking the UI/pump.
     fn poll(&mut self) -> Option<Result<Arc<str>, String>> {
-        let receiver = self.receiver.as_ref()?;
-        match receiver.try_recv() {
-            Ok(result) => {
-                self.receiver = None;
-                Some(result)
-            }
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                self.receiver = None;
-                Some(Err("Path reload worker ended without a result".into()))
-            }
+        if !self.worker.as_ref()?.is_finished() {
+            return None;
         }
+        let worker = self.worker.take().expect("finished Path preparation");
+        let completed = worker.identity();
+        let current = self.current.take().expect("current Path preparation");
+        let result = worker
+            .join()
+            .map_err(|error| format!("Path reload worker: {error}"))
+            .and_then(|result| result)
+            .and_then(|candidate| match candidate {
+                ReloadValue::Prepared(candidate) => {
+                    let registry =
+                        script::quester::registry::commit_snapshot(candidate, completed, current)
+                            .map_err(|error| compile_error_message(&error))?;
+                    Ok(registry.report().cloned().unwrap_or_else(|| {
+                        Arc::from(format!(
+                            "Reload Paths: bundled release registry active ({} rows)",
+                            registry.rows().len()
+                        ))
+                    }))
+                }
+                #[cfg(test)]
+                ReloadValue::Summary(summary) => Ok(summary),
+            });
+        Some(result)
     }
 
     fn is_running(&self) -> bool {
-        self.receiver.is_some()
+        self.worker.is_some()
     }
 }
 
@@ -481,7 +511,13 @@ mod tests {
         let first_source = source.clone();
         let first_selected = Arc::clone(&selected);
         reload
-            .start_with(move |worker| Ok(registry_summary(&first_source, &first_selected, worker)))
+            .start_with(move |worker| {
+                Ok(ReloadValue::Summary(registry_summary(
+                    &first_source,
+                    &first_selected,
+                    worker,
+                )))
+            })
             .expect("start asynchronous reload");
         let summary = finish_reload(&mut reload).expect("folder reload report");
         assert!(summary.contains("Folder Cook [folder]"), "{summary}");
@@ -502,7 +538,13 @@ mod tests {
         write_cook(&folder, "cook", "Edited Again", false);
         let second_source = source.clone();
         reload
-            .start_with(move |worker| Ok(registry_summary(&second_source, &selected, worker)))
+            .start_with(move |worker| {
+                Ok(ReloadValue::Summary(registry_summary(
+                    &second_source,
+                    &selected,
+                    worker,
+                )))
+            })
             .expect("restart asynchronous reload");
         let edited = finish_reload(&mut reload).expect("second folder reload report");
         assert!(edited.contains("Edited Again [folder]"), "{edited}");

@@ -67,18 +67,31 @@ pub(crate) fn gathering() -> Option<Arc<GatherCatalog>> {
     Some(catalog)
 }
 
-/// A holder elsewhere makes this a cache hit; a cold cache is prepared on a preparation worker (the only place
-/// the family decodes) and joined. `None` is an unavailable family: no selected data, or the embedded family
-/// failed its pin, manifest or schema checks.
+/// A holder elsewhere makes this a cache hit; a cold cache is prepared on
+/// the shared WorkAdmission worker. The isolate is not a host/UI pump; it
+/// waits for the exact accepted job as it previously joined its own worker.
+/// `None` means no selected data, refused capacity, or a failed family pin.
 #[cfg(feature = "load")]
 fn acquire_gathering() -> Option<Arc<GatherCatalog>> {
     let data = selected_data()?;
     data.try_gathering().or_else(|| {
-        let data = Arc::clone(&data);
-        api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-            .ok()?
-            .join()
-            .ok()?
-            .ok()
+        let revision = u64::try_from(data.revision()).ok()?;
+        let input = crate::preparation::PreparationInput::new(
+            revision,
+            std::mem::size_of::<Arc<SelectedGameData>>(),
+            2 * 1024 * 1024,
+            2 * 1024 * 1024,
+        )
+        .ok()?;
+        crate::preparation::submit(
+            crate::preparation::PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            input,
+            move |worker| data.prepare_gathering(worker),
+        )
+        .ok()?
+        .join()
+        .ok()?
+        .ok()
     })
 }
