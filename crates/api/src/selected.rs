@@ -321,9 +321,10 @@ pub struct Requirement {
     pub source: SourceSpan,
 }
 
-/// Preparation-worker capability. Only [`Self::run`] constructs one, on its
-/// worker thread; pump/tick callers never receive it. It cannot leave that
-/// thread or be retained by a prepared card.
+/// Preparation-worker capability. It is constructed only on a preparation
+/// worker: by [`Self::within`] inside a WorkAdmission `Prepare` step, or by
+/// [`Self::run`] on its own thread. Pump/tick callers never receive it. It
+/// cannot leave that thread or be retained by a prepared card.
 pub struct FamilyPreparation {
     _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
 }
@@ -342,11 +343,48 @@ impl FamilyPreparation {
                 })
             })
     }
+
+    /// Run preparation inline on the current WorkAdmission worker, inside a
+    /// [`crate::work::PreparationPhase`] step. The capability exists only for
+    /// the duration of `work` and is dropped before this returns, so it is
+    /// never retained across a yield (`work.rs` `PreparationPhase::Seal`).
+    /// No thread is spawned: the single WorkAdmission worker runs it (§24
+    /// G2b). The step context is the evidence that the caller is that
+    /// worker's step, not a pump or tick.
+    pub fn within<R>(
+        _step: &mut crate::work::StepContext<'_, crate::work::PreparationPhase>,
+        work: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        work(&mut Self {
+            _thread_bound: std::marker::PhantomData,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn within_runs_on_the_calling_worker_thread_without_spawning() {
+        use crate::identity::Deadline;
+        use crate::work::{
+            PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock,
+        };
+        use std::num::NonZeroU32;
+        use std::time::{Duration, Instant};
+
+        let clock = SystemClock;
+        let cancel = SharedCancellation::new();
+        let budget = SliceBudget::new(
+            NonZeroU32::MIN,
+            Deadline::at(Instant::now() + Duration::from_secs(60)),
+        );
+        let mut step = StepContext::<PreparationPhase>::new(&clock, budget, &cancel);
+        let caller = std::thread::current().id();
+        let ran_on = FamilyPreparation::within(&mut step, |_| std::thread::current().id());
+        assert_eq!(ran_on, caller);
+    }
 
     #[test]
     fn unknown_never_authorizes_even_when_negated_or_partial() {
