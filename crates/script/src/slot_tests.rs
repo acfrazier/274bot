@@ -42,6 +42,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1);
     slot.start_load_with_loadouts_and_game_data(
         source.into(),
         LoadShape::CompatClass,
@@ -100,7 +101,11 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
     let (policy, visible, owned) = slot.drain_host_interacts();
     assert!(policy.is_none());
     assert!(visible.is_empty());
-    assert!(owned, "the Load API seat owns delegated Gatherer work");
+    assert!(
+        owned,
+        "the Load API seat owns delegated Gatherer work: {:?}",
+        slot.api.as_ref().and_then(|seat| seat.terminal.as_ref())
+    );
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut tick = 10;

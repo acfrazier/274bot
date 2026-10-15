@@ -46,6 +46,15 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
+    let mut output = Output::default();
+    output.settings_applied(0);
+    assert_eq!(output.applied, None);
+    output.settings_applied(7);
+    assert_eq!(output.applied.map(std::num::NonZeroU64::get), Some(7));
+}
+
+#[test]
 fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(10);
@@ -329,13 +338,14 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
             Arc::default(),
             PanickingConfig(dropped),
         );
-        let (release, gate) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            gate.recv().unwrap();
-            PreparationResult(Some(Ok(*run)))
-        });
+        let worker = preparation::submit(
+            PreparationKind::Profile,
+            api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(30).unwrap()),
+            PreparationInput::new(0, 0, 1024, 1024).unwrap(),
+            move |_| PreparationResult(Some(Ok(*run))),
+        )
+        .unwrap();
         if finished {
-            release.send(()).unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
             while !worker.is_finished() {
                 assert!(Instant::now() < deadline);
@@ -347,9 +357,6 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
             worker,
         }));
         slot.stop();
-        if !finished {
-            release.send(()).unwrap();
-        }
         observed.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(slot.state(), RunState::Idle);
     }
@@ -1811,9 +1818,9 @@ mod api_gather_seat {
         .unwrap()
         .join()
         .unwrap();
-        let live = allocation_counter::measure(|| {
-            run(&mut slot, 209);
-            installed(&mut slot, &snapshot);
+        let dispatched = allocation_counter::measure(|| run(&mut slot, 209));
+        let installed_heap = allocation_counter::measure(|| installed(&mut slot, &snapshot));
+        let polled = allocation_counter::measure(|| {
             for tick in 2..18 {
                 poll(&mut slot, &snapshot, tick, false);
                 if slot.has_native_actions() {
@@ -1822,8 +1829,14 @@ mod api_gather_seat {
             }
         });
         assert!(slot.has_native_actions(), "actual native batch measured");
-        let exclusive = worker.bytes_current + live.bytes_current;
-        println!("API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; host live={live:?}; exclusive={exclusive}B", std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>());
+        let exclusive = worker.bytes_current
+            + dispatched.bytes_current
+            + installed_heap.bytes_current
+            + polled.bytes_current;
+        println!(
+            "API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
+            std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
+        );
         assert_eq!(
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8

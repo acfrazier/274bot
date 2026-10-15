@@ -145,6 +145,7 @@ pub fn parse_registry_card_with_sources(
 
 /// Parsed registry index retained while a bounded catalogue refresh prepares
 /// each changed card without rescanning the registry for every candidate.
+#[derive(Debug)]
 pub(crate) struct RegistryIndex {
     imports: HashMap<String, ImportBinding>,
     registers: Vec<RegisterInfo>,

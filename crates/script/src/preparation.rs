@@ -59,12 +59,17 @@ impl PreparationInput {
         charge
             .total_bytes()
             .ok_or(SubmissionRefusal::InvalidArgument)?;
+        // Worker job state keeps each checked bound in 32 bits. Admission's
+        // 128 MiB process ceiling is smaller, but this also rejects a single
+        // unrepresentable bound before constructing a job.
+        for bytes in [input_bytes, scratch_bytes, result_bytes] {
+            u32::try_from(bytes).map_err(|_| SubmissionRefusal::InvalidArgument)?;
+        }
         Ok(Self {
             revision: InputRevision::new(revision),
             charge,
             qualified_unit: None,
         })
-
     }
     /// The source revision fenced by the consuming owner.
     pub const fn revision(self) -> InputRevision {
@@ -141,9 +146,9 @@ struct CooperativePreparationJob<R, W> {
     phase: PreparationPhase,
     work: Option<W>,
     output: Option<R>,
-    retained_input: usize,
-    retained_scratch: usize,
-    retained_output: usize,
+    retained_input: u32,
+    retained_scratch: u32,
+    retained_output: u32,
 }
 
 impl<R, W> CooperativeJob for CooperativePreparationJob<R, W>
@@ -198,14 +203,14 @@ where
 
     fn retained(&self) -> RetainedState {
         RetainedState::clean(
-            self.retained_input
+            self.retained_input as usize
                 + if self.work.is_some() {
-                    self.retained_scratch
+                    self.retained_scratch as usize
                 } else {
                     0
                 }
                 + if self.output.is_some() {
-                    self.retained_output
+                    self.retained_output as usize
                 } else {
                     0
                 },
@@ -273,8 +278,8 @@ struct PreparationJob<R, W> {
     phase: PreparationPhase,
     work: Option<W>,
     output: Option<R>,
-    retained_input: usize,
-    retained_output: usize,
+    retained_input: u32,
+    retained_output: u32,
 }
 
 impl<R, W> CooperativeJob for PreparationJob<R, W>
@@ -327,9 +332,9 @@ where
 
     fn retained(&self) -> RetainedState {
         RetainedState::clean(
-            self.retained_input
+            self.retained_input as usize
                 + if self.output.is_some() {
-                    self.retained_output
+                    self.retained_output as usize
                 } else {
                     0
                 },
@@ -485,8 +490,8 @@ where
         phase: PreparationPhase::Load,
         work: Some(work),
         output: None,
-        retained_input: input.charge.input_bytes(),
-        retained_output: input.charge.result_bytes(),
+        retained_input: input.charge.input_bytes() as u32,
+        retained_output: input.charge.result_bytes() as u32,
     };
     submit_job(kind, scope, input, job)
 }
@@ -508,9 +513,9 @@ where
         phase: PreparationPhase::Load,
         work: Some(work),
         output: None,
-        retained_input: input.charge.input_bytes(),
-        retained_scratch: input.charge.scratch_bytes(),
-        retained_output: input.charge.result_bytes(),
+        retained_input: input.charge.input_bytes() as u32,
+        retained_scratch: input.charge.scratch_bytes() as u32,
+        retained_output: input.charge.result_bytes() as u32,
     };
     submit_job(kind, scope, input, job)
 }
@@ -539,7 +544,11 @@ where
             (0, Some(unit)) => PreparationTicket::Card(
                 admitted
                     .try_submit_qualified::<PreparationSpec<R, 0>, _>(
-                        identity, &input, job, &conditions, unit,
+                        identity,
+                        &input,
+                        job,
+                        &conditions,
+                        unit,
                     )
                     .map_err(|refused| refused.refusal())?,
             ),
@@ -551,7 +560,11 @@ where
             (1, Some(unit)) => PreparationTicket::Catalogue(
                 admitted
                     .try_submit_qualified::<PreparationSpec<R, 1>, _>(
-                        identity, &input, job, &conditions, unit,
+                        identity,
+                        &input,
+                        job,
+                        &conditions,
+                        unit,
                     )
                     .map_err(|refused| refused.refusal())?,
             ),
@@ -563,7 +576,11 @@ where
             (_, Some(unit)) => PreparationTicket::Profile(
                 admitted
                     .try_submit_qualified::<PreparationSpec<R, 2>, _>(
-                        identity, &input, job, &conditions, unit,
+                        identity,
+                        &input,
+                        job,
+                        &conditions,
+                        unit,
                     )
                     .map_err(|refused| refused.refusal())?,
             ),

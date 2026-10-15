@@ -611,6 +611,10 @@ const SURFACE: &[(&str, Decision)] = &[
     ("panel/main.rs::main", Excluded(PROCESS)),
     ("panel/main.rs::parse_args", Excluded(PROCESS)),
     ("panel/app.rs::fail_startup", Excluded(PROCESS)),
+    (
+        "panel/app.rs::exit_after_work_shutdown",
+        Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
+    ),
     ("panel/app.rs::init_panel_running", Excluded(PROCESS)),
     ("panel/app.rs::run_panel", Excluded(PROCESS)),
     (
@@ -803,6 +807,10 @@ const SURFACE: &[(&str, Decision)] = &[
     // --- tui: process entry, harnesses ---
     ("tui/bin.rs::parse_args", Excluded(PROCESS)),
     ("tui/bin.rs::usage", Excluded(PROCESS)),
+    (
+        "tui/bin.rs::exit_after_work_shutdown",
+        Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
+    ),
     ("tui/bin.rs::temp_live_vault", Excluded(HARNESS)),
     (
         "tui/bin.rs::map_bundle",

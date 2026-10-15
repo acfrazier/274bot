@@ -128,7 +128,7 @@ pub enum CompiledDelivery {
 pub(super) struct Output {
     pub status: Option<Arc<ScriptStatus>>,
     pub paint: Option<Arc<crate::shim::ScriptPaint>>,
-    pub applied: Option<u64>,
+    pub applied: Option<std::num::NonZeroU64>,
     pub account: String,
 }
 struct StatusDetails<'a> {
@@ -334,7 +334,7 @@ impl NativeOutput for Output {
         });
     }
     fn settings_applied(&mut self, revision: u64) {
-        self.applied = Some(revision);
+        self.applied = std::num::NonZeroU64::new(revision);
     }
 }
 
@@ -478,7 +478,7 @@ impl CompiledRun {
             if self
                 .pending
                 .as_ref()
-                .is_some_and(|next| next.boundary && next.revision() == revision)
+                .is_some_and(|next| next.boundary && next.revision() == revision.get())
             {
                 self.config = self
                     .pending
@@ -606,41 +606,111 @@ pub(super) fn prepare_run(
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
 ) -> Result<Preparation, StartError> {
+    let cold_gathering =
+        card.id == crate::CompiledId("Gatherer") && selected.try_gathering().is_none();
     let input = PreparationInput::for_settings(run.run, &bag)
         .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    let input = if cold_gathering {
+        input.with_gathering_family_decode()
+    } else {
+        input
+    };
     let slot = api::identity::SlotKey::from_incarnation(run.slot)
         .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
-    let worker = preparation::submit(
+    enum Stage {
+        Decode {
+            bag: Arc<SettingsBag>,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        },
+        Configure {
+            bag: Arc<SettingsBag>,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        },
+        Construct(Arc<PreparedConfig>),
+        Done,
+    }
+    let mut stage = if cold_gathering {
+        Stage::Decode { bag, banks }
+    } else {
+        Stage::Configure { bag, banks }
+    };
+    let mut account = Some(account.into_boxed_str());
+    let worker = preparation::submit_cooperative(
         PreparationKind::Profile,
         api::identity::Scope::Slot(slot),
         input,
         move |worker| {
-            PreparationResult(Some((|| {
-                let config = prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
-                let pin = selected.selected_pin().map_err(StartError::Facts)?;
-                let mut retained = try_retained(&retained)?;
-                let script = catch_unwind(AssertUnwindSafe(|| {
-                    (card.create)(run, Arc::clone(&config), &mut retained)
-                }))
-                .map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("factory panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-                Ok(CompiledRun {
-                    script: ScriptOwner(Some(script)),
-                    config,
-                    pending: None,
-                    run,
-                    selected,
-                    pin,
-                    output: Output {
-                        account,
-                        ..Default::default()
-                    },
-                    actions: NativeActions { _private: () },
-                })
-            })()))
+            let total = if cold_gathering { 3 } else { 2 };
+            let mut completed = match &stage {
+                Stage::Decode { .. } => 0,
+                Stage::Configure { .. } => u32::from(cold_gathering),
+                Stage::Construct(_) => total - 1,
+                Stage::Done => unreachable!("terminal preparation step is not dispatched"),
+            };
+            let result = (|| -> Result<Option<CompiledRun>, StartError> {
+                match std::mem::replace(&mut stage, Stage::Done) {
+                    Stage::Decode { bag, banks } => {
+                        selected
+                            .prepare_gathering(worker)
+                            .map_err(StartError::Facts)?;
+                        completed = 1;
+                        stage = Stage::Configure { bag, banks };
+                        Ok(None)
+                    }
+                    Stage::Configure { bag, banks } => {
+                        let config =
+                            prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
+                        completed = total - 1;
+                        stage = Stage::Construct(config);
+                        Ok(None)
+                    }
+                    Stage::Construct(config) => {
+                        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                        let mut retained = try_retained(&retained)?;
+                        let script = catch_unwind(AssertUnwindSafe(|| {
+                            (card.create)(run, Arc::clone(&config), &mut retained)
+                        }))
+                        .map_err(|payload| {
+                            StartError::Unavailable(
+                                format!("factory panic: {}", panic_message(&payload)).into(),
+                            )
+                        })??;
+                        Ok(Some(CompiledRun {
+                            script: ScriptOwner(Some(script)),
+                            config,
+                            pending: None,
+                            run,
+                            selected: Arc::clone(&selected),
+                            pin,
+                            output: Output {
+                                account: account
+                                    .take()
+                                    .expect("construction owns the account")
+                                    .into_string(),
+                                ..Default::default()
+                            },
+                            actions: NativeActions { _private: () },
+                        }))
+                    }
+                    Stage::Done => unreachable!("terminal preparation step is not dispatched"),
+                }
+            })();
+            match result {
+                Ok(None) => preparation::CooperativePreparationStep::Continue {
+                    completed,
+                    total: Some(total),
+                },
+                Ok(Some(run)) => preparation::CooperativePreparationStep::Complete {
+                    output: PreparationResult(Some(Ok(run))),
+                    completed: total,
+                    total: Some(total),
+                },
+                Err(error) => preparation::CooperativePreparationStep::Complete {
+                    output: PreparationResult(Some(Err(error))),
+                    completed,
+                    total: Some(total),
+                },
+            }
         },
     )
     .map_err(|error| StartError::Unavailable(error.to_string().into()))?;

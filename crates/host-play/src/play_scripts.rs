@@ -454,13 +454,58 @@ impl Play {
             .clone()
             .ok_or("selected game data unavailable")?;
         let banks = Arc::clone(&self.named_banks);
+        let cold_gathering =
+            id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
         let input = script::preparation::PreparationInput::for_settings(revision, &bag)
             .map_err(|error| error.to_string())?;
-        script::preparation::submit(
+        let input = if cold_gathering {
+            input.with_gathering_family_decode()
+        } else {
+            input
+        };
+        enum Stage {
+            Decode(Arc<script::native::SettingsBag>),
+            Configure(Arc<script::native::SettingsBag>),
+            Done,
+        }
+        let mut stage = if cold_gathering {
+            Stage::Decode(bag)
+        } else {
+            Stage::Configure(bag)
+        };
+        script::preparation::submit_cooperative(
             script::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
-            move |worker| script::slot::prepare_config(worker, id, revision, bag, selected, banks),
+            move |worker| match std::mem::replace(&mut stage, Stage::Done) {
+                Stage::Decode(bag) => match selected.prepare_gathering(worker) {
+                    Ok(_) => {
+                        stage = Stage::Configure(bag);
+                        script::preparation::CooperativePreparationStep::Continue {
+                            completed: 1,
+                            total: Some(2),
+                        }
+                    }
+                    Err(error) => script::preparation::CooperativePreparationStep::Complete {
+                        output: Err(script::native::StartError::Facts(error)),
+                        completed: 1,
+                        total: Some(2),
+                    },
+                },
+                Stage::Configure(bag) => script::preparation::CooperativePreparationStep::Complete {
+                    output: script::slot::prepare_config(
+                        worker,
+                        id,
+                        revision,
+                        bag,
+                        Arc::clone(&selected),
+                        Arc::clone(&banks),
+                    ),
+                    completed: if cold_gathering { 2 } else { 1 },
+                    total: Some(if cold_gathering { 2 } else { 1 }),
+                },
+                Stage::Done => unreachable!("completed preparation is not dispatched"),
+            },
         )
         .map_err(|error| error.to_string())
     }

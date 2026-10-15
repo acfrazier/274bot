@@ -28,6 +28,7 @@ const V2_ON_COMPAT: &str = concat!(
 );
 
 static VALIDATION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static COOPERATIVE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -63,13 +64,57 @@ fn prepare_snapshot(js: &JsLibrary, source: ScriptSource, name: &str) -> CardPre
         .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
 }
 
+#[test]
+fn cooperative_card_preparation_matches_the_changed_real_source() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("cooperative-card");
+    let mut js = library(&dir);
+    let path = write(&dir, "changed.ts", GOOD);
+    let previous = js
+        .load(&path)
+        .expect("load the original card")
+        .sha256
+        .clone();
+    std::fs::write(&path, GOOD_V2).unwrap();
+    let snapshot = std::sync::Arc::new(
+        js.card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
+            .expect("capture a changed card"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let candidate = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Card,
+        api::identity::Scope::Process,
+        input,
+        std::sync::Arc::clone(&snapshot).cooperative_prepare(),
+    )
+    .expect("admit the real card")
+    .join()
+    .expect("worker completes")
+    .expect("bounded preparation completes");
+    let reference = snapshot.prepare().expect("current card preparation");
+    let (CardPreparationOutcome::Prepared(candidate), CardPreparationOutcome::Prepared(reference)) =
+        (candidate, reference)
+    else {
+        panic!("both preparations must produce the changed card")
+    };
+    assert_ne!(candidate.card.sha256, previous);
+    assert_eq!(candidate.card, reference.card);
+    assert_eq!(candidate.siblings, reference.siblings);
+    assert_eq!(candidate.fingerprint, reference.fingerprint);
+}
+
 fn validate_prepared(
     cards: Vec<script::PreparedCard>,
 ) -> Vec<(script::PreparedCard, Result<(), String>)> {
     let _guard = VALIDATION_TEST_LOCK
         .lock()
         .expect("validation test lock poisoned");
-    script::bootstrap_v8_platform().expect("bootstrap validation platform");
     let batch = LoadIsolate::validate_prepared_batch(cards).expect("start validation batch");
     loop {
         match batch.try_recv() {
@@ -303,6 +348,71 @@ fn catalog_mixed_batch_retains_named_failures() {
         "{named} / {}",
         js.named_failure_output()
     );
+}
+
+#[test]
+fn cooperative_catalogue_matches_the_changed_real_source() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("cooperative-catalogue");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("GoodBot", GOOD)]);
+    let mut js = library(&dir);
+    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("load current registry");
+    std::fs::write(
+        root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+        "export default class T extends LoopingBot { override loop() { return; } }\n",
+    )
+    .unwrap();
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(&root)
+            .expect("capture the catalogue metadata"),
+    );
+    let reference = snapshot.diff().expect("current synchronous catalogue diff");
+    assert_eq!(reference.changed, ["GoodBot"]);
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let diff = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        std::sync::Arc::clone(&snapshot).cooperative_diff(),
+    )
+    .expect("admit the real catalogue")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue diff completes");
+    assert_eq!(diff.added, reference.added);
+    assert_eq!(diff.changed, reference.changed);
+    assert_eq!(diff.removed, reference.removed);
+    assert_eq!(diff.failed.len(), reference.failed.len());
+
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let prepared = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_prepare(),
+    )
+    .expect("admit catalogue preparation")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue preparation completes");
+    assert_eq!(prepared.diff.changed, reference.changed);
+    assert!(prepared.prepare_failed.is_empty(), "{:?}", prepared.prepare_failed);
+    assert_eq!(prepared.prepared.len(), 1);
+    assert_eq!(prepared.prepared[0].card.name, "GoodBot");
 }
 
 #[test]
