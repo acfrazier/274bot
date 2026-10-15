@@ -117,8 +117,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   server-imposed login hold from spacing and label a retiring handshake
   **previous login is finishing**.
 - Editing a running bot's uid applies to its next login without repeatedly
-  cycling the login queue. Saving a password cancels an in-flight login, but
-  keeps clean-logout release pacing and the bot's queued place.
+  cycling the login queue. Saving a new password does not count as a clean
+  logout: clean-logout release pacing remains in effect. A bot already waiting
+  in the login queue refuses its old login and rejoins at the back.
 - Unread session-end boundaries are delivered in order up to a bound of 32;
   the consuming lifecycle read reports how many older boundaries were missed
   if the bound fills.

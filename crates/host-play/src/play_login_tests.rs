@@ -1269,7 +1269,7 @@ fn reaffirming_login_and_load_all_keep_bound_release_evidence() {
 }
 
 #[test]
-fn agreeing_commands_keep_fifo_place_with_and_without_release_wait() {
+fn agreeing_commands_keep_fifo_place_until_grant_with_and_without_release_wait() {
     for release in [false, true] {
         for action in 0..3 {
             let arm = SlotArm::new(7, true);
@@ -1324,6 +1324,98 @@ fn agreeing_commands_keep_fifo_place_with_and_without_release_wait() {
             assert_eq!(queue.lock().status_owner(u64::MAX - 1).unwrap().position, 1);
         }
     }
+}
+
+#[test]
+fn password_save_during_fifo_wait_refuses_grant_and_rejoins_at_back() {
+    for release in [false, true] {
+        let arm = SlotArm::new(7, true);
+        if release {
+            arm.record_session_exit_at(true, HOST, PORT, Instant::now());
+        }
+        let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        // The worker captures its authorization before entering the FIFO.
+        let (command, world) = capture_login_authorization(&arm, false).unwrap();
+        queue.lock().enqueue_owner(u64::MAX, 9);
+        enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
+        queue.lock().enqueue_owner(u64::MAX - 1, 10);
+        let mut changed = false;
+        let wait = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
+            if !changed {
+                changed = true;
+                sync_profile_arm(
+                    &arm,
+                    &Profile {
+                        username: "alice".into(),
+                        password: "new-password".into(),
+                        uid: 7,
+                        settings: vault::ProfileSettings::default(),
+                    },
+                );
+                queue.lock().leave_owner(u64::MAX);
+                queue.lock().clear_owner_defer(arm.queue_owner);
+            }
+            Duration::from_millis(20)
+        });
+        assert!(changed);
+        let PermitWait::Granted(mut permit) = wait else {
+            panic!("release={release}: expected the original FIFO grant");
+        };
+        assert!(
+            permit
+                .attempt(
+                    |cancel| arm.begin_attempt(command, world, cancel),
+                    |_, _| Ok::<bool, ()>(true),
+                    |_| None,
+                )
+                .is_none(),
+            "release={release}: old password authorization must be refused"
+        );
+        arm.clear_unused_attempt();
+        drop(permit);
+        if release {
+            assert!(
+                arm.clean_release_admission_at(HOST, PORT, Instant::now())
+                    .is_some(),
+                "a password save does not count as a clean logout"
+            );
+        }
+        let (_command, _world) = capture_login_authorization(&arm, false).unwrap();
+        enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
+        assert_eq!(
+            queue.lock().status_owner(u64::MAX - 1).unwrap().position,
+            1,
+            "release={release}: the third owner keeps its place"
+        );
+        assert_eq!(
+            queue.lock().status_owner(arm.queue_owner).unwrap().position,
+            2,
+            "release={release}: the slot rejoins behind the third owner"
+        );
+    }
+}
+
+#[test]
+fn intent_cancellation_fires_only_after_k4_unlock() {
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    assert!(cancel.is_cancelled());
+}
+
+#[test]
+fn identity_cancellation_fires_only_after_k4_unlock() {
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    arm.sync_login_identity(7, "new-password");
+    assert!(cancel.is_cancelled());
 }
 
 #[test]

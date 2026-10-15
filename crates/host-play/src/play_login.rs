@@ -242,6 +242,54 @@ type RetryRaceGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>
 #[cfg(test)]
 type WorkerQueuePanicGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
 
+/// Watches an explicitly armed test's token from K4 entry until unlock.
+/// Drop catches even a second, direct `cancel()` inserted inside the lock.
+#[cfg(test)]
+struct K4CancelGuard<'a> {
+    lifecycle: parking_lot::MutexGuard<'a, SlotLifecycle>,
+    pending: Option<LoginCancel>,
+}
+
+#[cfg(test)]
+impl<'a> K4CancelGuard<'a> {
+    fn new(lifecycle: parking_lot::MutexGuard<'a, SlotLifecycle>, enabled: bool) -> Self {
+        let pending = enabled
+            .then(|| lifecycle.attempt.as_ref())
+            .flatten()
+            .filter(|cancel| !cancel.is_cancelled())
+            .cloned();
+        Self { lifecycle, pending }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for K4CancelGuard<'_> {
+    type Target = SlotLifecycle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lifecycle
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for K4CancelGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lifecycle
+    }
+}
+
+#[cfg(test)]
+impl Drop for K4CancelGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.pending {
+            assert!(
+                !cancel.is_cancelled(),
+                "login token fired while K4 was held"
+            );
+        }
+    }
+}
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
@@ -254,6 +302,10 @@ pub struct SlotArm {
     /// identities and are used only for server throttle accounting.
     pub(super) queue_owner: u64,
     lifecycle: parking_lot::Mutex<SlotLifecycle>,
+    /// Only isolated lock-order tests watch token state; another thread may
+    /// legitimately fire a previously collected token while this arm is locked.
+    #[cfg(test)]
+    assert_cancel_order: AtomicBool,
     /// Pump shutdown signal, derived from the mailbox's terminal command.
     /// The legacy client startup and render loops read this atomic directly.
     pub stop: Arc<AtomicBool>,
@@ -315,6 +367,8 @@ impl SlotArm {
                 clean_exit: None,
                 boundary_work_allowed: None,
             }),
+            #[cfg(test)]
+            assert_cancel_order: AtomicBool::new(false),
             stop: Arc::new(AtomicBool::new(false)),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
@@ -439,6 +493,12 @@ impl SlotArm {
     /// Apply one frozen row and fire its cancellation effect outside K4.
     pub fn post_intent(&self, row: Intent) -> Option<PostReceipt> {
         let (receipt, cancel) = {
+            #[cfg(test)]
+            let mut lifecycle = K4CancelGuard::new(
+                self.lifecycle.lock(),
+                self.assert_cancel_order.load(Ordering::Relaxed),
+            );
+            #[cfg(not(test))]
             let mut lifecycle = self.lifecycle.lock();
             let receipt = match lifecycle.mailbox.post(row) {
                 Ok(receipt) => receipt,
@@ -1096,6 +1156,12 @@ impl SlotArm {
     /// A start cannot authorize old credentials against a newly saved value.
     fn sync_login_identity(&self, uid: i32, password: &str) {
         let cancel = {
+            #[cfg(test)]
+            let mut lifecycle = K4CancelGuard::new(
+                self.lifecycle.lock(),
+                self.assert_cancel_order.load(Ordering::Relaxed),
+            );
+            #[cfg(not(test))]
             let mut lifecycle = self.lifecycle.lock();
             let uid_changed = self.uid.swap(uid, Ordering::Relaxed) != uid;
             let password_changed = {
