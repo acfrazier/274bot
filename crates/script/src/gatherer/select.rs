@@ -1408,8 +1408,12 @@ pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
                     "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
                 )
             });
-        nav::world::NavWorld::load_pack(&pack)
-            .unwrap_or_else(|error| panic!("load real 289 nav pack {}: {error}", pack.display()))
+        nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+            panic!(
+                "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
+                pack.display()
+            )
+        })
     });
     &WORLD
 }
@@ -3265,6 +3269,13 @@ mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -3353,6 +3364,13 @@ mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -3498,6 +3516,13 @@ mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         use api::obj_names::ItemDefView;
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
@@ -3667,6 +3692,13 @@ mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let world = real_nav_world();
         let mut seen = std::collections::HashSet::new();
