@@ -677,4 +677,49 @@ mod tests {
         assert_eq!(active.queued, 0);
         assert_eq!(active.dropped, 1);
     }
+
+    /// T4.1 characterization (§23 §2.7 recording): today's recording takes
+    /// whole-window readbacks, not per-head outputs. It accepts only frames
+    /// matching the armed pipe geometry, queues them without blocking, and
+    /// never asks the render path for a new frame.
+    #[test]
+    fn pump_queues_only_frames_matching_the_armed_geometry() {
+        let (sender, receiver) = sync_channel::<Vec<u8>>(RECORD_QUEUE);
+        let mut record = HeadedRecord {
+            config: HeadedRecordConfig {
+                enabled: true,
+                fps: 2.0,
+            },
+            pacer: RecordPacer::new(Duration::from_millis(500)),
+            active: Some(ActiveRecording::for_test(sender, 2.0)),
+            done: false,
+        };
+        let frame = |width: u32, height: u32, fill: u8| RecordFrame {
+            width,
+            height,
+            rgba: vec![fill; 4 * width as usize * height as usize],
+        };
+        let step = StepInfo {
+            step: 1,
+            total: 2,
+            name: "walk".into(),
+            tick: 7,
+        };
+        // 32×128 carries exactly the armed 64×64 byte count: only the
+        // geometry check can refuse it.
+        record.pump_frames(
+            vec![frame(64, 64, 1), frame(32, 128, 2), frame(64, 64, 3)],
+            &step,
+        );
+        let mut short = frame(64, 64, 4);
+        short.rgba.pop();
+        record.pump_frames(vec![short], &step);
+        let active = record.active.as_ref().expect("still armed");
+        assert_eq!(active.queued, 2, "only same-geometry frames queue");
+        assert_eq!(active.size_mismatch, 2, "resized and short frames drop");
+        assert_eq!(active.lines.len(), 2, "one sidecar line per queued frame");
+        assert_eq!(receiver.try_recv().unwrap()[0], 1);
+        assert_eq!(receiver.try_recv().unwrap()[0], 3);
+        assert!(receiver.try_recv().is_err());
+    }
 }

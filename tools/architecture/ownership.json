@@ -1291,6 +1291,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/m3_render_contention.rs",
+      "owner": "T4"
+    },
+    {
       "path": "crates/host-play/tests/nav_fares_live.rs",
       "owner": "T1"
     },
@@ -1517,6 +1521,10 @@
     {
       "path": "crates/host/src/slot_io.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/host/tests/render_characterization.rs",
+      "owner": "T4"
     },
     {
       "path": "crates/nav/build.rs",
