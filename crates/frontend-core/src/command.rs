@@ -105,7 +105,7 @@ pub enum OperatorCommand {
     /// Persist the random-event guardian fields staged in the profile form
     /// (`OperatorSession::set_random_settings`, `session.rs:2068-2093`) or
     /// one hostile random's policy (`OperatorSession::set_random_event_policy`,
-    /// `session.rs:2165-2184`).
+    /// `session.rs:2171-2191`).
     SetGuardian,
     /// Quit the application (panel window close, TUI `q`/`Ctrl-Q`). One
     /// member per loaded slot, each completed by its slot's retirement.
