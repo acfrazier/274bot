@@ -27,8 +27,12 @@ $Night = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingO
     -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 11)
 $Catch = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+# A start boundary without a UTC offset keeps 23:00 local through DST changes
+# (with an offset, Task Scheduler would fire at a fixed UTC time).
+$Daily = New-ScheduledTaskTrigger -Daily -At $At
+$Daily.StartBoundary = (Get-Date $At).ToString('yyyy-MM-ddTHH:mm:ss')
 Register-ScheduledTask -TaskName '274bot-nightly' -Principal $Principal -Settings $Night `
-    -Trigger (New-ScheduledTaskTrigger -Daily -At $At) `
+    -Trigger $Daily `
     -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$Launcher`" night" -WorkingDirectory $Root) `
     -Description '274bot Windows nightly: CI lanes, panel-play and tui-play cells (tools/nightly/README.md)' | Out-Null
 Register-ScheduledTask -TaskName '274bot-nightly-catchup' -Principal $Principal -Settings $Catch `
