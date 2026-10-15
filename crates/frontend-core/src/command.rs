@@ -472,14 +472,31 @@ pub enum DrawSwitch {
     LiveFullRate,
 }
 
-/// The fleet row order. The panel's own `FleetSort` (`panel/src/fleet.rs:28-32`)
-/// keeps serving the window until T3.3 routes the drop-down through this row.
+/// The fleet row order, owned by the core fleet model
+/// ([`crate::fleet::fill_visible_indices`]): the panel offers `Name`
+/// (its default) and `Status`; the TUI keeps `LoadOrder`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetOrder {
+    /// The order the surface supplied the rows in (load order).
+    LoadOrder,
     /// By profile name.
     Name,
-    /// By status.
+    /// By status (phase label), then profile name.
     Status,
+}
+
+impl FleetOrder {
+    /// The orders the panel's Sort drop-down offers.
+    pub const PANEL_CHOICES: [FleetOrder; 2] = [Self::Name, Self::Status];
+
+    /// The drop-down entry.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LoadOrder => "Load order",
+            Self::Name => "Name",
+            Self::Status => "Status",
+        }
+    }
 }
 
 /// Which part of the profile form's draft an edit changed.

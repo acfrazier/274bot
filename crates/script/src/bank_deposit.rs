@@ -964,4 +964,24 @@ mod tests {
             Take::Settled(Outcome::Done(Value::Null))
         );
     }
+
+    /// Characterization (T2.2): one transfer at a time. A second deposit
+    /// start while a deposit is live settles `null` at once (the frozen
+    /// void) and presses nothing; the first run keeps its press.
+    #[test]
+    fn a_second_deposit_settles_null_while_one_is_live() {
+        machine::on_reset();
+        observed::on_reset();
+        post(1, vec![side_row(Some("Bones"), 526, 1, 0)]);
+        let Started::Running(handle) =
+            machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0)
+        else {
+            panic!("expected a running deposit");
+        };
+        assert!(crate::bank_op::busy());
+        let second = machine::start(BankDeposit::NAME, json!({ "all": true }), Vec::new(), 0);
+        assert_eq!(second, Started::Settled(Outcome::Done(Value::Null)));
+        assert_eq!(step(), vec![press(526, 0)]);
+        assert_eq!(machine::take(handle), Take::Pending);
+    }
 }

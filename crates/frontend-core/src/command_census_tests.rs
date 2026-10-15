@@ -74,6 +74,25 @@ const CORE: &[(&str, Decision)] = &[
     ("fleet.rs::Fleet::remove", Row(C::Remove)),
     ("fleet.rs::Fleet::latch_logout", Row(C::Logout)),
     ("fleet.rs::Fleet::clear_latch", Row(C::Login)),
+    // fleet.rs: the fleet view model over the staged filter/order.
+    ("fleet.rs::contains_ci", Excluded(FORMAT)),
+    ("fleet.rs::state_label", Excluded(FORMAT)),
+    (
+        "fleet.rs::fleet_row_matches",
+        Excluded("pure filter predicate over the staged filter text; SetFleetFilter stages the text"),
+    ),
+    (
+        "fleet.rs::member_row",
+        Excluded("pure lookup of a member's projected row; presentation"),
+    ),
+    (
+        "fleet.rs::fill_visible_indices",
+        Excluded("pure computation of the shown rows from the staged filter text and order"),
+    ),
+    (
+        "fleet.rs::fill_visible_row_indices",
+        Excluded("pure computation of the shown rows from the staged filter text and order"),
+    ),
     // group_walk.rs
     ("group_walk.rs::walk_marked", Row(C::GroupWalk)),
     (
@@ -151,6 +170,15 @@ const CORE: &[(&str, Decision)] = &[
         "marked.rs::run_marked_command",
         Excluded("generic marked-row driver applying the caller's admission; the row is the caller's"),
     ),
+    (
+        "marked.rs::marked_availability",
+        Excluded("pure gating of the marked actions; each action's row is its caller's"),
+    ),
+    (
+        "marked.rs::combined_bulk_scope",
+        Excluded("pure scope choice for combined all/marked commands; the command's row is the caller's"),
+    ),
+    ("marked.rs::bounded_names", Excluded(FORMAT)),
     // nav_prefs.rs
     (
         "nav_prefs.rs::nav_preference",
@@ -508,8 +536,25 @@ const CORE: &[(&str, Decision)] = &[
         "selection.rs::MarkedSelection::retain",
         Excluded("projection maintenance: drops marks of rows no longer shown"),
     ),
+    (
+        "selection.rs::MarkedSelection::retain_sorted",
+        Excluded("projection maintenance: drops marks of rows no longer shown"),
+    ),
     ("selection.rs::start_marked", Row(C::StartScript)),
     ("selection.rs::stop_marked", Row(C::StopScript)),
+    ("selection.rs::MarkedSelection::mark_shown", Row(C::MarkAll)),
+    (
+        "selection.rs::profile_id_at",
+        Excluded("pure identity resolution over the caller's projected rows"),
+    ),
+    (
+        "selection.rs::profile_id_for_name",
+        Excluded("pure identity resolution over the caller's projected rows"),
+    ),
+    (
+        "selection.rs::marked_startable",
+        Excluded("pure computation of whether a marked Start could start anything"),
+    ),
     // session.rs: the operator session.
     ("session.rs::MemoryNotice::mode_name", Excluded(FORMAT)),
     (

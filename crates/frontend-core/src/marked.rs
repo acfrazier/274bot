@@ -12,9 +12,103 @@ use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::SlotSurface;
-use crate::views::Phase;
+use crate::views::{FleetRow, Phase};
 
 const UNAVAILABLE: &str = "profile unavailable";
+
+/// The report a refused *Assign* leaves when no card is selected, the
+/// same on both surfaces.
+pub const ASSIGN_NO_CARD: &str = "Assign: select a card in Scripts first";
+/// The report a refused *Assign & restart* leaves when no card is selected.
+pub const ASSIGN_RESTART_NO_CARD: &str = "Assign & restart: select a card in Scripts first";
+
+/// One marked-bots action of the fleet surfaces (the panel's Fleet
+/// action bar, the TUI's marked commands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkedAction {
+    /// Start the selected card, or each profile's saved assignment.
+    Start,
+    /// Stop the marked bots' scripts.
+    Stop,
+    /// Save the selected card as the marked bots' assignment.
+    Assign,
+    /// Assign the selected card and start it on the marked bots.
+    AssignAndRestart,
+    /// Log in the marked bots, loading the ones not loaded yet.
+    Login,
+    /// Log out the marked bots.
+    Logout,
+    /// Walk the marked bots (open the group-send picker / map send).
+    Walk,
+    /// Apply the focused bot's settings to the marked bots.
+    ApplySettings,
+}
+
+/// Why a marked action cannot run now. Both surfaces use the one
+/// precedence of [`marked_availability`]: nothing marked first, then a
+/// missing focused bot, then no card selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkedBlock {
+    /// No row is marked.
+    NothingMarked,
+    /// The action copies from a focused bot and none is focused.
+    NoFocusedBot,
+    /// The action needs the selected card and none is selected.
+    NoCard,
+}
+
+/// Whether `action` can run with `marked` marks, a selected card
+/// (`has_card`) and a focused bot (`has_focused`). `Start` needs no
+/// card here: without one it starts each marked profile's saved
+/// assignment, and [`crate::selection::marked_startable`] says whether
+/// any marked profile could start at all.
+pub fn marked_availability(
+    action: MarkedAction,
+    marked: usize,
+    has_card: bool,
+    has_focused: bool,
+) -> Result<(), MarkedBlock> {
+    if marked == 0 {
+        return Err(MarkedBlock::NothingMarked);
+    }
+    match action {
+        MarkedAction::Start
+        | MarkedAction::Stop
+        | MarkedAction::Login
+        | MarkedAction::Logout
+        | MarkedAction::Walk => Ok(()),
+        MarkedAction::Assign | MarkedAction::AssignAndRestart => {
+            has_card.then_some(()).ok_or(MarkedBlock::NoCard)
+        }
+        MarkedAction::ApplySettings => {
+            if !has_focused {
+                return Err(MarkedBlock::NoFocusedBot);
+            }
+            has_card.then_some(()).ok_or(MarkedBlock::NoCard)
+        }
+    }
+}
+
+/// Who a bulk command acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkScope {
+    /// Every member (or, for loading, every vault profile).
+    All,
+    /// The marked members only.
+    Marked,
+}
+
+/// The scope of a combined all/marked command (the TUI's *Start all*,
+/// *Stop all*, *Load+login all* and *Logout all*): the marked bots
+/// when anything is marked, everyone otherwise. The panel keeps its
+/// separate all and marked buttons instead of resolving a scope.
+pub fn combined_bulk_scope(selection: &MarkedSelection) -> BulkScope {
+    if selection.is_empty() {
+        BulkScope::All
+    } else {
+        BulkScope::Marked
+    }
+}
 
 /// The marked rows resolved to profile names (each once, by name) and the
 /// marks whose profile is gone.
@@ -237,6 +331,29 @@ pub struct RestartScope {
     starting: Vec<String>,
 }
 
+/// How many names one confirmation line spells out before the rest
+/// are counted as "+N more" (the [`RestartScope::prompt_lines`]
+/// lines and every surface list built with [`bounded_names`]).
+pub const PROMPT_NAMES_SHOWN: usize = 6;
+
+/// `names` joined for one confirmation line: at most
+/// [`PROMPT_NAMES_SHOWN`] names, then "+N more" for the remainder.
+/// The one bounded-names list every surface renders, so the cap
+/// cannot drift between them.
+pub fn bounded_names(names: &[String]) -> String {
+    let mut text = String::new();
+    for (index, name) in names.iter().take(PROMPT_NAMES_SHOWN).enumerate() {
+        if index > 0 {
+            text.push_str(", ");
+        }
+        text.push_str(name);
+    }
+    if names.len() > PROMPT_NAMES_SHOWN {
+        let _ = write!(text, " +{} more", names.len() - PROMPT_NAMES_SHOWN);
+    }
+    text
+}
+
 impl RestartScope {
     /// Marked bots with an active script: it is stopped, then the card starts.
     pub fn interrupted(&self) -> &[String] {
@@ -246,6 +363,67 @@ impl RestartScope {
     /// Marked, loaded bots with no active script: the card just starts.
     pub fn starting(&self) -> &[String] {
         &self.starting
+    }
+
+    /// No loaded marked bot would take the card.
+    pub fn is_empty(&self) -> bool {
+        self.interrupted.is_empty() && self.starting.is_empty()
+    }
+
+    /// The scope over `names` (the marked, loaded bots) from their
+    /// projected `rows`, for a surface that renders from the fleet
+    /// projection instead of the session. A name with no row yet has no
+    /// active script and counts as starting.
+    pub fn from_rows<'a>(names: impl IntoIterator<Item = &'a str>, rows: &[FleetRow]) -> Self {
+        let mut scope = Self::default();
+        for name in names {
+            let state = rows
+                .iter()
+                .find(|row| row.name() == name)
+                .map_or(script::RunState::Idle, |row| row.script());
+            if active(state) {
+                scope.interrupted.push(name.to_string());
+            } else {
+                scope.starting.push(name.to_string());
+            }
+        }
+        scope
+    }
+
+    /// The confirmation text, one line per part. Each line names at
+    /// most [`PROMPT_NAMES_SHOWN`] bots and counts the rest
+    /// ("+N more"), so no bot is hidden silently however large the
+    /// fleet: the line's count always covers every bot in its part.
+    pub fn prompt_lines(&self) -> Vec<String> {
+        if self.is_empty() {
+            return vec!["No loaded marked bot to start the card on.".to_string()];
+        }
+        let mut lines = Vec::new();
+        if !self.interrupted.is_empty() {
+            lines.push(format!(
+                "Stop and restart {} running {}: {}",
+                self.interrupted.len(),
+                if self.interrupted.len() == 1 {
+                    "bot"
+                } else {
+                    "bots"
+                },
+                bounded_names(&self.interrupted)
+            ));
+        }
+        if !self.starting.is_empty() {
+            lines.push(format!(
+                "Start the card on {} idle {}: {}",
+                self.starting.len(),
+                if self.starting.len() == 1 {
+                    "bot"
+                } else {
+                    "bots"
+                },
+                bounded_names(&self.starting)
+            ));
+        }
+        lines
     }
 }
 

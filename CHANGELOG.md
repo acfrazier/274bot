@@ -103,6 +103,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   cancelled in the log, one line per save, instead of being dropped
   silently.
 
+### Panel
+
+- The Fleet window's filter matches several words and world numbers, the
+  same as the TUI's: every word must match a bot's name or status, and
+  `w301` or `world:301` matches its world.
+- Start on the marked bots uses each bot's saved script when no card is
+  selected in Scripts, instead of being unavailable until a card is
+  picked. A marked bot with no saved script is named in the report.
+- When nothing is marked and no card is selected, the Fleet window's
+  Start, Assign and Assign & restart buttons now say "mark at least one
+  profile" first, instead of only asking for a card.
+- The Assign & restart confirmation names the first six bots it stops
+  and the first six it starts, and counts the rest ("+N more") beside
+  the total for each, instead of listing every name.
+
+### TUI
+
+- The Assign & restart confirmation names the bots whose running script
+  it stops and the idle bots it starts, as the panel's does: the first
+  six of each, with the rest counted ("+N more") beside each total.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles

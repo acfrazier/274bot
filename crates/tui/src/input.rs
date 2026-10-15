@@ -13,6 +13,7 @@
 //! menu and never acts as a left click.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use frontend_core::{combined_bulk_scope, BulkScope};
 
 use crate::app::{AppAction, TuiApp};
 use crate::commands::{
@@ -303,15 +304,7 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            let marked = matches!(
-                command,
-                Command::ScriptStartAll
-                    | Command::ScriptStopAll
-                    | Command::ScriptAssignMarked
-                    | Command::ScriptRestartMarked
-                    | Command::LoadLoginAll
-                    | Command::LogoutAll
-            ) && !self.table.selection.is_empty();
+            let marked = combined_bulk_scope(&self.table.selection) == BulkScope::Marked;
             let members = if marked {
                 self.marked_names()
             } else {

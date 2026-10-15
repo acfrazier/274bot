@@ -939,3 +939,422 @@ fn pack_full_counts_occupied_slots() {
     assert!(!pack_full(&pack[..27], 28));
     assert!(!pack_full(&pack, 0), "an unposted size is never full");
 }
+
+#[test]
+fn next_chunk_is_the_frozen_ladder() {
+    assert_eq!(next_chunk(0.0), None);
+    assert_eq!(next_chunk(-3.0), None);
+    assert_eq!(next_chunk(11.0), Some(Chunk::X(11.0)));
+    assert_eq!(next_chunk(10.0), Some(Chunk::Op("Withdraw-10")));
+    assert_eq!(next_chunk(7.0), Some(Chunk::Op("Withdraw-5")));
+    assert_eq!(next_chunk(4.0), Some(Chunk::Op("Withdraw-1")));
+}
+
+#[test]
+fn all_op_has_no_last_label_fallback() {
+    let row = native(
+        COINS,
+        "Coins",
+        10,
+        0,
+        5292,
+        &[Some("Deposit-1"), None, Some("Deposit-X")],
+    );
+    assert_eq!(all_op(&row), None);
+    assert_eq!(sweep_op(&row), Some(3), "the sweep alone falls back");
+    let row = native(
+        COINS,
+        "Coins",
+        10,
+        0,
+        5292,
+        &[Some("Deposit-1"), Some("Deposit-All"), Some("Deposit-X")],
+    );
+    assert_eq!(all_op(&row), Some(2));
+    assert_eq!(sweep_op(&row), Some(2));
+}
+
+#[test]
+fn dash_space_eq_is_the_hunt_spelling() {
+    assert!(dash_space_eq("Withdraw-X", "Withdraw X"));
+    assert!(dash_space_eq("withdraw x", "Withdraw X"));
+    assert!(dash_space_eq(" Withdraw-X ", "Withdraw X"));
+    assert!(dash_space_eq("-Withdraw-X-", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw_X", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw  X", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw-All", "Withdraw X"));
+}
+
+#[test]
+fn fill_click_in_matches_count_labels_of_any_spelling() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw 1".into()),
+        Some("Withdraw-5".into()),
+        Some("withdraw_10".into()),
+        Some("Withdraw All".into()),
+        Some("Withdraw X".into()),
+    ];
+    // The content's own spellings (bank_main.if options 1..5) and the
+    // compat dash spellings resolve to the same slots.
+    assert_eq!(fill_click_in(&actions, 1, 50), Some((1, false)));
+    assert_eq!(fill_click_in(&actions, 5, 50), Some((2, false)));
+    assert_eq!(fill_click_in(&actions, 10, 50), Some((3, false)));
+    assert_eq!(fill_click_in(&actions, 50, 50), Some((4, false)));
+    assert_eq!(fill_click_in(&actions, 7, 50), Some((5, true)));
+    // A negative count's minus normalizes away like a label's dash.
+    assert_eq!(fill_click_in(&actions, -5, 50), Some((2, false)));
+    assert_eq!(fill_click_in(&actions, 0, 0), Some((4, false)));
+    // An empty wanted label matches an empty (or separator-only) label.
+    assert_eq!(
+        action_op_in(&[Some(" ".into()), Some("Withdraw-1".into())], ""),
+        Some(1)
+    );
+}
+
+fn booth(id: i32, x: i32, z: i32, level: i32, distance: i32, actions: &[Option<&str>]) -> LocView {
+    LocView {
+        typecode: id,
+        info: 0,
+        id,
+        name: Some("Bank booth".into()),
+        description: None,
+        actions: actions.iter().map(|a| a.map(str::to_owned)).collect(),
+        tile: WorldTile { x, z, level },
+        distance,
+        layer: api::snapshot::LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+#[test]
+fn booth_picks_share_one_scan_over_loc_rows() {
+    let useq: &[Option<&str>] = &[None, Some("Use-quickly")];
+    let rows = [
+        booth(10, 3093, 3244, 0, 4, useq),
+        booth(11, 3092, 3243, 0, 2, useq),
+        booth(12, 3092, 3243, 1, 1, useq),
+        booth(-1, 3090, 3243, 0, 0, useq),
+    ];
+    // Named: live id, name and action, the player's plane, nearest.
+    assert_eq!(
+        booth_named(&rows, "bank booth", "use-quickly", Some(0)).map(|row| row.id),
+        Some(11)
+    );
+    assert_eq!(
+        booth_named(&rows, "Bank booth", "Use-quickly", None).map(|row| row.id),
+        Some(12),
+        "an unknown plane does not filter, so distance decides"
+    );
+    // Nearest by action on one plane, whatever the id.
+    assert_eq!(
+        booth_nearest_action(&rows, 0, "Use-quickly").map(|row| row.id),
+        Some(-1)
+    );
+    // Exact tile, first in row order, an optional name.
+    let tile = WorldTile {
+        x: 3092,
+        z: 3243,
+        level: 0,
+    };
+    assert_eq!(booth_at(&rows, tile, None).map(|row| row.id), Some(11));
+    assert!(booth_at(&rows, tile, Some("Chest")).is_none());
+    assert_eq!(
+        booth_exact(&rows, tile, 11, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    assert!(booth_exact(&rows, tile, 10, "Bank booth", "Use-quickly").is_none());
+    // Catalog: Chebyshev radius around the stand, id on a tie.
+    assert_eq!(
+        booth_catalog(&rows, tile, 1, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    assert_eq!(
+        booth_catalog(&rows, tile, 0, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    // Op slots: folded matches the config spelling only, normalized any.
+    let row = booth(1, 0, 0, 0, 0, &[Some("Use quickly")]);
+    assert_eq!(op_slot(&row, "Use-quickly", LabelMatch::Folded), None);
+    assert_eq!(
+        op_slot(&row, "Use-quickly", LabelMatch::Normalized),
+        Some(1)
+    );
+    assert_eq!(packed_op(&row, 1), Some(1));
+    assert_eq!(packed_op(&row, 2), None);
+    assert_eq!(packed_op(&row, 0), None);
+    let hole = booth(1, 0, 0, 0, 0, &[None]);
+    assert_eq!(packed_op(&hole, 1), None);
+}
+
+/// The deleted host fold, verbatim, as the oracle (`norm_action`, old
+/// `script_bank.rs:1190` at `1e6650831`).
+fn old_norm_action(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .collect()
+}
+
+/// Characterization (T2.2 r2): the kernel fold is the old host fold on
+/// every probe — the reviewer's pairs plus NBSP/VT/Kelvin/combining
+/// expansions of our own. Equality, symmetry and the char stream itself
+/// all have to agree with the allocating original.
+#[test]
+fn normalized_fold_matches_the_deleted_host_fold() {
+    let pairs: &[(&str, &str)] = &[
+        // The reviewer's differential pairs (T2.2 review, M1).
+        ("Withdraw All", "Withdraw-All"),
+        ("Withdraw\u{a0}X", "Withdraw X"),
+        ("Withdraw\u{b}X", "Withdraw X"),
+        ("Withdraw\u{3000}5", "Withdraw 5"),
+        ("Use\u{2009}quickly", "Use-quickly"),
+        ("\u{212a}", "k"),
+        ("WITHDRAW ÀLL", "withdraw àll"),
+        ("Withdraw Æ", "withdraw æ"),
+        ("Withdraw ΣΑΣ", "withdraw σασ"),
+        // Final sigma: the one context rule of `str::to_lowercase`.
+        ("Withdraw ΣΑΣ", "withdraw σας"),
+        ("Withdraw ΟΣ", "withdraw ος"),
+        ("Withdraw ΟΣΑ", "withdraw οσα"),
+        ("Withdraw Σ", "withdraw σ"),
+        ("ΑΣ Α", "αςα"),
+        ("ΑΣ'Α", "ασ'α"),
+        ("Withdraw ΣΣ", "withdraw σς"),
+        // Sigma beside symbols, unassigned/private-use chars and the
+        // modifier/combining classes `char` cannot classify (T2.2 r2 review).
+        ("Α©Σ", "ασ"),
+        ("Α©Σ", "ας"),
+        ("ΑΣ©Α", "ασ©α"),
+        ("Α\u{e000}Σ", "α\u{e000}σ"),
+        ("Α\u{345}Σ", "α\u{3b9}ς"),
+        ("Α\u{1d2c}Σ", "α\u{1d2c}ς"),
+        ("ΑΣ\u{37a}", "ας\u{37a}"),
+        ("Α\u{64e}Σ", "α\u{64e}ς"),
+        ("Α«Σ", "α«σ"),
+        // Multi-char lowercase expansions and titlecase letters.
+        ("Withdraw İ", "withdraw i\u{307}"),
+        ("Withdraw ẞ", "withdraw ß"),
+        ("Withdraw Ǆ", "withdraw ǆ"),
+        ("Withdraw ǅ", "withdraw ǆ"),
+        ("Withdraw ﬀ", "withdraw ff"),
+        // Combining marks are kept, and they are not normalized away.
+        ("Withdraw X\u{301}", "withdraw x\u{301}"),
+        ("Withdraw X\u{301}", "withdraw x"),
+        ("Withdraw À\u{300}", "withdraw à\u{300}"),
+        ("Withdraw A\u{300}", "withdraw à"),
+        // The separator class is exactly Unicode whitespace plus `-`/`_`.
+        ("Withdraw\u{2003}10", "withdraw10"),
+        ("Withdraw\u{85}5", "Withdraw 5"),
+        ("Withdraw\u{202f}All", "Withdraw All"),
+        ("Withdraw\u{feff}5", "Withdraw 5"),
+        ("Withdraw\u{200d}5", "Withdraw 5"),
+        ("Use_quickly", "Use-quickly"),
+        ("DÉPOSIT ÀLL", "déposit àll"),
+        ("Withdraw-10", "WITHDRAW_10"),
+        ("", " -_ \t\u{b}\u{a0}"),
+    ];
+    for &(a, b) in pairs {
+        let want = old_norm_action(a) == old_norm_action(b);
+        assert_eq!(normalized_action_eq(a, b), want, "{a:?} vs {b:?}");
+        assert_eq!(normalized_action_eq(b, a), want, "{b:?} vs {a:?}");
+        assert_eq!(
+            normalized_action_chars(a).collect::<String>(),
+            old_norm_action(a),
+            "fold of {a:?}"
+        );
+        assert_eq!(
+            normalized_action_chars(b).collect::<String>(),
+            old_norm_action(b),
+            "fold of {b:?}"
+        );
+    }
+}
+
+/// The fold equals the deleted host fold for every Unicode scalar value on
+/// its own, and for a stride-sampled sweep of the final-sigma templates the
+/// T2.2 r2 review used (`Α c Σ`, `ΑΣ c Α`, `ΑΣ c`, `c Σ`): the per-char path
+/// must hold for all chars, and a label with `Σ` must take the exact path.
+#[test]
+fn normalized_fold_matches_the_deleted_host_fold_across_unicode() {
+    let mut text = String::new();
+    let check = |text: &str| {
+        assert_eq!(
+            normalized_action_chars(text).collect::<String>(),
+            old_norm_action(text),
+            "fold of {text:?}"
+        );
+    };
+    for (index, c) in (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .enumerate()
+    {
+        text.clear();
+        text.push(c);
+        check(&text);
+        if index % 97 == 0 {
+            for template in [["Α", "Σ"], ["ΑΣ", "Α"], ["ΑΣ", ""], ["", "Σ"]] {
+                text.clear();
+                text.push_str(template[0]);
+                text.push(c);
+                text.push_str(template[1]);
+                check(&text);
+            }
+        }
+    }
+}
+
+/// Characterization (T2.2 r2): the All test is the old `all_slot`
+/// substring test over the same fold — `contains_all` against the
+/// oracle, including the reviewer's four All probes.
+#[test]
+fn contains_all_matches_the_deleted_host_fold() {
+    let labels = [
+        "Deposit All",
+        "Deposit A\u{a0}ll",
+        "DEPOSIT ÀLL",
+        "Deposit-ALL",
+        "Deposit A\u{b}ll",
+        "Deposit A\u{301}ll",
+        "Sm\u{a0}all",
+        "Withdraw Αλλ",
+        "Withdraw-1",
+        "",
+    ];
+    for label in labels {
+        assert_eq!(
+            contains_all(label),
+            old_norm_action(label).contains("all"),
+            "{label:?}"
+        );
+    }
+}
+
+/// Characterization (T2.2 r2): the slice helpers and the host fill see
+/// the same Unicode fold the old host helpers did.
+#[test]
+fn slice_label_helpers_and_fill_use_the_unicode_fold() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw\u{a0}5".into()),
+        Some("Withdraw\u{3000}All".into()),
+        Some("Withdraw\u{b}X".into()),
+    ];
+    assert_eq!(action_op_in(&actions, "Withdraw 5"), Some(1));
+    assert_eq!(action_op_in(&actions, "withdraw x"), Some(3));
+    assert_eq!(all_op_in(&actions), Some(2));
+    assert_eq!(withdraw_count_op_in(&actions, 5), Some(1));
+    assert_eq!(withdraw_count_op_in(&actions, -5), Some(1));
+    assert_eq!(fill_click_in(&actions, 5, 50), Some((1, false)));
+    assert_eq!(fill_click_in(&actions, 50, 50), Some((2, false)));
+    assert_eq!(fill_click_in(&actions, 7, 50), Some((3, true)));
+}
+
+fn booth_named_as(
+    id: i32,
+    x: i32,
+    z: i32,
+    level: i32,
+    distance: i32,
+    name: &str,
+    actions: &[Option<&str>],
+) -> LocView {
+    LocView {
+        name: Some(name.into()),
+        ..booth(id, x, z, level, distance, actions)
+    }
+}
+
+/// Characterization (T2.2 r2): on a Chebyshev tie the catalog pick is
+/// the lower id, whatever the row order; a strictly nearer row still
+/// beats the tie, and the name/action/plane filters apply before both.
+#[test]
+fn booth_catalog_breaks_a_chebyshev_tie_by_id() {
+    let useq: &[Option<&str>] = &[Some("Use-quickly")];
+    let stand = WorldTile {
+        x: 100,
+        z: 100,
+        level: 0,
+    };
+    let tied = [
+        booth(20, 102, 100, 0, 1, useq),
+        booth(9, 98, 100, 0, 9, useq),
+    ];
+    assert_eq!(
+        booth_catalog(&tied, stand, 4, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(9),
+        "equal Chebyshev distance 2: the lower id wins"
+    );
+    let rows = [
+        booth_named_as(1, 100, 100, 0, 0, "Chest", useq),
+        booth(2, 100, 100, 0, 0, &[Some("Bank")]),
+        booth(3, 100, 100, 1, 0, useq),
+        booth(20, 102, 100, 0, 1, useq),
+        booth(9, 98, 100, 0, 9, useq),
+        booth(30, 101, 100, 0, 8, useq),
+        booth(4, 105, 100, 0, 2, useq),
+    ];
+    assert_eq!(
+        booth_catalog(&rows, stand, 4, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(30),
+        "wrong name/action/plane at the stand and out-of-radius rows never compete; \
+         Chebyshev 1 beats the tied pair at 2"
+    );
+    assert_eq!(
+        booth_catalog(&rows, stand, 2, "bank booth", "use-quickly").map(|row| row.id),
+        Some(30)
+    );
+}
+
+/// Characterization (T2.2 r2): the named and nearest-action picks are
+/// nearest-first over the rows that pass their name/action filters.
+#[test]
+fn booth_named_and_nearest_action_pick_the_nearest_match() {
+    let useq: &[Option<&str>] = &[Some("Use-quickly")];
+    let rows = [
+        booth_named_as(1, 0, 0, 0, 0, "Chest", useq),
+        booth(2, 0, 0, 0, 1, &[Some("Bank")]),
+        booth(3, 0, 0, 0, 5, useq),
+        booth(4, 0, 0, 0, 3, useq),
+    ];
+    assert_eq!(
+        booth_named(&rows, "Bank booth", "Use-quickly", Some(0)).map(|row| row.id),
+        Some(4),
+        "the nearer Chest and the wrong-action booth are filtered out first"
+    );
+    assert_eq!(
+        booth_nearest_action(&rows, 0, "Use-quickly").map(|row| row.id),
+        Some(1),
+        "nearest-action has no name filter, so the Chest at distance 0 wins"
+    );
+    assert_eq!(
+        booth_nearest_action(&rows[1..], 0, "Use-quickly").map(|row| row.id),
+        Some(4)
+    );
+    // The name filter on the exact-tile pick: the first row on the tile
+    // is skipped when its name does not match.
+    let tile = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    assert_eq!(
+        booth_at(&rows, tile, Some("Bank booth")).map(|row| row.id),
+        Some(2)
+    );
+    assert_eq!(
+        booth_at(&rows, tile, Some("Chest")).map(|row| row.id),
+        Some(1)
+    );
+    assert!(booth_at(&rows, tile, Some("Furnace")).is_none());
+}

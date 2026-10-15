@@ -11,11 +11,11 @@ use ratatui::widgets::{Block, Borders, Widget};
 use ratatui::Frame;
 
 use frontend_core::views::script_status_label;
-use frontend_core::Phase;
+use frontend_core::{member_row, state_label, Phase};
 
 use crate::app::TuiApp;
 use crate::commands::{shortcut, Command};
-use crate::fleet::{member_row, state_label, FleetTable};
+use crate::fleet::FleetTable;
 use crate::layout::{shell_rects, Pane, Screen, SizeClass, Tab};
 use crate::log_pane::{render_rows, LogPane};
 use crate::settings::SettingsPane;
