@@ -601,11 +601,34 @@ pub struct AssessReceipt {
     pub route_ticks: u32,
 }
 
+/// Native walk failure classification, independent of Traveller internals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkStallReason {
+    /// The hop exhausted its budget after making partial progress.
+    Expired,
+    /// The hop exhausted its budget without leaving the send tile.
+    Dropped,
+    /// The live scene refused the route's final tile.
+    EndBlocked,
+}
+
+/// Cold terminal data stays shared instead of enlarging every native ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkStall {
+    pub at: WorldTile,
+    pub aiming: WorldTile,
+    pub why: WalkStallReason,
+    pub tries: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
     UserInput,
     RouteEnded,
+    /// A Traveller hop reached its finite budget without its aim being reached.
+    /// Retain its actual position, aim, reason and send count for the owner.
+    Stalled(Arc<WalkStall>),
     Refused,
     Blocked,
     Failed,
@@ -625,12 +648,19 @@ pub struct WalkReceipt {
     pub escape: Option<crate::combat::guard::Escape>,
 }
 impl WalkReceipt {
-    /// Prefer host-supplied detail, then the advisory's model reason, then a
-    /// typed refusal description. Callers use this before generic fallbacks.
+    /// Prefer host detail and a typed stall over an advisory's model reason,
+    /// then a typed refusal. Callers use this before generic fallbacks.
     pub fn failure_detail(&self) -> Option<Arc<str>> {
         self.detail
             .as_ref()
             .map(Arc::clone)
+            .or_else(|| match &self.end {
+                WalkEnd::Stalled(stall) => Some(Arc::from(format!(
+                    "walk stalled ({:?}) at {:?}, aiming at {:?}, tries: {}",
+                    stall.why, stall.at, stall.aiming, stall.tries
+                ))),
+                _ => None,
+            })
             .or_else(|| {
                 self.assessment
                     .as_ref()
@@ -657,12 +687,14 @@ impl WalkReceipt {
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));
                 Arc::clone(&REASON)
             }))),
-            WalkEnd::Aborted | WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
-                Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
-                    static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
-                    Arc::clone(&REASON)
-                })))
-            }
+            WalkEnd::Stalled(_)
+            | WalkEnd::Aborted
+            | WalkEnd::Refused
+            | WalkEnd::Blocked
+            | WalkEnd::Failed => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
+                Arc::clone(&REASON)
+            }))),
         }
     }
 }
@@ -758,6 +790,8 @@ pub enum ActionError {
     UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
+    /// A typed permanent refusal from the shared bank-deposit machine.
+    BankDeposit(crate::bank::ops::DepositFailure),
     /// A hit on the local player closed the dialogue before it finished
     /// (the NPC combat scripts `if_close` on every swing, including a
     /// 0-damage miss). Typed so callers never match on a reason string;
@@ -1007,6 +1041,7 @@ mod defer_budget_tests {
             ActionError::UserInput,
             ActionError::Unavailable(Arc::from("unavailable")),
             ActionError::Failed(Arc::from("failed")),
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];
