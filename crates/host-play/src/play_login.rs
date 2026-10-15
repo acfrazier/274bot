@@ -116,6 +116,9 @@ struct SlotLifecycle {
     last_session: Option<SessionKey>,
     scene_ready: bool,
     latest_event: Option<Event<SessionEventOut>>,
+    /// A boundary event remains available until a consumer takes it, even
+    /// when a later slot event changes the latest status.
+    pending_session_end: Option<Event<SessionEventOut>>,
     last_queue: Option<SessionEventOut>,
     attempt: Option<LoginCancel>,
     unexpected_logout_times: [Option<Instant>; UNEXPECTED_LOGOUT_THRESHOLD],
@@ -135,7 +138,15 @@ impl SlotLifecycle {
             self.session
                 .observe(key, &payload)
                 .expect("owner stamped current session");
-            self.latest_event = Some(Event::new(Scope::Session(key), None, payload));
+            let event = Event::new(Scope::Session(key), None, payload);
+            if matches!(payload, SessionEventOut::SessionEnded { .. })
+                && self.pending_session_end.is_none()
+            {
+                // The consumer takes the oldest unread boundary. The latest
+                // view still reports the current session's event.
+                self.pending_session_end = Some(event.clone());
+            }
+            self.latest_event = Some(event);
         }
     }
 }
@@ -158,6 +169,60 @@ impl SlotLifecycle {
         self.scene_ready = false;
         self.last_queue = None;
         self.slot_event(SessionEventOut::HandshakeOk { kind });
+    }
+
+    fn observe_exit(&mut self, cause: SessionEndCause, resumable: bool) {
+        if !self.mailbox.session_online() {
+            return;
+        }
+        let snapshot = self.mailbox.snapshot();
+        self.boundary_work_allowed = Some(
+            !snapshot.logout_wanted()
+                && !snapshot.turnover_pending()
+                && !matches!(
+                    snapshot.latch(),
+                    Some(LoginLatch::OperatorLogout | LoginLatch::PersistedLogout)
+                ),
+        );
+        self.session_event(SessionEventOut::SessionEnded { cause, resumable });
+        self.scene_ready = false;
+        self.mailbox
+            .observe(LifecycleFact::SessionExited {
+                clean: cause.is_clean(),
+                resumable,
+            })
+            .expect("slot session exit generation exhausted");
+    }
+
+    fn record_unexpected_logout_at(&mut self, now: Instant) -> Option<UnexpectedLogoutRecord> {
+        let snapshot = self.mailbox.snapshot();
+        if snapshot.latch().is_some() || snapshot.logout_wanted() || snapshot.turnover_pending() {
+            return None;
+        }
+        let mut retained = [None; UNEXPECTED_LOGOUT_THRESHOLD];
+        let mut count = 0;
+        for timestamp in self.unexpected_logout_times.iter().flatten().copied() {
+            if now.saturating_duration_since(timestamp) <= UNEXPECTED_LOGOUT_WINDOW {
+                retained[count] = Some(timestamp);
+                count += 1;
+            }
+        }
+        if count < UNEXPECTED_LOGOUT_THRESHOLD {
+            retained[count] = Some(now);
+            count += 1;
+        }
+        self.unexpected_logout_times = retained;
+        let latched = count >= UNEXPECTED_LOGOUT_THRESHOLD;
+        if latched {
+            self.mailbox
+                .observe(LifecycleFact::RepeatGuardTripped {
+                    count: count as u8,
+                    window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+                })
+                .expect("slot repeat-guard generation exhausted");
+            self.clean_exit = None;
+        }
+        Some(UnexpectedLogoutRecord { count, latched })
     }
 }
 
@@ -237,6 +302,7 @@ impl SlotArm {
                 last_session: None,
                 scene_ready: false,
                 latest_event: None,
+                pending_session_end: None,
                 last_queue: None,
                 attempt: None,
                 unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
@@ -368,14 +434,12 @@ impl SlotArm {
     pub fn post_intent(&self, row: Intent) -> Option<PostReceipt> {
         let (receipt, cancel) = {
             let mut lifecycle = self.lifecycle.lock();
-            let before = lifecycle.mailbox.snapshot().world_generation();
             let receipt = match lifecycle.mailbox.post(row) {
                 Ok(receipt) => receipt,
                 Err(api::lifecycle::MailboxError::Closed) => return None,
                 Err(error) => panic!("slot intent generation exhausted: {error}"),
             };
-            let invalidated = receipt.invalidated_attempt()
-                || lifecycle.mailbox.snapshot().world_generation() != before;
+            let invalidated = receipt.invalidated_attempt();
             if invalidated {
                 lifecycle.clean_exit = None;
                 lifecycle.last_queue = None;
@@ -494,8 +558,23 @@ impl SlotArm {
         self.lifecycle.lock().session.current()
     }
 
+    /// The most recently published event, including a newer session's exit.
+    /// Consumers that must not miss a boundary use `take_lifecycle_event`.
     pub fn latest_lifecycle_event(&self) -> Option<Event<SessionEventOut>> {
         self.lifecycle.lock().latest_event.clone()
+    }
+
+    /// Consume the oldest unread session boundary before the latest
+    /// replaceable status event. At most one of each is retained.
+    pub fn take_lifecycle_event(&self) -> Option<Event<SessionEventOut>> {
+        let mut lifecycle = self.lifecycle.lock();
+        if let Some(event) = lifecycle.pending_session_end.take() {
+            if lifecycle.latest_event.as_ref() == Some(&event) {
+                lifecycle.latest_event = None;
+            }
+            return Some(event);
+        }
+        lifecycle.latest_event.take()
     }
 
     pub(super) fn prepared(&self) {
@@ -546,26 +625,9 @@ impl SlotArm {
         ready && lifecycle.session.ready().is_some()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn observe_session_exit(&self, cause: SessionEndCause, resumable: bool) {
-        let mut lifecycle = self.lifecycle.lock();
-        let snapshot = lifecycle.mailbox.snapshot();
-        lifecycle.boundary_work_allowed = Some(
-            !snapshot.logout_wanted()
-                && !snapshot.turnover_pending()
-                && !matches!(
-                    snapshot.latch(),
-                    Some(LoginLatch::OperatorLogout | LoginLatch::PersistedLogout)
-                ),
-        );
-        lifecycle.session_event(SessionEventOut::SessionEnded { cause, resumable });
-        lifecycle.scene_ready = false;
-        lifecycle
-            .mailbox
-            .observe(LifecycleFact::SessionExited {
-                clean: cause.is_clean(),
-                resumable,
-            })
-            .expect("slot session exit generation exhausted");
+        self.lifecycle.lock().observe_exit(cause, resumable);
     }
 
     pub(super) fn take_session_boundary(&self) -> bool {
@@ -763,40 +825,12 @@ impl SlotArm {
         self.lifecycle.lock().mailbox.acknowledge_logout(command);
     }
 
+    #[cfg(test)]
     pub(super) fn record_unexpected_logout_at(
         &self,
         now: Instant,
     ) -> Option<UnexpectedLogoutRecord> {
-        let mut lifecycle = self.lifecycle.lock();
-        let snapshot = lifecycle.mailbox.snapshot();
-        if snapshot.latch().is_some() || snapshot.logout_wanted() || snapshot.turnover_pending() {
-            return None;
-        }
-        let mut retained = [None; UNEXPECTED_LOGOUT_THRESHOLD];
-        let mut count = 0;
-        for timestamp in lifecycle.unexpected_logout_times.iter().flatten().copied() {
-            if now.saturating_duration_since(timestamp) <= UNEXPECTED_LOGOUT_WINDOW {
-                retained[count] = Some(timestamp);
-                count += 1;
-            }
-        }
-        if count < UNEXPECTED_LOGOUT_THRESHOLD {
-            retained[count] = Some(now);
-            count += 1;
-        }
-        lifecycle.unexpected_logout_times = retained;
-        let latched = count >= UNEXPECTED_LOGOUT_THRESHOLD;
-        if latched {
-            lifecycle
-                .mailbox
-                .observe(LifecycleFact::RepeatGuardTripped {
-                    count: count as u8,
-                    window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
-                })
-                .expect("slot repeat-guard generation exhausted");
-            lifecycle.clean_exit = None;
-        }
-        Some(UnexpectedLogoutRecord { count, latched })
+        self.lifecycle.lock().record_unexpected_logout_at(now)
     }
 
     #[cfg(test)]
@@ -873,6 +907,11 @@ impl SlotArm {
         true
     }
 
+    /// An expired unused grant has no network or queue settlement to retire.
+    pub(super) fn clear_unused_attempt(&self) {
+        self.lifecycle.lock().attempt = None;
+    }
+
     /// The sole post-login handoff, before any Ready publication. A late,
     /// cancelled or superseded success cannot be promoted to a session; an
     /// error still reaches the owner's status/retry path when its deadline
@@ -926,6 +965,61 @@ impl SlotArm {
         current || (owned && result.is_err())
     }
 
+    /// Classify and settle one client exit using the same K4 snapshot as
+    /// concurrent Logout/Stop intent dispatch.
+    fn observe_client_exit(
+        &self,
+        cause: SessionEndCause,
+        resumable: bool,
+        host: &str,
+        port: u16,
+        now: Instant,
+    ) -> (
+        bool,
+        Option<LoginLatchReason>,
+        Option<UnexpectedLogoutRecord>,
+    ) {
+        let mut lifecycle = self.lifecycle.lock();
+        let stopping = self.stop.load(Ordering::Acquire);
+        let snapshot = lifecycle.mailbox.snapshot();
+        let latch = snapshot.latch().map(|reason| match reason {
+            LoginLatch::OperatorLogout => LoginLatchReason::OperatorLogout,
+            LoginLatch::PersistedLogout => LoginLatchReason::PersistedLogout,
+            LoginLatch::RepeatGuard {
+                count,
+                window_seconds,
+            } => LoginLatchReason::RepeatedUnexpectedLogouts {
+                count,
+                window_seconds,
+            },
+        });
+        if !lifecycle.mailbox.session_online() {
+            // An offline client cannot mint another session boundary, but a
+            // later dirty transport observation invalidates clean-release
+            // evidence retained from its last boundary.
+            if !cause.is_clean() {
+                lifecycle.clean_exit = None;
+            }
+            return (stopping, latch, None);
+        }
+        lifecycle.clean_exit = cause.is_clean().then(|| CleanExit {
+            observed: now,
+            not_before: now + host::login_queue::LOGIN_START_SPACING,
+            host: host.to_owned(),
+            port,
+            uid: self.uid.load(Ordering::Relaxed),
+            world_generation: snapshot.world_generation(),
+        });
+        let repeat = if !stopping && cause.counts_toward_repeat_guard() {
+            lifecycle.record_unexpected_logout_at(now)
+        } else {
+            None
+        };
+        lifecycle.observe_exit(cause, resumable);
+        (stopping, latch, repeat)
+    }
+
+    #[cfg(test)]
     fn record_session_exit_at(&self, clean: bool, host: &str, port: u16, now: Instant) {
         let mut lifecycle = self.lifecycle.lock();
         lifecycle.clean_exit = clean.then(|| CleanExit {
@@ -987,6 +1081,41 @@ impl SlotArm {
         Some(CLEAN_RELEASE_CADENCE)
     }
 
+    /// The credential value and its invalidation share K4 with publication.
+    /// A start cannot authorize old credentials against a newly saved value.
+    fn sync_login_identity(&self, uid: i32, password: &str) {
+        let cancel = {
+            let mut lifecycle = self.lifecycle.lock();
+            let uid_changed = self.uid.swap(uid, Ordering::Relaxed) != uid;
+            let password_changed = {
+                let mut current = self.password.lock();
+                if **current != *password {
+                    *current = Arc::from(password);
+                    true
+                } else {
+                    false
+                }
+            };
+            if !uid_changed && !password_changed {
+                return;
+            }
+            let receipt = lifecycle
+                .mailbox
+                .post(Intent::LoginIdentityChanged)
+                .expect("slot identity change generation exhausted");
+            lifecycle.clean_exit = None;
+            lifecycle.last_queue = None;
+            lifecycle.slot_event(SessionEventOut::IntentApplied {
+                generation: receipt.generation(),
+            });
+            lifecycle.attempt.clone()
+        };
+        if let Some(cancel) = cancel {
+            cancel.cancel();
+        }
+        self.retry_wake.notify_all();
+    }
+
     pub(super) fn login_password(&self) -> Arc<str> {
         Arc::clone(&self.password.lock())
     }
@@ -994,16 +1123,7 @@ impl SlotArm {
 
 pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     api::hostlog::register_secret(&profile.password);
-    let identity_changed = arm.uid.swap(profile.uid, Ordering::Relaxed) != profile.uid;
-    {
-        let mut password = arm.password.lock();
-        if **password != *profile.password {
-            *password = Arc::from(profile.password.as_str());
-        }
-    }
-    if identity_changed {
-        arm.post_intent(Intent::LoginIdentityChanged);
-    }
+    arm.sync_login_identity(profile.uid, &profile.password);
     arm.random_events
         .store(profile.settings.random_events, Ordering::Relaxed);
     arm.lamp_auto
@@ -1022,12 +1142,18 @@ pub(super) fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
     arm.login_command(ingame).is_some()
 }
 
-/// Whether a granted slot may start its login: not stopped, and the arm
-/// still wants one (a withdrawal, or a relog wanted only by a script that
-/// has since stopped, lands here). `None` gives the grant back when the
-/// caller drops its [`GrantedReservation`].
-pub(super) fn granted_permit_may_start_login(arm: &SlotArm, ingame: bool) -> Option<IntentCommand> {
-    arm.login_command(ingame)
+/// Capture the command and world fence together before resolution/queue
+/// admission. A subsequent Logout→Login cannot authorize this old attempt.
+pub(super) fn capture_login_authorization(
+    arm: &SlotArm,
+    ingame: bool,
+) -> Option<(IntentCommand, u64)> {
+    let lifecycle = arm.lifecycle.lock();
+    lifecycle
+        .mailbox
+        .login_command(ingame)
+        .filter(|_| !arm.stop.load(Ordering::Acquire))
+        .map(|command| (command, lifecycle.mailbox.snapshot().world_generation()))
 }
 
 /// A profile edit can land while this slot waits in the FIFO. `false`: the
@@ -1076,21 +1202,21 @@ impl GrantedReservation {
         }
     }
 
-    /// Start the attempt: the queue marks its start (spacing counts from
-    /// here) and `login` runs with the deadline by which the client must stop
-    /// all socket I/O, and the [`LoginCancel`] the queue fires to shut the
-    /// attempt's socket if its lease ends before it returns. `server_hold`
-    /// sees the result while the attempt still holds the in-flight slot; a
-    /// hold it returns is published in the same queue update that frees the
-    /// slot, so no sibling can be granted in between. `None`: the grant's
-    /// lease ran out before the attempt started (a stalled worker), so
-    /// nothing was attempted and the slot queues again.
+    /// Publish the attempt token before K1 charges a start. A refused
+    /// publication drops the unused reservation without spacing or UID/IP
+    /// settlement. Once started, the queue owns its actual return. `login`
+    /// closes refused/cancelled transport before this method acknowledges
+    /// that return. The hold callback runs before the acknowledgement too.
     pub(super) fn attempt<T, E>(
         &mut self,
+        publish: impl FnOnce(LoginCancel) -> bool,
         login: impl FnOnce(Instant, LoginCancel) -> Result<T, E>,
         server_hold: impl FnOnce(&Result<T, E>) -> Option<Duration>,
     ) -> Option<Result<T, E>> {
         let cancel = LoginCancel::new();
+        if !publish(cancel.clone()) {
+            return None;
+        }
         let started = self
             .queue
             .lock()
@@ -1157,6 +1283,94 @@ pub(super) fn server_hold<T>(
     }
 }
 
+/// Release today's ClientStream before the queue acknowledges retirement.
+/// A successful-but-stale login has installed an in-game session; a refused
+/// login may also have retained a stream despite never owning a session.
+pub(super) fn close_login_transport(client: &mut Client) {
+    if client.ingame {
+        client.logout();
+    } else if let Some(mut stream) = client.stream.take() {
+        stream.close();
+    }
+}
+
+/// The single current-transport login return path. It retains the raw server
+/// response for the shared hold and releases non-session sockets before the
+/// caller acknowledges the queue's retiring flight.
+pub(super) struct SlotLogin<'a> {
+    pub client: &'a mut Client,
+    pub arm: &'a SlotArm,
+    pub command: IntentCommand,
+    pub world_generation: u64,
+    pub username: &'a str,
+    pub password: &'a str,
+    pub reconnect: bool,
+    pub backoff: &'a LoginBackoff,
+}
+
+impl SlotLogin<'_> {
+    pub(super) fn run(
+        self,
+        deadline: Instant,
+        cancel: LoginCancel,
+        after_return: impl FnOnce(&Client),
+    ) -> (Result<bool, LoginError>, Option<Duration>) {
+        if cancel.is_cancelled()
+            || !self
+                .arm
+                .login_attempt_is_current(self.command, self.world_generation)
+        {
+            self.arm.finish_attempt(
+                self.command,
+                self.world_generation,
+                deadline,
+                &cancel,
+                &Ok(()),
+            );
+            return (Ok(false), None);
+        }
+        self.client.set_login_deadline(deadline);
+        self.client.set_login_cancel(cancel.clone());
+        let result = self
+            .client
+            .login(self.username, self.password, self.reconnect);
+        let hold = server_hold(&result, self.backoff);
+        after_return(self.client);
+        let current = self.arm.finish_attempt(
+            self.command,
+            self.world_generation,
+            deadline,
+            &cancel,
+            &result,
+        );
+        if !current || result.is_err() {
+            close_login_transport(self.client);
+        }
+        if !current {
+            (Ok(false), hold)
+        } else {
+            (result.map(|()| true), hold)
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl SlotArm {
+    pub fn complete_login_for_test(&self) {
+        if self.session_key().is_some() {
+            self.observe_session_exit(SessionEndCause::ServerLogout, false);
+        }
+        let command = self.login_command(false).expect("test login wanted");
+        let mut lifecycle = self.lifecycle.lock();
+        let kind = if lifecycle.mailbox.reconnects() {
+            HandshakeKind::Reconnect
+        } else {
+            HandshakeKind::Fresh
+        };
+        lifecycle.login_succeeded(command, kind);
+    }
+}
+
 #[cfg(test)]
 pub(super) fn on_login_success(arm: &SlotArm, command: IntentCommand) {
     let mut lifecycle = arm.lifecycle.lock();
@@ -1174,21 +1388,13 @@ pub(super) fn on_login_success(arm: &SlotArm, command: IntentCommand) {
 pub(super) fn observe_client_session_exit(client: &mut Client, arm: &SlotArm) {
     if let Some(reason) = client.take_session_exit_reason() {
         let cause = SessionEndCause::classify(&reason);
-        let clean = cause.is_clean();
-        arm.record_session_exit_at(
-            clean,
+        let (stopping, latch, repeat) = arm.observe_client_exit(
+            cause,
+            client.session_resumable(),
             &client.config.host,
             client.config.port,
             Instant::now(),
         );
-        let stopping = arm.stop.load(Ordering::Acquire);
-        let latch = arm.login_latch_reason();
-        let repeat = if !stopping && latch != Some(LoginLatchReason::OperatorLogout) {
-            arm.record_unexpected_logout_at(Instant::now())
-        } else {
-            None
-        };
-        arm.observe_session_exit(cause, client.session_resumable());
         match (stopping, latch) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.
