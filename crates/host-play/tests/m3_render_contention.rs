@@ -1,0 +1,567 @@
+//! M3: render contention at N heads (contract §23 §2.5 / §21 measurements),
+//! supplemental Linux evidence for the T4 track. Mac FLOOR stays the
+//! qualification gate; nothing here is a FLOOR number.
+//!
+//! N bots log in to Engine A through the production `Play` path, each slot on
+//! its own thread with a drawing head (the per-frame hook applies
+//! `set_draw(true)`, as the panel's focus switch does). A consumer thread
+//! takes every mailbox at the panel's ~60 Hz, as the panel does. Two render
+//! policies run in one session:
+//!
+//! - `full`: every head focused (full rate, a paint on every 20 ms frame);
+//! - `focus1`: head 0 focused, every other head background (1 fps watch).
+//!
+//! Per cell the harness writes a JSON summary and per-second samples:
+//! paints per head, host raster time per paint (the `performance-profile`
+//! slot timers, which `memory-profile` enables), slot frame-interval
+//! histograms, process CPU, RSS and tracked GPU bytes. Run one backend and
+//! one N per process:
+//!
+//! ```sh
+//! isohome env LIVE=1 BOT_LIVE_NAME_PREFIX=m3 M3_N=4 M3_BACKEND=gpu \
+//!   M3_OUT=/path/to/evidence ENGINE_DIR=... NAV_PACK=... \
+//!   cargo test --release -p host-play --features memory-profile \
+//!   --test m3_render_contention -- --ignored --nocapture
+//! ```
+//!
+//! `M3_BACKEND=cpu` also needs `BOT_CPU=1`. Optional: `M3_WARMUP_S` (10),
+//! `M3_OBSERVE_S` (30), `M3_POLICIES` (`full,focus1`), `M3_PORT` (44594),
+//! `M3_HTTP_PORT` (1080).
+#![cfg(feature = "memory-profile")]
+
+use std::collections::HashMap;
+use std::io::Write as _;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use host::{FrameBuf, SlotInput};
+use host_play::{
+    current_resident_bytes, mint_live_names, run_with_template, sample_process, Play,
+    ProfileOptions, SharedClientTemplate,
+};
+use serde_json::{json, Value};
+use vault::{Profile, ProfileSettings, RasterMode};
+
+/// Frame-interval histogram buckets: 1 ms ceilings 0..249, then 250+.
+const BUCKETS: usize = 251;
+/// The panel's frame-consumer period (its UI loop at ~60 Hz).
+const CONSUMER_PERIOD: Duration = Duration::from_millis(16);
+
+fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn required(key: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| panic!("{key} is required"))
+}
+
+/// Slot-thread frame intervals for one head, written by the per-frame hook.
+struct SlotFrames {
+    last: Mutex<Option<Instant>>,
+    frames: AtomicU64,
+    histogram: [AtomicU64; BUCKETS],
+}
+
+impl SlotFrames {
+    fn new() -> Self {
+        Self {
+            last: Mutex::new(None),
+            frames: AtomicU64::new(0),
+            histogram: [const { AtomicU64::new(0) }; BUCKETS],
+        }
+    }
+
+    fn record(&self, now: Instant) {
+        let previous = self.last.lock().unwrap().replace(now);
+        self.frames.fetch_add(1, Relaxed);
+        if let Some(previous) = previous {
+            let ms = now.duration_since(previous).as_micros().div_ceil(1000) as usize;
+            self.histogram[ms.min(BUCKETS - 1)].fetch_add(1, Relaxed);
+        }
+    }
+
+    fn histogram(&self) -> Vec<u64> {
+        self.histogram.iter().map(|b| b.load(Relaxed)).collect()
+    }
+}
+
+/// One census of every slot's retained sim world, taken on the slot thread
+/// by the per-frame hook (a `Client` never leaves its slot).
+#[derive(Default)]
+struct Census {
+    phase: Mutex<Option<&'static str>>,
+    rows: Mutex<Vec<Value>>,
+}
+
+impl Census {
+    /// Request `phase` from every slot and wait for `n` rows.
+    fn run(&self, phase: &'static str, n: usize) -> Vec<Value> {
+        self.rows.lock().unwrap().clear();
+        *self.phase.lock().unwrap() = Some(phase);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let done = self.rows.lock().unwrap().len();
+            if done >= n {
+                break;
+            }
+            assert!(Instant::now() < deadline, "census {phase}: {done}/{n}");
+            thread::sleep(Duration::from_millis(50));
+        }
+        *self.phase.lock().unwrap() = None;
+        std::mem::take(&mut *self.rows.lock().unwrap())
+    }
+
+    fn observe(&self, client: &client::client::Client, name: &str) {
+        let Some(phase) = *self.phase.lock().unwrap() else {
+            return;
+        };
+        if !client.ingame || client.scene_state != 2 {
+            return;
+        }
+        let mut rows = self.rows.lock().unwrap();
+        if rows.iter().any(|row| row["head"] == name) {
+            return;
+        }
+        let mut row = world_census(client);
+        row["head"] = json!(name);
+        row["phase"] = json!(phase);
+        rows.push(row);
+    }
+}
+
+/// Counts of the sim world's per-tile records, split by what reads them.
+fn world_census(client: &client::client::Client) -> Value {
+    use client::dash3d::ground::{Ground, GroundStamp};
+    use client::dash3d::square::Square;
+    use client::dash3d::BuildArea;
+    let mut squares = 0usize;
+    let mut stamps = 0usize;
+    let mut grounds = 0usize;
+    let mut quick_grounds = 0usize;
+    let mut locs = 0usize;
+    for level in 0..4 {
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                let mut cursor = client.world.square(level, x, z);
+                while let Some(square) = cursor {
+                    squares += 1;
+                    stamps += usize::from(square.overlay_stamp.is_some());
+                    grounds += usize::from(square.ground.is_some());
+                    quick_grounds += usize::from(square.quick_ground.is_some());
+                    locs += usize::from(square.wall.is_some())
+                        + usize::from(square.decor.is_some())
+                        + usize::from(square.ground_decor.is_some());
+                    cursor = square.linked_square.as_deref();
+                }
+            }
+        }
+    }
+    json!({
+        "squares": squares,
+        "square_bytes": squares * std::mem::size_of::<Square>(),
+        "overlay_stamps": stamps,
+        "overlay_stamp_bytes": stamps * std::mem::size_of::<GroundStamp>(),
+        "ground_meshes": grounds,
+        "ground_mesh_inline_bytes": grounds * std::mem::size_of::<Ground>(),
+        "quick_grounds": quick_grounds,
+        "wall_decor_ground_decor": locs,
+        "overlay_pending": client.world.overlay_pending,
+        "share_light_pending": client.world.share_light_pending,
+        "draw": client.draw,
+    })
+}
+
+/// Fixed per-world allocations made at `World::new`, whatever is loaded.
+fn static_world_bytes() -> Value {
+    use client::core::world::{MAX_DYNAMIC_SPRITES, MAX_OCCLUDERS, OCCLUDER_LEVELS};
+    use client::dash3d::occlude::Occlude;
+    use client::dash3d::BuildArea;
+    let side = BuildArea::SIZE as usize + 1;
+    json!({
+        "occluders": OCCLUDER_LEVELS * MAX_OCCLUDERS * std::mem::size_of::<Option<Occlude>>(),
+        "occlusion_cycle_zeroed": OCCLUDER_LEVELS * side * side * std::mem::size_of::<i32>(),
+        "dynamic_sprite_slots": MAX_DYNAMIC_SPRITES * std::mem::size_of::<Option<usize>>(),
+        "square_size": std::mem::size_of::<client::dash3d::square::Square>(),
+    })
+}
+
+/// One head's channels and counters.
+struct HeadProbe {
+    name: String,
+    input: Arc<SlotInput>,
+    mailbox: Arc<FrameBuf>,
+    frames: Arc<SlotFrames>,
+}
+
+/// Cumulative counters at one instant.
+#[derive(Clone)]
+struct Mark {
+    at: Instant,
+    cpu_s: f64,
+    paints: Vec<u64>,
+    raster_ns: Vec<u64>,
+    frames: Vec<u64>,
+    histograms: Vec<Vec<u64>>,
+    taken: u64,
+}
+
+fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
+    let timings: HashMap<String, u64> = host::performance_profile::snapshots()
+        .into_iter()
+        .map(|t| (t.username, t.raster_ns))
+        .collect();
+    Mark {
+        at: Instant::now(),
+        cpu_s: sample_process().1,
+        paints: heads.iter().map(|h| h.mailbox.generation()).collect(),
+        raster_ns: heads
+            .iter()
+            .map(|h| timings.get(&h.name).copied().unwrap_or(0))
+            .collect(),
+        frames: heads
+            .iter()
+            .map(|h| h.frames.frames.load(Relaxed))
+            .collect(),
+        histograms: heads.iter().map(|h| h.frames.histogram()).collect(),
+        taken: taken.load(Relaxed),
+    }
+}
+
+/// Quantile (ms ceiling) of a 1 ms histogram.
+fn quantile(histogram: &[u64], q: f64) -> Option<usize> {
+    let total: u64 = histogram.iter().sum();
+    if total == 0 {
+        return None;
+    }
+    let rank = ((total as f64) * q).ceil().max(1.0) as u64;
+    let mut seen = 0;
+    histogram.iter().position(|&count| {
+        seen += count;
+        seen >= rank
+    })
+}
+
+fn delta(a: &[u64], b: &[u64]) -> Vec<u64> {
+    a.iter().zip(b).map(|(x, y)| y - x).collect()
+}
+
+fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> Value {
+    let secs = to.at.duration_since(from.at).as_secs_f64();
+    let mut rows = Vec::new();
+    let mut groups: HashMap<&str, (Vec<f64>, Vec<f64>, Vec<u64>)> = HashMap::new();
+    for (i, head) in heads.iter().enumerate() {
+        let paints = to.paints[i] - from.paints[i];
+        let raster_ns = to.raster_ns[i] - from.raster_ns[i];
+        let frames = to.frames[i] - from.frames[i];
+        let histogram = delta(&from.histograms[i], &to.histograms[i]);
+        let raster_ms = (paints > 0).then(|| raster_ns as f64 / paints as f64 / 1e6);
+        let group = if focused[i] { "focused" } else { "background" };
+        let entry = groups.entry(group).or_default();
+        entry.0.push(paints as f64 / secs);
+        if let Some(ms) = raster_ms {
+            entry.1.push(ms);
+        }
+        if entry.2.is_empty() {
+            entry.2 = vec![0; BUCKETS];
+        }
+        for (sum, count) in entry.2.iter_mut().zip(&histogram) {
+            *sum += count;
+        }
+        rows.push(json!({
+            "head": head.name,
+            "focused": focused[i],
+            "paints": paints,
+            "paint_fps": paints as f64 / secs,
+            "raster_ms_per_paint": raster_ms,
+            "slot_frames": frames,
+            "frame_interval_ms_p50": quantile(&histogram, 0.50),
+            "frame_interval_ms_p95": quantile(&histogram, 0.95),
+            "frame_interval_ms_p99": quantile(&histogram, 0.99),
+            "frame_interval_ms_max": histogram.iter().rposition(|&c| c > 0),
+        }));
+    }
+    let mean = |v: &[f64]| (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    let max = |v: &[f64]| v.iter().copied().reduce(f64::max);
+    let groups: serde_json::Map<String, Value> = groups
+        .into_iter()
+        .map(|(name, (fps, raster, histogram))| {
+            (
+                name.to_string(),
+                json!({
+                    "heads": fps.len(),
+                    "paint_fps_mean": mean(&fps),
+                    "paint_fps_min": fps.iter().copied().reduce(f64::min),
+                    "raster_ms_per_paint_mean": mean(&raster),
+                    "raster_ms_per_paint_max": max(&raster),
+                    "frame_interval_ms_p50": quantile(&histogram, 0.50),
+                    "frame_interval_ms_p95": quantile(&histogram, 0.95),
+                    "frame_interval_ms_p99": quantile(&histogram, 0.99),
+                }),
+            )
+        })
+        .collect();
+    let gpu = client::profiling::gpu_bytes();
+    json!({
+        "observe_s": secs,
+        "process_cpu_percent": (to.cpu_s - from.cpu_s) / secs * 100.0,
+        "rss_mib": current_resident_bytes().map(|b| b as f64 / 1048576.0),
+        "gpu_tracked_mib": (gpu.buffers + gpu.textures) as f64 / 1048576.0,
+        "gpu_peak_tracked_mib": gpu.peak as f64 / 1048576.0,
+        "frames_taken_by_consumer": to.taken - from.taken,
+        "groups": groups,
+        "heads": rows,
+    })
+}
+
+fn wait_ingame(play: &Play, want: usize, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let ready = play
+            .statuses()
+            .iter()
+            .filter(|s| s.ingame && s.scene_state == 2)
+            .count();
+        if ready >= want {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{ready}/{want} heads in game with a scene after {timeout:?}"
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[test]
+#[ignore = "LIVE=1 Engine A measurement; logs in its own BOT_LIVE_NAME_PREFIX accounts"]
+fn live_m3_render_contention() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let n: usize = required("M3_N").parse().expect("M3_N");
+    let backend = required("M3_BACKEND");
+    let cpu = match backend.as_str() {
+        "cpu" => true,
+        "gpu" => false,
+        other => panic!("M3_BACKEND must be cpu or gpu, got {other}"),
+    };
+    assert_eq!(
+        std::env::var("BOT_CPU").as_deref() == Ok("1"),
+        cpu,
+        "BOT_CPU=1 exactly for the cpu backend"
+    );
+    let out = PathBuf::from(required("M3_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let warmup = Duration::from_secs(env_or("M3_WARMUP_S", 10));
+    let observe = Duration::from_secs(env_or("M3_OBSERVE_S", 30));
+    let policies: Vec<String> = std::env::var("M3_POLICIES")
+        .unwrap_or_else(|_| "full,focus1".into())
+        .split(',')
+        .map(str::to_string)
+        .collect();
+    client::profiling::enable();
+
+    let options = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(env_or("M3_PORT", 44594)),
+        http_port: Some(env_or("M3_HTTP_PORT", 1080)),
+        engine_dir: Some(required("ENGINE_DIR").into()),
+        nav_pack: Some(required("NAV_PACK").into()),
+        ..ProfileOptions::default()
+    };
+    let bound = options
+        .resolve(None)
+        .expect("resolve")
+        .bind()
+        .expect("bind");
+    let names = mint_live_names(n);
+    eprintln!("m3 accounts: {names:?}");
+    let profiles: Vec<Profile> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| Profile {
+            username: name.clone(),
+            password: name.clone().into(),
+            uid: 274_300_000 + i as i32,
+            settings: ProfileSettings {
+                auto_login: true,
+                lowmem: true,
+                raster: if cpu {
+                    RasterMode::Cpu
+                } else {
+                    RasterMode::Gpu
+                },
+                ..ProfileSettings::default()
+            },
+        })
+        .collect();
+    let heads: Vec<HeadProbe> = names
+        .iter()
+        .map(|name| {
+            let input = SlotInput::new();
+            input.set_prefer_cpu(cpu);
+            HeadProbe {
+                name: name.clone(),
+                input,
+                mailbox: FrameBuf::new(),
+                frames: Arc::new(SlotFrames::new()),
+            }
+        })
+        .collect();
+    let channels: HashMap<String, (Arc<SlotInput>, Arc<FrameBuf>)> = heads
+        .iter()
+        .map(|h| {
+            (
+                h.name.clone(),
+                (Arc::clone(&h.input), Arc::clone(&h.mailbox)),
+            )
+        })
+        .collect();
+    let frame_stats: Arc<HashMap<String, Arc<SlotFrames>>> = Arc::new(
+        heads
+            .iter()
+            .map(|h| (h.name.clone(), Arc::clone(&h.frames)))
+            .collect(),
+    );
+    // Heads stay detached (headless) until the census below has run.
+    let draw = Arc::new(AtomicBool::new(false));
+    let census = Arc::new(Census::default());
+    let template = SharedClientTemplate::load(bound).expect("template");
+    let play = {
+        let (draw, census) = (Arc::clone(&draw), Arc::clone(&census));
+        run_with_template(
+            template,
+            false,
+            profiles,
+            move |name| {
+                let (input, mailbox) = &channels[name];
+                (Some(Arc::clone(input)), Some(Arc::clone(mailbox)))
+            },
+            move |client, name, _| {
+                client.set_draw(draw.load(Relaxed));
+                if let Some(stats) = frame_stats.get(name) {
+                    stats.record(Instant::now());
+                }
+                census.observe(client, name);
+            },
+        )
+        .expect("play")
+    };
+
+    // The panel's frame consumer: take every mailbox at ~60 Hz.
+    let stop = Arc::new(AtomicBool::new(false));
+    let taken = Arc::new(AtomicU64::new(0));
+    let consumer = {
+        let mailboxes: Vec<Arc<FrameBuf>> = heads.iter().map(|h| Arc::clone(&h.mailbox)).collect();
+        let (stop, taken) = (Arc::clone(&stop), Arc::clone(&taken));
+        thread::spawn(move || {
+            while !stop.load(Relaxed) {
+                for mailbox in &mailboxes {
+                    if mailbox.take().is_some() {
+                        taken.fetch_add(1, Relaxed);
+                    }
+                }
+                thread::sleep(CONSUMER_PERIOD);
+            }
+        })
+    };
+
+    let login_started = Instant::now();
+    wait_ingame(&play, n, Duration::from_secs(60 + 30 * n as u64));
+    eprintln!(
+        "m3: {n} bots in game after {:.1}s",
+        login_started.elapsed().as_secs_f64()
+    );
+    let rev = std::env::var("M3_GIT_REV").unwrap_or_default();
+
+    // M1 evidence: the sim world each bot retains with no head, then with a
+    // drawing head, on the real scenes these accounts loaded.
+    let mut phases = serde_json::Map::new();
+    for phase in ["headless", "headed"] {
+        draw.store(phase == "headed", Relaxed);
+        thread::sleep(warmup);
+        let rows = census.run(phase, n);
+        let gpu = client::profiling::gpu_bytes();
+        phases.insert(
+            phase.into(),
+            json!({
+                "rss_mib": current_resident_bytes().map(|b| b as f64 / 1048576.0),
+                "gpu_tracked_mib": (gpu.buffers + gpu.textures) as f64 / 1048576.0,
+                "worlds": rows,
+            }),
+        );
+    }
+    std::fs::write(
+        out.join(format!("{backend}-n{n}-census.json")),
+        serde_json::to_string_pretty(&json!({
+            "n": n,
+            "backend": backend,
+            "git_rev": rev,
+            "static_bytes_per_world": static_world_bytes(),
+            "phases": phases,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    for policy in &policies {
+        let focused: Vec<bool> = match policy.as_str() {
+            "full" => vec![true; n],
+            "focus1" => (0..n).map(|i| i == 0).collect(),
+            other => panic!("unknown M3 policy {other}"),
+        };
+        for (head, &focus) in heads.iter().zip(&focused) {
+            head.input.set_full_rate(focus);
+        }
+        thread::sleep(warmup);
+        let cell = format!("{backend}-n{n}-{policy}");
+        let mut samples = std::fs::File::create(out.join(format!("{cell}.samples.jsonl"))).unwrap();
+        let start = mark(&heads, &taken);
+        let mut last = start.clone();
+        while last.at.duration_since(start.at) < observe {
+            thread::sleep(Duration::from_secs(1));
+            let now = mark(&heads, &taken);
+            let ingame = play.statuses().iter().filter(|s| s.ingame).count();
+            let mut sample = summarize(&heads, &focused, &last, &now);
+            sample["t_s"] = json!(now.at.duration_since(start.at).as_secs_f64());
+            sample["ingame"] = json!(ingame);
+            writeln!(samples, "{sample}").unwrap();
+            last = now;
+        }
+        let ingame = play.statuses().iter().filter(|s| s.ingame).count();
+        let mut summary = summarize(&heads, &focused, &start, &last);
+        summary["cell"] = json!(cell);
+        summary["n"] = json!(n);
+        summary["backend"] = json!(backend);
+        summary["policy"] = json!(policy);
+        summary["ingame_at_end"] = json!(ingame);
+        summary["git_rev"] = json!(rev);
+        summary["warmup_s"] = json!(warmup.as_secs());
+        std::fs::write(
+            out.join(format!("{cell}.json")),
+            serde_json::to_string_pretty(&summary).unwrap(),
+        )
+        .unwrap();
+        eprintln!("m3 {cell}: {}", summary["groups"]);
+        assert_eq!(ingame, n, "{cell}: every head stayed in game");
+    }
+
+    for head in &heads {
+        if let Some(arm) = play.arm(&head.name) {
+            arm.request_logout();
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while play.statuses().iter().any(|s| s.ingame) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(250));
+    }
+    stop.store(true, Relaxed);
+    consumer.join().unwrap();
+}
