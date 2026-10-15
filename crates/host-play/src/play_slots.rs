@@ -9,13 +9,14 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
+use api::identity::SlotKeyMinter;
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::{Cache, IfType, IfTypeMut};
 use host::login_queue::LoginBackoff;
 use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
-    ScriptRunPolicy, SlotInput, SlotPark, SlotWake, TitleWait,
+    ScriptRunPolicy, SlotInput, SlotPark, SlotRender, SlotWake, TitleWait,
 };
 use nav::world::NavWorld;
 use vault::Profile;
@@ -48,6 +49,11 @@ use crate::script_runtime::{
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
+
+/// The process's slot worker lifetimes: Play assigns one `SlotKey` per
+/// spawned worker. Process-wide, so two `Play`s in one process never share
+/// a key; never reused, refused at exhaustion.
+static SLOT_KEYS: SlotKeyMinter = SlotKeyMinter::new();
 
 /// Snapshot families whose new evidence can settle a parked machine.
 pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
@@ -429,9 +435,16 @@ impl Play {
         // publish a changed world preference to an existing slot before
         // the already-spawned early return.
         self.remember_profile(profile.clone());
-        if !self.spawned.insert(profile.username.clone()) {
+        if self.spawned.contains(&profile.username) {
             return Ok(());
         }
+        // One `SlotKey` per worker lifetime: every render head the worker
+        // attaches carries it, so a respawned profile is a new slot even when
+        // its name is reused. Minted before any spawn state changes, so a
+        // refused mint leaves nothing behind.
+        let slot_key = SLOT_KEYS.mint().map_err(|error| error.to_string())?;
+        let slot_render = mailbox.map(|mailbox| SlotRender::new(slot_key, mailbox));
+        self.spawned.insert(profile.username.clone());
         let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
         // Store through the shared inner fields so a caller's own clone
         // cannot retain stale profile settings.
@@ -540,7 +553,7 @@ impl Play {
             profile,
             world_round,
             slot_input,
-            mailbox,
+            slot_render,
             Some(park),
             worker_wake,
             arm,
@@ -828,7 +841,7 @@ fn spawn_slot_thread(
     profile: Profile,
     mut world_round: Option<public_worlds::WorldRound>,
     slot_input: Arc<SlotInput>,
-    slot_mailbox: Option<Arc<FrameBuf>>,
+    slot_render: Option<SlotRender>,
     park: Option<SlotPark>,
     slot_wake: SlotWake,
     arm: Arc<SlotArm>,
@@ -1018,7 +1031,7 @@ fn spawn_slot_thread(
                     let _ = client.take_title_login_request();
                     last_relog_park = None;
                     let wait_frames = title_wait.get_or_insert_with(|| {
-                        TitleWait::new(Some(Arc::clone(&slot_input)), slot_mailbox.clone())
+                        TitleWait::new(Some(Arc::clone(&slot_input)), slot_render.clone())
                     });
                     // Leaving title park for handshake: refresh latch from the
                     // arm so an explicit Log in cannot keep a stale TRUE from
@@ -1310,7 +1323,7 @@ fn spawn_slot_thread(
                     Arc::clone(&arm_obs.random_event_policies),
                     connection.profile().and_then(|profile| profile.game_data()),
                     Some(slot_input.clone()),
-                    slot_mailbox.clone(),
+                    slot_render.clone(),
                     park.clone(),
                     run_policy,
                     {

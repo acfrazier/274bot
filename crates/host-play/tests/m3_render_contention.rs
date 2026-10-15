@@ -40,6 +40,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use host::render_head;
 use host::{FrameBuf, SlotInput};
 use host_play::{
     current_resident_bytes, mint_live_names, run_with_template, sample_process, Play,
@@ -128,7 +129,7 @@ impl Publication {
 ///
 /// The host publishes a slot's cumulative raster time at most once a second
 /// (`SlotLoop::publish_profile`), inside the slot frame: after that frame's
-/// paint and before its `FrameBuf::store`. The per-frame hook runs in the
+/// paint and before its head's `FrameBuf::publish`. The per-frame hook runs in the
 /// next slot frame's observe, before that frame's paint, and on every slot
 /// frame. So when the hook first sees a new published total, the mailbox
 /// generation is exactly the number of paints that total covers. Both
@@ -294,6 +295,7 @@ struct Mark {
     frames: Vec<u64>,
     histograms: Vec<Vec<u64>>,
     taken: u64,
+    workspace: render_head::WorkspaceStats,
 }
 
 fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
@@ -308,6 +310,7 @@ fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
             .collect(),
         histograms: heads.iter().map(|h| h.frames.histogram()).collect(),
         taken: taken.load(Relaxed),
+        workspace: render_head::workspace_stats(),
     }
 }
 
@@ -410,6 +413,12 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
         })
         .collect();
     let gpu = client::profiling::gpu_bytes();
+    // GPU scene submissions leased from the one scene workspace in this
+    // interval, and how long those that found it held waited for their
+    // grant (the wrap's retained wait). The max is the process lifetime's.
+    let (ws_from, ws_to) = (from.workspace, to.workspace);
+    let waited = ws_to.waited() - ws_from.waited();
+    let wait = ws_to.wait() - ws_from.wait();
     json!({
         "observe_s": secs,
         "from_t_s": since_epoch(from.at),
@@ -419,6 +428,14 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
         "gpu_tracked_mib": (gpu.buffers + gpu.textures) as f64 / 1048576.0,
         "gpu_peak_tracked_mib": gpu.peak as f64 / 1048576.0,
         "frames_taken_by_consumer": to.taken - from.taken,
+        "scene_workspace": {
+            "leased": ws_to.leased() - ws_from.leased(),
+            "waited": waited,
+            "wait_ms_total": wait.as_secs_f64() * 1e3,
+            "wait_us_mean": (waited > 0).then(|| wait.as_secs_f64() * 1e6 / waited as f64),
+            "max_wait_ms_process": ws_to.max_wait().as_secs_f64() * 1e3,
+            "unleased": ws_to.unleased() - ws_from.unleased(),
+        },
         "groups": groups,
         "heads": rows,
     })
@@ -570,7 +587,8 @@ fn live_m3_render_contention() {
         .expect("play")
     };
 
-    // The panel's frame consumer: take every mailbox at ~60 Hz.
+    // The panel's frame consumer: take every mailbox at ~60 Hz, and run the
+    // independent render pump on the same loop, as the panel window does.
     let stop = Arc::new(AtomicBool::new(false));
     let taken = Arc::new(AtomicU64::new(0));
     let consumer = {
@@ -583,6 +601,7 @@ fn live_m3_render_contention() {
                         taken.fetch_add(1, Relaxed);
                     }
                 }
+                render_head::pump(Instant::now());
                 thread::sleep(CONSUMER_PERIOD);
             }
         })
