@@ -4736,6 +4736,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "tiny-skia",
+ "tokio",
  "v8",
  "vault",
 ]

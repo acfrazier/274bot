@@ -60,7 +60,7 @@ type ValidationBatch = Vec<(script::PreparedCard, Result<(), String>)>;
 
 struct ValidationJob {
     epoch: u64,
-    receiver: std::sync::mpsc::Receiver<ValidationBatch>,
+    receiver: script::ValidationBatch,
     kind: ValidationKind,
 }
 
@@ -203,20 +203,8 @@ impl Scripts {
             return Err("script validation already running".into());
         }
         let epoch = self.reload.generation;
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name("script-reload-validate".into())
-            .spawn(move || {
-                let results = prepared
-                    .into_iter()
-                    .map(|prepared| {
-                        let result = prepared.validate();
-                        (prepared, result)
-                    })
-                    .collect();
-                let _ = sender.send(results);
-            })
-            .map_err(|error| format!("script validation worker: {error}"))?;
+        let receiver = script::LoadIsolate::validate_prepared_batch(prepared)
+            .map_err(|error| error.to_string())?;
         self.reload.validation = Some(ValidationJob {
             epoch,
             receiver,
@@ -225,8 +213,8 @@ impl Scripts {
         Ok(())
     }
 
-    /// Fold a finished validation worker. The worker owns every throwaway
-    /// V8 runtime; this only commits or reports its bounded result.
+    /// Fold a finished ValidationSeat batch, accepting only this reload's
+    /// current generation.
     pub(super) fn poll_reload_validation<Io>(&mut self, core: &mut OperatorSession<Io>) {
         use std::sync::mpsc::TryRecvError;
         let batch = match self.reload.validation.as_ref() {

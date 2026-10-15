@@ -160,12 +160,23 @@ value applies; omission is not proof of no requirement.
 
 | | Compiled (Browse our cards) | Load / catalog (operator file or `$RS2B0T`) |
 | --- | --- | --- |
-| When V8 exists | Never | Start of a **JS/TS** picker card only |
+| When V8 exists | Never | JS/TS Start or isolated catalog validation only |
 | Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
 | House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
+
+The process root calls `script::bootstrap_v8_platform()` on its main thread
+before creating any V8-using worker. A worker cannot bootstrap the protected
+platform after that point. One Tokio runtime bridges the per-bot isolate
+threads; one supervisor owns execution/hook deadlines and physical retirement.
+Dropping a Load handle does not release its process isolate reservation until
+the V8 thread exits. A bounded quarantine retains over-deadline threads; when
+full, new JS is refused instead of silently detaching another worker.
+Catalog refresh validation uses one serialized, bounded process seat. An
+invalidated refresh cancels its queued and remaining cards; the current
+generation alone can apply the returned prepared cards.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and

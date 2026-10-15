@@ -924,7 +924,6 @@ fn join_detached_returns_immediately_and_delivers_onstop_logs() {
         logs.iter().any(|l| l.contains("stopped-ok")),
         "onStop log missing: {logs:?}"
     );
-    let _ = abandoned_isolate_count();
 }
 
 fn machine_tick(iso: &LoadIsolate, n: u64) {
