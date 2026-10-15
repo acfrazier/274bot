@@ -640,15 +640,21 @@ mod tests {
         assert!(loaded.collapsed.is_empty());
     }
 
-    /// A corrupt preferences file (not JSON) is moved aside byte for byte
-    /// to `panel-ui.json.corrupt-<time>` when it is read (T5.2 r4), and the
-    /// panel then saves into fresh preferences; no `.new` side file.
+    /// A corrupt preferences file (not JSON) is refused by reads, so the
+    /// panel starts from defaults; the panel's next save moves it aside
+    /// byte for byte to `panel-ui.json.corrupt-<time>` and lands in fresh
+    /// preferences (T5.2 r4, the recovery the old shared writer made); no
+    /// `.new` side file.
     #[test]
     fn corrupt_prefs_are_moved_aside_and_the_save_lands_in_fresh_preferences() {
         let (dir, prefs) = scratch("ui-corrupt");
         let corrupt = b"{ not valid json";
         std::fs::write(prefs.path(), corrupt).unwrap();
-        assert!(prefs.reload().unwrap().is_empty(), "fresh preferences");
+        prefs
+            .reload()
+            .expect_err("a corrupt preferences file is refused by reads");
+        assert_eq!(load_from(&prefs), PanelUiState::default());
+        assert_eq!(std::fs::read(prefs.path()).unwrap(), corrupt);
         let state = PanelUiState {
             last_focus: Some("alice".into()),
             ..Default::default()

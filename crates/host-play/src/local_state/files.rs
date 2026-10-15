@@ -12,8 +12,9 @@
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
 //! until a later read accepts it. The one exception is a preferences file
 //! whose content is malformed (not JSON, or JSON that is not an object):
-//! the service moves it aside under its lock, byte for byte, and starts
-//! fresh preferences ([`corrupt_preferences`], [`quarantine_copy`]). A file
+//! when a save reads it, the service moves it aside under its lock, byte
+//! for byte, and starts fresh preferences ([`corrupt_preferences`],
+//! [`quarantine_copy`]); every other read refuses it. A file
 //! whose content the service cannot represent whole (unknown fields, rows
 //! it cannot write back as read) is read but never rewritten
 //! ([`Rewrite::Refused`]), the same rule in every domain. What a write
