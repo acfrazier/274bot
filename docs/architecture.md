@@ -526,6 +526,11 @@ libtest exception.
 | `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging) |
 | `quester_paths.rs` | durable Quester Path configuration | asynchronous folder reload |
 
+The walk-map decode corpus fixture compares every manifest-listed producer tile
+through the shared controller with the legacy test-only decoder. It compares
+serialized identity, generation, tile key and RGBA bytes, and checks ticket
+release after every result. The legacy decoder is not a production fallback.
+
 Accepted native copies keep their Start hold on the existing preparation and
 profile-write operations, not on a separate completion tracker. Preparation
 failure, Cancel, vault lock or slot removal releases the affected hold without

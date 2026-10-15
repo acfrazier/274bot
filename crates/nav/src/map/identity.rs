@@ -4,7 +4,7 @@
 
 use super::{MapError, Rows, Text};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest as _, Sha256};
+use sha2::{Digest as ShaDigest, Sha256};
 use std::fmt;
 
 pub const IMAGE_SCHEMA: u16 = 1;
