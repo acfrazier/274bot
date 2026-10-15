@@ -408,10 +408,11 @@ latches. Paths marked `owns_inventory` retain their authored inventory steps.
 Automatic coin funding is not provided.
 
 Needs are planned from the account's bank memory. The host keeps one per
-account: the rows of the bank as last seen open, saved to
-`~/.274bot/bank-hints/<profile>/<account>.json` when the bank closes and loaded
-at login as an advisory hint. After a new login the rows stay but count only as
-that hint until the bank is opened again. A bank never seen costs one scan trip,
+account: the rows of the bank as last seen open, saved through the process
+local-state service to `<state root>/bank-hints/<profile>/<account>.json`
+(the state root is `~/.274bot`, resolved once at launch) when the bank closes
+and loaded at login as an advisory hint. After a new login the rows stay but
+count only as that hint until the bank is opened again. A bank never seen costs one scan trip,
 and a shortage that only the saved hint predicts costs one verifying trip. A
 shortage in a bank seen open this login is final: a required provisioning item
 blocks in place, and an authored `bank` `withdraw` refuses before any walk with
