@@ -15,8 +15,8 @@ use nav::contract::{BoundZoneExempt, BoundZoneKey, LegView, RouteView, Wildernes
 use std::fmt::{self, Write};
 
 /// The owner-boundary facts an assessment runs over: the pack's zone table
-/// and wilderness views (both of the route's pack), the risk facts built
-/// for that pack, and the selected combat tables.
+/// and wilderness views (both of the route's pack), the NPC-keyed risk
+/// facts, and the selected combat tables.
 #[derive(Clone, Copy)]
 pub struct Estimate<'a> {
     pub zones: Option<ZoneTableView<'a>>,
@@ -837,8 +837,11 @@ pub fn admission_passes(
         if granted(crossing)? {
             continue;
         }
-        if let Some(row) = rows(plan, crossing).iter().find(|row| row.unknown()) {
-            return Err(UnknownWhy::Kind(row.kind));
+        if let Some(class) = rows(plan, crossing)
+            .iter()
+            .find_map(|row| row.unknown_kind())
+        {
+            return Err(UnknownWhy::Kind(class));
         }
         if matches!(assessment.input.poison, PoisonState::Unknown { .. }) {
             return Err(UnknownWhy::Poison);
@@ -903,23 +906,18 @@ fn assess_inner(
     let plan = build_plan(path, zones, context.risks, context.wilderness, &input)?;
     let mut unknown = input_problem(&input, context.combat);
     for row in &plan.intervals {
-        if row.unknown() {
-            let kind = row.kind;
-            let class = context
-                .risks
-                .kind(kind)
-                .and_then(|fact| fact.unknown_for(input.map_members));
+        if let Some(class) = row.unknown_kind() {
             let _ = write!(
                 reason,
                 "{}: {:?}; ",
                 zones.zone(row.zone).map_err(nav_identity)?.kind().label(),
-                class
+                Some(class)
             );
             if unknown.is_none() {
                 unknown = Some(match class {
-                    Some(UnknownKind::MissingFacts) => UnknownWhy::MissingFacts,
-                    Some(UnknownKind::Overflow) => UnknownWhy::Overflow,
-                    _ => UnknownWhy::Kind(kind),
+                    UnknownKind::MissingFacts => UnknownWhy::MissingFacts,
+                    UnknownKind::Overflow => UnknownWhy::Overflow,
+                    _ => UnknownWhy::Kind(class),
                 });
             }
             break;
