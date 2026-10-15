@@ -194,14 +194,6 @@
       "reason": "F0 baseline seam classification."
     },
     {
-      "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeController",
-      "path": "crates/frontend-core/src/map_decode.rs",
-      "symbol": "WalkMapDecodeController",
-      "classification": "owning",
-      "owner": "T3",
-      "reason": "T5.W(walk-map-decode) keeps one accepted decode ticket and one replaceable pending demand."
-    },
-    {
       "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeError",
       "path": "crates/frontend-core/src/map_decode.rs",
       "symbol": "WalkMapDecodeError",
