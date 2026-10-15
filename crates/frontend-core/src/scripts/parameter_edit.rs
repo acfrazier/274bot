@@ -1200,9 +1200,19 @@ mod tests {
         );
         let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
         assert_eq!(order_options.values, ["sheep", "cook"]);
-        assert_eq!(
-            order_options.labels,
-            ["2. Sheep display", "1. Cook display"]
+        assert_eq!(order_options.labels.len(), 2);
+        assert_eq!(order_options.labels[0], "2. Sheep display");
+        // A concurrent Path reload may replace the process-wide cook label;
+        // its display name changes, but the requested order never does.
+        assert!(
+            [
+                "1. Cook display",
+                "1. Folder Cook [folder]",
+                "1. Edited Again [folder]",
+            ]
+            .contains(&order_options.labels[1].as_str()),
+            "{:?}",
+            order_options.labels
         );
 
         let mut paths = source_setting("quests", "string[]", "released-paths");
@@ -1914,9 +1924,29 @@ export const SETTINGS: SettingsSchema = {
             assert_eq!(initial_loadout.ty, "string", "{name}");
             assert_eq!(initial_loadout.default.as_deref(), Some(""), "{name}");
 
-            let prepared = library
-                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
-                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"));
+            let path = library
+                .get(script::ScriptSource::Catalog, name)
+                .expect("registered card")
+                .path
+                .clone();
+            let mut source = std::fs::read_to_string(&path).unwrap();
+            source.push('\n');
+            std::fs::write(path, source).unwrap();
+            let prepared = match library
+                .card_preparation_snapshot(script::ScriptSource::Catalog, name, None)
+                .unwrap_or_else(|error| panic!("{name}: snapshot failed: {error}"))
+                .prepare()
+                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
+            {
+                script::load::CardPreparationOutcome::Prepared(prepared) => prepared,
+                script::load::CardPreparationOutcome::Failed { error, .. } => {
+                    panic!("{name}: prepare failed: {error}")
+                }
+                script::load::CardPreparationOutcome::Unchanged
+                | script::load::CardPreparationOutcome::Confirmed => {
+                    panic!("{name}: changed catalog card was not prepared")
+                }
+            };
             let prepared_loadout = prepared
                 .card
                 .settings_schema

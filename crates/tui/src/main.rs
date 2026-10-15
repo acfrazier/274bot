@@ -18,5 +18,11 @@ fn main() -> ExitCode {
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
     // The session log records the result when it opens.
     host_play::fd_limit::raise_at_startup();
-    tui::bin::main()
+    let result = tui::bin::main();
+    if let Err(error) = script::work_admission::WorkService::shutdown_if_started() {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+        ExitCode::FAILURE
+    } else {
+        result
+    }
 }

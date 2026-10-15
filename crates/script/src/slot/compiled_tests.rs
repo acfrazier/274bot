@@ -46,6 +46,87 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn large_catalogue_job_and_operator_start_both_complete() {
+    use crate::preparation::{self, PreparationInput, PreparationKind};
+    use api::identity::Scope;
+
+    const SOURCE_BYTES: usize = 64 * 1024 * 1024;
+    let source = vec![0_u8; SOURCE_BYTES];
+    let (entered, started) = std::sync::mpsc::sync_channel(0);
+    let (release, released) = std::sync::mpsc::sync_channel(0);
+    let large = preparation::submit(
+        PreparationKind::Catalogue,
+        Scope::Process,
+        PreparationInput::new(1, source.len(), 32 * 1024 * 1024, 32 * 1024 * 1024).unwrap(),
+        move |_| {
+            entered.send(()).unwrap();
+            released.recv().unwrap();
+            source.len()
+        },
+    )
+    .unwrap();
+    started
+        .recv_timeout(Duration::from_secs(5))
+        .expect("large catalogue entered the worker");
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_409);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(slot.state(), RunState::Starting);
+    release.send(()).unwrap();
+    assert_eq!(large.join().unwrap(), SOURCE_BYTES);
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+}
+
+#[test]
+fn oversized_native_settings_have_a_typed_visible_refusal() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_411);
+    let bag = SettingsBag::from_iter([(
+        "oversized".into(),
+        serde_json::Value::String("x".repeat(8 * 1024 * 1024)),
+    )]);
+    let error = slot
+        .start_compiled(
+            "account",
+            crate::CompiledId("Sherlock"),
+            Arc::new(bag),
+            selected(),
+            Arc::default(),
+        )
+        .expect_err("oversized settings must not enter the work ledger");
+    assert_eq!(
+        error,
+        StartError::WorkRefused(api::work::SubmissionRefusal::InvalidArgument),
+    );
+    assert!(error.to_string().contains("preparation refused"));
+    assert_eq!(slot.state(), RunState::Idle);
+}
+
+#[test]
+fn native_card_policy_timing() {
+    let _selected = selected();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_410);
+    let start_at = Instant::now();
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    eprintln!("NATIVE_START_POLICY elapsed={:?}", start_at.elapsed());
+    let restart_at = Instant::now();
+    restart_and_settle(&mut slot, restart_at);
+    eprintln!("NATIVE_RESTART_POLICY elapsed={:?}", restart_at.elapsed());
+}
+
+#[test]
+fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
+    let mut output = Output::default();
+    output.settings_applied(0);
+    assert_eq!(output.applied, None);
+    output.settings_applied(7);
+    assert_eq!(output.applied.map(std::num::NonZeroU64::get), Some(7));
+}
+
+#[test]
 fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(10);
@@ -92,9 +173,6 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(11);
-    let retained = Arc::new(Mutex::new(RetainedMemory::default()));
-    let held = retained.lock().unwrap();
-    slot.retained = Some(Arc::clone(&retained));
     start(&mut slot, SettingsBag::new());
     // Keep the real worker handle so this test can force drain of a completed
     // old reply. In production Stop discards it, making resurrection impossible.
@@ -103,7 +181,6 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     start(&mut slot, SettingsBag::new());
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     let replacement = slot.native_run().unwrap();
-    drop(held);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !stale.worker.is_finished() {
         assert!(Instant::now() < deadline);
@@ -114,6 +191,25 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     assert_eq!(slot.native_run(), Some(replacement));
     assert_eq!(slot.state(), RunState::Running);
     assert!(slot.preparing.is_none());
+}
+
+#[test]
+fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(12);
+    let retained = Arc::new(Mutex::new(RetainedMemory::default()));
+    slot.retained = Some(Arc::clone(&retained));
+    let held = retained.lock().unwrap();
+    start(&mut slot, SettingsBag::new());
+    assert!(matches!(
+        settle(&mut slot),
+        StartOutcome::Rejected(StartError::Unavailable(message))
+            if message.contains("retained memory")
+    ));
+    assert!(slot.native_run().is_none());
+    drop(held);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
 }
 
 struct Receiver {
@@ -314,13 +410,14 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
             Arc::default(),
             PanickingConfig(dropped),
         );
-        let (release, gate) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            gate.recv().unwrap();
-            PreparationResult(Some(Ok(*run)))
-        });
+        let worker = preparation::submit(
+            PreparationKind::Profile,
+            api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(30).unwrap()),
+            PreparationInput::new(0, 0, 1024, 1024).unwrap(),
+            move |_| PreparationResult(Some(Ok(*run))),
+        )
+        .unwrap();
         if finished {
-            release.send(()).unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
             while !worker.is_finished() {
                 assert!(Instant::now() < deadline);
@@ -332,9 +429,6 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
             worker,
         }));
         slot.stop();
-        if !finished {
-            release.send(()).unwrap();
-        }
         observed.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(slot.state(), RunState::Idle);
     }
@@ -372,6 +466,7 @@ fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
             Arc::new(SettingsBag::new()),
             selected(),
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -396,6 +491,7 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
             ),
             selected(),
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -1776,6 +1872,7 @@ mod api_gather_seat {
                     bag,
                     Arc::clone(&cx.selected),
                     Arc::clone(&cx.banks),
+                    None,
                 )
                 .unwrap();
                 instance = Some(
@@ -1797,9 +1894,9 @@ mod api_gather_seat {
         .unwrap()
         .join()
         .unwrap();
-        let live = allocation_counter::measure(|| {
-            run(&mut slot, 209);
-            installed(&mut slot, &snapshot);
+        let dispatched = allocation_counter::measure(|| run(&mut slot, 209));
+        let installed_heap = allocation_counter::measure(|| installed(&mut slot, &snapshot));
+        let polled = allocation_counter::measure(|| {
             for tick in 2..18 {
                 poll(&mut slot, &snapshot, tick, false);
                 if slot.has_native_actions() {
@@ -1808,8 +1905,14 @@ mod api_gather_seat {
             }
         });
         assert!(slot.has_native_actions(), "actual native batch measured");
-        let exclusive = worker.bytes_current + live.bytes_current;
-        println!("API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; host live={live:?}; exclusive={exclusive}B", std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>());
+        let exclusive = worker.bytes_current
+            + dispatched.bytes_current
+            + installed_heap.bytes_current
+            + polled.bytes_current;
+        println!(
+            "API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
+            std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
+        );
         assert_eq!(
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
@@ -2073,7 +2176,7 @@ fn native_status_logs_each_phase_or_failure_change_once() {
     const SLOT: &str = "status-change-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
 
@@ -2147,7 +2250,7 @@ fn native_status_logs_present_fields_as_plain_text() {
     const SLOT: &str = "status-format-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut working = status_line_test_status(NativePhase::Working, None);
@@ -2201,7 +2304,7 @@ fn native_status_logs_gatherer_method_area_target_and_reason() {
     const SLOT: &str = "status-diagnose-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut blocked = status_line_test_status(
@@ -2251,7 +2354,7 @@ fn native_status_logs_gatherer_last_event_at_info() {
     const SLOT: &str = "status-last-event-info";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut first = status_line_test_status(NativePhase::Working, None);
@@ -2318,7 +2421,7 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
             Some(selected()),
         )
         .unwrap();
-        slot.compiled.as_mut().unwrap().output.account = slot_name.to_owned();
+        slot.compiled.as_mut().unwrap().output.account = Some(slot_name.into());
         tick(&mut slot);
 
         assert_eq!(slot.state(), RunState::Idle);

@@ -46,6 +46,39 @@ impl ScriptNavPaint {
         }
     }
 }
+
+/// One prepared native-card configuration; an optional Quester registry is
+/// published only after the WorkAdmission result is consumed by its owner.
+pub struct PreparedScriptConfig {
+    config: Arc<script::native::PreparedConfig>,
+    registry: Option<script::quester::registry::PreparedRegistry>,
+}
+
+impl PreparedScriptConfig {
+    /// Commit a current Quester snapshot after the caller's operation and run
+    /// identity fences pass. A stale or cancelled result is dropped instead.
+    pub fn commit(
+        self,
+        identity: api::identity::WorkIdentity,
+    ) -> Result<Arc<script::native::PreparedConfig>, script::native::StartError> {
+        if let Some(registry) = self.registry {
+            script::quester::registry::commit_snapshot(registry, identity, identity).map_err(
+                |error| {
+                    script::native::StartError::Unavailable(
+                        format!(
+                            "{}: {}",
+                            error.code,
+                            error.detail.as_deref().unwrap_or("Path reload failed")
+                        )
+                        .into(),
+                    )
+                },
+            )?;
+        }
+        Ok(self.config)
+    }
+}
+
 /// Cloneable isolate-start handle for slot-thread live pumps that cannot
 /// hold `&Play` (the per-frame hook is built before `Play` is stored).
 #[derive(Clone)]
@@ -455,28 +488,197 @@ impl Play {
         self.script_start_hold.lock().unwrap().upgrade()
     }
 
-    /// A settings preparer has only shared pinned resources, no slot or game
+    /// A profile preparer has only shared pinned resources, no slot or game
     /// action handle. Frontend persistence follows successful typed preparation.
+    /// The accepted job is charged to the one process WorkAdmission worker.
     pub fn script_prepare_config(
         &self,
         id: script::CompiledId,
         revision: u64,
         bag: Arc<script::native::SettingsBag>,
     ) -> Result<
-        std::thread::JoinHandle<
-            Result<Arc<script::native::PreparedConfig>, script::native::StartError>,
-        >,
-        String,
+        script::preparation::PreparedTask<Result<PreparedScriptConfig, script::native::StartError>>,
+        script::preparation::PreparationError,
     > {
-        let selected = self
-            .game_data
-            .clone()
-            .ok_or("selected game data unavailable")?;
+        let selected = self.game_data.clone().ok_or_else(|| {
+            script::preparation::PreparationError::Unavailable(
+                "selected game data unavailable".into(),
+            )
+        })?;
         let banks = Arc::clone(&self.named_banks);
-        api::selected::FamilyPreparation::run(move |worker| {
-            script::slot::prepare_config(worker, id, revision, bag, selected, banks)
-        })
-        .map_err(|error| error.to_string())
+        let quester = id == script::quester::card::CARD.id;
+        let cold_gathering =
+            id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
+        let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)?;
+        let mut folder_source = quester.then(script::quester::registry::source_for_preparation);
+        let input = if let Some(source) = folder_source.as_ref() {
+            script::preparation::PreparationInput::for_quester_folder(
+                revision,
+                settings_input,
+                source,
+            )?
+        } else if cold_gathering {
+            settings_input.with_gathering_family_decode()
+        } else {
+            settings_input
+        };
+        enum Stage {
+            Registry(Arc<script::native::SettingsBag>),
+            Decode(Arc<script::native::SettingsBag>),
+            Configure(Arc<script::native::SettingsBag>),
+            Done,
+        }
+        let mut stage = if quester {
+            Stage::Registry(bag)
+        } else if cold_gathering {
+            Stage::Decode(bag)
+        } else {
+            Stage::Configure(bag)
+        };
+        let mut registry_preparation = None;
+        let mut registry_quests = None;
+        let mut prepared_registry = None;
+        let mut registry_actions = 0_u32;
+        script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            move |worker| match std::mem::replace(&mut stage, Stage::Done) {
+                Stage::Registry(bag) => {
+                    registry_actions = registry_actions
+                        .checked_add(1)
+                        .expect("bounded Quester registry action count");
+                    let result = (|| -> Result<
+                        Option<script::quester::registry::PreparedRegistry>,
+                        script::native::StartError,
+                    > {
+                        if registry_preparation.is_none() {
+                            let quests = Arc::new(
+                                api::quest_facts::QuestCatalog::from_identity(
+                                    selected.quest_identity(),
+                                )
+                                .map_err(script::native::StartError::Facts)?,
+                            );
+                            registry_preparation = Some(
+                                script::quester::registry::RegistryPreparation::from_source(
+                                    folder_source.take().expect("Quester folder source captured"),
+                                    Arc::clone(&selected),
+                                    Arc::clone(&quests),
+                                )
+                                .map_err(|error| {
+                                    script::native::StartError::Unavailable(
+                                        format!(
+                                            "{}: {}",
+                                            error.code,
+                                            error.detail.as_deref().unwrap_or("Path reload failed")
+                                        )
+                                        .into(),
+                                    )
+                                })?,
+                            );
+                            registry_quests = Some(quests);
+                        }
+                        registry_preparation
+                            .as_mut()
+                            .expect("registry preparation initialized")
+                            .step(worker)
+                            .map_err(|error| {
+                                script::native::StartError::Unavailable(
+                                    format!(
+                                        "{}: {}",
+                                        error.code,
+                                        error.detail.as_deref().unwrap_or("Path reload failed")
+                                    )
+                                    .into(),
+                                )
+                            })
+                    })();
+                    match result {
+                        Ok(Some(candidate)) => {
+                            registry_preparation = None;
+                            prepared_registry = Some(candidate);
+                            stage = Stage::Configure(bag);
+                            script::preparation::CooperativePreparationStep::Continue {
+                                completed: registry_actions,
+                                total: Some(registry_actions),
+                            }
+                        }
+                        Ok(None) => {
+                            stage = Stage::Registry(bag);
+                            script::preparation::CooperativePreparationStep::Continue {
+                                completed: registry_actions,
+                                total: None,
+                            }
+                        }
+                        Err(error) => script::preparation::CooperativePreparationStep::Complete {
+                            output: Err(error),
+                            completed: registry_actions,
+                            total: Some(registry_actions),
+                        },
+                    }
+                }
+                Stage::Decode(bag) => match selected.prepare_gathering(worker) {
+                    Ok(_) => {
+                        stage = Stage::Configure(bag);
+                        script::preparation::CooperativePreparationStep::Continue {
+                            completed: 1,
+                            total: Some(2),
+                        }
+                    }
+                    Err(error) => script::preparation::CooperativePreparationStep::Complete {
+                        output: Err(script::native::StartError::Facts(error)),
+                        completed: 1,
+                        total: Some(2),
+                    },
+                },
+                Stage::Configure(bag) => {
+                    let ready = if quester {
+                        Some(script::quester::card::QuesterRegistryReady::new(
+                            prepared_registry
+                                .as_ref()
+                                .expect("Quester registry prepared")
+                                .registry()
+                                .clone(),
+                            registry_quests
+                                .take()
+                                .expect("Quester quest facts prepared"),
+                        ))
+                    } else {
+                        None
+                    };
+                    script::preparation::CooperativePreparationStep::Complete {
+                        output: script::slot::prepare_config(
+                            worker,
+                            id,
+                            revision,
+                            bag,
+                            Arc::clone(&selected),
+                            Arc::clone(&banks),
+                            ready,
+                        )
+                        .map(|config| PreparedScriptConfig {
+                            config,
+                            registry: prepared_registry.take(),
+                        }),
+                        completed: if quester {
+                            registry_actions + 1
+                        } else if cold_gathering {
+                            2
+                        } else {
+                            1
+                        },
+                        total: Some(if quester {
+                            registry_actions + 1
+                        } else if cold_gathering {
+                            2
+                        } else {
+                            1
+                        }),
+                    }
+                }
+                Stage::Done => unreachable!("completed preparation is not dispatched"),
+            },
+        )
     }
 
     pub fn script_configure_compiled(

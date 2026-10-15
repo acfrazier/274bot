@@ -13,8 +13,8 @@ use super::{
     parse_live_args, progress_channel, request_clean_stop_capture, request_native_failure_capture,
     runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
-    StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    PanelState, ProfilePrepareJob, ProfilePreparePending, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
@@ -682,7 +682,7 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
     }
 }
 
-fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
+fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvironment) {
     let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
@@ -702,6 +702,85 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
     };
+    (root, options, env)
+}
+
+fn profile_prepare_task(
+    generation: u64,
+    result: Result<Arc<SharedClientTemplate>, String>,
+) -> script::preparation::PreparedTask<Result<Arc<SharedClientTemplate>, String>> {
+    let result_bytes = std::mem::size_of_val(&result)
+        + match &result {
+            Ok(_) => 0,
+            Err(error) => error.capacity(),
+        };
+    let input = script::preparation::PreparationInput::new(generation, 0, 0, result_bytes).unwrap();
+    script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        api::identity::Scope::Process,
+        input,
+        move |_| result,
+    )
+    .unwrap()
+}
+
+fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "WorkAdmission preparation did not settle"
+        );
+        thread::yield_now();
+    }
+}
+
+fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
+    let input = script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap();
+    let mut tasks = Vec::new();
+    loop {
+        match script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            |_| (),
+        ) {
+            Ok(task) => {
+                tasks.push(task);
+                assert!(
+                    tasks.len() <= 64,
+                    "WorkAdmission accepted more jobs than its fixed bound"
+                );
+            }
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => break,
+            Err(error) => panic!("could not occupy WorkAdmission: {error}"),
+        }
+    }
+    for task in &tasks {
+        wait_for_preparation(task);
+    }
+    tasks
+}
+
+fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drive_startup(state, startup);
+        if !startup.in_flight() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "panel startup did not settle through WorkAdmission"
+        );
+        thread::yield_now();
+    }
+}
+
+fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
+    let (root, options, env) = startup_profile_inputs();
     let template = options
         .resolve_with_env(None, &env)
         .unwrap()
@@ -713,41 +792,22 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         .configure_profile_with_env(options, env)
         .unwrap();
     let generation = state.session.profile_generation();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender.send(Ok(template)).unwrap();
-    let (_, progress) = progress_channel(host_play::progress::ProfileProgress::steps(
-        host_play::progress::ProfileProgressStage::LoadingGameData,
-        4,
-        4,
-    ));
-    let startup = StartupPreparation {
-        prepare: Some(ProfilePrepareJob {
-            generation,
-            receiver,
-            progress,
-        }),
-        validate: None,
-        pending_boot: Some(boot),
-        failed_generation: None,
-    };
+    state
+        .session
+        .finish_profile_preparation(generation, Ok(template));
+    assert!(state.session.profile_bound());
+    let startup = StartupPreparation::new(Some(boot));
     (state, startup, root)
 }
 
 #[test]
-fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
+fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile() {
     let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let mut validation = startup.validate.take().expect("final validation worker");
-    let result = validation
-        .receiver
-        .recv_timeout(Duration::from_secs(2))
-        .expect("final validation completion");
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender.send(result).unwrap();
-    validation.receiver = receiver;
-    startup.validate = Some(validation);
+    let validation = startup.validate.as_ref().expect("final validation job");
+    wait_for_preparation(&validation.task);
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.core.vault().is_some());
@@ -761,23 +821,87 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
-    let validation = startup.validate.take().expect("final validation worker");
+    let validation = startup.validate.take().expect("final validation job");
     assert!(state.session.profile_preparing());
     assert!(state.session.core.vault().is_none());
     assert!(state.session.core.play().is_none());
     assert!(state.session.core.slots().is_empty());
-    assert!(validation
-        .receiver
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap()
-        .is_ok());
+    wait_for_preparation(&validation.task);
+    assert!(validation.task.join().unwrap().is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
+}
+
+#[test]
+fn profile_selection_retries_after_work_admission_is_full() {
+    let (_root, options, env) = startup_profile_inputs();
+    let mut state = PanelState::default();
+    state
+        .session
+        .configure_profile_with_env(options, env)
+        .unwrap();
+    let generation = state.session.profile_generation();
+    let mut startup = StartupPreparation::new(None);
+    let full = saturate_work_admission();
+
+    drive_startup(&mut state, &mut startup);
+    assert!(
+        startup.prepare.is_none(),
+        "Full must not start another worker"
+    );
+    assert!(
+        startup.prepare_pending.is_some(),
+        "the captured demand is retained"
+    );
+    assert!(state.session.profile_preparing());
+    assert!(state.session.error.is_none());
+    assert!(startup_progress(&startup, generation).is_some());
+
+    drop(full);
+    settle_startup(&mut state, &mut startup);
+    assert!(state.session.profile_bound());
+    assert!(state.session.error.is_none());
+    assert!(startup_progress(&startup, generation).is_none());
+}
+
+#[test]
+fn profile_validation_retries_after_work_admission_is_full() {
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
+        pass: "prepared-pass".into(),
+    });
+    let generation = state.session.profile_generation();
+    let full = saturate_work_admission();
+
+    drive_startup(&mut state, &mut startup);
+    assert!(
+        startup.validate.is_none(),
+        "Full must not start another worker"
+    );
+    assert!(
+        startup.validate_pending.is_some(),
+        "the validation boot and template stay captured"
+    );
+    assert!(state.session.profile_preparing());
+    assert!(startup_progress(&startup, generation).is_some());
+
+    drop(full);
+    settle_startup(&mut state, &mut startup);
+    assert!(state.session.core.vault().is_some());
+    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.slots().is_empty());
+    assert!(startup_progress(&startup, generation).is_none());
 }
 
 #[test]
 fn startup_progress_is_latest_only_and_generation_scoped() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
 
+    let (_root, options, env) = startup_profile_inputs();
+    let mut state = PanelState::default();
+    state
+        .session
+        .configure_profile_with_env(options, env)
+        .unwrap();
+    let (generation, preparation) = state.session.profile_preparation().unwrap();
     let (observer, progress) = progress_channel(ProfileProgress::steps(
         ProfileProgressStage::CheckingGameFiles,
         0,
@@ -793,25 +917,25 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
         1024,
         4096,
     ));
-    let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
     let mut startup = StartupPreparation::new(None);
-    startup.prepare = Some(ProfilePrepareJob {
-        generation: 7,
-        receiver,
+    startup.prepare_pending = Some(ProfilePreparePending {
+        generation,
+        preparation: Arc::new(preparation),
+        observer,
         progress,
     });
 
-    let current = startup_progress(&startup, 7).expect("matching generation progress");
+    let current = startup_progress(&startup, generation).expect("matching generation progress");
     assert_eq!(current.phase, ProgressPhase::Preparing);
     assert_eq!(current.progress.completed, 1024);
     assert_eq!(current.progress.total, 4096);
     assert!(
-        startup_progress(&startup, 8).is_none(),
+        startup_progress(&startup, generation.wrapping_add(1)).is_none(),
         "stale work is hidden"
     );
-    startup.prepare = None;
+    startup.prepare_pending = None;
     assert!(
-        startup_progress(&startup, 7).is_none(),
+        startup_progress(&startup, generation).is_none(),
         "completion clears it"
     );
 }
@@ -839,10 +963,8 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
         )
         .unwrap();
     let generation = state.session.profile_generation();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender
-        .send(Err("fixture preparation failed".into()))
-        .unwrap();
+    let task = profile_prepare_task(generation, Err("fixture preparation failed".into()));
+    wait_for_preparation(&task);
     let (_, progress) = progress_channel(ProfileProgress::steps(
         ProfileProgressStage::CheckingGameFiles,
         3,
@@ -851,10 +973,12 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     let mut startup = StartupPreparation {
         prepare: Some(ProfilePrepareJob {
             generation,
-            receiver,
+            task,
             progress,
         }),
+        prepare_pending: None,
         validate: None,
+        validate_pending: None,
         pending_boot: Some(Boot::Unlock {
             pass: "not-used".into(),
         }),

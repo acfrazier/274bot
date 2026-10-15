@@ -5,7 +5,7 @@
 //! skipped with its reason.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
 use crate::scripts::{Scripts, SyncScope};
@@ -21,6 +21,16 @@ const UNAVAILABLE: &str = "profile unavailable";
 struct Resolved {
     names: Vec<String>,
     gone: Vec<String>,
+}
+
+/// A marked Assign/Restart command held until its catalog prerequisite settles.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingCatalogAssignment {
+    pub(crate) profiles: Vec<String>,
+    pub(crate) unavailable: Vec<String>,
+    pub(crate) card: script::ScriptSel,
+    pub(crate) root: Option<PathBuf>,
+    pub(crate) restart: bool,
 }
 
 fn resolve<Io>(selection: &MarkedSelection, core: &OperatorSession<Io>) -> Resolved {
@@ -154,31 +164,66 @@ pub fn assign_marked<Io>(
     const LABEL: &str = "Assign";
     const DONE: &str = "assigned";
     let Resolved { names, gone } = resolve(selection, core);
-    let mut rows = unavailable_rows(gone);
-    let assignment = match scripts.assignment_for(card, catalog_root) {
-        Ok(assignment) => assignment,
+    match scripts.assignment_for(card, catalog_root) {
+        Ok(Some(assignment)) => assign_ready_names(&names, &gone, core, scripts, assignment),
+        Ok(None) => {
+            let mut rows = unavailable_rows(gone.clone());
+            let action = PendingCatalogAssignment {
+                profiles: names.clone(),
+                unavailable: gone,
+                card: card.clone(),
+                root: catalog_root.map(Path::to_path_buf),
+                restart: false,
+            };
+            match scripts.defer_pending_catalog_assignment(action) {
+                Ok(()) => {
+                    rows.extend(names.iter().map(|name| {
+                        BulkRow::new(name, BulkOutcome::Pending).with_detail("catalog scan pending")
+                    }));
+                    BulkReport::new(LABEL, DONE, rows, None)
+                }
+                Err(reason) => {
+                    rows.extend(
+                        names
+                            .iter()
+                            .map(|name| BulkRow::new(name, BulkOutcome::failed(&reason))),
+                    );
+                    BulkReport::new(LABEL, DONE, rows, Some(reason))
+                }
+            }
+        }
         Err(reason) => {
+            let mut rows = unavailable_rows(gone);
             rows.extend(
                 names
                     .iter()
                     .map(|name| BulkRow::new(name, BulkOutcome::failed(&reason))),
             );
-            return BulkReport::new(LABEL, DONE, rows, Some(reason));
+            BulkReport::new(LABEL, DONE, rows, Some(reason))
         }
-    };
+    }
+}
+
+fn assign_ready_names<Io>(
+    names: &[String],
+    gone: &[String],
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+    assignment: vault::ScriptAssignment,
+) -> BulkReport {
+    let mut rows = unavailable_rows(gone.to_vec());
     for name in names {
-        let outcome = if active(state(core, &name)) {
+        let outcome = if active(state(core, name)) {
             BulkOutcome::skipped("script active: use Assign & restart")
-        } else if scripts.persist_assignment_with_action(core, &name, assignment.clone(), "Assign")
-        {
-            scripts.clear_pending_browse(&name);
+        } else if scripts.persist_assignment_with_action(core, name, assignment.clone(), "Assign") {
+            scripts.clear_pending_browse(name);
             BulkOutcome::Done
         } else {
             BulkOutcome::failed("could not save")
         };
         rows.push(BulkRow::new(name, outcome));
     }
-    BulkReport::new(LABEL, DONE, rows, None)
+    BulkReport::new("Assign", "assigned", rows, None)
 }
 
 /// Which marked bots *Assign & restart* would interrupt, for the
@@ -246,16 +291,46 @@ fn assign_and_restart_names<Io>(
     for profile in gone {
         scripts.tally_skip_unavailable(profile, UNAVAILABLE);
     }
-    let assignment = match scripts.assignment_for(card, catalog_root) {
-        Ok(assignment) => assignment,
+    match scripts.assignment_for(card, catalog_root) {
+        Ok(Some(assignment)) => {
+            enqueue_assigned_restarts(names, core, scripts, card, catalog_root, assignment);
+        }
+        Ok(None) => {
+            let action = PendingCatalogAssignment {
+                profiles: names.to_vec(),
+                unavailable: gone.to_vec(),
+                card: card.clone(),
+                root: catalog_root.map(Path::to_path_buf),
+                restart: true,
+            };
+            if let Err(reason) = scripts.defer_pending_catalog_assignment(action) {
+                for name in names {
+                    scripts.tally_fail(name, &reason);
+                }
+            } else {
+                for name in names {
+                    scripts.tally_queued_pending(name);
+                }
+            }
+            scripts.publish_bulk();
+        }
         Err(reason) => {
             for name in names {
                 scripts.tally_fail(name, &reason);
             }
             scripts.publish_bulk();
-            return;
         }
-    };
+    }
+}
+
+fn enqueue_assigned_restarts<Io>(
+    names: &[String],
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+    card: &script::ScriptSel,
+    catalog_root: Option<&Path>,
+    assignment: vault::ScriptAssignment,
+) {
     let mut stopping = Vec::new();
     for name in names {
         if !core.members().contains(name) {
@@ -288,6 +363,96 @@ fn assign_and_restart_names<Io>(
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
+}
+
+/// Complete a marked Assign/Restart receipt once the catalog worker settles.
+pub(crate) fn poll_pending_catalog_assignment<Io>(
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+) {
+    if scripts.catalog_work_pending() {
+        return;
+    }
+    let Some(action) = scripts.take_pending_catalog_assignment() else {
+        return;
+    };
+    let published_root = scripts.catalog_scan_root().map(Path::to_path_buf);
+    if action
+        .root
+        .as_deref()
+        .is_some_and(|root| published_root.as_deref() != Some(root))
+    {
+        fail_pending_catalog_assignment(
+            &action,
+            core,
+            scripts,
+            "catalog scan did not publish the requested root",
+        );
+        return;
+    }
+    let Some(root) = action.root.as_deref().or(published_root.as_deref()) else {
+        fail_pending_catalog_assignment(&action, core, scripts, "catalog root is not available");
+        return;
+    };
+    match scripts.assignment_for(&action.card, Some(root)) {
+        Ok(Some(assignment)) if action.restart => {
+            scripts.open_tally("Assign & restart");
+            for profile in &action.unavailable {
+                scripts.tally_skip_unavailable(profile, UNAVAILABLE);
+            }
+            enqueue_assigned_restarts(
+                &action.profiles,
+                core,
+                scripts,
+                &action.card,
+                Some(root),
+                assignment,
+            );
+        }
+        Ok(Some(assignment)) => {
+            let report = assign_ready_names(
+                &action.profiles,
+                &action.unavailable,
+                core,
+                scripts,
+                assignment,
+            );
+            scripts.show(report.summary());
+        }
+        Ok(None) => {
+            let _ = scripts.defer_pending_catalog_assignment(action);
+        }
+        Err(error) => fail_pending_catalog_assignment(&action, core, scripts, &error),
+    }
+}
+
+fn fail_pending_catalog_assignment<Io>(
+    action: &PendingCatalogAssignment,
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+    reason: &str,
+) {
+    if action.restart {
+        scripts.open_tally("Assign & restart");
+        for profile in &action.unavailable {
+            scripts.tally_skip_unavailable(profile, UNAVAILABLE);
+        }
+        for profile in &action.profiles {
+            scripts.tally_fail(profile, reason);
+        }
+        scripts.publish_bulk();
+    } else {
+        let mut rows = unavailable_rows(action.unavailable.clone());
+        rows.extend(
+            action
+                .profiles
+                .iter()
+                .map(|profile| BulkRow::new(profile, BulkOutcome::failed(reason))),
+        );
+        let report = BulkReport::new("Assign", "assigned", rows, Some(reason.to_string()));
+        scripts.show(report.summary());
+    }
+    let _ = core;
 }
 
 /// Log in every marked profile, loading the ones not loaded yet. A bot that

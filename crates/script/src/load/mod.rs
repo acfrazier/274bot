@@ -108,6 +108,11 @@ pub use library::{
     default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
     LoadStage, PreparedCard,
 };
+#[cfg(feature = "load")]
+pub use library::{
+    CardPreparationOutcome, CardPreparationSnapshot, CatalogPreparationResult,
+    CatalogPreparationSnapshot,
+};
 
 #[cfg(feature = "load")]
 pub(crate) use isolate::GameplayFactory;

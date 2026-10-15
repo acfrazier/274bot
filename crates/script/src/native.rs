@@ -229,6 +229,8 @@ pub struct CompiledCard {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {
     Busy,
+    /// A typed refusal from preparation; temporary Full is retried first.
+    WorkRefused(api::work::SubmissionRefusal),
     Unavailable(Arc<str>),
     Facts(FactError),
     Config(ConfigError),
@@ -254,6 +256,7 @@ impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Busy => f.write_str("script already active: stop it first"),
+            Self::WorkRefused(refusal) => write!(f, "preparation refused: {refusal}"),
             Self::Unavailable(reason) => f.write_str(reason),
             Self::Facts(error) => write!(f, "selected facts: {error:?}"),
             Self::Config(error) => write!(f, "{}: {} ({})", error.field, error.message, error.code),

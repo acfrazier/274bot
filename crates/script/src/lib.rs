@@ -59,6 +59,7 @@ pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
 pub mod native_shop;
+pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -71,6 +72,7 @@ mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;
+pub mod work_admission;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]

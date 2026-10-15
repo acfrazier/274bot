@@ -83,8 +83,8 @@ enum ExternalReloadPending {
     },
 }
 
-/// Owned inputs captured on the UI thread and consumed by the sequential
-/// profile/template preparation worker.
+/// Owned inputs captured on the UI thread and retained by the sequential
+/// profile/template preparation demand until the worker consumes them.
 pub(crate) struct ProfilePreparation {
     options: ProfileOptions,
     environment: ProfileEnvironment,
@@ -98,7 +98,7 @@ impl ProfilePreparation {
     }
 
     pub(crate) fn run_with_progress(
-        self,
+        &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<SharedClientTemplate>, String> {
         observer.report(ProfileProgress::steps(
@@ -1728,22 +1728,45 @@ impl Session {
         match watch.dispatch_operation() {
             Some(Operation::LoadRawTs) => {
                 let path = watch.source_path();
-                self.load_js(&path);
-                if let Some(error) = self.error.clone() {
-                    watch.fail(format!("load: {error}"));
-                    return;
+                let already_loaded = matches!(
+                    &self.script_sel,
+                    Some(script::ScriptSel::Loaded(script::ScriptSource::File, lookup))
+                        if self.scripts.js().get(script::ScriptSource::File, lookup)
+                            .is_some_and(|card| card.path == path)
+                );
+                if !already_loaded {
+                    self.load_js(&path);
+                    if let Some(error) = self.error.clone() {
+                        watch.fail(format!("load: {error}"));
+                        return;
+                    }
                 }
                 let lookup = match &self.script_sel {
                     Some(script::ScriptSel::Loaded(_, lookup)) => lookup.clone(),
                     _ => path.to_string_lossy().into_owned(),
                 };
-                if let Err(error) = self
+                if let Some(Err(error)) = self
                     .scripts
-                    .js_mut()
-                    .ensure_js(script::ScriptSource::File, &lookup)
+                    .take_external_loader_transpile_result(script::ScriptSource::File, &lookup)
                 {
                     watch.fail(format!("transpile: {error}"));
                     return;
+                }
+                if !self
+                    .scripts
+                    .js()
+                    .js_is_ready(script::ScriptSource::File, &lookup)
+                {
+                    match self
+                        .scripts
+                        .request_external_loader_transpile(script::ScriptSource::File, &lookup)
+                    {
+                        Ok(_) => return,
+                        Err(error) => {
+                            watch.fail(format!("transpile: {error}"));
+                            return;
+                        }
+                    }
                 }
                 let Some(card) = self
                     .scripts
@@ -2515,6 +2538,17 @@ impl Session {
         Ok(())
     }
 
+    /// Live setup runs before the interactive event loop. Keep its catalogue
+    /// receipt off the UI path's synchronous scan, then consume it before the
+    /// scenario selects a card from that catalogue.
+    fn fill_live_catalog(&mut self) -> Result<(), String> {
+        let root = self
+            .catalog_root()?
+            .ok_or_else(|| "$RS2B0T catalog root unavailable".to_string())?;
+        let path_file = self.rs2b0t_path_file();
+        self.scripts.fill_catalog_blocking(&root, &path_file)
+    }
+
     /// Live `script_<name>` setup: temp vault with the scenario's seed
     /// profiles minted to unique per-run usernames (the engine
     /// auto-registers unknown names, so a live boot never logs the shared
@@ -2691,7 +2725,17 @@ impl Session {
         // after seed. A fleet launch Starts the scenario's own card on each
         // member slot.
         if let Some(fleet) = view.fleet_start {
-            self.fill_rs2b0t_cards_once();
+            self.fill_live_catalog()?;
+            for member in fleet.members(&names)? {
+                if !self
+                    .scripts
+                    .js()
+                    .js_is_ready(script::ScriptSource::Catalog, member.card)
+                {
+                    self.scripts
+                        .transpile_blocking(script::ScriptSource::Catalog, member.card)?;
+                }
+            }
             let scripts = &mut self.scripts;
             let (js, legacy, inject) = scripts.live_start_parts();
             let starts = live_start::fleet_catalog_starts(
@@ -2783,11 +2827,10 @@ impl Session {
                     );
                 }
             } else {
-                self.fill_rs2b0t_cards_once();
+                self.fill_live_catalog()?;
                 self.scripts
-                    .js_mut()
-                    .ensure_js(script::ScriptSource::Catalog, card_name)
-                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                    .transpile_blocking(script::ScriptSource::Catalog, card_name)
+                    .map_err(|error| format!("transpile {card_name}: {error}"))?;
                 let card = self
                     .scripts
                     .js()
@@ -5418,6 +5461,7 @@ mod fleet_hold_tests {
             host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {});
         play.attach_arm("alice", host_play::SlotArm::new(1, false));
         session.core.set_play(Some(play));
+        session.core.fleet_mut().add("alice");
         session.set_focus_for_test("alice");
         session.load_js(&path);
         assert_eq!(session.error, None);

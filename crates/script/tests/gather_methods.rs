@@ -152,8 +152,8 @@ export function tick(api) {
 }
 "#;
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let value = probe(src, revision);
         let catalog = catalog(revision);
+        let value = probe(src, revision);
         let methods = |skill| api::gather_methods::gather_methods(Some(&catalog), skill).unwrap();
         let resource = |name| api::gather_methods::gather_resource(Some(&catalog), name).unwrap();
         // Whole results cross into JS without losing a null, a number or an unknown/partial marker.
@@ -416,8 +416,8 @@ export function tick(api) {
 }
 "#;
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let value = probe(src, revision);
         let catalog = catalog(revision);
+        let value = probe(src, revision);
         let placements = |resource, region: [i32; 5], after: Option<&str>, limit| {
             let region = api::gather_methods::SceneRegionInput {
                 min_x: region[0],

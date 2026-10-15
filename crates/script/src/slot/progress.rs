@@ -2,17 +2,19 @@
 use super::*;
 use crate::api_progress::{ProgressPage, QuestProgressRow};
 use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use crate::quest_journal::{title_matches, JournalMachine, JournalRequest, ROOT_289, TITLE_289};
 use crate::quester::{
     compile::CompiledPath,
     progress::{quest_colour, resolve_colour, resolve_journal},
 };
+use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
-use api::selected::{FamilyPreparation, Knowledge, SelectedPin};
+use api::selected::{Knowledge, SelectedPin};
 use api::snapshot::QuestListStatus;
 use std::{task::Poll, time::Duration};
 
-pub(super) type ProgressJob = std::thread::JoinHandle<Result<PreparedProgress, Arc<str>>>;
+pub(super) type ProgressJob = PreparedTask<Result<PreparedProgress, Arc<str>>>;
 
 pub(super) struct PreparedProgress {
     selected: Arc<api::game_data::SelectedGameData>,
@@ -25,6 +27,13 @@ pub(super) struct PreparedProgress {
 pub(super) enum ProgressSeat {
     #[default]
     Idle,
+    AwaitingAdmission {
+        token: u64,
+        run: RunKey,
+        selected: Arc<api::game_data::SelectedGameData>,
+        bytes: &'static [u8],
+        input: PreparationInput,
+    },
     Preparing {
         token: u64,
         run: RunKey,
@@ -45,7 +54,9 @@ impl ProgressSeat {
     pub(super) fn token(&self) -> Option<u64> {
         match self {
             Self::Idle => None,
-            Self::Preparing { token, .. } | Self::Reading { token, .. } => Some(*token),
+            Self::AwaitingAdmission { token, .. }
+            | Self::Preparing { token, .. }
+            | Self::Reading { token, .. } => Some(*token),
         }
     }
     pub(super) fn selected(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
@@ -55,13 +66,16 @@ impl ProgressSeat {
         }
     }
     pub(super) fn reset(&mut self, retiring: &mut Vec<ProgressJob>) {
-        if let Self::Preparing { job, .. } = std::mem::take(self) {
+        if let Self::Preparing { mut job, .. } = std::mem::take(self) {
+            job.cancel(Cancellation::Superseded);
             retiring.push(job);
         }
     }
     pub(super) fn rekey(&mut self, session: u64) {
         match self {
-            Self::Preparing { run, .. } | Self::Reading { run, .. } => run.session = session,
+            Self::AwaitingAdmission { run, .. }
+            | Self::Preparing { run, .. }
+            | Self::Reading { run, .. } => run.session = session,
             Self::Idle => {}
         }
     }
@@ -118,6 +132,52 @@ fn row(
         binding: progress.binding.0,
         role: progress.role.map(|role| role.0),
     })
+}
+
+/// The operator's rows the compile overrides kits with, leased on the slot
+/// thread from the bound state capability (absent when none is bound). A
+/// cold domain refuses the read with its typed reason. The request and each
+/// retry after temporary `Full` lease again: rows of an unchanged version are
+/// shared, not copied, so the seat retains none of them while it waits.
+fn lease_operator_loadouts(
+    state: Option<&crate::local_state::SlotState>,
+) -> Result<crate::local_state::OperatorLoadouts, api::local_state::ErrorCode> {
+    match state {
+        Some(state) => state.operator_loadouts(),
+        None => Ok(crate::local_state::OperatorLoadouts::absent()),
+    }
+}
+
+fn submit_progress(
+    slot: SlotKey,
+    input: PreparationInput,
+    selected: Arc<api::game_data::SelectedGameData>,
+    bytes: &'static [u8],
+    operator: crate::local_state::OperatorLoadouts,
+) -> Result<ProgressJob, preparation::PreparationError> {
+    preparation::submit(
+        PreparationKind::Profile,
+        Scope::Slot(slot),
+        input,
+        move |cap| {
+            let pin = selected
+                .selected_pin()
+                .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
+            let quests = Arc::new(
+                QuestCatalog::from_identity(selected.quest_identity())
+                    .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
+            );
+            let path =
+                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
+                    .map_err(compile_error_reason)?;
+            Ok(PreparedProgress {
+                selected,
+                pin,
+                path,
+                quests,
+            })
+        },
+    )
 }
 
 impl SlotScript {
@@ -198,44 +258,54 @@ impl SlotScript {
             run: generation,
             session: self.work_epoch,
         };
-        // The operator's rows the compile overrides kits with, leased on
-        // this thread from the bound state capability (absent when none is
-        // bound); a cold domain refuses the read with its typed reason.
-        let operator = match self.local_state.as_deref() {
-            Some(state) => match state.operator_loadouts() {
-                Ok(operator) => operator,
-                Err(code) => {
-                    seat.progress_page = Some(ProgressPage::Refused {
-                        token,
-                        reason: format!("unavailable:{code}").into(),
-                    });
-                    return;
-                }
-            },
-            None => crate::local_state::OperatorLoadouts::absent(),
+        let operator = match lease_operator_loadouts(self.local_state.as_deref()) {
+            Ok(operator) => operator,
+            Err(code) => {
+                seat.progress_page = Some(ProgressPage::Refused {
+                    token,
+                    reason: format!("unavailable:{code}").into(),
+                });
+                return;
+            }
         };
-        let job = FamilyPreparation::run(move |cap| {
-            let pin = selected
-                .selected_pin()
-                .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
-            let quests = Arc::new(
-                QuestCatalog::from_identity(selected.quest_identity())
-                    .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
-            );
-            let path =
-                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
-                    .map_err(compile_error_reason)?;
-            Ok(PreparedProgress {
-                selected,
-                pin,
-                path,
-                quests,
-            })
-        });
+        let input = match PreparationInput::new(
+            generation,
+            bytes.len(),
+            2 * 1024 * 1024,
+            2 * 1024 * 1024,
+        ) {
+            Ok(input) => input.with_quester_progress_compile(),
+            Err(error) => {
+                seat.progress_page = Some(ProgressPage::Refused {
+                    token,
+                    reason: format!("unavailable:{error}").into(),
+                });
+                return;
+            }
+        };
+        let Some(slot) = SlotKey::from_incarnation(run.slot) else {
+            seat.progress_page = Some(ProgressPage::Refused {
+                token,
+                reason: "unavailable:slot worker is not bound".into(),
+            });
+            return;
+        };
+        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator);
         match job {
             Ok(job) => {
                 self.control_generation = generation;
                 seat.progress = ProgressSeat::Preparing { token, run, job };
+                seat.progress_page = Some(ProgressPage::Reading { token });
+            }
+            Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                self.control_generation = generation;
+                seat.progress = ProgressSeat::AwaitingAdmission {
+                    token,
+                    run,
+                    selected,
+                    bytes,
+                    input,
+                };
                 seat.progress_page = Some(ProgressPage::Reading { token });
             }
             Err(error) => {
@@ -248,6 +318,53 @@ impl SlotScript {
     }
 
     pub(super) fn tick_api_progress(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
+        if let ProgressSeat::AwaitingAdmission {
+            token,
+            run,
+            selected,
+            bytes,
+            input,
+        } = &seat.progress
+        {
+            let Some(slot) = SlotKey::from_incarnation(run.slot) else {
+                seat.progress_page = Some(ProgressPage::Refused {
+                    token: *token,
+                    reason: "unavailable:slot worker is not bound".into(),
+                });
+                seat.progress = ProgressSeat::Idle;
+                return;
+            };
+            let operator = match lease_operator_loadouts(self.local_state.as_deref()) {
+                Ok(operator) => operator,
+                Err(code) => {
+                    seat.progress_page = Some(ProgressPage::Refused {
+                        token: *token,
+                        reason: format!("unavailable:{code}").into(),
+                    });
+                    seat.progress = ProgressSeat::Idle;
+                    return;
+                }
+            };
+            match submit_progress(slot, *input, Arc::clone(selected), bytes, operator) {
+                Ok(job) => {
+                    seat.progress = ProgressSeat::Preparing {
+                        token: *token,
+                        run: *run,
+                        job,
+                    };
+                }
+                Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                }
+                Err(error) => {
+                    seat.progress_page = Some(ProgressPage::Refused {
+                        token: *token,
+                        reason: format!("unavailable:{error}").into(),
+                    });
+                    seat.progress = ProgressSeat::Idle;
+                    return;
+                }
+            }
+        }
         if matches!(&seat.progress, ProgressSeat::Preparing { job, .. } if job.is_finished()) {
             let ProgressSeat::Preparing {
                 token,
@@ -259,7 +376,7 @@ impl SlotScript {
             };
             match job
                 .join()
-                .unwrap_or_else(|_| Err("unavailable:preparation worker panic".into()))
+                .unwrap_or_else(|error| Err(format!("unavailable:{error}").into()))
             {
                 Ok(prepared) => {
                     run.session = self.work_epoch;
