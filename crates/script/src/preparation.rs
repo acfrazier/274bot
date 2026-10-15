@@ -26,16 +26,6 @@ pub enum PreparationKind {
     Profile,
 }
 
-impl PreparationKind {
-    const fn index(self) -> u8 {
-        match self {
-            Self::Card => 0,
-            Self::Catalogue => 1,
-            Self::Profile => 2,
-        }
-    }
-}
-
 /// A checked charge for source/retained input, peak scratch and the result.
 /// The preparing owner must bound all three using the actual family input;
 /// WorkAdmission reserves the sum, not just the source's logical length.
@@ -375,10 +365,13 @@ pub enum PreparationError {
     Cancelled(Cancellation),
 }
 
-enum PreparationTicket<R: Send + 'static> {
-    Card(WorkTicket<PreparationSpec<R, 0>>),
-    Catalogue(WorkTicket<PreparationSpec<R, 1>>),
-    Profile(WorkTicket<PreparationSpec<R, 2>>),
+// WorkTicket's frozen marker contains a function pointer, which is not a
+// storable seam field. Keep only the accepted identity and input revision;
+// each service operation reconstructs the exact typed ticket for this kind.
+struct PreparationTicket {
+    kind: PreparationKind,
+    identity: WorkIdentity,
+    revision: InputRevision,
 }
 
 /// An exact-job result lease. Dropping it revokes an unfinished job; a
@@ -386,30 +379,45 @@ enum PreparationTicket<R: Send + 'static> {
 /// A stuck worker keeps its physical charge even after the ticket is dropped.
 pub struct PreparedTask<R: Send + 'static> {
     service: Arc<Mutex<WorkService>>,
-    ticket: Option<PreparationTicket<R>>,
+    ticket: Option<PreparationTicket>,
+    _output: PhantomData<R>,
 }
 
 impl<R: Send + 'static> PreparedTask<R> {
     /// Correlation identity used to fence a later global publish.
     pub fn identity(&self) -> WorkIdentity {
-        match self.ticket.as_ref().expect("live preparation ticket") {
-            PreparationTicket::Card(ticket) => ticket.identity(),
-            PreparationTicket::Catalogue(ticket) => ticket.identity(),
-            PreparationTicket::Profile(ticket) => ticket.identity(),
-        }
+        self.ticket
+            .as_ref()
+            .expect("live preparation ticket")
+            .identity
     }
 
     /// Whether the worker published this exact terminal. No job is run by the caller.
     pub fn is_finished(&self) -> bool {
         let service = self.service.lock();
-        match self.ticket.as_ref().expect("live preparation ticket") {
-            PreparationTicket::Card(ticket) => !matches!(service.borrow_terminal(ticket), Ok(None)),
-            PreparationTicket::Catalogue(ticket) => {
-                !matches!(service.borrow_terminal(ticket), Ok(None))
-            }
-            PreparationTicket::Profile(ticket) => {
-                !matches!(service.borrow_terminal(ticket), Ok(None))
-            }
+        let ticket = self.ticket.as_ref().expect("live preparation ticket");
+        match ticket.kind {
+            PreparationKind::Card => !matches!(
+                service.borrow_terminal(&WorkTicket::<PreparationSpec<R, 0>>::new(
+                    ticket.identity,
+                    ticket.revision,
+                )),
+                Ok(None)
+            ),
+            PreparationKind::Catalogue => !matches!(
+                service.borrow_terminal(&WorkTicket::<PreparationSpec<R, 1>>::new(
+                    ticket.identity,
+                    ticket.revision,
+                )),
+                Ok(None)
+            ),
+            PreparationKind::Profile => !matches!(
+                service.borrow_terminal(&WorkTicket::<PreparationSpec<R, 2>>::new(
+                    ticket.identity,
+                    ticket.revision,
+                )),
+                Ok(None)
+            ),
         }
     }
 
@@ -417,15 +425,25 @@ impl<R: Send + 'static> PreparedTask<R> {
     /// return. Consumers still reject a stale generation after settlement.
     pub fn cancel(&mut self, reason: Cancellation) {
         let mut service = self.service.lock();
-        match self.ticket.as_ref().expect("live preparation ticket") {
-            PreparationTicket::Card(ticket) => {
-                service.cancel(*ticket, reason);
+        let ticket = self.ticket.as_ref().expect("live preparation ticket");
+        match ticket.kind {
+            PreparationKind::Card => {
+                service.cancel(
+                    WorkTicket::<PreparationSpec<R, 0>>::new(ticket.identity, ticket.revision),
+                    reason,
+                );
             }
-            PreparationTicket::Catalogue(ticket) => {
-                service.cancel(*ticket, reason);
+            PreparationKind::Catalogue => {
+                service.cancel(
+                    WorkTicket::<PreparationSpec<R, 1>>::new(ticket.identity, ticket.revision),
+                    reason,
+                );
             }
-            PreparationTicket::Profile(ticket) => {
-                service.cancel(*ticket, reason);
+            PreparationKind::Profile => {
+                service.cancel(
+                    WorkTicket::<PreparationSpec<R, 2>>::new(ticket.identity, ticket.revision),
+                    reason,
+                );
             }
         }
     }
@@ -436,18 +454,25 @@ impl<R: Send + 'static> PreparedTask<R> {
     pub fn join(mut self) -> Result<R, PreparationError> {
         // Leave the ticket in `self` until terminal custody transfers. If
         // waiting or consuming fails, Drop still abandons this exact job.
-        let terminal = match self.ticket.as_ref().expect("live preparation ticket") {
-            PreparationTicket::Card(ticket) => {
-                WorkService::wait_terminal(&self.service, ticket)?;
-                self.service.lock().consume(ticket)?
+        let ticket = self.ticket.as_ref().expect("live preparation ticket");
+        let terminal = match ticket.kind {
+            PreparationKind::Card => {
+                let exact =
+                    WorkTicket::<PreparationSpec<R, 0>>::new(ticket.identity, ticket.revision);
+                WorkService::wait_terminal(&self.service, &exact)?;
+                self.service.lock().consume(&exact)?
             }
-            PreparationTicket::Catalogue(ticket) => {
-                WorkService::wait_terminal(&self.service, ticket)?;
-                self.service.lock().consume(ticket)?
+            PreparationKind::Catalogue => {
+                let exact =
+                    WorkTicket::<PreparationSpec<R, 1>>::new(ticket.identity, ticket.revision);
+                WorkService::wait_terminal(&self.service, &exact)?;
+                self.service.lock().consume(&exact)?
             }
-            PreparationTicket::Profile(ticket) => {
-                WorkService::wait_terminal(&self.service, ticket)?;
-                self.service.lock().consume(ticket)?
+            PreparationKind::Profile => {
+                let exact =
+                    WorkTicket::<PreparationSpec<R, 2>>::new(ticket.identity, ticket.revision);
+                WorkService::wait_terminal(&self.service, &exact)?;
+                self.service.lock().consume(&exact)?
             }
         };
         let _ = self.ticket.take();
@@ -465,29 +490,31 @@ impl<R: Send + 'static> Drop for PreparedTask<R> {
             return;
         };
         let mut service = self.service.lock();
-        match ticket {
-            PreparationTicket::Card(ticket) => {
-                if service.borrow_terminal(&ticket).is_ok_and(|v| v.is_some()) {
-                    let _ = service.consume(&ticket);
-                } else {
-                    let _ = service.abandon(ticket, Cancellation::Superseded);
-                }
-            }
-            PreparationTicket::Catalogue(ticket) => {
-                if service.borrow_terminal(&ticket).is_ok_and(|v| v.is_some()) {
-                    let _ = service.consume(&ticket);
-                } else {
-                    let _ = service.abandon(ticket, Cancellation::Superseded);
-                }
-            }
-            PreparationTicket::Profile(ticket) => {
-                if service.borrow_terminal(&ticket).is_ok_and(|v| v.is_some()) {
-                    let _ = service.consume(&ticket);
-                } else {
-                    let _ = service.abandon(ticket, Cancellation::Superseded);
-                }
-            }
+        match ticket.kind {
+            PreparationKind::Card => release_or_abandon(
+                &mut service,
+                WorkTicket::<PreparationSpec<R, 0>>::new(ticket.identity, ticket.revision),
+            ),
+            PreparationKind::Catalogue => release_or_abandon(
+                &mut service,
+                WorkTicket::<PreparationSpec<R, 1>>::new(ticket.identity, ticket.revision),
+            ),
+            PreparationKind::Profile => release_or_abandon(
+                &mut service,
+                WorkTicket::<PreparationSpec<R, 2>>::new(ticket.identity, ticket.revision),
+            ),
         }
+    }
+}
+
+fn release_or_abandon<F: WorkFamilySpec>(service: &mut WorkService, ticket: WorkTicket<F>) {
+    if service
+        .borrow_terminal(&ticket)
+        .is_ok_and(|value| value.is_some())
+    {
+        let _ = service.consume(&ticket);
+    } else {
+        let _ = service.abandon(ticket, Cancellation::Superseded);
     }
 }
 
@@ -552,14 +579,14 @@ where
         let mut admitted = service.lock();
         let identity: WorkIdentity = admitted.mint_identity(scope, None)?;
         let conditions = ProcessConditions::new(admitted.incarnation());
-        match (kind.index(), input.qualified_unit) {
-            (0, None) => PreparationTicket::Card(
-                admitted
+        match (kind, input.qualified_unit) {
+            (PreparationKind::Card, None) => {
+                let _ = admitted
                     .try_submit::<PreparationSpec<R, 0>, _>(identity, &input, job, &conditions)
-                    .map_err(|refused| refused.refusal())?,
-            ),
-            (0, Some(unit)) => PreparationTicket::Card(
-                admitted
+                    .map_err(|refused| refused.refusal())?;
+            }
+            (PreparationKind::Card, Some(unit)) => {
+                let _ = admitted
                     .try_submit_qualified::<PreparationSpec<R, 0>, _>(
                         identity,
                         &input,
@@ -567,15 +594,15 @@ where
                         &conditions,
                         unit,
                     )
-                    .map_err(|refused| refused.refusal())?,
-            ),
-            (1, None) => PreparationTicket::Catalogue(
-                admitted
+                    .map_err(|refused| refused.refusal())?;
+            }
+            (PreparationKind::Catalogue, None) => {
+                let _ = admitted
                     .try_submit::<PreparationSpec<R, 1>, _>(identity, &input, job, &conditions)
-                    .map_err(|refused| refused.refusal())?,
-            ),
-            (1, Some(unit)) => PreparationTicket::Catalogue(
-                admitted
+                    .map_err(|refused| refused.refusal())?;
+            }
+            (PreparationKind::Catalogue, Some(unit)) => {
+                let _ = admitted
                     .try_submit_qualified::<PreparationSpec<R, 1>, _>(
                         identity,
                         &input,
@@ -583,15 +610,15 @@ where
                         &conditions,
                         unit,
                     )
-                    .map_err(|refused| refused.refusal())?,
-            ),
-            (_, None) => PreparationTicket::Profile(
-                admitted
+                    .map_err(|refused| refused.refusal())?;
+            }
+            (PreparationKind::Profile, None) => {
+                let _ = admitted
                     .try_submit::<PreparationSpec<R, 2>, _>(identity, &input, job, &conditions)
-                    .map_err(|refused| refused.refusal())?,
-            ),
-            (_, Some(unit)) => PreparationTicket::Profile(
-                admitted
+                    .map_err(|refused| refused.refusal())?;
+            }
+            (PreparationKind::Profile, Some(unit)) => {
+                let _ = admitted
                     .try_submit_qualified::<PreparationSpec<R, 2>, _>(
                         identity,
                         &input,
@@ -599,12 +626,18 @@ where
                         &conditions,
                         unit,
                     )
-                    .map_err(|refused| refused.refusal())?,
-            ),
+                    .map_err(|refused| refused.refusal())?;
+            }
+        }
+        PreparationTicket {
+            kind,
+            identity,
+            revision: input.revision(),
         }
     };
     Ok(PreparedTask {
         service,
         ticket: Some(ticket),
+        _output: PhantomData,
     })
 }

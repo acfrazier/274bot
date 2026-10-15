@@ -41,8 +41,14 @@ pub enum PendingReloadKind {
 pub struct PendingReload {
     pub warning: ReloadWarning,
     pub prepared: Vec<script::PreparedCard>,
-    pub warmed: Vec<script::PreparedCard>,
+    warmed: Vec<script::PreparedCard>,
     pub kind: PendingReloadKind,
+}
+
+impl PendingReload {
+    fn take_warmed(&mut self) -> Vec<script::PreparedCard> {
+        std::mem::take(&mut self.warmed)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1091,6 +1097,7 @@ impl Scripts {
             self.reload.install(pending);
             return ReloadOutcome::NeedsConfirm;
         }
+        let warmed = pending.take_warmed();
         let failed = match pending.kind {
             PendingReloadKind::Catalog { failed, .. } => failed,
             PendingReloadKind::Manual => unreachable!(),
@@ -1099,7 +1106,7 @@ impl Scripts {
             core,
             diff,
             pending.prepared,
-            pending.warmed,
+            warmed,
             failed,
             pending.warning,
         )

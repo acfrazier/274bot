@@ -1,5 +1,5 @@
 use super::*;
-use api::selected::{EntityId, FamilyPreparation, Knowledge};
+use api::selected::{EntityId, Knowledge};
 use client::io::ClientRevision;
 use std::sync::Arc;
 
@@ -119,14 +119,25 @@ fn every_evade_npc_has_a_content_chase_range() {
 #[test]
 fn the_activity_stands_are_beside_real_resources() {
     let selected = data();
-    let catalog = {
-        let data = Arc::clone(&selected);
-        FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-            .expect("worker")
-            .join()
-            .expect("worker panicked")
-            .expect("the gathering family prepares")
-    };
+    let data = Arc::clone(&selected);
+    let input = script::preparation::PreparationInput::new(
+        289,
+        std::mem::size_of::<Arc<api::game_data::SelectedGameData>>(),
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+    )
+    .unwrap()
+    .with_gathering_family_decode();
+    let catalog = script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        api::identity::Scope::Process,
+        input,
+        move |worker| data.prepare_gathering(worker),
+    )
+    .expect("admit the real gathering family")
+    .join()
+    .expect("worker settles")
+    .expect("the gathering family prepares");
     for (method, start, radius) in [
         ("fishing.rarefish.op3", CATHERBY_HARPOON_START, 8),
         ("mining.copper", VARROCK_EAST_MINE_START, 4),
