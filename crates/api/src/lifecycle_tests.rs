@@ -1605,3 +1605,46 @@ fn scripts_tick_only_between_scene_ready_and_session_ended_of_the_begun_session(
         })
     );
 }
+
+#[test]
+fn current_client_transport_failures_keep_typed_stage_and_session_envelope() {
+    use client::client::{LoginStage, LoginTransportError};
+    use std::io::ErrorKind;
+
+    let cases = [
+        (LoginStage::Connect, ErrorKind::ConnectionRefused, TransportFailure::Connect),
+        // Current ClientStream flattens TLS setup to Connect/Other.
+        (LoginStage::Connect, ErrorKind::Other, TransportFailure::Connect),
+        (LoginStage::ReadSeed, ErrorKind::InvalidData, TransportFailure::Read),
+        (LoginStage::SendLogin, ErrorKind::BrokenPipe, TransportFailure::Write),
+        (LoginStage::ReadResponse, ErrorKind::UnexpectedEof, TransportFailure::Closed),
+    ];
+    let key = session(0);
+    let mut gate = SessionGate::new(slot());
+    gate.begin(key).unwrap();
+    gate.observe(key, &SessionEventOut::SceneReady).unwrap();
+    for (stage, kind, expected) in cases {
+        let failure = LoginTransportError {
+            stage,
+            kind,
+            errno: None,
+            detail: String::new(),
+        };
+        let event = crate::identity::Event::new(
+            crate::identity::Scope::Slot(slot()),
+            None,
+            SessionEventOut::HandshakeAborted {
+                reason: AbortedAttempt::Transport(TransportFailure::classify(&failure)),
+            },
+        );
+        assert_eq!(
+            event.payload(),
+            &SessionEventOut::HandshakeAborted {
+                reason: AbortedAttempt::Transport(expected),
+            }
+        );
+        assert_eq!(event.scope(), crate::identity::Scope::Slot(slot()));
+        gate.observe(key, event.payload()).unwrap();
+        assert_eq!(gate.ready(), Some(key));
+    }
+}

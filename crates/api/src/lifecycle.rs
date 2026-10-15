@@ -1243,7 +1243,50 @@ pub enum QueueBlocker {
     Retiring,
 }
 
-/// Why an attempt ended without a handshake outcome (§20 L7/L8).
+/// The failed step of the current Client::login transport. The client reports
+/// a structured stage and I/O kind; its human-readable detail stays in the
+/// existing login error/status rather than becoming an event discriminator.
+/// T1.4 can add a TLS-specific class once its handshake worker preserves
+/// typed TLS provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransportFailure {
+    /// Connection setup, including DNS, TCP, TLS and WebSocket upgrade on
+    /// the current transport (`client.rs:3404-3433`).
+    Connect,
+    /// A handshake read failed (`client.rs:3446-3463,3507-3558`).
+    Read,
+    /// A handshake write failed (`client.rs:3439-3444,3504-3506`).
+    Write,
+    /// The peer closed a handshake read, including a partial seed
+    /// (`client.rs:3728-3733`, `client_stream.rs:725-731`).
+    Closed,
+}
+
+impl TransportFailure {
+    /// Classify the structured error returned by the current client. A
+    /// Connect-stage TLS error is Connect because ClientStream currently
+    /// stringifies TLS setup before producing LoginTransportError.
+    pub const fn classify(error: &client::client::LoginTransportError) -> Self {
+        use client::client::LoginStage;
+        match error.stage {
+            LoginStage::Connect => Self::Connect,
+            LoginStage::SendHello | LoginStage::SendLogin => Self::Write,
+            LoginStage::ReadHello
+            | LoginStage::ReadSeed
+            | LoginStage::ReadResponse
+            | LoginStage::ReadTransferDelay
+            | LoginStage::ReadAccept => {
+                if matches!(error.kind, std::io::ErrorKind::UnexpectedEof) {
+                    Self::Closed
+                } else {
+                    Self::Read
+                }
+            }
+        }
+    }
+}
+
+/// Why an attempt ended without a server handshake outcome (§20 L7/L8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbortedAttempt {
     /// The server answered after the lease ended; the slot rejected it.
@@ -1252,8 +1295,10 @@ pub enum AbortedAttempt {
     Cancelled,
     /// The absolute deadline passed.
     Deadline,
-    /// Name resolution failed or timed out.
+    /// Name resolution failed or timed out (T1.4's resolver).
     Resolve,
+    /// A real transport failure during the current client's handshake.
+    Transport(TransportFailure),
 }
 
 /// Why a session ended, as a closed classification of the client's exit
