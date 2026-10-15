@@ -15,6 +15,9 @@ the content's 500-tick reward clock); after that, and for the Maze or Mime
 square with random events off, the square is inert and any unheld running
 script (native or Load) standing on it fails with `random-trapped` and takes
 the terminal Blocked Stop described below instead of continuing there.
+With random-event handling off, detected events do not freeze scripts through
+either the Guardian hold or the pending-event ownership flag. This includes
+held Strange boxes. Detection still publishes the event's kind and name.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
