@@ -823,6 +823,7 @@ fn marked_gating_checks_marks_before_card() {
     assert_eq!(avail(A::Login, 1, false, false), Ok(()));
     assert_eq!(avail(A::Logout, 0, false, false), Err(B::NothingMarked));
     assert_eq!(avail(A::Walk, 1, false, false), Ok(()));
+    assert_eq!(avail(A::Walk, 0, false, false), Err(B::NothingMarked));
     assert_eq!(
         avail(A::ApplySettings, 0, false, false),
         Err(B::NothingMarked)
@@ -837,8 +838,10 @@ fn marked_gating_checks_marks_before_card() {
 
 #[test]
 fn combined_scope_is_marked_only_when_marks_exist() {
-    assert_eq!(combined_bulk_scope(true), BulkScope::Marked);
-    assert_eq!(combined_bulk_scope(false), BulkScope::All);
+    let mut selection = MarkedSelection::default();
+    assert_eq!(combined_bulk_scope(&selection), BulkScope::All);
+    selection.set(ProfileIdentity::uid(1), true);
+    assert_eq!(combined_bulk_scope(&selection), BulkScope::Marked);
 }
 
 #[test]
@@ -856,6 +859,29 @@ fn restart_scope_prompt_names_interrupted_and_starting() {
         scope.prompt_lines(),
         ["Start the card on 3 idle bots: alice, bob, carol"],
         "idle fixture rows and an unprojected name all count as starting"
+    );
+}
+
+#[test]
+fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
+    let names: Vec<String> = (0..23).map(|i| format!("bot{i:02}")).collect();
+    let mut rows: Vec<crate::views::FleetRow> = names
+        .iter()
+        .map(|name| {
+            crate::views::FleetRow::fixture(name, crate::views::Phase::Ready, Some(301), None)
+        })
+        .collect();
+    for row in rows.iter_mut().take(20) {
+        row.set_script(script::RunState::Running);
+    }
+    let scope = RestartScope::from_rows(names.iter().map(String::as_str), &rows);
+    assert_eq!(
+        scope.prompt_lines(),
+        [
+            "Stop and restart 20 running bots: bot00, bot01, bot02, bot03, bot04, bot05 +14 more",
+            "Start the card on 3 idle bots: bot20, bot21, bot22",
+        ],
+        "each list names six bots at most and counts every other bot"
     );
 }
 

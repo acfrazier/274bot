@@ -1651,7 +1651,13 @@ impl TuiSession {
     /// [`frontend_core::walk_marked`], the same command the panel's picker
     /// runs. Nothing marked keeps the map selection.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
-        if app.table.selection.is_empty() {
+        if frontend_core::marked_availability(
+            frontend_core::MarkedAction::Walk,
+            app.table.selection.len(),
+            app.script_sel.is_some(),
+            app.focused_name().is_some(),
+        ) == Err(frontend_core::MarkedBlock::NothingMarked)
+        {
             app.error = Some("no bots selected".into());
             return;
         }
@@ -1977,7 +1983,7 @@ impl TuiSession {
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
-        match frontend_core::combined_bulk_scope(!app.table.selection.is_empty()) {
+        match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
                 frontend_core::start_marked(
                     &app.table.selection,
@@ -2069,7 +2075,7 @@ impl TuiSession {
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
-        match frontend_core::combined_bulk_scope(!app.table.selection.is_empty()) {
+        match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
                 let report = frontend_core::stop_marked(
                     &app.table.selection,
@@ -2536,19 +2542,16 @@ impl TuiSession {
         }
         let ids_changed = app.profile_ids.len() != members.len()
             || members.iter().enumerate().any(|(index, name)| {
-                let identity = self
-                    .core
-                    .profile_identity(name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+                let identity = self.core.profile_identity_or_synthetic(name);
                 app.profile_ids.get(index).copied() != Some(identity)
             });
         if ids_changed {
             app.profile_ids.clear();
-            app.profile_ids.extend(members.iter().map(|name| {
-                self.core
-                    .profile_identity(name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
-            }));
+            app.profile_ids.extend(
+                members
+                    .iter()
+                    .map(|name| self.core.profile_identity_or_synthetic(name)),
+            );
             app.table.selection.retain(app.profile_ids.iter().copied());
         }
         let restart_generation = self.scripts.restart_generation();

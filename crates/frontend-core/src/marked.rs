@@ -102,11 +102,11 @@ pub enum BulkScope {
 /// *Stop all*, *Load+login all* and *Logout all*): the marked bots
 /// when anything is marked, everyone otherwise. The panel keeps its
 /// separate all and marked buttons instead of resolving a scope.
-pub fn combined_bulk_scope(has_marks: bool) -> BulkScope {
-    if has_marks {
-        BulkScope::Marked
-    } else {
+pub fn combined_bulk_scope(selection: &MarkedSelection) -> BulkScope {
+    if selection.is_empty() {
         BulkScope::All
+    } else {
+        BulkScope::Marked
     }
 }
 
@@ -286,6 +286,26 @@ pub struct RestartScope {
     starting: Vec<String>,
 }
 
+/// How many names one [`RestartScope::prompt_lines`] line spells out
+/// before the rest are counted as "+N more".
+const PROMPT_NAMES_SHOWN: usize = 6;
+
+/// `names` joined for one confirmation line: at most
+/// [`PROMPT_NAMES_SHOWN`] names, then "+N more" for the remainder.
+fn bounded_names(names: &[String]) -> String {
+    let mut text = String::new();
+    for (index, name) in names.iter().take(PROMPT_NAMES_SHOWN).enumerate() {
+        if index > 0 {
+            text.push_str(", ");
+        }
+        text.push_str(name);
+    }
+    if names.len() > PROMPT_NAMES_SHOWN {
+        let _ = write!(text, " +{} more", names.len() - PROMPT_NAMES_SHOWN);
+    }
+    text
+}
+
 impl RestartScope {
     /// Marked bots with an active script: it is stopped, then the card starts.
     pub fn interrupted(&self) -> &[String] {
@@ -322,8 +342,10 @@ impl RestartScope {
         scope
     }
 
-    /// The confirmation text, one line per part, naming every bot its
-    /// running script the restart stops and every idle bot it starts.
+    /// The confirmation text, one line per part. Each line names at
+    /// most [`PROMPT_NAMES_SHOWN`] bots and counts the rest
+    /// ("+N more"), so no bot is hidden silently however large the
+    /// fleet: the line's count always covers every bot in its part.
     pub fn prompt_lines(&self) -> Vec<String> {
         if self.is_empty() {
             return vec!["No loaded marked bot to start the card on.".to_string()];
@@ -338,7 +360,7 @@ impl RestartScope {
                 } else {
                     "bots"
                 },
-                self.interrupted.join(", ")
+                bounded_names(&self.interrupted)
             ));
         }
         if !self.starting.is_empty() {
@@ -350,7 +372,7 @@ impl RestartScope {
                 } else {
                     "bots"
                 },
-                self.starting.join(", ")
+                bounded_names(&self.starting)
             ));
         }
         lines

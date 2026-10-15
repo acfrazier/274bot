@@ -166,6 +166,16 @@ impl MarkedSelection {
         self.marks.retain(|identity| identities.contains(identity));
     }
 
+    /// Drop marks absent from `sorted`, a caller-kept slice of universe
+    /// identities in ascending order (duplicates are harmless). The
+    /// allocation-free form of [`Self::retain`] for a surface that
+    /// prunes every frame: membership is a binary search over the
+    /// borrowed slice, so nothing is collected.
+    pub fn retain_sorted(&mut self, sorted: &[ProfileIdentity]) {
+        self.marks
+            .retain(|identity| sorted.binary_search(identity).is_ok());
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
         self.marks.iter().copied()
     }
@@ -294,7 +304,9 @@ pub fn start_marked<Io>(
 /// terms [`start_marked`] uses: with a selected card, any mark counts
 /// (rows that cannot take it are named in its report); without one, at
 /// least one marked profile needs a saved assignment [`start_marked`]
-/// can start. Front ends use this to enable their Start control.
+/// can start. Front ends use this to enable their Start control, so
+/// it only borrows: no assignment or selection is cloned and no
+/// profile is looked up by name.
 pub fn marked_startable<Io>(
     selection: &MarkedSelection,
     core: &OperatorSession<Io>,
@@ -311,9 +323,11 @@ pub fn marked_startable<Io>(
     };
     vault.profiles().any(|profile| {
         selection.contains(ProfileIdentity::uid(profile.uid))
-            && Scripts::assignment(core, &profile.username)
-                .and_then(|a| crate::scripts::sel_from_assignment(&a))
-                .is_some()
+            && profile
+                .settings
+                .script_assignment
+                .as_ref()
+                .is_some_and(crate::scripts::assignment_has_sel)
     })
 }
 
@@ -432,6 +446,21 @@ mod tests {
         marked.rename(old, replacement);
         assert!(marked.contains(replacement));
         marked.remove(replacement);
+        assert!(marked.is_empty());
+    }
+
+    #[test]
+    fn retain_sorted_drops_marks_outside_the_borrowed_universe() {
+        let alice = ProfileIdentity::uid(11);
+        let bob = ProfileIdentity::uid(22);
+        let carol = ProfileIdentity::uid(33);
+        let mut marked = MarkedSelection::default();
+        marked.mark_all([alice, bob, carol]);
+        marked.retain_sorted(&[alice, carol]);
+        assert!(marked.contains(alice));
+        assert!(!marked.contains(bob));
+        assert!(marked.contains(carol));
+        marked.retain_sorted(&[]);
         assert!(marked.is_empty());
     }
 
