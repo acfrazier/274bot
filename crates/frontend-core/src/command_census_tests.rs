@@ -35,6 +35,7 @@ use std::path::Path;
 
 use self::scan::{display_surface, scan, Census, CoreEntry};
 use super::*;
+use crate::rs2b0t_import::ConflictPolicy;
 
 /// What the census records for one entry point.
 #[derive(Debug, Clone, Copy)]
@@ -184,6 +185,11 @@ const CORE: &[(&str, Decision)] = &[
         "profile_form.rs::ProfileFormSave::settle",
         Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
     ),
+    // profiles.rs
+    (
+        "profiles.rs::fresh_uid",
+        Excluded("derives the next profile UID from the vault; identity calculation only"),
+    ),
     // progress.rs, resources.rs: labels and meters.
     ("progress.rs::span_label", Excluded(FORMAT)),
     ("progress.rs::runtime_label", Excluded(FORMAT)),
@@ -196,6 +202,69 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::format_bots", Excluded(FORMAT)),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
+    // rs2b0t_import.rs
+    (
+        "rs2b0t_import.rs::parse_profile_file",
+        Excluded("validates the export and registers parsed passwords for redaction; parsing/privacy handling, not an operator decision or vault write"),
+    ),
+    (
+        "rs2b0t_import.rs::read_profile_file",
+        Excluded("reads and validates the selected export for a preview; no operator decision or vault write"),
+    ),
+    (
+        "rs2b0t_import.rs::plan_import",
+        Excluded("maps the parsed export and vault into a preview plan; writes nothing"),
+    ),
+    (
+        "rs2b0t_import.rs::apply_import",
+        Rows(
+            &[C::CreateProfile, C::SaveProfile],
+            "each account's planned status selects CreateProfile for a new profile or SaveProfile for an existing one",
+        ),
+    ),
+    (
+        "rs2b0t_import.rs::delete_export_file",
+        Row(C::DeleteProfileImportExport),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::path_mut",
+        Row(C::EditProfileImportPath),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::preview",
+        Row(C::PreviewProfileImport),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::set_policy",
+        Row(C::SetProfileImportPolicy(ConflictPolicy::Skip)),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::set_include_unusable",
+        Row(C::SetProfileImportIncludeUnusable(true)),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::confirm",
+        Rows(
+            &[C::CreateProfile, C::SaveProfile],
+            "the confirmed import writes each planned account as a create or save according to its status",
+        ),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::back",
+        Row(C::ReturnToProfileImportPath),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::ask_delete",
+        Row(C::SetProfileImportDeletePrompt(true)),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::cancel_delete",
+        Row(C::SetProfileImportDeletePrompt(false)),
+    ),
+    (
+        "rs2b0t_import.rs::ProfileImport::confirm_delete",
+        Row(C::DeleteProfileImportExport),
+    ),
     // quester_paths.rs
     (
         "quester_paths.rs::QuesterPathsController::restore_at",
@@ -492,6 +561,10 @@ const CORE: &[(&str, Decision)] = &[
         "session.rs::OperatorSession::set_random_settings",
         Row(C::SetGuardian),
     ),
+    (
+        "session.rs::OperatorSession::set_random_event_policy",
+        Row(C::SetGuardian),
+    ),
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
     ("session.rs::OperatorSession::track_save", Row(C::SaveProfile)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
@@ -659,6 +732,31 @@ const SURFACE: &[(&str, Decision)] = &[
         "panel/profile_script.rs::Session::begin_script_reload_clicked",
         Rows(&[C::ReloadScripts, C::ConfirmReload], RELOAD_CLICK),
     ),
+    // --- panel: rs2b0t import ---
+    (
+        "panel/app.rs::profile_import_body",
+        Rows(
+            &[
+                C::EditProfileImportPath,
+                C::SetProfileImportPolicy(ConflictPolicy::Skip),
+                C::SetProfileImportIncludeUnusable(true),
+            ],
+            "the shared flow owns the edited path and the two preview choices",
+        ),
+    ),
+    (
+        "panel/app.rs::profile_import_bar",
+        Rows(
+            &[
+                C::PreviewProfileImport,
+                C::CreateProfile,
+                C::SaveProfile,
+                C::ReturnToProfileImportPath,
+                C::DeleteProfileImportExport,
+            ],
+            "Preview reads and maps; Import creates or saves each planned profile; Back drops the preview; confirmed deletion removes the export",
+        ),
+    ),
     // --- panel: profile form and chooser ---
     (
         "panel/session/chooser.rs::Session::begin_edit_profile",
@@ -810,6 +908,24 @@ const SURFACE: &[(&str, Decision)] = &[
     ("tui/bin.rs::TuiSession::script_load", Row(C::LoadScriptFile)),
     ("tui/bin.rs::TuiSession::defer_rs2b0t_catalog", Row(C::DeferCatalogImport)),
     ("tui/bin.rs::TuiSession::import_rs2b0t_catalog", Row(C::ImportCatalog)),
+    (
+        "tui/bin.rs::TuiSession::profile_import",
+        Rows(
+            &[
+                C::ImportCatalog,
+                C::EditProfileImportPath,
+                C::PreviewProfileImport,
+                C::SetProfileImportPolicy(ConflictPolicy::Skip),
+                C::SetProfileImportIncludeUnusable(true),
+                C::CreateProfile,
+                C::SaveProfile,
+                C::ReturnToProfileImportPath,
+                C::SetProfileImportDeletePrompt(true),
+                C::DeleteProfileImportExport,
+            ],
+            "the Preview action may fill the catalog; its branches edit the path, choose preview options, confirm profile writes, return to the path, stage or cancel deletion, and confirm export deletion",
+        ),
+    ),
     (
         "tui/bin.rs::TuiSession::params_key",
         Rows(

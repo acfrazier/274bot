@@ -134,8 +134,14 @@ pub struct StartSettled {
 /// one profile saved in one commit each settle and deliver their own
 /// setting; only a later one with the same setting replaces an earlier
 /// one's.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct ArmMirror(ArmMirrorKind);
+
+impl std::fmt::Debug for ArmMirror {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
 
 #[derive(Debug, PartialEq)]
 enum ArmMirrorKind {

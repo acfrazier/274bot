@@ -53,6 +53,7 @@ use api::process_condition::{
 use crate::map_bake::MapBakeChoice;
 use crate::nav_prefs::NavPreference;
 use crate::operations::ActionKind;
+use crate::rs2b0t_import::ConflictPolicy;
 use crate::selection::ProfileIdentity;
 use crate::walk_permissions::DangerLevel;
 
@@ -102,7 +103,9 @@ pub enum OperatorCommand {
     /// (`OperatorSession::set_memory_mode`, `session.rs:1075-1095`).
     SetMemoryMode(MemoryMode),
     /// Persist the random-event guardian fields staged in the profile form
-    /// (`OperatorSession::set_random_settings`, `session.rs:2068-2093`).
+    /// (`OperatorSession::set_random_settings`, `session.rs:2068-2093`) or
+    /// one hostile random's policy (`OperatorSession::set_random_event_policy`,
+    /// `session.rs:2165-2184`).
     SetGuardian,
     /// Quit the application (panel window close, TUI `q`/`Ctrl-Q`). One
     /// member per loaded slot, each completed by its slot's retirement.
@@ -290,6 +293,28 @@ pub enum OperatorCommand {
     /// [`Self::DebugCommand`] (`setvar tutorial 1000`) and this row; either
     /// can fail without undoing the other.
     MarkTutorialSkipped,
+    // --- rs2b0t profile import ---
+    /// Edit the shared export path held by the importer
+    /// (`ProfileImport::path_mut`; the panel path field and TUI overlay).
+    EditProfileImportPath,
+    /// Read and map the rs2b0t export into the preview without writing
+    /// (`ProfileImport::preview`; the panel Preview button and TUI action).
+    PreviewProfileImport,
+    /// Choose how an existing profile in the preview is handled
+    /// (`ProfileImport::set_policy`).
+    SetProfileImportPolicy(ConflictPolicy),
+    /// Include accounts the 289 client cannot log into in the import
+    /// (`ProfileImport::set_include_unusable`).
+    SetProfileImportIncludeUnusable(bool),
+    /// Return to the path field, dropping the parsed preview file and its
+    /// passwords (`ProfileImport::back`).
+    ReturnToProfileImportPath,
+    /// Show or withdraw the export-file deletion confirmation
+    /// (`ProfileImport::{ask_delete, cancel_delete}`).
+    SetProfileImportDeletePrompt(bool),
+    /// Delete the plaintext export after explicit confirmation
+    /// (`ProfileImport::confirm_delete`, `delete_export_file`).
+    DeleteProfileImportExport,
 
     // --- Loadouts ---
     /// Make the selected loadout the editing draft (panel Loadouts list,
@@ -633,7 +658,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 84] = [
+    pub const ALL: [OperatorCommand; 91] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -686,6 +711,13 @@ impl OperatorCommand {
         Self::KeepEditing,
         Self::CloseProfileForm(FormClose::Form),
         Self::MarkTutorialSkipped,
+        Self::EditProfileImportPath,
+        Self::PreviewProfileImport,
+        Self::SetProfileImportPolicy(ConflictPolicy::Skip),
+        Self::SetProfileImportIncludeUnusable(true),
+        Self::ReturnToProfileImportPath,
+        Self::SetProfileImportDeletePrompt(true),
+        Self::DeleteProfileImportExport,
         Self::SelectLoadout,
         Self::EditLoadoutDraft(LoadoutField::Supplies),
         Self::CopyEquipmentToLoadout,
@@ -745,6 +777,13 @@ impl OperatorCommand {
             | Self::ImportCatalog
             | Self::TranspileAll
             | Self::DeferCatalogImport
+            | Self::EditProfileImportPath
+            | Self::PreviewProfileImport
+            | Self::SetProfileImportPolicy(_)
+            | Self::SetProfileImportIncludeUnusable(_)
+            | Self::ReturnToProfileImportPath
+            | Self::SetProfileImportDeletePrompt(_)
+            | Self::DeleteProfileImportExport
             | Self::CreateProfile
             | Self::OpenNewProfileForm
             | Self::EditProfileDraft(_)
@@ -897,6 +936,13 @@ impl OperatorCommand {
             | Self::SelectLoadout
             | Self::EditLoadoutDraft(_)
             | Self::CopyEquipmentToLoadout
+            | Self::EditProfileImportPath
+            | Self::PreviewProfileImport
+            | Self::SetProfileImportPolicy(_)
+            | Self::SetProfileImportIncludeUnusable(_)
+            | Self::ReturnToProfileImportPath
+            | Self::SetProfileImportDeletePrompt(_)
+            | Self::DeleteProfileImportExport
             | Self::CancelQueuedStart
             | Self::CancelSettingsSync
             | Self::DeferSettingsRestart

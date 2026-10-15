@@ -174,6 +174,7 @@ const SYNC_LOG_FAMILIES: &[&str] = &[
     "banking_open",
     "bank_access",
     "bank_npc_access",
+    "bank_open_access",
     "bank_deposit",
     "dialog",
     "reach-npc-dialog",
@@ -490,7 +491,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:352-353; $S/bank_access.rs:713-714,874-875; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:479-483,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:352-353; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:479-483,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
