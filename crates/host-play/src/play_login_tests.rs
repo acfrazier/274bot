@@ -1419,6 +1419,52 @@ fn identity_cancellation_fires_only_after_k4_unlock() {
 }
 
 #[test]
+fn world_error_cancellation_fires_only_after_k4_unlock() {
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    arm.hold_login_on_error();
+    assert!(cancel.is_cancelled());
+}
+
+#[test]
+fn queue_expiry_cancellation_fires_only_after_k1_unlock() {
+    let arm = SlotArm::new(7, true);
+    let queue = Arc::new(QueueMutex::new(
+        LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60))
+            .with_handshake_hold(Duration::from_millis(1)),
+    ));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let expired_at = Instant::now() - Duration::from_secs(2);
+    let cancel = LoginCancel::new();
+    {
+        let mut q = queue.lock();
+        q.enqueue_owner(u64::MAX, 9);
+        assert_eq!(q.poll_owner(u64::MAX, 9, expired_at).permit, Permit::Grant);
+        assert!(q
+            .start_attempt(u64::MAX, expired_at, cancel.clone())
+            .is_some());
+        q.enqueue_owner(arm.queue_owner, 7);
+    }
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    let mut retired = false;
+    let wait = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
+        if !retired {
+            assert!(cancel.is_cancelled());
+            retired = queue
+                .lock()
+                .acknowledge_login_return(u64::MAX, Instant::now());
+        }
+        Duration::from_millis(1)
+    });
+    assert!(matches!(wait, PermitWait::Granted(_)));
+    assert!(retired);
+    assert!(cancel.is_cancelled());
+}
+
+#[test]
 fn plain_login_does_not_shorten_an_established_generic_backoff() {
     let arm = SlotArm::new(7, true);
     let command = arm.login_command(false).unwrap();

@@ -289,6 +289,63 @@ impl Drop for K4CancelGuard<'_> {
         }
     }
 }
+/// Watches an armed test's queue cancellation effects until K1 unlocks.
+#[cfg(test)]
+struct K1CancelGuard<'a> {
+    queue: parking_lot::MutexGuard<'a, LoginQueue>,
+    pending: Vec<LoginCancel>,
+    enabled: bool,
+}
+
+#[cfg(test)]
+impl<'a> K1CancelGuard<'a> {
+    fn new(queue: parking_lot::MutexGuard<'a, LoginQueue>, enabled: bool) -> Self {
+        Self {
+            queue,
+            pending: Vec::new(),
+            enabled,
+        }
+    }
+
+    fn watch(&mut self, cancels: &[LoginCancel]) {
+        if self.enabled {
+            self.pending.extend(
+                cancels
+                    .iter()
+                    .filter(|cancel| !cancel.is_cancelled())
+                    .cloned(),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for K1CancelGuard<'_> {
+    type Target = LoginQueue;
+
+    fn deref(&self) -> &Self::Target {
+        &self.queue
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for K1CancelGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.queue
+    }
+}
+
+#[cfg(test)]
+impl Drop for K1CancelGuard<'_> {
+    fn drop(&mut self) {
+        for cancel in &self.pending {
+            assert!(
+                !cancel.is_cancelled(),
+                "login token fired while K1 was held"
+            );
+        }
+    }
+}
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
@@ -766,6 +823,12 @@ impl SlotArm {
 
     pub(super) fn hold_login_on_error(&self) {
         let cancel = {
+            #[cfg(test)]
+            let mut lifecycle = K4CancelGuard::new(
+                self.lifecycle.lock(),
+                self.assert_cancel_order.load(Ordering::Relaxed),
+            );
+            #[cfg(not(test))]
             let mut lifecycle = self.lifecycle.lock();
             let receipt = lifecycle
                 .mailbox
@@ -1995,8 +2058,16 @@ pub(super) fn wait_for_permit(
             queue.lock().clear_owner_defer(arm.queue_owner);
         }
         let (polled, event) = {
+            #[cfg(test)]
+            let mut q = K1CancelGuard::new(
+                queue.lock(),
+                arm.assert_cancel_order.load(Ordering::Relaxed),
+            );
+            #[cfg(not(test))]
             let mut q = queue.lock();
             let polled = q.poll_owner(arm.queue_owner, uid, Instant::now());
+            #[cfg(test)]
+            q.watch(&polled.cancels);
             let event = if matches!(polled.permit, Permit::Wait(_)) {
                 publish_queue_place(&q, &mut lock_statuses(statuses), username, arm.queue_owner)
             } else {
