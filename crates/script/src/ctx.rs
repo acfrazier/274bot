@@ -5,7 +5,7 @@ use api::interact::Driver;
 pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
-/// off, mirroring the three booleans of `nav::router::FindOptions`; the nav
+/// off, mirroring the three booleans of the host's router options; the nav
 /// type also carries essence and zone-exemption state the host owns, so the
 /// host converts between the two at the hook boundary. `allow_bank_fetch` latches a host
 /// BankBudget session when true; JS `Banking.walk` still uses defaults
@@ -42,7 +42,7 @@ pub struct CompiledTick<'a> {
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
-    pub collision: Option<&'a nav::collision::WorldCollision>,
+    pub collision: Option<nav::contract::CollisionView<'a>>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.

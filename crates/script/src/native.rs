@@ -523,7 +523,7 @@ pub struct WalkRequest {
     /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     /// Destination settlement mode; `Reach` remains the default behavior.
-    pub arrival: nav::arrival::ArrivalKind,
+    pub arrival: nav::contract::ArrivalKind,
     pub options: WalkOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
@@ -596,7 +596,7 @@ pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub end: WalkEnd,
-    pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
+    pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,

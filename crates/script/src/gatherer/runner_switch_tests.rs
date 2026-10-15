@@ -750,7 +750,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                             _ => None,
                         },
                         radius: 1,
-                        arrival: nav::arrival::ArrivalKind::Reach,
+                        arrival: nav::contract::ArrivalKind::Reach,
                         options: crate::native::WalkOptions::default(),
                         required_after: tick.cx.evidence(),
                         evidence: None,
