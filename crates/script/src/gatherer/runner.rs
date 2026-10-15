@@ -3730,6 +3730,13 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
