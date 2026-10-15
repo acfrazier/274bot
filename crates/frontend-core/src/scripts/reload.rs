@@ -12,6 +12,55 @@ use std::sync::Arc;
 use super::{PendingCard, PendingStart, Scripts, StartKind};
 use crate::session::{OperatorSession, ScriptStart};
 
+/// Why a catalog fill or import request failed.
+///
+/// Returned at the `frontend-core` crate boundary by
+/// [`Scripts::request_catalog_fill`], [`Scripts::request_catalog_import`],
+/// [`Scripts::take_catalog_import_result`] and
+/// [`Scripts::fill_catalog_blocking`]. The `Display` text of every variant
+/// is the message those methods returned as `String` before, so
+/// operator-visible wording is unchanged; callers can now tell the
+/// failures apart without matching on text.
+///
+/// No existing `frontend-core` or `script` error type models this surface:
+/// [`script::preparation::PreparationError`] covers admission and the
+/// worker join, and is reused below for those two sources, but the
+/// busy-state guards, the bounded library snapshot, the catalog worker's
+/// own failure strings and the library commit belong to this coordinator.
+/// `Clone` is needed: a submission failure is both retained as the async
+/// receipt and returned to the caller.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CatalogError {
+    /// Another root's catalog work is already queued or running.
+    #[error("catalog preparation is already pending for another root")]
+    BusyForAnotherRoot,
+    /// A catalog fill or import is already queued or running.
+    #[error("catalog preparation is already pending")]
+    Busy,
+    /// The previous import settled but its receipt was never collected.
+    #[error("the previous catalog import result has not been collected")]
+    UncollectedImportResult,
+    /// The bounded pre-submission snapshot of the library did not fit.
+    /// Carries the [`script::JsLibrary::catalog_preparation_snapshot`]
+    /// message verbatim.
+    #[error("{0}")]
+    Snapshot(String),
+    /// The admission charge for the catalog job was refused.
+    #[error(transparent)]
+    Charge(#[from] api::work::SubmissionRefusal),
+    /// WorkAdmission refused, failed, or lost the catalog job.
+    #[error(transparent)]
+    Preparation(#[from] script::preparation::PreparationError),
+    /// The catalog worker reported a failure (registry, source graph,
+    /// diff); carries its message verbatim.
+    #[error("{0}")]
+    Worker(String),
+    /// A prepared card could not be committed to the library; carries the
+    /// [`script::JsLibrary::commit_prepared`] message verbatim.
+    #[error("{0}")]
+    Commit(String),
+}
+
 #[derive(Debug)]
 pub struct ReloadWarning {
     pub(crate) identity_key: String,
@@ -318,8 +367,8 @@ pub(super) struct ScriptWorkState {
     next_generation: u64,
     catalog_generation: u64,
     catalog: Option<CatalogJob>,
-    catalog_fill_result: Option<Result<(), String>>,
-    catalog_import_result: Option<(PathBuf, Result<usize, String>)>,
+    catalog_fill_result: Option<Result<(), CatalogError>>,
+    catalog_import_result: Option<(PathBuf, Result<usize, CatalogError>)>,
     starts: std::collections::HashMap<String, StartPreparation>,
     transpile_generation: u64,
     transpile: Option<TranspileJob>,
@@ -473,7 +522,11 @@ impl Scripts {
 
     /// Queue the first source-only catalog scan. The caller may retry this
     /// method after a hard refusal; Full is retained internally.
-    pub fn request_catalog_fill(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
+    pub fn request_catalog_fill(
+        &mut self,
+        root: &Path,
+        path_file: &Path,
+    ) -> Result<(), CatalogError> {
         if self.catalog_root.as_deref() == Some(root) && self.catalog_filled {
             return Ok(());
         }
@@ -485,13 +538,17 @@ impl Scripts {
         });
         match active_root {
             Some(active_root) if active_root == root => return Ok(()),
-            Some(_) => return Err("catalog preparation is already pending for another root".into()),
+            Some(_) => return Err(CatalogError::BusyForAnotherRoot),
             None => {}
         }
         if self.async_work.catalog_import_result.is_some() {
-            return Err("the previous catalog import result has not been collected".into());
+            return Err(CatalogError::UncollectedImportResult);
         }
-        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
+        let snapshot = Arc::new(
+            self.js
+                .catalog_preparation_snapshot(root)
+                .map_err(CatalogError::Snapshot)?,
+        );
         let generation = self.async_work.next_generation();
         self.async_work.catalog_generation = generation;
         self.async_work.catalog_fill_result = None;
@@ -506,14 +563,22 @@ impl Scripts {
 
     /// Queue an explicit catalog import and its bounded preparation. Unlike
     /// the first Browse scan, the import also prepares changed cards.
-    pub fn request_catalog_import(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
+    pub fn request_catalog_import(
+        &mut self,
+        root: &Path,
+        path_file: &Path,
+    ) -> Result<(), CatalogError> {
         if self.async_work.catalog.is_some() {
-            return Err("catalog preparation is already pending".into());
+            return Err(CatalogError::Busy);
         }
         if self.async_work.catalog_import_result.is_some() {
-            return Err("the previous catalog import result has not been collected".into());
+            return Err(CatalogError::UncollectedImportResult);
         }
-        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
+        let snapshot = Arc::new(
+            self.js
+                .catalog_preparation_snapshot(root)
+                .map_err(CatalogError::Snapshot)?,
+        );
         let generation = self.async_work.next_generation();
         self.async_work.catalog_generation = generation;
         self.async_work.catalog_fill_result = None;
@@ -526,7 +591,10 @@ impl Scripts {
         self.submit_catalog_job()
     }
 
-    pub fn take_catalog_import_result(&mut self) -> Option<(PathBuf, Result<usize, String>)> {
+    /// Take the settled import receipt, if any: the root it was taken for
+    /// and the prepared catalog's card count. A new fill or import is
+    /// refused until this is collected.
+    pub fn take_catalog_import_result(&mut self) -> Option<(PathBuf, Result<usize, CatalogError>)> {
         self.async_work.catalog_import_result.take()
     }
 
@@ -677,7 +745,11 @@ impl Scripts {
     /// Synchronous receipt for non-interactive live setup before its session
     /// begins pumping. Interactive callers use `request_catalog_fill` and
     /// advance it from `Scripts::poll`.
-    pub fn fill_catalog_blocking(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
+    pub fn fill_catalog_blocking(
+        &mut self,
+        root: &Path,
+        path_file: &Path,
+    ) -> Result<(), CatalogError> {
         self.request_catalog_fill(root, path_file)?;
         while self.catalog_work_pending() {
             self.poll_catalog_job();
@@ -721,7 +793,7 @@ impl Scripts {
         }
     }
 
-    fn submit_catalog_job(&mut self) -> Result<(), String> {
+    fn submit_catalog_job(&mut self) -> Result<(), CatalogError> {
         let Some(job) = self.async_work.catalog.take() else {
             return Ok(());
         };
@@ -740,7 +812,7 @@ impl Scripts {
                 ) {
                     Ok(input) => input,
                     Err(error) => {
-                        let error = error.to_string();
+                        let error = CatalogError::Charge(error);
                         self.async_work.catalog_fill_result = Some(Err(error.clone()));
                         self.show(format!("$RS2B0T registry: {error}"));
                         return Err(error);
@@ -774,7 +846,7 @@ impl Scripts {
                         Ok(())
                     }
                     Err(error) => {
-                        let error = error.to_string();
+                        let error = CatalogError::Preparation(error);
                         self.async_work.catalog_fill_result = Some(Err(error.clone()));
                         self.show(format!("$RS2B0T registry: {error}"));
                         Err(error)
@@ -795,7 +867,7 @@ impl Scripts {
                 ) {
                     Ok(input) => input,
                     Err(error) => {
-                        let error = error.to_string();
+                        let error = CatalogError::Charge(error);
                         self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
                         return Err(error);
@@ -829,7 +901,7 @@ impl Scripts {
                         Ok(())
                     }
                     Err(error) => {
-                        let error = error.to_string();
+                        let error = CatalogError::Preparation(error);
                         self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
                         Err(error)
@@ -901,8 +973,8 @@ impl Scripts {
                     let _ = script::persist_rs2b0t_root_at(&root, &path_file);
                     self.async_work.catalog_fill_result = Some(Ok(()));
                 }
-                Ok(Err(error)) => self.fail_catalog_fill(error),
-                Err(error) => self.fail_catalog_fill(error.to_string()),
+                Ok(Err(error)) => self.fail_catalog_fill(CatalogError::Worker(error)),
+                Err(error) => self.fail_catalog_fill(CatalogError::Preparation(error)),
             },
             CatalogJob::ImportRunning {
                 generation,
@@ -917,20 +989,20 @@ impl Scripts {
                             self.show(format!("Catalog imported: {count} cards"));
                         }
                         Err(error) => {
-                            self.async_work.catalog_import_result =
-                                Some((root, Err(error.clone())));
                             self.show(format!("Import catalog: {error}"));
+                            self.async_work.catalog_import_result = Some((root, Err(error)));
                         }
                     }
                 }
                 Ok(Err(error)) => {
-                    self.async_work.catalog_import_result = Some((root, Err(error.clone())));
+                    let error = CatalogError::Worker(error);
                     self.show(format!("Import catalog: {error}"));
+                    self.async_work.catalog_import_result = Some((root, Err(error)));
                 }
                 Err(error) => {
-                    let error = error.to_string();
-                    self.async_work.catalog_import_result = Some((root, Err(error.clone())));
+                    let error = CatalogError::Preparation(error);
                     self.show(format!("Import catalog: {error}"));
+                    self.async_work.catalog_import_result = Some((root, Err(error)));
                 }
             },
             CatalogJob::FillRunning { .. }
@@ -940,9 +1012,9 @@ impl Scripts {
         }
     }
 
-    fn fail_catalog_fill(&mut self, error: String) {
-        self.async_work.catalog_fill_result = Some(Err(error.clone()));
+    fn fail_catalog_fill(&mut self, error: CatalogError) {
         self.show(format!("$RS2B0T registry: {error}"));
+        self.async_work.catalog_fill_result = Some(Err(error));
     }
 
     fn apply_catalog_import(
@@ -950,7 +1022,7 @@ impl Scripts {
         root: PathBuf,
         path_file: PathBuf,
         result: script::load::CatalogPreparationResult,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, CatalogError> {
         let script::load::CatalogPreparationResult {
             diff,
             prepared,
@@ -962,7 +1034,9 @@ impl Scripts {
         }
         self.js.apply_catalog_diff(diff);
         for item in prepared.into_iter().chain(warmed) {
-            self.js.commit_prepared(item)?;
+            self.js
+                .commit_prepared(item)
+                .map_err(CatalogError::Commit)?;
         }
         self.js.set_catalog_root(&root);
         self.catalog_root = Some(root.clone());
@@ -1173,7 +1247,7 @@ impl Scripts {
                 script::StartLoadError::Refused("catalog root is not available".into())
             })?;
             self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
-                .map_err(script::StartLoadError::Refused)?;
+                .map_err(|error| script::StartLoadError::Refused(error.to_string()))?;
         }
         let stage = if wait_for_catalog {
             StartStage::WaitingCatalog
@@ -1311,7 +1385,7 @@ impl Scripts {
                         &profile,
                         preparation.demand.kind,
                         preparation.demand.tallied,
-                        error.clone(),
+                        error.to_string(),
                     );
                     return;
                 }
@@ -1332,7 +1406,7 @@ impl Scripts {
                             &profile,
                             preparation.demand.kind,
                             preparation.demand.tallied,
-                            error,
+                            error.to_string(),
                         );
                         return;
                     }

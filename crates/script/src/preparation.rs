@@ -407,7 +407,7 @@ where
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum PreparationError {
     #[error("could not start work admission: {0}")]
     Start(#[from] WorkStartError),

@@ -1262,7 +1262,7 @@ pub enum CooperativeViolation {
 
 /// Error side of a job terminal: family error, a contained internal failure,
 /// cooperation, or the process-unavailable failure of an accepted job.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JobError<E: fmt::Debug + std::error::Error> {
     /// Family-typed error.
     #[error(transparent)]
