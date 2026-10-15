@@ -140,12 +140,20 @@
 use crate::load::callback_v8::HeldCallback;
 use crate::shim::{InteractReq, MaybeInteractReq};
 use crate::task_clock::InstantTaskClock;
+use crate::{isolate_fb, native};
+use api::identity::{ExecutionId, RequestId};
+use api::script_contract::{CallbackCancelReason, RequestStamp};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
-
+use std::collections::VecDeque;
 /// A started machine's id, unique for the isolate thread's life.
 pub(crate) type Handle = u64;
+
+/// Handles are returned to JavaScript as Number and encoded in isolate request ids.
+const MAX_MACHINE_HANDLE: Handle = 9_007_199_254_740_991;
+
+const MAX_PENDING_SEAT_STARTS: usize = api::script_contract::MAX_PENDING_STARTS;
 
 /// Callbacks one row may run in one tick before it yields to the next.
 ///
@@ -305,6 +313,10 @@ pub(crate) enum AbortReason {
     Superseded,
     /// A callback of this row was terminated (join or the watchdog).
     Terminated,
+    /// A child of a revoked in-isolate parent.
+    ParentAborted,
+    /// Manual Combat takeover.
+    UserInput,
     /// The handle was never started here or was already taken.
     Unknown,
 }
@@ -315,6 +327,8 @@ impl AbortReason {
             Self::Reset => "reset",
             Self::Superseded => "superseded",
             Self::Terminated => "terminated",
+            Self::ParentAborted => "parent-aborted",
+            Self::UserInput => "user-input",
             Self::Unknown => "unknown",
         }
     }
@@ -326,6 +340,7 @@ pub(crate) enum Outcome {
     Done(Value),
     Failed(Thrown),
     Aborted(AbortReason),
+    Refused(String),
 }
 
 /// The synchronous result of a start.
@@ -349,6 +364,7 @@ pub(crate) struct Cx<'a> {
     clock: &'a mut InstantTaskClock,
     reply: Option<Reply>,
     hooks: &'a [Hook],
+    handle: Handle,
     /// The script side while a row steps; `None` in begin.
     js: Option<&'a mut (dyn Js + 'a)>,
     /// The outer operation's user-movement intent baseline.
@@ -357,7 +373,6 @@ pub(crate) struct Cx<'a> {
     asks: usize,
     ending: Option<Ending>,
 }
-
 impl<'a> Cx<'a> {
     /// A bare context for a family's own unit tests: no hooks held.
     #[cfg(test)]
@@ -371,6 +386,7 @@ impl<'a> Cx<'a> {
             clock,
             reply,
             hooks: &[],
+            handle: 0,
             js: None,
             intent_baseline: user_move_intent_seq(),
             asks: 0,
@@ -383,6 +399,16 @@ impl Cx<'_> {
     /// Append one game op to this tick's InteractReq batch.
     pub(crate) fn emit(&mut self, op: InteractReq) {
         self.ops.push(op);
+    }
+
+    /// This row's isolate request identity, when it has a wire-safe handle.
+    pub(crate) fn request_id(&self) -> Option<RequestId> {
+        RequestId::isolate(self.handle).ok()
+    }
+
+    /// The raw seat token shared with this row's machine handle.
+    pub(crate) fn seat_token(&self) -> Option<u64> {
+        self.request_id().map(RequestId::get)
     }
 
     /// This row's pause/hold-aware deadline clock.
@@ -445,7 +471,7 @@ impl Cx<'_> {
             return Err(Ended);
         }
         let callback = self.hooks.get(hook).map(|hook| &hook.callback);
-        let called = js.call(callback, args);
+        let called = js.call_for(self.handle, callback, args);
         if matches!(called, Called::Terminated) {
             TERMINATED.with(|flag| flag.set(true));
             self.ending = Some(Ending::Stopped);
@@ -504,6 +530,11 @@ pub(crate) trait Js {
     /// and must not drain that queue; it polls the callback promise
     /// instead.
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
+    /// Call a row-owned hook. Implementations that need row attribution
+    /// override this method; test hosts can keep the context-free default.
+    fn call_for(&mut self, _handle: Handle, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+        self.call(hook, args)
+    }
     /// Poll a promise a callback returned; `None` while pending.
     fn poll(&mut self, pending: &Pending) -> Option<Reply>;
     /// Join has claimed this tick for Stop, or the slow-tick watchdog armed
@@ -527,7 +558,7 @@ struct Entry {
     name: &'static str,
     callbacks: &'static [&'static str],
     kick_on_start: bool,
-    begin: fn(Value, Vec<Hook>, usize) -> Started,
+    begin: fn(Handle, Value, Vec<Hook>, usize) -> Started,
     /// [`Family::SYNC_HOOKS`]. The ABI coverage test reads this field.
     #[allow(dead_code)]
     sync_hooks: &'static [usize],
@@ -654,7 +685,7 @@ pub(crate) fn live(family: &str) -> bool {
     HOST.with(|host| {
         let host = host.borrow();
         host.rows.iter().any(|row| row.family == family)
-            || host.stepping.iter().any(|(name, _, _, _)| *name == family)
+            || host.stepping.iter().any(|row| row.family == family)
     })
 }
 
@@ -766,6 +797,204 @@ pub(crate) fn kick_on_start(family: &str) -> bool {
         .is_some_and(|entry| entry.kick_on_start)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CapturedLineage {
+    pub(crate) lineage: Option<RequestId>,
+    pub(crate) mirror_owner: Option<RequestId>,
+    pub(crate) dropped: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MachineEventKind {
+    Phase(crate::native::NativePhase),
+    Done,
+    Failed,
+    Aborted(api::script_contract::AbortReason),
+    ManualWalk,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MachineEvent {
+    pub(crate) id: RequestId,
+    pub(crate) kind: MachineEventKind,
+    pub(crate) admitted: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StartContext {
+    parent_row: Option<Handle>,
+    seat_parent: Option<RequestId>,
+    local_parent: Option<RequestId>,
+    parent_revoked: bool,
+    history_expired: bool,
+}
+struct StartContextGuard(Option<StartContext>);
+impl Drop for StartContextGuard {
+    fn drop(&mut self) {
+        START_CONTEXT.with(|slot| slot.set(self.0));
+    }
+}
+
+fn with_start_context<T>(context: StartContext, f: impl FnOnce() -> T) -> T {
+    let previous = START_CONTEXT.with(|slot| slot.replace(Some(context)));
+    let _restore = StartContextGuard(previous);
+    f()
+}
+
+#[derive(Clone)]
+pub(crate) enum SeatStartPayload {
+    Empty,
+    Gather(std::sync::Arc<crate::native::SettingsBag>),
+    Combat(std::sync::Arc<crate::api_combat::CombatSessionRequest>),
+    QuestProgress(std::sync::Arc<str>),
+}
+
+impl SeatStartPayload {
+    fn as_ref(&self) -> isolate_fb::SeatStartArgsRef<'_> {
+        match self {
+            Self::Empty => isolate_fb::SeatStartArgsRef::Empty,
+            Self::Gather(settings) => isolate_fb::SeatStartArgsRef::Gather(settings),
+            Self::Combat(request) => isolate_fb::SeatStartArgsRef::Combat(request),
+            Self::QuestProgress(name) => isolate_fb::SeatStartArgsRef::QuestProgress(name),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct PendingSeatStart {
+    id: RequestId,
+    parent: Option<RequestId>,
+    local_parent: Option<RequestId>,
+    kind: native::request::NativeKind,
+    args: SeatStartPayload,
+}
+
+impl PendingSeatStart {
+    pub(crate) fn as_ref(
+        &self,
+        execution: ExecutionId,
+    ) -> Result<isolate_fb::SeatStartRef<'_>, String> {
+        let stamp = RequestStamp::new(self.id, self.parent, self.local_parent, execution)
+            .map_err(|error| error.to_string())?;
+        Ok(isolate_fb::SeatStartRef {
+            stamp,
+            kind: self.kind,
+            args: self.args.as_ref(),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PendingSeatCancel {
+    of: RequestId,
+    reason: CallbackCancelReason,
+}
+
+pub(crate) struct SeatBatchCarry<'a> {
+    pub(crate) consumed_terminal_seq: u64,
+    pub(crate) terminal_ack_pending: bool,
+    pub(crate) starts: Result<Vec<isolate_fb::SeatStartRef<'a>>, String>,
+    pub(crate) cancels: Vec<isolate_fb::SeatCancelInput>,
+    pub(crate) mirror_revokes: Vec<isolate_fb::SeatMirrorRevoke>,
+    pub(crate) machine_events: Vec<MachineEvent>,
+}
+
+impl SeatBatchCarry<'_> {
+    pub(crate) fn has_work(&self) -> bool {
+        self.terminal_ack_pending
+            || self.starts.as_ref().is_ok_and(|starts| !starts.is_empty())
+            || self.starts.is_err()
+            || !self.cancels.is_empty()
+            || !self.mirror_revokes.is_empty()
+            || !self.machine_events.is_empty()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SteppingRow {
+    family: &'static str,
+    handle: Handle,
+    walking: bool,
+    baseline: u64,
+    lineage: CapturedLineage,
+    parent_row: Option<Handle>,
+    seat_parent: Option<RequestId>,
+    native_kind: Option<native::request::NativeKind>,
+    admitted: bool,
+    phase: native::NativePhase,
+    manual_walk_event_sent: bool,
+    authority_revoked: bool,
+}
+
+impl SteppingRow {
+    fn capture(self) -> CapturedLineage {
+        if self.native_kind.is_some() {
+            CapturedLineage {
+                lineage: RequestId::isolate(self.handle).ok(),
+                mirror_owner: None,
+                dropped: self.authority_revoked,
+            }
+        } else {
+            CapturedLineage {
+                dropped: self.authority_revoked,
+                ..self.lineage
+            }
+        }
+    }
+
+    fn start_context(self) -> StartContext {
+        StartContext {
+            parent_row: Some(self.handle),
+            seat_parent: if self.native_kind.is_some() {
+                RequestId::isolate(self.handle).ok()
+            } else {
+                self.seat_parent
+            },
+            local_parent: if self.native_kind.is_none() {
+                RequestId::isolate(self.handle).ok()
+            } else {
+                None
+            },
+            parent_revoked: self.authority_revoked,
+            history_expired: false,
+        }
+    }
+    fn revoked_record(self) -> LocalRevocation {
+        let mut context = self.start_context();
+        context.parent_revoked = true;
+        LocalRevocation {
+            handle: self.handle,
+            lineage: self.capture(),
+            context,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PlacedOp {
+    at: usize,
+    request: InteractReq,
+    lineage: CapturedLineage,
+}
+
+#[derive(Clone, Copy)]
+struct WalkReleaseReservation {
+    id: Handle,
+    queued: bool,
+}
+
+const MAX_WALK_RELEASES: usize = api::script_contract::MAX_WALK_RELEASES;
+
+#[derive(Clone, Copy)]
+struct MirrorRevokeCarry {
+    wire: isolate_fb::SeatMirrorRevoke,
+}
+#[derive(Clone, Copy)]
+struct LocalRevocation {
+    handle: Handle,
+    lineage: CapturedLineage,
+    context: StartContext,
+}
+
 struct Row {
     handle: Handle,
     family: &'static str,
@@ -784,6 +1013,20 @@ struct Row {
     /// The callback promise the row waits on.
     pending: Option<Pending>,
     machine: Box<dyn Machine>,
+    /// The nearest seat entry this local row mirrors.
+    seat_parent: Option<RequestId>,
+    /// The local row that started this row, including across seat cutover.
+    parent_row: Option<Handle>,
+    /// A native seat owner remains distinct from an in-isolate mirror.
+    native_kind: Option<native::request::NativeKind>,
+    /// The seat acknowledged this start as live.
+    admitted: bool,
+    /// A revoked owner retains its token so late pushes fail closed.
+    authority_revoked: bool,
+    /// Current truthful phase reported for this request.
+    phase: native::NativePhase,
+    /// ManualWalk publishes a Done terminal before this local row settles.
+    manual_walk_event_sent: bool,
     /// The outer walking intent baseline carried through nested rows.
     intent_baseline: u64,
     /// This row belongs to an outer walking operation or owns one.
@@ -793,21 +1036,89 @@ struct Row {
     /// Rebaseline only an uncancelled operator-paused walk on resume.
     rebaseline_on_resume: bool,
 }
+impl Row {
+    fn capture(&self) -> CapturedLineage {
+        if self.native_kind.is_some() {
+            CapturedLineage {
+                lineage: RequestId::isolate(self.handle).ok(),
+                mirror_owner: None,
+                dropped: self.authority_revoked,
+            }
+        } else {
+            CapturedLineage {
+                lineage: self.seat_parent,
+                mirror_owner: RequestId::isolate(self.handle).ok(),
+                dropped: self.authority_revoked,
+            }
+        }
+    }
 
-/// Emitted ops keyed by the JS queue length at emit time, so they merge
-/// into the tick batch where they happened.
-type PlacedOp = (usize, InteractReq);
+    fn start_context(&self) -> StartContext {
+        StartContext {
+            parent_row: Some(self.handle),
+            seat_parent: if self.native_kind.is_some() {
+                RequestId::isolate(self.handle).ok()
+            } else {
+                self.seat_parent
+            },
+            local_parent: if self.native_kind.is_none() {
+                RequestId::isolate(self.handle).ok()
+            } else {
+                None
+            },
+            parent_revoked: self.authority_revoked,
+            history_expired: false,
+        }
+    }
+
+    fn revoked_record(&self) -> LocalRevocation {
+        let mut context = self.start_context();
+        context.parent_revoked = true;
+        LocalRevocation {
+            handle: self.handle,
+            lineage: self.capture(),
+            context,
+        }
+    }
+    fn stepping_record(&self) -> SteppingRow {
+        SteppingRow {
+            family: self.family,
+            handle: self.handle,
+            walking: self.walking_operation,
+            baseline: self.intent_baseline,
+            lineage: self.capture(),
+            parent_row: self.parent_row,
+            seat_parent: self.seat_parent,
+            native_kind: self.native_kind,
+            admitted: self.admitted,
+            phase: self.phase,
+            manual_walk_event_sent: self.manual_walk_event_sent,
+            authority_revoked: self.authority_revoked,
+        }
+    }
+}
 
 struct Host {
     next: Handle,
     rows: Vec<Row>,
-    /// The rows a [`pass`] is stepping right now. They are out of `rows`
-    /// while a callback runs, and [`live`] must still see them.
-    stepping: Vec<(&'static str, Handle, bool, u64)>,
+    /// Rows a pass is stepping while user callbacks may start children.
+    stepping: Vec<SteppingRow>,
     /// The newest running row of each exclusive group.
     newest: Vec<(&'static str, Handle)>,
     settled: Vec<(Handle, Outcome)>,
     ops: Vec<PlacedOp>,
+    pending_starts: Vec<PendingSeatStart>,
+    pending_cancels: Vec<PendingSeatCancel>,
+    mirror_revokes: Vec<MirrorRevokeCarry>,
+    machine_events: Vec<MachineEvent>,
+    consumed_terminal_seq: u64,
+    terminal_ack_pending: bool,
+    mirror_revokes_consumed: u64,
+    revoked_local: VecDeque<LocalRevocation>,
+    revoked_floor: Handle,
+    walk_releases: Vec<WalkReleaseReservation>,
+    next_mirror_revoke_seq: u64,
+    execution: Option<ExecutionId>,
     paused: bool,
     held: bool,
     walking_publication: Option<std::sync::Arc<WalkingOwnership>>,
@@ -817,6 +1128,8 @@ thread_local! {
     static HOST: RefCell<Host> = const { RefCell::new(Host::new()) };
     /// A family `begin` is running: a nested start is refused.
     static IN_BEGIN: Cell<bool> = const { Cell::new(false) };
+    /// The push-time local/seat lineage for the next machine start.
+    static START_CONTEXT: Cell<Option<StartContext>> = const { Cell::new(None) };
     /// A reconnect holds the session's work (`ResetSession { keep_work }`):
     /// the host carries the held walk, so no row sends a release op.
     static SESSION_HELD: Cell<bool> = const { Cell::new(false) };
@@ -859,6 +1172,18 @@ impl Host {
             newest: Vec::new(),
             settled: Vec::new(),
             ops: Vec::new(),
+            pending_starts: Vec::new(),
+            pending_cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            machine_events: Vec::new(),
+            consumed_terminal_seq: 0,
+            terminal_ack_pending: false,
+            mirror_revokes_consumed: 0,
+            revoked_local: VecDeque::new(),
+            revoked_floor: 1,
+            walk_releases: Vec::new(),
+            next_mirror_revoke_seq: 1,
+            execution: None,
             paused: false,
             held: false,
             walking_publication: None,
@@ -888,7 +1213,7 @@ impl Host {
             .chain(
                 self.stepping
                     .iter()
-                    .filter_map(|(_, _, walking, baseline)| walking.then_some(*baseline)),
+                    .filter_map(|row| row.walking.then_some(row.baseline)),
             )
             .filter(|baseline| *baseline >= takeover)
             .max()
@@ -918,16 +1243,385 @@ impl Host {
         clock
     }
 
-    fn place(&mut self, at: usize, ops: Vec<InteractReq>) {
-        self.ops.extend(ops.into_iter().map(|op| (at, op)));
+    fn allocate_handle(&mut self) -> Option<Handle> {
+        if self.next == 0 || self.next > MAX_MACHINE_HANDLE {
+            return None;
+        }
+        let handle = self.next;
+        self.next = handle.checked_add(1)?;
+        Some(handle)
     }
 
-    /// Drop `handle` from the rows a pass is stepping: it ended here, so
-    /// it is no longer live.
+    fn start_context_for(&self, parent: Option<Handle>) -> StartContext {
+        let Some(handle) = parent else {
+            return StartContext::default();
+        };
+        if let Some(row) = self.rows.iter().find(|row| row.handle == handle) {
+            return row.start_context();
+        }
+        if let Some(row) = self.stepping.iter().find(|row| row.handle == handle) {
+            return row.start_context();
+        }
+        if let Some(revoked) = self
+            .revoked_local
+            .iter()
+            .find(|revoked| revoked.handle == handle)
+        {
+            return revoked.context;
+        }
+        if handle < self.revoked_floor {
+            return StartContext {
+                history_expired: true,
+                ..StartContext::default()
+            };
+        }
+        if handle < self.next {
+            // Ordinary completion is not a continuation authority.
+            StartContext::default()
+        } else {
+            StartContext {
+                parent_revoked: true,
+                ..StartContext::default()
+            }
+        }
+    }
+
+    fn capture_push(&self, parent: Option<Handle>) -> CapturedLineage {
+        if self.execution.is_none() {
+            return CapturedLineage::default();
+        }
+        let Some(handle) = parent else {
+            return CapturedLineage::default();
+        };
+        if let Some(row) = self.rows.iter().find(|row| row.handle == handle) {
+            return row.capture();
+        }
+        if let Some(row) = self.stepping.iter().find(|row| row.handle == handle) {
+            return row.capture();
+        }
+        if let Some(revoked) = self
+            .revoked_local
+            .iter()
+            .find(|revoked| revoked.handle == handle)
+        {
+            return CapturedLineage {
+                dropped: true,
+                ..revoked.lineage
+            };
+        }
+        if handle < self.revoked_floor || handle >= self.next {
+            return CapturedLineage {
+                dropped: true,
+                ..CapturedLineage::default()
+            };
+        }
+        CapturedLineage::default()
+    }
+
+    fn remember_revoked(&mut self, row: &Row) {
+        if row.handle < self.revoked_floor
+            || self
+                .revoked_local
+                .iter()
+                .any(|revoked| revoked.handle == row.handle)
+        {
+            return;
+        }
+        if self.revoked_local.len() == api::script_contract::REVOKED_RING {
+            if let Some(oldest) = self.revoked_local.pop_front() {
+                self.revoked_floor = self.revoked_floor.max(oldest.handle.saturating_add(1));
+            }
+        }
+        self.revoked_local.push_back(row.revoked_record());
+    }
+
+    fn queue_machine_event(&mut self, id: RequestId, kind: MachineEventKind, admitted: bool) {
+        if self.execution.is_none() {
+            return;
+        }
+        if matches!(kind, MachineEventKind::Phase(_)) {
+            if let Some(event) = self
+                .machine_events
+                .iter_mut()
+                .find(|event| event.id == id && matches!(event.kind, MachineEventKind::Phase(_)))
+            {
+                event.kind = kind;
+                event.admitted |= admitted;
+                return;
+            }
+        } else {
+            self.machine_events.retain(|event| {
+                event.id != id || !matches!(event.kind, MachineEventKind::Phase(_))
+            });
+            if let Some(event) = self
+                .machine_events
+                .iter_mut()
+                .find(|event| event.id == id && event.kind == kind)
+            {
+                event.admitted |= admitted;
+                return;
+            }
+        }
+        self.machine_events
+            .push(MachineEvent { id, kind, admitted });
+    }
+
+    fn set_phase(&mut self, row: &mut Row, phase: native::NativePhase) {
+        if row.phase == phase {
+            return;
+        }
+        row.phase = phase;
+        if let Some(id) = RequestId::isolate(row.handle)
+            .ok()
+            .filter(|_| row.native_kind.is_some())
+        {
+            self.queue_machine_event(id, MachineEventKind::Phase(phase), row.admitted);
+        }
+    }
+
+    fn carry_typed_start(&mut self, request: &InteractReq) -> bool {
+        if self.execution.is_none() {
+            return false;
+        }
+        let (raw_id, args) = match request {
+            InteractReq::GatherRun {
+                request_id,
+                settings,
+            } => (
+                *request_id,
+                SeatStartPayload::Gather(std::sync::Arc::clone(settings)),
+            ),
+            InteractReq::CombatFight {
+                request_id,
+                request,
+            } => (
+                *request_id,
+                SeatStartPayload::Combat(std::sync::Arc::clone(request)),
+            ),
+            InteractReq::ProgressRead { request_id, name } => (
+                *request_id,
+                SeatStartPayload::QuestProgress(std::sync::Arc::from(name.as_str())),
+            ),
+            _ => return false,
+        };
+        if let Ok(id) = RequestId::isolate(raw_id) {
+            if let Some(start) = self.pending_starts.iter_mut().find(|start| start.id == id) {
+                start.args = args;
+            }
+        }
+        true
+    }
+
+    fn place(&mut self, at: usize, ops: Vec<InteractReq>, lineage: CapturedLineage) {
+        for request in ops {
+            if self.carry_typed_start(&request) {
+                continue;
+            }
+            if let InteractReq::AbortWalk { request_id } = &request {
+                if *request_id > 0 {
+                    if let Some(slot) = self
+                        .walk_releases
+                        .iter_mut()
+                        .find(|slot| slot.id == *request_id)
+                    {
+                        if slot.queued {
+                            continue;
+                        }
+                        slot.queued = true;
+                    } else if self.walk_releases.len() < MAX_WALK_RELEASES {
+                        self.walk_releases.push(WalkReleaseReservation {
+                            id: *request_id,
+                            queued: true,
+                        });
+                    }
+                }
+            }
+            self.ops.push(PlacedOp {
+                at,
+                request,
+                lineage,
+            });
+        }
+    }
+
+    fn reserve_walk_release(&mut self, id: Handle) -> bool {
+        if self.walk_releases.iter().any(|slot| slot.id == id) {
+            return true;
+        }
+        if self.walk_releases.len() >= MAX_WALK_RELEASES {
+            return false;
+        }
+        self.walk_releases
+            .push(WalkReleaseReservation { id, queued: false });
+        true
+    }
+
+    fn free_completed_walk(&mut self, id: Handle) {
+        if self
+            .walk_releases
+            .iter()
+            .any(|slot| slot.id == id && slot.queued)
+        {
+            return;
+        }
+        self.walk_releases.retain(|slot| slot.id != id);
+    }
+
+    fn mark_walk_releases_encoded(&mut self, ids: &[Handle]) {
+        self.walk_releases
+            .retain(|slot| !slot.queued || !ids.contains(&slot.id));
+    }
+
+    fn queue_cancel(&mut self, of: RequestId, reason: CallbackCancelReason) {
+        if self.execution.is_none() {
+            return;
+        }
+        if let Some(existing) = self
+            .pending_cancels
+            .iter_mut()
+            .find(|cancel| cancel.of == of)
+        {
+            if reason == CallbackCancelReason::ParentAborted {
+                existing.reason = reason;
+            }
+            return;
+        }
+        self.pending_cancels.push(PendingSeatCancel { of, reason });
+    }
+
+    fn queue_mirror_revoke(&mut self, owner: RequestId) {
+        if self.execution.is_none()
+            || self
+                .mirror_revokes
+                .iter()
+                .any(|revoke| revoke.wire.owner == owner)
+        {
+            return;
+        }
+        let seq = self.next_mirror_revoke_seq;
+        let Some(next) = seq.checked_add(1) else {
+            return;
+        };
+        self.next_mirror_revoke_seq = next;
+        self.mirror_revokes.push(MirrorRevokeCarry {
+            wire: isolate_fb::SeatMirrorRevoke { owner, seq },
+        });
+    }
+
     fn unstep(&mut self, family: &'static str, handle: Handle) {
         self.stepping
-            .retain(|(name, held, _, _)| !(*name == family && *held == handle));
+            .retain(|row| !(row.family == family && row.handle == handle));
         self.publish_walking();
+    }
+    fn is_revoked(&self, handle: Handle) -> bool {
+        self.revoked_local
+            .iter()
+            .any(|revoked| revoked.handle == handle)
+    }
+
+    fn revoke_descendants(&mut self, root: Handle, at: usize) {
+        let mut frontier = vec![root];
+        let mut descendants = Vec::new();
+        let mut index = 0;
+        while index < frontier.len() {
+            let parent = frontier[index];
+            for row in &self.rows {
+                if row.parent_row == Some(parent) && !descendants.contains(&row.handle) {
+                    descendants.push(row.handle);
+                    frontier.push(row.handle);
+                }
+            }
+            index += 1;
+        }
+
+        while let Some(handle) = descendants
+            .iter()
+            .copied()
+            .filter(|handle| {
+                !self.rows.iter().any(|child| {
+                    child.parent_row == Some(*handle) && descendants.contains(&child.handle)
+                })
+            })
+            .min()
+        {
+            descendants.retain(|candidate| *candidate != handle);
+            let Some(position) = self.rows.iter().position(|row| row.handle == handle) else {
+                continue;
+            };
+            let mut row = self.rows.remove(position);
+            self.remember_revoked(&row);
+            if let Some(id) = RequestId::isolate(row.handle).ok() {
+                if row.native_kind.is_some() {
+                    self.queue_cancel(id, CallbackCancelReason::ParentAborted);
+                } else {
+                    self.queue_mirror_revoke(id);
+                }
+            }
+            if let Some(op) = release_op(&*row.machine) {
+                self.place(at, vec![op], row.capture());
+            }
+            row.machine.abort(AbortReason::ParentAborted);
+            self.free_completed_walk(row.handle);
+            self.settled
+                .push((row.handle, Outcome::Aborted(AbortReason::ParentAborted)));
+        }
+    }
+
+    fn revoke_row(&mut self, row: &Row, reason: AbortReason, at: usize) {
+        self.remember_revoked(row);
+        if let Some(id) = RequestId::isolate(row.handle).ok() {
+            if row.native_kind.is_some() {
+                if !row.admitted || reason == AbortReason::ParentAborted {
+                    self.queue_cancel(id, CallbackCancelReason::ParentAborted);
+                } else if let Some(reason) = match reason {
+                    AbortReason::Superseded => Some(api::script_contract::AbortReason::Superseded),
+                    AbortReason::UserInput => Some(api::script_contract::AbortReason::UserInput),
+                    AbortReason::Reset | AbortReason::Terminated | AbortReason::Unknown => None,
+                    AbortReason::ParentAborted => None,
+                } {
+                    self.queue_machine_event(id, MachineEventKind::Aborted(reason), row.admitted);
+                }
+            } else {
+                self.queue_mirror_revoke(id);
+            }
+        }
+        self.revoke_descendants(row.handle, at);
+    }
+
+    fn finish_row(&mut self, row: &Row, outcome: Outcome, at: usize) {
+        match &outcome {
+            Outcome::Done(_) if row.manual_walk_event_sent => {
+                self.remember_revoked(row);
+                if let Some(id) = RequestId::isolate(row.handle).ok() {
+                    if row.native_kind.is_some() {
+                        self.queue_machine_event(id, MachineEventKind::ManualWalk, row.admitted);
+                    } else {
+                        self.queue_mirror_revoke(id);
+                    }
+                }
+                self.revoke_descendants(row.handle, at);
+            }
+            Outcome::Done(_) => {
+                if let Some(id) = RequestId::isolate(row.handle)
+                    .ok()
+                    .filter(|_| row.native_kind.is_some())
+                {
+                    self.queue_machine_event(id, MachineEventKind::Done, row.admitted);
+                }
+            }
+            Outcome::Failed(_) => {
+                if let Some(id) = RequestId::isolate(row.handle)
+                    .ok()
+                    .filter(|_| row.native_kind.is_some())
+                {
+                    self.queue_machine_event(id, MachineEventKind::Failed, row.admitted);
+                }
+            }
+            Outcome::Aborted(reason) => self.revoke_row(row, *reason, at),
+            Outcome::Refused(_) => {}
+        }
+        self.free_completed_walk(row.handle);
+        self.settled.push((row.handle, outcome));
     }
 
     fn superseded(&self, row: &Row) -> bool {
@@ -938,17 +1632,18 @@ impl Host {
         })
     }
 
-    /// Abort every superseded row; the ops that stop their host work
-    /// ([`Family::release`]) join the batch at `at`.
+    /// Abort every superseded row; its release operation stays at `at`.
     fn abort_superseded(&mut self, at: usize) {
         let mut i = 0;
         while i < self.rows.len() {
             if self.superseded(&self.rows[i]) {
                 let mut row = self.rows.remove(i);
                 if let Some(op) = release_op(&*row.machine) {
-                    self.ops.push((at, op));
+                    self.place(at, vec![op], row.capture());
                 }
+                self.revoke_row(&row, AbortReason::Superseded, at);
                 row.machine.abort(AbortReason::Superseded);
+                self.free_completed_walk(row.handle);
                 self.settled
                     .push((row.handle, Outcome::Aborted(AbortReason::Superseded)));
             } else {
@@ -985,6 +1680,13 @@ impl Host {
         self.newest.clear();
         self.stepping.clear();
         self.ops.clear();
+        self.pending_starts.clear();
+        self.pending_cancels.clear();
+        self.mirror_revokes.clear();
+        self.machine_events.clear();
+        self.consumed_terminal_seq = 0;
+        self.terminal_ack_pending = false;
+        self.mirror_revokes_consumed = 0;
         self.publish_walking();
     }
 
@@ -999,19 +1701,328 @@ impl Host {
     }
 }
 
-fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
+fn seat_phase_from_wire(phase: isolate_fb::SeatPhase) -> Result<native::NativePhase, String> {
+    match phase {
+        isolate_fb::SeatPhase::Preparing => Ok(native::NativePhase::Preparing),
+        isolate_fb::SeatPhase::Working => Ok(native::NativePhase::Working),
+        isolate_fb::SeatPhase::Waiting => Ok(native::NativePhase::Waiting),
+        isolate_fb::SeatPhase::Blocked => Ok(native::NativePhase::Blocked),
+        isolate_fb::SeatPhase::Complete => Ok(native::NativePhase::Complete),
+        isolate_fb::SeatPhase::None => Err("seat live row has no phase".into()),
+        _ => Err("seat live row has unknown phase enum".into()),
+    }
+}
+
+fn seat_result_outcome(
+    row: isolate_fb::SeatResult<'_>,
+) -> Result<(RequestId, u64, Outcome), String> {
+    let id = RequestId::from_raw(row.id())
+        .ok_or_else(|| format!("seat result has invalid identity {}", row.id()))?;
+    let outcome = row
+        .outcome()
+        .ok_or_else(|| format!("seat result {} has no outcome", id.get()))?;
+    let value = outcome.value();
+    let result = match outcome.kind() {
+        isolate_fb::SeatOutcomeKind::Done => {
+            let value = value
+                .map(|bytes| serde_json::from_slice(bytes.bytes()))
+                .transpose()
+                .map_err(|error| format!("seat result {} value: {error}", id.get()))?
+                .unwrap_or(Value::Null);
+            Outcome::Done(value)
+        }
+        isolate_fb::SeatOutcomeKind::Failed => {
+            let message = value
+                .map(|bytes| serde_json::from_slice::<Value>(bytes.bytes()))
+                .transpose()
+                .map_err(|error| format!("seat result {} failure value: {error}", id.get()))?
+                .map(|value| match value {
+                    Value::String(message) => message,
+                    value => value.to_string(),
+                })
+                .unwrap_or_else(|| "native seat failed".into());
+            Outcome::Failed(Thrown::new(message))
+        }
+        isolate_fb::SeatOutcomeKind::Refused => {
+            let reason = match outcome.refusal() {
+                isolate_fb::SeatRefusal::Busy => "busy",
+                isolate_fb::SeatRefusal::ParentBusy => "parent-busy",
+                isolate_fb::SeatRefusal::ParentNotLive => "parent-not-live",
+                isolate_fb::SeatRefusal::LineageDepth => "lineage-depth",
+                isolate_fb::SeatRefusal::HistoryExpired => "history-expired",
+                isolate_fb::SeatRefusal::Unknown => "unknown",
+                isolate_fb::SeatRefusal::AwaitingDecision => "awaiting-decision",
+                isolate_fb::SeatRefusal::None | isolate_fb::SeatRefusal::ArgsTooLarge => {
+                    return Err(format!("seat result {} has invalid refusal", id.get()));
+                }
+                _ => return Err(format!("seat result {} has unknown refusal", id.get())),
+            };
+            Outcome::Refused(reason.into())
+        }
+        isolate_fb::SeatOutcomeKind::Aborted => {
+            let reason = match outcome.abort_reason() {
+                isolate_fb::SeatAbortReason::Superseded => AbortReason::Superseded,
+                isolate_fb::SeatAbortReason::UserInput => AbortReason::UserInput,
+                isolate_fb::SeatAbortReason::ParentAborted => AbortReason::ParentAborted,
+                isolate_fb::SeatAbortReason::None
+                | isolate_fb::SeatAbortReason::Reset
+                | isolate_fb::SeatAbortReason::Terminated => {
+                    return Err(format!("seat result {} has invalid abort reason", id.get()));
+                }
+                _ => return Err(format!("seat result {} has unknown abort reason", id.get())),
+            };
+            Outcome::Aborted(reason)
+        }
+        isolate_fb::SeatOutcomeKind::None => {
+            return Err(format!("seat result {} has no outcome kind", id.get()));
+        }
+        _ => return Err(format!("seat result {} has unknown outcome kind", id.get())),
+    };
+    Ok((id, row.terminal_seq(), result))
+}
+
+fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
+    let Ok(handle) = RequestId::isolate(id.get()) else {
+        return;
+    };
+    let handle = handle.get();
+    let Some(position) = host
+        .rows
+        .iter()
+        .position(|row| row.handle == handle && row.native_kind.is_some())
+    else {
+        return;
+    };
+    let mut row = host.rows.remove(position);
+    let abort_reason = match &outcome {
+        Outcome::Aborted(reason) => Some(*reason),
+        _ => None,
+    };
+    if abort_reason.is_some() || matches!(&outcome, Outcome::Refused(_)) {
+        row.authority_revoked = true;
+        host.remember_revoked(&row);
+        host.revoke_descendants(row.handle, 0);
+    }
+    let cleanup_reason = abort_reason.unwrap_or(AbortReason::Reset);
+    row.machine.abort(cleanup_reason);
+    host.ops
+        .retain(|op| op.lineage.lineage != Some(id) && op.lineage.mirror_owner != Some(id));
+    host.free_completed_walk(row.handle);
+    host.settled.push((row.handle, outcome));
+}
+
+pub(crate) fn set_execution(execution: Option<ExecutionId>) {
+    HOST.with(|host| host.borrow_mut().execution = execution);
+}
+
+pub(crate) fn has_pending_seat_batch() -> bool {
+    HOST.with(|host| {
+        let host = host.borrow();
+        host.execution.is_some()
+            && (!host.pending_starts.is_empty()
+                || !host.pending_cancels.is_empty()
+                || !host.mirror_revokes.is_empty()
+                || host.machine_events.iter().any(|event| event.admitted)
+                || host.terminal_ack_pending)
+    })
+}
+
+pub(crate) fn with_seat_batch<R>(f: impl FnOnce(Option<SeatBatchCarry<'_>>) -> R) -> R {
+    HOST.with(|host| {
+        let host = host.borrow();
+        let Some(execution) = host.execution else {
+            return f(None);
+        };
+        let starts = host
+            .pending_starts
+            .iter()
+            .map(|start| start.as_ref(execution))
+            .collect();
+        let cancels = host
+            .pending_cancels
+            .iter()
+            .map(|cancel| isolate_fb::SeatCancelInput {
+                of: cancel.of,
+                reason: cancel.reason,
+            })
+            .collect();
+        let mirror_revokes = host
+            .mirror_revokes
+            .iter()
+            .map(|revoke| revoke.wire)
+            .collect();
+        f(Some(SeatBatchCarry {
+            consumed_terminal_seq: host.consumed_terminal_seq,
+            terminal_ack_pending: host.terminal_ack_pending,
+            starts,
+            cancels,
+            mirror_revokes,
+            machine_events: machine_events_for_batch(&host),
+        }))
+    })
+}
+
+fn machine_events_for_batch(host: &Host) -> Vec<MachineEvent> {
+    host.machine_events
+        .iter()
+        .filter(|event| event.admitted)
+        .copied()
+        .collect()
+}
+
+fn reconcile_machine_events(
+    host: &mut Host,
+    live_rows: &[(RequestId, native::NativePhase)],
+    result_ids: &[RequestId],
+) {
+    for event in &mut host.machine_events {
+        if live_rows.iter().any(|(id, _)| *id == event.id) {
+            event.admitted = true;
+        }
+    }
+    host.machine_events.retain(|event| {
+        !result_ids.contains(&event.id)
+            && !matches!(
+                event.kind,
+                MachineEventKind::Phase(phase)
+                    if live_rows.iter().any(|(id, live_phase)| {
+                        *id == event.id && *live_phase == phase
+                    })
+            )
+    });
+}
+pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), String> {
+    let live = snapshot.seat_live();
+    let results = snapshot.seat_results();
+    let mut live_rows = Vec::with_capacity(live.as_ref().map_or(0, |rows| rows.len()));
+    if let Some(rows) = live.as_ref() {
+        for row in rows.iter() {
+            let id = RequestId::from_raw(row.id())
+                .ok_or_else(|| format!("seat live row has invalid identity {}", row.id()))?;
+            live_rows.push((id, seat_phase_from_wire(row.phase())?));
+        }
+    }
+    let has_results_page = results.is_some();
+    let mut result_rows = Vec::with_capacity(results.as_ref().map_or(0, |rows| rows.len()));
+    if let Some(rows) = results.as_ref() {
+        for row in rows.iter() {
+            result_rows.push(seat_result_outcome(row)?);
+        }
+    }
+    let mirror_revokes_consumed = snapshot.mirror_revokes_consumed();
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        for (id, phase) in &live_rows {
+            if let Some(row) = host.rows.iter_mut().find(|row| {
+                row.native_kind.is_some() && RequestId::isolate(row.handle).ok() == Some(*id)
+            }) {
+                row.admitted = true;
+                row.phase = *phase;
+            }
+        }
+        let result_ids: Vec<_> = result_rows.iter().map(|(id, _, _)| *id).collect();
+        host.pending_starts.retain(|start| {
+            !live_rows.iter().any(|(id, _)| *id == start.id) && !result_ids.contains(&start.id)
+        });
+        host.pending_cancels
+            .retain(|cancel| !result_ids.contains(&cancel.of));
+        reconcile_machine_events(&mut host, &live_rows, &result_ids);
+        if let Some(consumed) = mirror_revokes_consumed {
+            host.mirror_revokes_consumed = host.mirror_revokes_consumed.max(consumed);
+            host.mirror_revokes
+                .retain(|revoke| revoke.wire.seq > consumed);
+        }
+        if has_results_page {
+            for (_, seq, _) in &result_rows {
+                host.consumed_terminal_seq = host.consumed_terminal_seq.max(*seq);
+            }
+            host.terminal_ack_pending = result_rows
+                .iter()
+                .any(|(_, seq, _)| *seq <= host.consumed_terminal_seq);
+        }
+        for (id, _, outcome) in result_rows {
+            settle_seat_result(&mut host, id, outcome);
+        }
+    });
+    Ok(())
+}
+
+pub(crate) fn capture_push(parent: Option<Handle>) -> CapturedLineage {
+    HOST.with(|host| host.borrow().capture_push(parent))
+}
+
+fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
+    use native::request::NativeKind;
+    Some(match family {
+        "gather" => NativeKind::Gather,
+        "combat" => NativeKind::Combat,
+        "quest-progress" => NativeKind::QuestProgress,
+        "hunt-fight" | "hunt-hold" | "hunt-retreat" | "hunt-walkspot" | "hunt-enter" => {
+            NativeKind::Hunt
+        }
+        "bank_nearest" => NativeKind::BankNearest,
+        "periodic_bank" => NativeKind::PeriodicBank,
+        _ => return None,
+    })
+}
+
+fn seat_start_payload(
+    kind: native::request::NativeKind,
+    id: RequestId,
+    ops: &mut Vec<InteractReq>,
+) -> Result<SeatStartPayload, String> {
+    let position = ops.iter().position(|request| match (kind, request) {
+        (native::request::NativeKind::Gather, InteractReq::GatherRun { request_id, .. })
+        | (native::request::NativeKind::Combat, InteractReq::CombatFight { request_id, .. })
+        | (
+            native::request::NativeKind::QuestProgress,
+            InteractReq::ProgressRead { request_id, .. },
+        ) => *request_id == id.get(),
+        _ => false,
+    });
+    match kind {
+        native::request::NativeKind::Gather => {
+            let Some(position) = position else {
+                return Err("native Gather start is missing its typed settings".into());
+            };
+            let InteractReq::GatherRun { settings, .. } = ops.remove(position) else {
+                unreachable!("matched GatherRun")
+            };
+            Ok(SeatStartPayload::Gather(settings))
+        }
+        native::request::NativeKind::Combat => {
+            let Some(position) = position else {
+                return Err("native Combat start is missing its typed request".into());
+            };
+            let InteractReq::CombatFight { request, .. } = ops.remove(position) else {
+                unreachable!("matched CombatFight")
+            };
+            Ok(SeatStartPayload::Combat(request))
+        }
+        native::request::NativeKind::QuestProgress => {
+            let Some(position) = position else {
+                return Err("native QuestProgress start is missing its quest name".into());
+            };
+            let InteractReq::ProgressRead { name, .. } = ops.remove(position) else {
+                unreachable!("matched ProgressRead")
+            };
+            Ok(SeatStartPayload::QuestProgress(std::sync::Arc::from(name)))
+        }
+        _ => Ok(SeatStartPayload::Empty),
+    }
+}
+
+fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
     let args: F::Args = match serde_json::from_value(args) {
         Ok(args) => args,
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
     };
+    let context = START_CONTEXT.with(Cell::get).unwrap_or_default();
     let inherited_baseline = WALK_BASELINE.with(Cell::get);
-    // A new decision belongs to the snapshot that will stamp its actions,
-    // not an atomic notice whose outcome snapshot this tick has not seen.
     let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
     let carries_walk_baseline = inherited_baseline.is_some() || F::WALKING_OPERATION;
     let mut clock = HOST.with(|host| host.borrow().fresh_clock());
     let mut ops = Vec::new();
-    // The host is not borrowed while the family begins.
     IN_BEGIN.with(|flag| flag.set(true));
     let _begun = BeginGuard;
     let begun = with_walk_baseline(carries_walk_baseline.then_some(intent_baseline), || {
@@ -1022,6 +2033,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                 clock: &mut clock,
                 reply: None,
                 hooks: &hooks,
+                handle,
                 js: None,
                 intent_baseline,
                 asks: 0,
@@ -1035,19 +2047,67 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
         match begun {
             Begin::Refuse(reason) => Started::Refused(reason),
             Begin::Done(out) => {
-                host.place(at, ops);
+                host.place(
+                    at,
+                    ops,
+                    CapturedLineage {
+                        lineage: context.seat_parent,
+                        mirror_owner: context.local_parent,
+                        dropped: false,
+                    },
+                );
                 Started::Settled(Outcome::Done(out.into()))
             }
-            Begin::Run(machine) => {
-                let handle = host.next;
-                host.next += 1;
+            Begin::Run(mut machine) => {
+                let native_kind = host
+                    .execution
+                    .is_some()
+                    .then(|| native_kind_for_family(F::NAME))
+                    .flatten();
+                let owner_id = native_kind.and_then(|_| RequestId::isolate(handle).ok());
+                if native_kind.is_some() && host.pending_starts.len() >= MAX_PENDING_SEAT_STARTS {
+                    machine.abort(AbortReason::Reset);
+                    return Started::Refused("native seat start carry is full".into());
+                }
+                let lineage = if native_kind.is_some() {
+                    let Some(id) = owner_id else {
+                        machine.abort(AbortReason::Reset);
+                        return Started::Refused("native seat request identity exhausted".into());
+                    };
+                    let payload =
+                        match seat_start_payload(native_kind.expect("checked"), id, &mut ops) {
+                            Ok(payload) => payload,
+                            Err(reason) => {
+                                machine.abort(AbortReason::Reset);
+                                return Started::Refused(reason);
+                            }
+                        };
+                    host.pending_starts.push(PendingSeatStart {
+                        id,
+                        parent: context.seat_parent,
+                        local_parent: context.local_parent,
+                        kind: native_kind.expect("checked"),
+                        args: payload,
+                    });
+                    CapturedLineage {
+                        lineage: Some(id),
+                        mirror_owner: None,
+                        dropped: false,
+                    }
+                } else {
+                    CapturedLineage {
+                        lineage: context.seat_parent,
+                        mirror_owner: context.local_parent,
+                        dropped: false,
+                    }
+                };
                 if F::EXCLUSIVE {
                     host.newest
                         .retain(|(group, _)| *group != F::EXCLUSIVE_GROUP);
                     host.newest.push((F::EXCLUSIVE_GROUP, handle));
                     host.abort_superseded(at);
                 }
-                host.place(at, ops);
+                host.place(at, ops, lineage);
                 let walking_operation = machine.walking_operation();
                 host.rows.push(Row {
                     handle,
@@ -1061,6 +2121,13 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     reply: None,
                     pending: None,
                     machine: Box::new(machine),
+                    seat_parent: context.seat_parent,
+                    parent_row: context.parent_row,
+                    native_kind,
+                    admitted: native_kind.is_none(),
+                    authority_revoked: false,
+                    phase: native::NativePhase::Preparing,
+                    manual_walk_event_sent: false,
                     intent_baseline,
                     carries_walk_baseline,
                     walking_operation,
@@ -1085,13 +2152,47 @@ impl Drop for BeginGuard {
 /// Start `family` with JS `args` and its held `hooks` (one per
 /// [`Family::CALLBACKS`] name); `at` is the JS interact queue length.
 pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
+    let parent = START_CONTEXT
+        .with(Cell::get)
+        .and_then(|context| context.parent_row);
+    start_with_parent(family, args, hooks, at, parent)
+}
+
+pub(crate) fn start_with_parent(
+    family: &str,
+    args: Value,
+    hooks: Vec<Hook>,
+    at: usize,
+    parent: Option<Handle>,
+) -> Started {
     if IN_BEGIN.with(Cell::get) {
         return Started::Refused("a machine begin may not start a machine".into());
     }
     let Some(entry) = FAMILIES.iter().find(|entry| entry.name == family) else {
         return Started::Refused(format!("unknown machine family {family:?}"));
     };
-    (entry.begin)(args, hooks, at)
+    let context = HOST.with(|host| host.borrow().start_context_for(parent));
+    if context.history_expired {
+        return Started::Refused("history expired".into());
+    }
+    if context.parent_revoked {
+        return Started::Refused("parent not live".into());
+    }
+    let needs_seat = HOST.with(|host| {
+        let host = host.borrow();
+        host.execution.is_some() && native_kind_for_family(entry.name).is_some()
+    });
+    if needs_seat && HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS)
+    {
+        return Started::Refused("native seat start carry is full".into());
+    }
+    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
+        return Started::Refused("machine handle exhausted".into());
+    };
+    if needs_seat && RequestId::isolate(handle).is_err() {
+        return Started::Refused("native seat request identity exhausted".into());
+    }
+    with_start_context(context, || (entry.begin)(handle, args, hooks, at))
 }
 
 /// Drive one live row once (the starting tick for [`Family::KICK_ON_START`]).
@@ -1103,28 +2204,26 @@ pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
         host.rows
             .iter()
             .position(|row| row.handle == handle)
-            .map(|i| host.rows.remove(i))
+            .map(|index| host.rows.remove(index))
     }) else {
         return;
     };
-    let stepping = (
-        row.family,
-        row.handle,
-        row.walking_operation,
-        row.intent_baseline,
-    );
+    if row.native_kind.is_some() && !row.admitted {
+        HOST.with(|host| host.borrow_mut().rows.push(row));
+        return;
+    }
+    let stepping = row.stepping_record();
     HOST.with(|host| host.borrow_mut().stepping.push(stepping));
     let outcome = drive(&mut row, js, &mut at);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
         match outcome {
-            // The termination unwinds the caller's `runMachine` before it
-            // parks an await: nothing would ever take this outcome.
+            // Termination unwinds runMachine before it can park this result.
             Some(Outcome::Aborted(AbortReason::Terminated)) => {}
-            Some(outcome) => host.settled.push((handle, outcome)),
+            Some(outcome) => host.finish_row(&row, outcome, at),
             None => host.rows.push(row),
         }
-        host.unstep(stepping.0, stepping.1);
+        host.unstep(stepping.family, stepping.handle);
     });
 }
 
@@ -1178,17 +2277,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
             return None;
         }
         let rows = std::mem::take(&mut host.rows);
-        host.stepping = rows
-            .iter()
-            .map(|row| {
-                (
-                    row.family,
-                    row.handle,
-                    row.walking_operation,
-                    row.intent_baseline,
-                )
-            })
-            .collect();
+        host.stepping = rows.iter().map(Row::stepping_record).collect();
         Some(rows)
     }) else {
         return;
@@ -1198,6 +2287,9 @@ fn pass(js: &mut impl Js, pass: Pass) {
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
     rows.retain_mut(|row| {
+        if row.native_kind.is_some() && !row.admitted {
+            return true;
+        }
         match pass {
             Pass::Step => row.calls = 0,
             Pass::Resume if row.pending.is_none() => return true,
@@ -1218,11 +2310,17 @@ fn pass(js: &mut impl Js, pass: Pass) {
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
             if let Some(op) = release_op(&*row.machine) {
-                HOST.with(|host| host.borrow_mut().place(at, vec![op]));
+                HOST.with(|host| host.borrow_mut().place(at, vec![op], row.capture()));
             }
             row.machine.abort(AbortReason::Superseded);
             HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
-            settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
+            settle(row, Outcome::Aborted(AbortReason::Superseded), at);
+            return false;
+        }
+        if HOST.with(|host| host.borrow().is_revoked(row.handle)) {
+            row.machine.abort(AbortReason::ParentAborted);
+            HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
+            settle(row, Outcome::Aborted(AbortReason::ParentAborted), at);
             return false;
         }
         // PLAYER_INFO can expose the new level before that scene's loc
@@ -1238,7 +2336,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
         match outcome {
             Some(outcome) => {
                 HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
-                settle(row.handle, outcome);
+                settle(row, outcome, at);
                 false
             }
             None => true,
@@ -1254,8 +2352,8 @@ fn pass(js: &mut impl Js, pass: Pass) {
     });
 }
 
-fn settle(handle: Handle, outcome: Outcome) {
-    HOST.with(|host| host.borrow_mut().settled.push((handle, outcome)));
+fn settle(row: &Row, outcome: Outcome, at: usize) {
+    HOST.with(|host| host.borrow_mut().finish_row(row, outcome, at));
 }
 
 /// One row's steps for this pass; `Some` when it ended. Stops, leaving
@@ -1308,6 +2406,7 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
             clock: &mut row.clock,
             reply: row.reply.take(),
             hooks: &row.hooks,
+            handle: row.handle,
             js: Some(&mut *js),
             asks: 0,
             intent_baseline: row.intent_baseline,
@@ -1327,14 +2426,14 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
         match cx.ending.take() {
             Some(Ending::Stopped) => {
                 if let Some(op) = release_op(&*row.machine) {
-                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op], row.capture()));
                 }
                 row.machine.abort(AbortReason::Terminated);
                 return Some(Outcome::Aborted(AbortReason::Terminated));
             }
             Some(Ending::Failed(thrown)) => {
                 if let Some(op) = release_op(&*row.machine) {
-                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op], row.capture()));
                 }
                 return Some(Outcome::Failed(thrown));
             }
@@ -1344,24 +2443,24 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
         // owns the tick, so this step's decision and ops are dropped.
         if asked && HOST.with(|host| host.borrow().superseded(row)) {
             if let Some(op) = release_op(&*row.machine) {
-                HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                HOST.with(|host| host.borrow_mut().place(*at, vec![op], row.capture()));
             }
             row.machine.abort(AbortReason::Superseded);
             return Some(Outcome::Aborted(AbortReason::Superseded));
         }
-        HOST.with(|host| host.borrow_mut().place(*at, ops));
+        HOST.with(|host| host.borrow_mut().place(*at, ops, row.capture()));
         match step {
             Step::Wait => return None,
             Step::Done(value) => return Some(Outcome::Done(value)),
             Step::Fail(thrown) => {
                 if let Some(op) = release_op(&*row.machine) {
-                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op], row.capture()));
                 }
                 return Some(Outcome::Failed(thrown));
             }
             Step::Call(call) => {
                 let hook = row.hooks.get(call.hook).map(|hook| &hook.callback);
-                let called = js.call(hook, &call.args);
+                let called = js.call_for(row.handle, hook, &call.args);
                 row.calls += 1;
                 *at = js.queue_len();
                 match called {
@@ -1397,23 +2496,54 @@ pub(crate) fn take(handle: Handle) -> Take {
 /// Merge this tick's machine ops into the drained JS rows in emit order.
 pub(crate) fn merge_ops(rows: Vec<MaybeInteractReq>) -> Vec<InteractReq> {
     let mut ops = HOST.with(|host| std::mem::take(&mut host.borrow_mut().ops));
-    merge(rows, &mut ops)
-}
-
-fn merge(rows: Vec<MaybeInteractReq>, ops: &mut Vec<PlacedOp>) -> Vec<InteractReq> {
-    ops.sort_by_key(|(at, _)| *at);
+    ops.sort_by_key(|op| op.at);
     let mut out = Vec::with_capacity(rows.len() + ops.len());
-    let mut ops = ops.drain(..).peekable();
-    for (i, row) in rows.into_iter().enumerate() {
-        while let Some((_, op)) = ops.next_if(|(at, _)| *at <= i) {
-            out.push(op);
+    let mut ops = ops.into_iter().peekable();
+    for (index, row) in rows.into_iter().enumerate() {
+        while ops.peek().is_some_and(|op| op.at <= index) {
+            out.push(ops.next().expect("peeked placed op").request);
         }
-        if let MaybeInteractReq::Req(req) = row {
-            out.push(req);
+        if let MaybeInteractReq::Req(request) = row {
+            out.push(request);
         }
     }
-    out.extend(ops.map(|(_, op)| op));
+    out.extend(ops.map(|op| op.request));
     out
+}
+
+pub(crate) fn merge_ops_with_lineage(
+    rows: Vec<MaybeInteractReq>,
+    lineages: Vec<CapturedLineage>,
+) -> Result<Vec<(InteractReq, CapturedLineage)>, String> {
+    if rows.len() != lineages.len() {
+        return Err(format!(
+            "interact lineage count {} does not match row count {}",
+            lineages.len(),
+            rows.len()
+        ));
+    }
+    let mut ops = HOST.with(|host| std::mem::take(&mut host.borrow_mut().ops));
+    ops.sort_by_key(|op| op.at);
+    let mut out = Vec::with_capacity(rows.len() + ops.len());
+    let mut ops = ops.into_iter().peekable();
+    for (index, (row, lineage)) in rows.into_iter().zip(lineages).enumerate() {
+        while ops.peek().is_some_and(|op| op.at <= index) {
+            let op = ops.next().expect("peeked placed op");
+            if !op.lineage.dropped {
+                out.push((op.request, op.lineage));
+            }
+        }
+        if let MaybeInteractReq::Req(request) = row {
+            if !lineage.dropped {
+                out.push((request, lineage));
+            }
+        }
+    }
+    out.extend(
+        ops.filter(|op| !op.lineage.dropped)
+            .map(|op| (op.request, op.lineage)),
+    );
+    Ok(out)
 }
 
 /// A held tick drops its public actions; machine ops go with them.
@@ -2635,16 +3765,33 @@ pub(crate) mod tests {
     #[test]
     fn machine_ops_merge_at_their_js_queue_position() {
         let js = |id: i32| MaybeInteractReq::Req(button(id));
-        let mut placed = vec![
-            (0, button(1)),
-            (2, button(3)),
-            (2, button(4)),
-            (9, button(6)),
+        let placed = vec![
+            PlacedOp {
+                at: 0,
+                request: button(1),
+                lineage: CapturedLineage::default(),
+            },
+            PlacedOp {
+                at: 2,
+                request: button(3),
+                lineage: CapturedLineage::default(),
+            },
+            PlacedOp {
+                at: 2,
+                request: button(4),
+                lineage: CapturedLineage::default(),
+            },
+            PlacedOp {
+                at: 9,
+                request: button(6),
+                lineage: CapturedLineage::default(),
+            },
         ];
+        HOST.with(|host| host.borrow_mut().ops = placed);
         let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow("a number".into()));
         let rows = vec![js(2), skipped, js(5)];
         assert_eq!(
-            merge(rows, &mut placed),
+            merge_ops(rows),
             vec![
                 button(1),
                 button(2),
@@ -2654,6 +3801,88 @@ pub(crate) mod tests {
                 button(6)
             ]
         );
+    }
+
+    #[test]
+    fn unadmitted_machine_events_wait_for_admission_and_replay_until_ack() {
+        let phase_id = RequestId::isolate(1).expect("isolate id");
+        let done_id = RequestId::isolate(2).expect("isolate id");
+        let failed_id = RequestId::isolate(3).expect("isolate id");
+        let manual_walk_id = RequestId::isolate(4).expect("isolate id");
+        let phase = MachineEventKind::Phase(native::NativePhase::Working);
+        let done = MachineEventKind::Done;
+        let failed = MachineEventKind::Failed;
+        let manual_walk = MachineEventKind::ManualWalk;
+        let mut host = Host::new();
+        host.machine_events.extend([
+            MachineEvent {
+                id: phase_id,
+                kind: phase,
+                admitted: false,
+            },
+            MachineEvent {
+                id: done_id,
+                kind: done,
+                admitted: false,
+            },
+            MachineEvent {
+                id: failed_id,
+                kind: failed,
+                admitted: false,
+            },
+            MachineEvent {
+                id: manual_walk_id,
+                kind: manual_walk,
+                admitted: false,
+            },
+        ]);
+
+        // A lost page or deferred start leaves every event in carrier custody.
+        reconcile_machine_events(&mut host, &[], &[]);
+        assert!(machine_events_for_batch(&host).is_empty());
+
+        reconcile_machine_events(
+            &mut host,
+            &[
+                (phase_id, native::NativePhase::Preparing),
+                (done_id, native::NativePhase::Waiting),
+                (failed_id, native::NativePhase::Waiting),
+                (manual_walk_id, native::NativePhase::Waiting),
+            ],
+            &[],
+        );
+        let replayed = machine_events_for_batch(&host);
+        assert_eq!(replayed.len(), 4);
+        assert_eq!(
+            replayed.iter().map(|event| event.kind).collect::<Vec<_>>(),
+            vec![phase, done, failed, manual_walk]
+        );
+        assert!(replayed.iter().all(|event| event.admitted));
+
+        reconcile_machine_events(&mut host, &[(phase_id, native::NativePhase::Working)], &[]);
+        assert_eq!(
+            machine_events_for_batch(&host),
+            vec![
+                MachineEvent {
+                    id: done_id,
+                    kind: done,
+                    admitted: true,
+                },
+                MachineEvent {
+                    id: failed_id,
+                    kind: failed,
+                    admitted: true,
+                },
+                MachineEvent {
+                    id: manual_walk_id,
+                    kind: manual_walk,
+                    admitted: true,
+                },
+            ]
+        );
+
+        reconcile_machine_events(&mut host, &[], &[done_id, failed_id, manual_walk_id]);
+        assert!(machine_events_for_batch(&host).is_empty());
     }
 
     #[test]

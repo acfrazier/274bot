@@ -7,6 +7,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Script operations now share a bounded request seat across native cards and
+  JavaScript. A new top-level operation while a Gatherer, combat, quest
+  progress or Hunt session is live reports **busy**; a child started from that
+  session's hook can still run. A fifth concurrent independent operation
+  reports busy instead of silently losing its gameplay actions.
+- Stops and walk releases keep their place through a random-event hold and
+  bypass a session's gameplay foreground. Gameplay emitted while the guardian
+  holds the script is discarded, never replayed after the event. Actions
+  accepted before an ordinary operation completes retain their authority;
+  cancelling the operation still invalidates its queued actions.
+- A saturated script tick keeps its release and control rows ahead of gameplay.
+  It dispatches the first 141 other rows in their original order, drops the
+  excess, and reports one overflow diagnostic instead of failing the batch.
+- Per-slot diagnostics expose dropped seat actions and late control copies as
+  read-only counters. Duplicate acknowledgements count without noisy error logs.
+
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.

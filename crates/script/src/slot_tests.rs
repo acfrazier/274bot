@@ -1566,6 +1566,7 @@ fn compiled_ctx<'a>(
             hold: false,
             world_members: api::selected::Truth::Unknown,
             interacts: None,
+            service_gate: None,
         },
     }
 }
@@ -2355,4 +2356,46 @@ fn load_watchdog_logs_packet_silence_and_clears_it_on_resume() {
         crate::watchdog::WatchdogAction::None
     );
     slot.stop();
+}
+
+#[test]
+fn native_only_slot_metrics_count_late_controls_without_logging() {
+    let mut slot = SlotScript::new();
+    assert_eq!(slot.slot_metrics(), SlotMetrics::default());
+    slot.bind_incarnation(1);
+    let run = api::selected::RunKey {
+        slot: 11,
+        run: 22,
+        session: 33,
+    };
+    slot.arm_seat(run);
+    let id = RequestId::isolate(1).unwrap();
+    let seat = slot.seat.as_mut().unwrap();
+    assert_eq!(
+        seat.start(
+            RequestStamp::new(id, None, None, ExecutionId::first(run)).unwrap(),
+            crate::native::request::NativeKind::BankNearest,
+            false,
+        )
+        .unwrap(),
+        Admission::Admitted
+    );
+    seat.complete(id, false).unwrap();
+    let result_seq = seat.results()[0].seq;
+    seat.watermark(result_seq);
+    for _ in 0..50 {
+        seat.cancel(
+            id,
+            api::script_contract::CallbackCancelReason::ParentAborted,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        slot.slot_metrics(),
+        SlotMetrics {
+            dropped: 0,
+            late_controls: 50,
+        }
+    );
+    assert!(slot.take_pending_logs().is_empty());
 }

@@ -1670,6 +1670,7 @@ mod tests {
                     hold: self.hold,
                     world_members: api::selected::Truth::Unknown,
                     interacts: Some(Vec::new()),
+                    service_gate: None,
                 },
             }
         }
@@ -1939,6 +1940,8 @@ mod tests {
         let eligible = !host.compiled.hold;
         let mut native = NativeTick {
             state: None,
+            service_authority: None,
+            prompt_port: None,
             actions: &mut actions,
             cx: crate::native::ActionContext {
                 evidence,

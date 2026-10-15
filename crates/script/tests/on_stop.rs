@@ -675,7 +675,7 @@ fn reset_session_does_not_run_onstop() {
     );
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     iso.on_game_tick(2);
     assert_eq!(iso.probe("__n").unwrap(), 2);
     let mid = iso.drain_logs();

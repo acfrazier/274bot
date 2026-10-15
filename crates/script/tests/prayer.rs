@@ -657,7 +657,7 @@ export async function tick(api) {
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let _ = iso.probe("true");
     let set = iso.probe("globalThis.__set").unwrap();
     assert_eq!(set["ok"], false);

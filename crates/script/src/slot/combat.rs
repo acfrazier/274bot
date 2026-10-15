@@ -115,7 +115,11 @@ fn prepare_combat(
 }
 
 impl SlotScript {
-    pub(super) fn start_api_combat(&mut self, token: u64, request: &Arc<CombatSessionRequest>) {
+    pub(in crate::slot) fn start_api_combat(
+        &mut self,
+        token: u64,
+        request: &Arc<CombatSessionRequest>,
+    ) {
         if !self.load_active() {
             return;
         }
@@ -165,9 +169,6 @@ impl SlotScript {
         match prepared {
             Ok(job) => {
                 self.control_generation = generation;
-                seat.dropped_rows = 0;
-                seat.reported_drops = 0;
-                seat.dropped_owner = None;
                 seat.combat_page = Some(Arc::new(CombatPage {
                     token,
                     phase: GatherPhase::Preparing,
@@ -327,13 +328,25 @@ impl SlotScript {
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())))
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(
+            let (result, interacts) = run.tick(
                 ctx,
                 &mut retained,
                 &mut self.native_runtime,
                 None,
                 self.local_state.as_deref(),
-            )
+                None,
+                self.seat
+                    .as_mut()
+                    .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+            );
+            #[cfg(feature = "load")]
+            {
+                ctx.compiled.interacts = interacts;
+            }
+            #[cfg(not(feature = "load"))]
+            let _ = interacts;
+            run.finish_tick();
+            result
         };
         let changed = match seat
             .combat_page

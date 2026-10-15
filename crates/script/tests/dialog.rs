@@ -460,7 +460,7 @@ fn pause_hold_and_session_reset_drop_stale_dialog_actions() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     assert!(iso.drain_interacts().is_empty());
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     post(&iso, &snap);
@@ -876,7 +876,7 @@ fn pause_and_reset_during_continue_ack_drop_stale_actions() {
     post(&iso, &snap);
     tick(&iso, 5);
     assert!(iso.drain_interacts().is_empty());
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 6;
     snap.chat_modal_id = 4882;
     snap.chat_continue = false;

@@ -307,6 +307,8 @@ fn with_tick<R>(
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
         state: None,
+        service_authority: None,
+        prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
@@ -336,6 +338,7 @@ fn with_tick<R>(
                 hold: world.held,
                 world_members: api::selected::Truth::Unknown,
                 interacts: Some(Vec::new()),
+                service_gate: None,
             },
         },
     };

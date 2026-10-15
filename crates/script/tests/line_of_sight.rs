@@ -255,7 +255,7 @@ export function tick(api) {
     let paused = iso.probe("globalThis.__probe").unwrap();
     assert_eq!(paused["v2"]["ok"], true, "pause keeps last identity");
     iso.resume();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     iso.post_snapshot(encode_snapshot(&empty_input(3)));
     iso.on_game_tick(3);
     let after = iso.probe("globalThis.__probe").unwrap();

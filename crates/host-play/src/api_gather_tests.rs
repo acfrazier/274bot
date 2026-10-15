@@ -582,6 +582,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         BrokerWorld::Local,
         Some(&mut rig.policy),
         None,
+        None,
     );
     let mut packets = Vec::new();
     assert!(api::interact::Driver::trace_packets(
@@ -744,6 +745,7 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
                 Some(&sender),
                 BrokerWorld::Local,
                 Some(&mut rig.policy),
+                None,
                 None,
             );
             assert_eq!(cell.lock().unwrap().state(), script::RunState::Paused);

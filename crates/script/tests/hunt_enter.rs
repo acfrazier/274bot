@@ -1020,7 +1020,7 @@ export default class T extends LoopingBot {
     assert_ne!(first_enter, Value::Null, "{first_enter:?}");
     assert_ne!(first_hold, Value::Null, "{first_hold:?}");
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let mut snap = here();
     snap.tick = 2;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));

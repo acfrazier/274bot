@@ -439,14 +439,19 @@ impl CompiledRun {
         }
     }
 
-    pub(super) fn tick(
-        &mut self,
-        ctx: &mut ScriptCtx<'_>,
-        retained: &mut RetainedMemory,
-        runtime: &mut crate::native::ledger::Runtime,
-        pairs: Option<&dyn crate::quester::pair::QuestPairPort>,
-        state: Option<&crate::local_state::SlotState>,
-    ) -> Result<ScriptFlow, ScriptFailure> {
+    pub(super) fn tick<'tick>(
+        &'tick mut self,
+        ctx: &'tick mut ScriptCtx<'_>,
+        retained: &'tick mut RetainedMemory,
+        runtime: &'tick mut crate::native::ledger::Runtime,
+        pairs: Option<&'tick dyn crate::quester::pair::QuestPairPort>,
+        state: Option<&'tick crate::local_state::SlotState>,
+        service_authority: Option<crate::native::ServiceAuthority<'tick>>,
+        prompt_port: Option<&'tick mut dyn crate::native::SeatPromptPort>,
+    ) -> (
+        Result<ScriptFlow, ScriptFailure>,
+        Option<Vec<crate::shim::InteractReq>>,
+    ) {
         if let Some(port) = pairs {
             let dead = crate::native::death::hitpoints_zero(
                 ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
@@ -487,6 +492,8 @@ impl CompiledRun {
                 output: &mut self.output,
                 pairs,
                 state,
+                service_authority,
+                prompt_port,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
@@ -500,6 +507,7 @@ impl CompiledRun {
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
                         hold: ctx.compiled.hold,
+                        service_gate: ctx.compiled.service_gate,
                         #[cfg(feature = "load")]
                         interacts,
                     },
@@ -509,11 +517,25 @@ impl CompiledRun {
             // revoke/discard it before the host can drain any partial effects.
             let result = catch_unwind(AssertUnwindSafe(|| self.script.tick(&mut tick)));
             #[cfg(feature = "load")]
-            {
-                ctx.compiled.interacts = tick.frame.compiled.interacts.take();
-            }
-            result
+            let interacts = tick.frame.compiled.interacts.take();
+            #[cfg(not(feature = "load"))]
+            let interacts = None;
+            (result, interacts)
         };
+        let (result, interacts) = result;
+        let flow = match result {
+            Ok(flow) => flow,
+            Err(payload) => Err(ScriptFailure {
+                code: "panic".into(),
+                message: format!("script panic: {}", panic_message(&payload)).into(),
+            }),
+        };
+        (flow, interacts)
+    }
+    /// Complete the card tick after its seat borrow has ended. This includes
+    /// panic results: the card may have accepted a boundary revision before
+    /// it threw, and the status must still reflect that acceptance.
+    pub(super) fn finish_tick(&mut self) {
         if let Some(revision) = self.output.applied.take() {
             if self
                 .pending
@@ -528,13 +550,6 @@ impl CompiledRun {
             }
         }
         self.sync_settings_status();
-        match result {
-            Ok(flow) => flow,
-            Err(payload) => Err(ScriptFailure {
-                code: "panic".into(),
-                message: format!("script panic: {}", panic_message(&payload)).into(),
-            }),
-        }
     }
 }
 
@@ -1271,6 +1286,7 @@ impl SlotScript {
         }
         self.source_identity = Some(crate::compiled_identity_key(run.config.card()));
         self.runtime_generation = run.run.run;
+        self.arm_compiled_seat(run.run, run.config.card());
         self.compiled = Some(Box::new(run));
         self.last_error = None;
         self.lifecycle_receipt = None;
@@ -1424,7 +1440,9 @@ impl SlotScript {
     }
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
-        self.native_runtime.revoke();
+        if reason != StopReason::Completed {
+            self.native_runtime.revoke();
+        }
         if let (Some(pairs), Some(run)) = (&self.quest_pairs, &self.compiled) {
             pairs.invalidate(run.run);
         }

@@ -119,8 +119,21 @@ struct SnapshotMessage {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueuedInteract {
+    /// Legacy gameplay or lifecycle request.
     pub req: crate::shim::InteractReq,
+    /// Push-time walk outcome sequence shared by this physical batch.
     pub observed_walk_outcome_seq: u64,
+}
+#[derive(Debug)]
+pub struct QueuedSeatBatch {
+    /// The isolate session-work generation that produced this batch.
+    pub generation: u64,
+    /// Push-time walk outcome sequence shared by this physical batch.
+    pub observed_walk_outcome_seq: u64,
+    /// Decoded typed controls and gameplay rows.
+    pub batch: crate::isolate_fb::DecodedSeatBatch,
+    /// Local machine phases and terminals from this same producer turn.
+    pub machine_events: Vec<crate::machine::MachineEvent>,
 }
 
 impl std::borrow::Borrow<crate::shim::InteractReq> for QueuedInteract {
@@ -144,6 +157,8 @@ enum IsolateCmd {
         /// The work generation this reset opened: only the reset of the
         /// current generation restates the parked waits.
         generation: u64,
+        /// The slot-owned RunKey for the new connection/session.
+        execution: Option<api::identity::ExecutionId>,
     },
     /// Latch manual movement before a queued Pause, even if the snapshot is pending.
     ManualWalkTakeover(u64),
@@ -241,9 +256,13 @@ enum ThreadMsg {
         generation: u64,
         observed_walk_outcome_seq: u64,
     },
-    /// The bot instance's `ignoredRandoms()` list, read on the isolate
-    /// thread each tick and sent only when it changed; the host caches it
-    /// (no probe).
+    /// The tick's typed I-seat producer batch, decoded only on the host side.
+    SeatBatch {
+        bytes: Vec<u8>,
+        generation: u64,
+        observed_walk_outcome_seq: u64,
+        machine_events: Vec<crate::machine::MachineEvent>,
+    },
     IgnoredRandoms(Vec<String>),
     /// The tick whose work has fully finished. `report_errors` is false for
     /// operator Pause cancellation: termination is not a script diagnostic.
@@ -331,7 +350,9 @@ pub struct LoadIsolate {
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<QueuedInteract>>,
-    /// Watchdog lifecycle facts from the same FlatBuffer batch.
+    /// Ordered typed seat batches, each retaining its source generation and
+    /// one push-time walk outcome stamp for the physical wire batch.
+    seat_batches: Mutex<VecDeque<QueuedSeatBatch>>,
     lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
     /// Script walk requests (walk, walk-near, abort-walk) a reconnect kept
     /// from the dropped connection before any host dispatch, oldest first,
@@ -415,8 +436,9 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
-        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks)
+        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks, execution)
     }
 }
 
@@ -438,9 +460,27 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            None,
         )
     }
 
+    /// Spawn a test isolate that owns a native seat execution.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn spawn_with_execution(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        execution: api::identity::ExecutionId,
+    ) -> Result<Self, LoadIsolateError> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Some(execution),
+        )
+    }
     /// Spawn with immutable selected-revision facts. The Arc is shared
     /// until the isolate's one startup publication is complete.
     #[cfg(any(test, feature = "test-hooks"))]
@@ -456,6 +496,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            None,
         )
     }
 
@@ -468,7 +509,7 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks)
+        Self::spawn_inner(js, shape, siblings, game_data, named_banks, None)
     }
 
     /// Queue a whole refresh on the single process ValidationSeat. The
@@ -485,6 +526,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        execution: Option<api::identity::ExecutionId>,
     ) -> Result<Self, LoadIsolateError> {
         super::platform::require_v8_platform()?;
         let supervisor = supervisor::get()?;
@@ -538,6 +580,7 @@ impl LoadIsolate {
                     thread_paint_generation,
                     thread_teardown,
                     thread_proof,
+                    execution,
                     #[cfg(feature = "memory-profile")]
                     thread_counters,
                 )
@@ -566,6 +609,7 @@ impl LoadIsolate {
             tick_outcome_error_generation: Mutex::new(None),
             script_cut: AtomicBool::new(false),
             interacts: Mutex::new(Vec::new()),
+            seat_batches: Mutex::new(VecDeque::new()),
             lifecycle: Mutex::new(Vec::new()),
             held_walks: Mutex::new(Vec::new()),
             holding_walks: AtomicBool::new(false),
@@ -1108,6 +1152,29 @@ impl LoadIsolate {
         std::mem::take(&mut *self.interacts.lock().unwrap())
     }
 
+    /// Current private session-work generation. It is independent of the
+    /// slot's run/session stamp and fences isolate-owned output batches.
+    pub fn generation(&self) -> u64 {
+        self.work_generation
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Drain ordered typed seat batches. Callers may restore an unconsumed
+    /// suffix after an interrupted host-side dispatch.
+    pub fn drain_seat_batches(&self) -> Vec<QueuedSeatBatch> {
+        self.pump_logs();
+        self.seat_batches.lock().unwrap().drain(..).collect()
+    }
+
+    /// Restore an unconsumed batch prefix ahead of anything that arrived
+    /// afterward. Generation and per-batch walk stamps are never rewritten.
+    pub(crate) fn restore_seat_batches(&self, mut drained: Vec<QueuedSeatBatch>) {
+        self.pump_logs();
+        let mut queued = self.seat_batches.lock().unwrap();
+        drained.extend(queued.drain(..));
+        *queued = drained.into();
+    }
+
     /// Diagnostics/tests only: this drops each row's enqueue stamp and MUST NOT
     /// be used for production walking dispatch.
     pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
@@ -1194,8 +1261,8 @@ impl LoadIsolate {
     /// snapshot is posted before a new tick. Returns the new work
     /// generation. An active error transfers to that generation so the
     /// first completed clean loop can recover it.
-    pub fn reset_session_work(&self) -> u64 {
-        self.reset_session(false)
+    pub fn reset_session_work(&self, execution: Option<api::identity::ExecutionId>) -> u64 {
+        self.reset_session(false, execution)
     }
 
     /// The connection dropped unexpectedly: discard the connection's work
@@ -1205,8 +1272,8 @@ impl LoadIsolate {
     /// first tick. Frozen AutoRelogin pauses the whole script across a
     /// disconnect and resumes it on the new session's scene 2
     /// (`AutoRelogin.ts:180-190`, `159-163`; `ScriptContext.ts:92-117`).
-    pub fn reconnect_session_work(&self) -> u64 {
-        self.reset_session(true)
+    pub fn reconnect_session_work(&self, execution: Option<api::identity::ExecutionId>) -> u64 {
+        self.reset_session(true, execution)
     }
 
     pub(crate) fn compat_journal_paint_hidden(&self, now: Instant) -> bool {
@@ -1225,7 +1292,7 @@ impl LoadIsolate {
         }
     }
 
-    fn reset_session(&self, keep_work: bool) -> u64 {
+    fn reset_session(&self, keep_work: bool, execution: Option<api::identity::ExecutionId>) -> u64 {
         if let Some(lease) = &self.compat_journal {
             lease.revoke();
             lease.set_host_generation(u64::MAX);
@@ -1239,6 +1306,7 @@ impl LoadIsolate {
         let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
         let generation = {
             let mut interacts = self.interacts.lock().unwrap();
+            let mut seat_batches = self.seat_batches.lock().unwrap();
             let generation = self
                 .work_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
@@ -1251,8 +1319,19 @@ impl LoadIsolate {
                 let mut held = self.held_walks.lock().unwrap();
                 if keep_work {
                     hold_walk_requests(&mut held, interacts.drain(..));
+                    for batch in seat_batches.drain(..) {
+                        let observed_walk_outcome_seq = batch.observed_walk_outcome_seq;
+                        hold_walk_requests(
+                            &mut held,
+                            batch.batch.reqs.into_iter().map(move |row| QueuedInteract {
+                                req: row.request,
+                                observed_walk_outcome_seq,
+                            }),
+                        );
+                    }
                 } else {
                     held.clear();
+                    seat_batches.clear();
                 }
             }
             self.holding_walks
@@ -1288,6 +1367,7 @@ impl LoadIsolate {
         self.send(IsolateCmd::ResetSession {
             keep_work,
             generation,
+            execution,
         });
         generation
     }
@@ -1520,6 +1600,7 @@ impl LoadIsolate {
                         .store(true, std::sync::atomic::Ordering::Release);
                     *lock_after_isolate_failure(&self.in_flight) = None;
                     lock_after_isolate_failure(&self.interacts).clear();
+                    lock_after_isolate_failure(&self.seat_batches).clear();
                     lock_after_isolate_failure(&self.lifecycle).clear();
                 }
                 ThreadMsg::Interact {
@@ -1568,6 +1649,49 @@ impl LoadIsolate {
                         Err(e) => {
                             lock_after_isolate_failure(&self.logs).push(format!("interact: {e}"))
                         }
+                    }
+                }
+                ThreadMsg::SeatBatch {
+                    bytes,
+                    generation,
+                    observed_walk_outcome_seq,
+                    machine_events,
+                } => {
+                    if generation
+                        != self
+                            .work_generation
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        if self
+                            .holding_walks
+                            .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            if let Ok(batch) = crate::isolate_fb::decode_seat_interact_batch(&bytes)
+                            {
+                                hold_walk_requests(
+                                    &mut lock_after_isolate_failure(&self.held_walks),
+                                    batch.reqs.into_iter().map(|row| QueuedInteract {
+                                        req: row.request,
+                                        observed_walk_outcome_seq,
+                                    }),
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                    match crate::isolate_fb::decode_seat_interact_batch(&bytes) {
+                        Ok(batch) => {
+                            lock_after_isolate_failure(&self.seat_batches).push_back(
+                                QueuedSeatBatch {
+                                    generation,
+                                    observed_walk_outcome_seq,
+                                    batch,
+                                    machine_events,
+                                },
+                            );
+                        }
+                        Err(error) => lock_after_isolate_failure(&self.logs)
+                            .push(format!("seat interact: {error}")),
                     }
                 }
                 ThreadMsg::Paint(frame) => {

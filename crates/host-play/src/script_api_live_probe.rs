@@ -9,6 +9,13 @@ impl Play {
             .unwrap_or(serde_json::Value::Null)
     }
 
+    /// The actual slot-owned seat, read without modifying its custody.
+    #[doc(hidden)]
+    pub fn script_seat_probe(&self, name: &str) -> Option<script::slot::SeatProbe> {
+        script_slot(&self.scripts, name)
+            .and_then(|cell| cell.lock().ok().and_then(|slot| slot.seat_probe()))
+    }
+
     /// Signal the fixture consumer after the host observes the real stage-40 cheat
     /// acknowledgment. This does not modify snapshots or perform a game action.
     #[doc(hidden)]

@@ -706,6 +706,13 @@ impl Play {
             .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_status()))
     }
 
+    /// Read-only per-slot seat counters for status and diagnostics consumers.
+    /// Sampling does not enter the JS isolate or allocate a per-frame record.
+    pub fn script_slot_metrics(&self, name: &str) -> Option<script::slot::SlotMetrics> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.slot_metrics()))
+    }
+
     /// Current or last native/v2 walk assessment, retained after a refusal.
     /// rs2b0t-compatible scripts receive assessment text only in the host log.
     pub fn script_walk_risk(&self, name: &str) -> Option<Arc<str>> {
