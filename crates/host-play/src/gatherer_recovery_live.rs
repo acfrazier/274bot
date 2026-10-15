@@ -1022,6 +1022,7 @@ fn valid_outcome(mode: Mode, receipt: &serde_json::Value) -> bool {
         }
         Mode::AcceptedNoMovement => {
             receipt["result"] == "blocked-for-12s"
+                && receipt["random_events_enabled"] == false
                 && receipt["failure"]["code"] == "bank-deposit-failed"
                 && receipt["failure"]["message"] == "bank deposit did not move inventory"
                 && receipt["blocked_for_ms"]
@@ -1114,6 +1115,9 @@ fn run_live(mode: Mode) {
     let last_tick = Mutex::new(None);
     let hook_snapshot = Mutex::new(GameSnapshot::new());
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
+    // Guardian must not solve the seeded boxes before their real bank refusal.
+    // Keep the ordinary profile setting unchanged for the four other cells.
+    let random_events = mode != Mode::AcceptedNoMovement;
     let play = super::run_with_template(
         template,
         true,
@@ -1121,7 +1125,10 @@ fn run_live(mode: Mode) {
             username: account.clone(),
             password: account.clone().into(),
             uid: 274_279_231,
-            settings: ProfileSettings::default(),
+            settings: ProfileSettings {
+                random_events,
+                ..ProfileSettings::default()
+            },
         }],
         |_| (None, None),
         move |client, username, frame_result| {
@@ -1189,6 +1196,20 @@ fn run_live(mode: Mode) {
     let mut completion_status = None;
 
     loop {
+        if cell.lock().started.is_none() && preparation_started.elapsed() >= PREPARATION_BOUND {
+            let evidence = serde_json::json!({
+                "account": account,
+                "mode": mode.name(),
+                "phase": format!("{:?}", cell.lock().phase),
+                "seed": mode.seed(),
+                "facts": frame_recorder.lock().frames,
+            });
+            std::fs::write(
+                evidence_dir.join("preparation-failure.json"),
+                serde_json::to_vec_pretty(&evidence).expect("serialize failed preparation"),
+            )
+            .expect("retain failed-preparation observations");
+        }
         check_prerequisites(
             &play,
             &account,
@@ -1436,6 +1457,7 @@ fn run_live(mode: Mode) {
         },
         "cell_elapsed_ms": elapsed_ms,
         "settings": mode_settings(mode),
+        "random_events_enabled": random_events,
         "seed": mode.seed(),
         "target_verified": record.target_verified,
         "result": result,
@@ -1582,6 +1604,7 @@ fn oracle_receipt(mode: Mode) -> serde_json::Value {
         }]);
     }
     if mode == Mode::AcceptedNoMovement {
+        receipt["random_events_enabled"] = serde_json::json!(false);
         receipt["result"] = serde_json::json!("blocked-for-12s");
         receipt["failure"] = serde_json::json!({
             "code": "bank-deposit-failed",
