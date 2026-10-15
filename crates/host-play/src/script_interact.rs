@@ -12,10 +12,7 @@ use nav::world::NavWorld;
 use nav::WorldState;
 use parking_lot::RwLock;
 
-use super::{
-    abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptRouteExclusions,
-    ScriptWalkArm,
-};
+use super::{abort_script_walk, route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -336,18 +333,19 @@ where
                 ..
             } => {
                 let accepted = if kind == "booth" {
-                    let loc = snapshot.locs().iter().find(|loc| {
-                        loc.tile.x == x
-                            && loc.tile.z == z
-                            && loc.tile.level == level
-                            && name.as_deref().is_none_or(|wanted| {
-                                loc.name
-                                    .as_deref()
-                                    .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                            })
-                    });
+                    let loc = script::bank::ops::booth_at(
+                        snapshot.locs(),
+                        WorldTile { x, z, level },
+                        name.as_deref(),
+                    );
                     loc.is_some_and(|loc| {
-                        let op = stand_op.or_else(|| action_slot(&loc.actions, "Use-quickly"));
+                        let op = stand_op.or_else(|| {
+                            script::bank::ops::op_slot(
+                                loc,
+                                "Use-quickly",
+                                script::bank::ops::LabelMatch::Normalized,
+                            )
+                        });
                         op.is_some_and(|op| {
                             matches!(
                                 ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
@@ -356,27 +354,23 @@ where
                         })
                     })
                 } else if kind == "npc" {
-                    let npc = snapshot.npcs().iter().find(|npc| {
-                        npc.tile.x == x
-                            && npc.tile.z == z
-                            && npc.tile.level == level
-                            && name.as_deref().is_some_and(|wanted| {
-                                npc.name
-                                    .as_deref()
-                                    .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                            })
+                    let npc = name.as_deref().and_then(|wanted| {
+                        script::bank::ops::npc_at(
+                            snapshot.npcs(),
+                            WorldTile { x, z, level },
+                            wanted,
+                        )
                     });
                     npc.is_some_and(|npc| {
                         let op = stand_op
-                            .filter(|&op| {
-                                op >= 1
-                                    && npc
-                                        .actions
-                                        .get((op as usize).saturating_sub(1))
-                                        .and_then(|action| action.as_deref())
-                                        .is_some_and(|action| !action.is_empty())
-                            })
-                            .or_else(|| action_slot(&npc.actions, "Bank"));
+                            .and_then(|op| script::bank::ops::packed_op(npc, op))
+                            .or_else(|| {
+                                script::bank::ops::op_slot(
+                                    npc,
+                                    "Bank",
+                                    script::bank::ops::LabelMatch::Normalized,
+                                )
+                            });
                         op.is_some_and(|op| {
                             matches!(
                                 ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
@@ -695,7 +689,7 @@ where
                     obj_names
                         .and_then(|names| names.name(item.def.id))
                         .is_some_and(|actual| actual.eq_ignore_ascii_case(&name))
-                        .then(|| all_slot(&item.actions).map(|op| (item, op)))
+                        .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
                         .flatten()
                 }) {
                     wrote |= matches!(
@@ -711,7 +705,7 @@ where
                         .and_then(|n| n.name(it.def.id))
                         .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
                 }) {
-                    if let Some(op) = action_slot(&item.actions, &action) {
+                    if let Some(op) = script::bank::ops::action_op_in(&item.actions, &action) {
                         let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
                         match &res {
                             SendResult::Sent { .. } => {

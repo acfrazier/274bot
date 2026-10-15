@@ -305,3 +305,25 @@ pub(crate) fn option_matches(actual: &str, wanted: &str) -> bool {
             .all(|wanted| actual.next() == Some(wanted))
     })
 }
+
+/// The banker both adapters pick from their scene rows: named `name`,
+/// carrying `op` (by label or by packed 1-based index), nearest first.
+/// A row with no posted name reads as empty, so it can only match an
+/// empty wanted name; adapters never ask for one.
+pub(crate) fn banker_scan<'a, R: crate::bank::ops::NpcRow>(
+    rows: &'a [R],
+    name: &str,
+    op: NpcOp<'_>,
+) -> Option<(&'a R, &'a str)> {
+    rows.iter()
+        .filter(|row| name_matches(row.name().unwrap_or_default(), name))
+        .filter_map(|row| {
+            let action = (1..=row.op_len()).find_map(|slot| {
+                let label = row.op_label(slot)?;
+                let index = usize::try_from(slot).ok()?.checked_sub(1)?;
+                action_matches(label, index, op).then_some(label)
+            })?;
+            Some((row, action))
+        })
+        .min_by_key(|(row, _)| row.distance())
+}

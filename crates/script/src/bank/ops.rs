@@ -1,15 +1,22 @@
-//! The one bank transfer kernel. Compiled cards ([`crate::native_bank`]) and
-//! the compatibility families ([`crate::bank_op`]) both call it.
+//! The one bank transfer kernel. Compiled cards ([`crate::native_bank`]),
+//! the compatibility families ([`crate::bank_op`]) and the host dispatch
+//! paths for their requests all decide through here.
 //!
 //! The kernel is stateless and copies nothing. Callers pass the rows they
 //! already hold through [`BankRow`]: native `ItemView` and isolate `ItemRow`
 //! both implement it, so a scan never converts or collects a row. Machines
 //! own the clocks, the emits and the loops; the kernel only decides.
+//!
+//! Where callers' historic semantics differ — the kernel withdraw ladder
+//! vs the frozen [`next_chunk`] ladder, the fill rules of `withdrawLoad`
+//! vs the host's [`fill_click_in`], folded vs normalized label matching —
+//! each keeps its own named policy below. They decide alike wherever the
+//! content labels (bank `option1..5`) reach.
 
 #[cfg(feature = "load")]
-use crate::observed::ItemRow;
+use crate::observed::{EntityRow, ItemRow, SceneRow};
 use crate::shim::InteractReq;
-use api::snapshot::ItemView;
+use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -228,15 +235,39 @@ pub fn action_op<R: BankRow>(row: &R, wanted: &str) -> Option<i32> {
     })
 }
 
-/// The sweep op: the first label containing `all`, else the last non-empty
-/// label (frozen `depositAllMatching` / `bestOpIndex`).
+/// The All op: the first label whose normalized form contains `all`
+/// (even inside another word), 1-based. No fallback: a row without such
+/// a label has no All op.
+pub fn all_op<R: BankRow>(row: &R) -> Option<i32> {
+    (1..=row.op_len()).find(|&op| row.op_label(op).is_some_and(contains_all))
+}
+
+/// The sweep op: the All op, else the last non-empty label (frozen
+/// `depositAllMatching` / `bestOpIndex`).
 pub fn sweep_op<R: BankRow>(row: &R) -> Option<i32> {
-    (1..=row.op_len())
-        .find(|&op| row.op_label(op).is_some_and(contains_all))
-        .or_else(|| {
-            (1..=row.op_len())
-                .rev()
-                .find(|&op| row.op_label(op).is_some())
+    all_op(row).or_else(|| {
+        (1..=row.op_len())
+            .rev()
+            .find(|&op| row.op_label(op).is_some())
+    })
+}
+
+/// The hunt's X-label spelling: `-` and space are one separator (other
+/// separators are not), the ends are trimmed after that replacement, and
+/// the rest folds ASCII case. `Withdraw-X` and `withdraw x` match
+/// `Withdraw X`; `Withdraw_X` and `Withdraw  X` do not.
+pub fn dash_space_eq(actual: &str, expected: &str) -> bool {
+    let edge = |c: char| c.is_whitespace() || c == '-';
+    let start = actual.find(|c: char| !edge(c)).unwrap_or(actual.len());
+    let end = actual.rfind(|c: char| !edge(c)).map_or(start, |at| {
+        at + actual[at..].chars().next().map_or(0, char::len_utf8)
+    });
+    let actual = &actual.as_bytes()[start..end];
+    let expected = expected.as_bytes();
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(&got, &want)| {
+            let got = if got == b'-' { b' ' } else { got };
+            got.eq_ignore_ascii_case(&want)
         })
 }
 
@@ -799,6 +830,385 @@ pub fn close_progress(
     } else {
         CloseScan::Waiting
     }
+}
+
+// --- frozen chunk ladder ---------------------------------------------------
+
+/// One frozen `nextWithdrawChunk` step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Chunk {
+    /// Withdraw-X for this many.
+    X(f64),
+    /// `Withdraw-10` / `Withdraw-5` / `Withdraw-1`.
+    Op(&'static str),
+}
+
+/// Frozen `nextWithdrawChunk(need)`: Withdraw-X above 10, else the 10/5/1
+/// ladder; nothing for no need. This published compatibility policy is
+/// deliberately not [`withdraw_click`]'s ladder (need 7 is Withdraw-5
+/// here, Withdraw-X/7 there); the callers that chunk by it — compat
+/// `withdrawTo` and the hunt bank — keep their recorded emits.
+pub fn next_chunk(need: f64) -> Option<Chunk> {
+    if need <= 0.0 {
+        None
+    } else if need > 10.0 {
+        Some(Chunk::X(need))
+    } else if need >= 10.0 {
+        Some(Chunk::Op("Withdraw-10"))
+    } else if need >= 5.0 {
+        Some(Chunk::Op("Withdraw-5"))
+    } else {
+        Some(Chunk::Op("Withdraw-1"))
+    }
+}
+
+// --- host actions-slice policy ---------------------------------------------
+//
+// The host re-resolves a request against the live snapshot rows, whose
+// `actions` tables it already holds as `Vec<Option<String>>`. These are
+// the same normalized decisions over that slice, holes keeping their
+// 1-based positions.
+
+/// The 1-based op slot in `actions` whose normalized label equals
+/// `wanted`, first match wins.
+pub fn action_op_in(actions: &[Option<String>], wanted: &str) -> Option<i32> {
+    actions
+        .iter()
+        .position(|label| {
+            label
+                .as_deref()
+                .is_some_and(|label| normalized_action_eq(label, wanted))
+        })
+        .map(|index| index as i32 + 1)
+}
+
+/// The 1-based All slot in `actions`: the first label whose normalized
+/// form contains `all`, no fallback ([`all_op`] over the slice).
+pub fn all_op_in(actions: &[Option<String>]) -> Option<i32> {
+    actions
+        .iter()
+        .position(|label| label.as_deref().is_some_and(contains_all))
+        .map(|index| index as i32 + 1)
+}
+
+/// The slot of the label for exactly `count` (`Withdraw {count}`, any
+/// separator spelling). The `-` of a negative count normalizes away, as
+/// it does for a `Withdraw-10` label.
+fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i32> {
+    let mut digits = [0u8; 10];
+    let mut at = digits.len();
+    let mut n = i64::from(count).unsigned_abs();
+    loop {
+        at -= 1;
+        digits[at] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &digits[at..];
+    actions
+        .iter()
+        .position(|label| {
+            label.as_deref().is_some_and(|label| {
+                normalized_action_bytes(label)
+                    .eq(b"withdraw".iter().copied().chain(digits.iter().copied()))
+            })
+        })
+        .map(|index| index as i32 + 1)
+}
+
+/// The host fill policy (BankBudget's bounded fill and the legacy
+/// `withdraw-load` dispatch): an exact `Withdraw {count}` label, then
+/// All only when the fill consumes the current stock, then the
+/// Withdraw-X continuation. The boolean is "needs the amount dialog".
+/// Distinct from [`load_click`], the compat `withdrawLoad` policy.
+pub fn fill_click_in(actions: &[Option<String>], count: i32, stock: i32) -> Option<(i32, bool)> {
+    withdraw_count_op_in(actions, count)
+        .map(|op| (op, false))
+        .or_else(|| {
+            (count == stock)
+                .then(|| all_op_in(actions).map(|op| (op, false)))
+                .flatten()
+        })
+        .or_else(|| action_op_in(actions, "Withdraw X").map(|op| (op, true)))
+}
+
+// --- open: booth and teller rows -------------------------------------------
+
+/// The op table of a scene row, as the row's representation stores it.
+/// `op_label` is the raw label at a 1-based slot: `None` for a hole the
+/// representation stores as absent (native views), `Some("")` for one it
+/// posts as an empty label (isolate rows).
+pub trait OpLabels {
+    fn op_len(&self) -> i32;
+    fn op_label(&self, one_based: i32) -> Option<&str>;
+}
+
+/// A loc row a bank-open decision scans.
+pub trait LocRow: OpLabels {
+    fn id(&self) -> i32;
+    fn tile(&self) -> WorldTile;
+    fn distance(&self) -> i32;
+    fn name(&self) -> Option<&str>;
+}
+
+/// An npc row a bank-open decision scans.
+pub trait NpcRow: OpLabels {
+    fn tile(&self) -> WorldTile;
+    fn distance(&self) -> i32;
+    fn name(&self) -> Option<&str>;
+}
+
+impl OpLabels for LocView {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?)?.as_deref()
+    }
+}
+
+impl LocRow for LocView {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn tile(&self) -> WorldTile {
+        self.tile
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+impl OpLabels for NpcView {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?)?.as_deref()
+    }
+}
+
+impl NpcRow for NpcView {
+    fn tile(&self) -> WorldTile {
+        self.tile
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+#[cfg(feature = "load")]
+impl OpLabels for SceneRow {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?).map(|label| &**label)
+    }
+}
+
+#[cfg(feature = "load")]
+impl LocRow for SceneRow {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn tile(&self) -> WorldTile {
+        WorldTile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+#[cfg(feature = "load")]
+impl OpLabels for EntityRow {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?).map(|label| &**label)
+    }
+}
+
+#[cfg(feature = "load")]
+impl NpcRow for EntityRow {
+    fn tile(&self) -> WorldTile {
+        WorldTile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+/// How an op label is compared: folded ASCII case only (the loc/npc
+/// config spellings: `Use-quickly`, a catalog operation name), or the
+/// normalized menu-label equality of [`normalized_action_eq`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelMatch {
+    Folded,
+    Normalized,
+}
+
+fn label_eq(label: &str, wanted: &str, policy: LabelMatch) -> bool {
+    match policy {
+        LabelMatch::Folded => label.eq_ignore_ascii_case(wanted),
+        LabelMatch::Normalized => normalized_action_eq(label, wanted),
+    }
+}
+
+/// Whether any label of `row` matches `wanted` under `policy`.
+fn any_label<R: OpLabels>(row: &R, wanted: &str, policy: LabelMatch) -> bool {
+    (1..=row.op_len()).any(|op| {
+        row.op_label(op)
+            .is_some_and(|label| label_eq(label, wanted, policy))
+    })
+}
+
+/// The 1-based op slot of `row` matching `wanted` under `policy`, first
+/// match wins.
+pub fn op_slot<R: OpLabels>(row: &R, wanted: &str, policy: LabelMatch) -> Option<i32> {
+    (1..=row.op_len()).find(|&op| {
+        row.op_label(op)
+            .is_some_and(|label| label_eq(label, wanted, policy))
+    })
+}
+
+/// A packed 1-based op slot, kept only while that slot still carries a
+/// non-empty label.
+pub fn packed_op<R: OpLabels>(row: &R, packed: i32) -> Option<i32> {
+    (packed >= 1 && row.op_label(packed).is_some_and(|label| !label.is_empty())).then_some(packed)
+}
+
+/// The compat named booth: a live row (id ≥ 0) named `name` carrying
+/// `action`, on the player's plane when it is known, nearest first.
+pub fn booth_named<'a, R: LocRow>(
+    rows: &'a [R],
+    name: &str,
+    action: &str,
+    here_level: Option<i32>,
+) -> Option<&'a R> {
+    rows.iter()
+        .filter(|row| {
+            row.id() >= 0
+                && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+                && any_label(*row, action, LabelMatch::Folded)
+                && here_level.is_none_or(|level| level == row.tile().level)
+        })
+        .min_by_key(|row| row.distance())
+}
+
+/// The nearest row on `level` carrying `action` (the native no-stand
+/// booth: a catalog operation's op, or `Use-quickly`).
+pub fn booth_nearest_action<'a, R: LocRow>(
+    rows: &'a [R],
+    level: i32,
+    action: &str,
+) -> Option<&'a R> {
+    rows.iter()
+        .filter(|row| row.tile().level == level && any_label(*row, action, LabelMatch::Folded))
+        .min_by_key(|row| row.distance())
+}
+
+/// The first row standing exactly on `tile`, named `name` when one is
+/// given.
+pub fn booth_at<'a, R: LocRow>(
+    rows: &'a [R],
+    tile: WorldTile,
+    name: Option<&str>,
+) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.tile() == tile
+            && name.is_none_or(|wanted| {
+                row.name()
+                    .is_some_and(|got| got.eq_ignore_ascii_case(wanted))
+            })
+    })
+}
+
+/// The exact snapshot-selected booth identity: this id on this tile,
+/// still named `name` and still carrying `action`.
+pub fn booth_exact<'a, R: LocRow>(
+    rows: &'a [R],
+    tile: WorldTile,
+    id: i32,
+    name: &str,
+    action: &str,
+) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.id() == id
+            && row.tile() == tile
+            && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+            && any_label(*row, action, LabelMatch::Folded)
+    })
+}
+
+/// The catalog bank object around its declared stand: named `name`,
+/// carrying `action`, within Chebyshev `radius` of `stand` on its
+/// plane, nearest first and by id on a tie.
+pub fn booth_catalog<'a, R: LocRow>(
+    rows: &'a [R],
+    stand: WorldTile,
+    radius: i32,
+    name: &str,
+    action: &str,
+) -> Option<&'a R> {
+    let chebyshev = |row: &R| {
+        row.tile()
+            .x
+            .abs_diff(stand.x)
+            .max(row.tile().z.abs_diff(stand.z))
+    };
+    rows.iter()
+        .filter(|row| {
+            row.tile().level == stand.level
+                && chebyshev(row) <= u32::try_from(radius).unwrap_or(u32::MAX)
+                && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+                && any_label(*row, action, LabelMatch::Folded)
+        })
+        .min_by_key(|row| (chebyshev(row), row.id()))
+}
+
+/// The first npc standing exactly on `tile`, named `name`.
+pub fn npc_at<'a, R: NpcRow>(rows: &'a [R], tile: WorldTile, name: &str) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.tile() == tile && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+    })
 }
 
 #[cfg(test)]
