@@ -129,6 +129,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
 
+### Profiles
+
+- On Windows, giving the rs2b0t import a folder instead of the exported
+  file now says it is not a regular file, as on Linux and macOS, instead of
+  "cannot read …: Access is denied".
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles
