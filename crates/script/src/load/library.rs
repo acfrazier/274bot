@@ -11,7 +11,7 @@ pub use catalog::{
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "load")]
-use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
+use crate::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 #[cfg(feature = "load")]
 use crate::rs2b0t_registry::{
     absolute_clean, parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
@@ -22,7 +22,8 @@ use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 use super::shape::{
     catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
     raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_api_family,
-    resolve_sibling_modules_bounded, ApiFamily, LoadShape, MAX_PREPARATION_RESULT_BYTES,
+    resolve_sibling_modules_bounded, ApiFamily, FirstUnloadableWork, LoadShape,
+    PreparationFingerprintWork, SiblingCompilationWork, MAX_PREPARATION_RESULT_BYTES,
     MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES, MAX_SOURCE_BYTES,
 };
 
@@ -1329,6 +1330,505 @@ impl CardPreparationSnapshot {
             siblings,
             fingerprint,
         })
+    }
+
+    /// Begin incremental preparation; each call advances one bounded stage.
+    pub(crate) fn start_cooperative(self) -> CardPreparationTask {
+        CardPreparationTask::new(self)
+    }
+}
+
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CardPreparationPhase {
+    SourceLimit,
+    ReadOrigin,
+    FingerprintStart,
+    Fingerprint,
+    Settings,
+    Shape,
+    Cache,
+    UnloadableStart,
+    Unloadable,
+    SiblingsStart,
+    Siblings,
+    FinalFingerprintStart,
+    FinalFingerprint,
+    FailureFingerprint,
+    Finish,
+    Complete,
+}
+
+#[cfg(feature = "load")]
+#[derive(Debug)]
+pub(crate) struct CardPreparationTask {
+    snapshot: CardPreparationSnapshot,
+    phase: CardPreparationPhase,
+    source_limit: usize,
+    origin: Option<String>,
+    fingerprint_work: Option<PreparationFingerprintWork>,
+    failure_work: Option<PreparationFingerprintWork>,
+    pending_failure: Option<(String, Option<ApiFamily>)>,
+    settings_schema: Option<Vec<SettingDef>>,
+    has_catalog_settings_schema: bool,
+    shape: Option<LoadShape>,
+    api_family: Option<ApiFamily>,
+    meta: Option<CacheMeta>,
+    cached: Option<CachedJs>,
+    result_bytes: usize,
+    unloadable_work: Option<FirstUnloadableWork>,
+    unloadable: Option<String>,
+    siblings_work: Option<SiblingCompilationWork>,
+    siblings: Option<Vec<(String, String)>>,
+    fingerprint: Option<String>,
+}
+
+#[cfg(feature = "load")]
+impl CardPreparationTask {
+    fn new(snapshot: CardPreparationSnapshot) -> Self {
+        let has_catalog_settings_schema = snapshot.catalog_settings_schema.is_some();
+        Self {
+            snapshot,
+            phase: CardPreparationPhase::SourceLimit,
+            source_limit: MAX_PREPARATION_SOURCE_BYTES,
+            origin: None,
+            fingerprint_work: None,
+            failure_work: None,
+            pending_failure: None,
+            settings_schema: None,
+            has_catalog_settings_schema,
+            shape: None,
+            api_family: None,
+            meta: None,
+            cached: None,
+            result_bytes: 0,
+            unloadable_work: None,
+            unloadable: None,
+            siblings_work: None,
+            siblings: None,
+            fingerprint: None,
+        }
+    }
+
+    pub(crate) fn step(&mut self) -> Result<Option<CardPreparationOutcome>, String> {
+        match self.phase {
+            CardPreparationPhase::SourceLimit => {
+                self.source_limit = match self.snapshot.source_limit() {
+                    Ok(source_limit) => source_limit,
+                    Err(error) => return self.begin_failure(error, None),
+                };
+                self.phase = CardPreparationPhase::ReadOrigin;
+            }
+            CardPreparationPhase::ReadOrigin => {
+                self.origin = match self.snapshot.read_origin(self.source_limit) {
+                    Ok(origin) => Some(origin),
+                    Err(error) => {
+                        return self.begin_failure(error, self.snapshot.template.api_family);
+                    }
+                };
+                self.phase = CardPreparationPhase::FingerprintStart;
+            }
+            CardPreparationPhase::FingerprintStart => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                self.fingerprint_work = match PreparationFingerprintWork::new(
+                    &self.snapshot.template.path,
+                    origin,
+                    self.source_limit,
+                ) {
+                    Ok(work) => Some(work),
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                self.phase = CardPreparationPhase::Fingerprint;
+            }
+            CardPreparationPhase::Fingerprint => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                match self
+                    .fingerprint_work
+                    .as_mut()
+                    .expect("fingerprint work exists")
+                    .step(origin)
+                {
+                    Ok(None) => return Ok(None),
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                    Ok(Some(fingerprint)) => {
+                        self.fingerprint_work = None;
+                        if self.snapshot.confirmation_fingerprint.as_deref()
+                            == Some(fingerprint.as_str())
+                        {
+                            self.phase = CardPreparationPhase::Complete;
+                            return Ok(Some(CardPreparationOutcome::Confirmed));
+                        }
+                        if self.snapshot.stored_fingerprint.as_deref()
+                            == Some(fingerprint.as_str())
+                        {
+                            self.phase = CardPreparationPhase::Complete;
+                            return Ok(Some(CardPreparationOutcome::Unchanged));
+                        }
+                        self.phase = CardPreparationPhase::Settings;
+                    }
+                }
+            }
+            CardPreparationPhase::Settings => {
+                self.settings_schema = if let Some(schema) =
+                    self.snapshot.catalog_settings_schema.take()
+                {
+                    Some(schema)
+                } else {
+                    let origin = self.origin.as_deref().expect("origin was read");
+                    let result = match self.snapshot.template.source {
+                        ScriptSource::Catalog => catalog::resolve_catalog_settings_schema_bounded(
+                            self.snapshot.catalog_root.as_deref(),
+                            &self.snapshot.template.name,
+                            &self.snapshot.template.path,
+                            origin,
+                            self.source_limit,
+                        ),
+                        ScriptSource::File | ScriptSource::Builtin => {
+                            crate::rs2b0t_registry::try_settings_schema_from_source(origin)
+                                .map_err(|error| {
+                                    format!("{}: {error}", self.snapshot.template.name)
+                                })
+                        }
+                    };
+                    match result {
+                        Ok(schema) => Some(schema),
+                        Err(error) => {
+                            let family = self.failure_family();
+                            return self.begin_failure(error, family);
+                        }
+                    }
+                };
+                self.phase = CardPreparationPhase::Shape;
+            }
+            CardPreparationPhase::Shape => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                let (shape, api_family) = match resolve_api_family(origin) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        let error = format!("{}: {error}", self.snapshot.template.name);
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                if shape == LoadShape::Reject {
+                    return self.begin_failure(
+                        format!("not a bot shape: {}", self.snapshot.template.name),
+                        Some(api_family),
+                    );
+                }
+                self.shape = Some(shape);
+                self.api_family = Some(api_family);
+                self.phase = CardPreparationPhase::Cache;
+            }
+            CardPreparationPhase::Cache => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                let shape = self.shape.expect("shape was resolved");
+                let api_family = self.api_family.expect("API family was resolved");
+                let cache = JsCache::new(self.snapshot.cache_root.clone());
+                let meta = cache_meta(shape, self.snapshot.template.source, api_family);
+                let object = cache.object_path(&JsCache::origin_sha(origin.as_bytes()));
+                if std::fs::metadata(&object)
+                    .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
+                {
+                    return self.begin_failure(
+                        "cached JavaScript exceeds the 16 MiB result limit".into(),
+                        Some(api_family),
+                    );
+                }
+                let cached = match cache.get_or_transpile(
+                    &self.snapshot.template.path,
+                    origin.as_bytes(),
+                    meta.clone(),
+                ) {
+                    Ok(cached) => cached,
+                    Err(error) => {
+                        let error = format!("{}: {error}", self.snapshot.template.name);
+                        return self.begin_failure(error, Some(api_family));
+                    }
+                };
+                let result_bytes = self
+                    .snapshot
+                    .template
+                    .retained_bytes()
+                    .and_then(|bytes| bytes.checked_add(origin.len()))
+                    .and_then(|bytes| bytes.checked_add(cached.js.capacity()))
+                    .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string());
+                let mut result_bytes = match result_bytes {
+                    Ok(bytes) => bytes,
+                    Err(error) => return self.begin_failure(error, Some(api_family)),
+                };
+                if self.has_catalog_settings_schema {
+                    if let Some(schema) = &self.settings_schema {
+                        if add_schema_bytes(&mut result_bytes, schema, schema.capacity()).is_none()
+                        {
+                            return self.begin_failure(
+                                "prepared card exceeds the 16 MiB result limit".into(),
+                                Some(api_family),
+                            );
+                        }
+                    }
+                }
+                if result_bytes > MAX_PREPARATION_RESULT_BYTES {
+                    return self.begin_failure(
+                        "prepared card exceeds the 16 MiB result limit".into(),
+                        Some(api_family),
+                    );
+                }
+                self.result_bytes = result_bytes;
+                self.meta = Some(meta);
+                self.cached = Some(cached);
+                self.phase = CardPreparationPhase::UnloadableStart;
+            }
+            CardPreparationPhase::UnloadableStart => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                self.unloadable_work = match FirstUnloadableWork::new(
+                    origin,
+                    &self.snapshot.template.path,
+                    self.source_limit,
+                ) {
+                    Ok(work) => Some(work),
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                self.phase = CardPreparationPhase::Unloadable;
+            }
+            CardPreparationPhase::Unloadable => {
+                let first_unloadable = match self
+                    .unloadable_work
+                    .as_mut()
+                    .expect("unloadable work exists")
+                    .step()
+                {
+                    Ok(None) => return Ok(None),
+                    Ok(Some(first_unloadable)) => first_unloadable,
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                let cached = self.cached.as_ref().expect("cached card exists");
+                let unloadable = catalog_unloadable(
+                    &self.snapshot.template.name,
+                    self.snapshot.template.source,
+                    &cached.sha256,
+                    &self.snapshot.template.path,
+                    first_unloadable,
+                );
+                if !self.snapshot.allow_unloadable {
+                    if let Some(reason) = &unloadable {
+                        return self.begin_failure(
+                            format!("unloadable import: {reason}"),
+                            self.api_family,
+                        );
+                    }
+                }
+                self.unloadable = unloadable;
+                self.unloadable_work = None;
+                self.phase = CardPreparationPhase::SiblingsStart;
+            }
+            CardPreparationPhase::SiblingsStart => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                let work = match SiblingCompilationWork::new(
+                    &self.snapshot.template.path,
+                    origin,
+                    JsCache::new(self.snapshot.cache_root.clone()),
+                    self.meta.clone().expect("cache metadata exists"),
+                    self.result_bytes,
+                    self.source_limit,
+                ) {
+                    Ok(work) => work,
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                self.siblings_work = Some(work);
+                self.phase = CardPreparationPhase::Siblings;
+            }
+            CardPreparationPhase::Siblings => {
+                match self
+                    .siblings_work
+                    .as_mut()
+                    .expect("sibling work exists")
+                    .step()
+                {
+                    Ok(None) => return Ok(None),
+                    Ok(Some(siblings)) => {
+                        self.siblings = Some(siblings);
+                        self.siblings_work = None;
+                        self.phase = CardPreparationPhase::FinalFingerprintStart;
+                    }
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                }
+            }
+            CardPreparationPhase::FinalFingerprintStart => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                self.fingerprint_work = match PreparationFingerprintWork::new(
+                    &self.snapshot.template.path,
+                    origin,
+                    self.source_limit,
+                ) {
+                    Ok(work) => Some(work),
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                };
+                self.phase = CardPreparationPhase::FinalFingerprint;
+            }
+            CardPreparationPhase::FinalFingerprint => {
+                let origin = self.origin.as_deref().expect("origin was read");
+                match self
+                    .fingerprint_work
+                    .as_mut()
+                    .expect("final fingerprint work exists")
+                    .step(origin)
+                {
+                    Ok(None) => return Ok(None),
+                    Err(error) => {
+                        let family = self.failure_family();
+                        return self.begin_failure(error, family);
+                    }
+                    Ok(Some(fingerprint)) => {
+                        let Some(result_bytes) =
+                            self.result_bytes.checked_add(fingerprint.capacity())
+                        else {
+                            return self.begin_failure(
+                                "prepared card exceeds the 16 MiB result limit".into(),
+                                self.api_family,
+                            );
+                        };
+                        if result_bytes > MAX_PREPARATION_RESULT_BYTES {
+                            return self.begin_failure(
+                                "prepared card exceeds the 16 MiB result limit".into(),
+                                self.api_family,
+                            );
+                        }
+                        self.result_bytes = result_bytes;
+                        self.fingerprint = Some(fingerprint);
+                        self.fingerprint_work = None;
+                        self.phase = CardPreparationPhase::Finish;
+                    }
+                }
+            }
+            CardPreparationPhase::FailureFingerprint => {
+                let origin = self.origin.as_deref().expect("failed source exists");
+                match self
+                    .failure_work
+                    .as_mut()
+                    .expect("failure fingerprint work exists")
+                    .step(origin)
+                {
+                    Ok(None) => return Ok(None),
+                    Ok(Some(fingerprint)) => {
+                        let (error, family) =
+                            self.pending_failure.take().expect("failure is pending");
+                        return Ok(Some(self.finish_failure(error, fingerprint, family)));
+                    }
+                    Err(_) => {
+                        let (error, family) =
+                            self.pending_failure.take().expect("failure is pending");
+                        return Ok(Some(self.finish_failure(error, String::new(), family)));
+                    }
+                }
+            }
+            CardPreparationPhase::Finish => {
+                let CachedJs { sha256, js } = self.cached.take().expect("cached card exists");
+                let card = self.snapshot.template.build(
+                    self.origin.take().expect("origin was read"),
+                    js,
+                    sha256,
+                    self.shape.expect("shape was resolved"),
+                    self.api_family.expect("API family was resolved"),
+                    self.settings_schema
+                        .take()
+                        .expect("settings schema was resolved"),
+                    self.unloadable.take(),
+                );
+                let prepared = PreparedCard {
+                    card,
+                    siblings: self.siblings.take().expect("siblings were compiled"),
+                    fingerprint: self
+                        .fingerprint
+                        .take()
+                        .expect("final fingerprint was computed"),
+                };
+                self.phase = CardPreparationPhase::Complete;
+                return Ok(Some(CardPreparationOutcome::Prepared(prepared)));
+            }
+            CardPreparationPhase::Complete => {
+                return Err("card preparation task is already complete".into());
+            }
+        }
+        Ok(None)
+    }
+
+    fn failure_family(&self) -> Option<ApiFamily> {
+        self.api_family
+            .or_else(|| {
+                self.origin
+                    .as_deref()
+                    .and_then(|origin| resolve_api_family(origin).ok().map(|(_, family)| family))
+            })
+            .or(self.snapshot.template.api_family)
+    }
+
+    fn begin_failure(
+        &mut self,
+        error: String,
+        family: Option<ApiFamily>,
+    ) -> Result<Option<CardPreparationOutcome>, String> {
+        let Some(origin) = self.origin.as_deref() else {
+            self.phase = CardPreparationPhase::Complete;
+            return Ok(Some(self.snapshot.failed_outcome(
+                error,
+                None,
+                family,
+                self.source_limit,
+            )));
+        };
+        match PreparationFingerprintWork::new(
+            &self.snapshot.template.path,
+            origin,
+            self.source_limit,
+        ) {
+            Ok(work) => {
+                self.pending_failure = Some((error, family));
+                self.failure_work = Some(work);
+                self.phase = CardPreparationPhase::FailureFingerprint;
+                Ok(None)
+            }
+            Err(_) => Ok(Some(self.finish_failure(error, String::new(), family))),
+        }
+    }
+
+    fn finish_failure(
+        &mut self,
+        error: String,
+        fingerprint: String,
+        family: Option<ApiFamily>,
+    ) -> CardPreparationOutcome {
+        let failure = LoadFailure::capture_with_fingerprint(
+            self.snapshot.template.source,
+            &self.snapshot.template.path,
+            &self.snapshot.template.name,
+            &error,
+            fingerprint,
+            family,
+        );
+        self.phase = CardPreparationPhase::Complete;
+        CardPreparationOutcome::Failed { error, failure }
     }
 }
 
