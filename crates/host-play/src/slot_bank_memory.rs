@@ -1156,18 +1156,18 @@ mod tests {
     fn alias_spellings_share_one_memory_and_one_generation_counter() {
         let state = TestState::new("bank-hints-alias");
         let mut play = offline_play();
-        let mut slot_for = |typed: &str| {
-            let memory = Arc::clone(
-                play.bank_memories
-                    .entry(memory_key(typed).into_owned())
-                    .or_default(),
-            );
-            let port = SlotHintPort::new(Arc::clone(&state.service), identity(typed));
-            SlotBankMemory::new(memory, Some(port))
+        let (first, second) = {
+            let mut slot_for = |typed: &str| {
+                let memory = Arc::clone(
+                    play.bank_memories
+                        .entry(memory_key(typed).into_owned())
+                        .or_default(),
+                );
+                let port = SlotHintPort::new(Arc::clone(&state.service), identity(typed));
+                SlotBankMemory::new(memory, Some(port))
+            };
+            (slot_for("Alice Smith"), slot_for("alice_smith"))
         };
-        let first = slot_for("Alice Smith");
-        let second = slot_for("alice_smith");
-        drop(slot_for);
         assert_eq!(play.bank_memories.len(), 1, "one memory for both spellings");
         assert!(Arc::ptr_eq(&first.memory, &second.memory));
         let first_identity = &first.hint.as_ref().unwrap().port.identity;

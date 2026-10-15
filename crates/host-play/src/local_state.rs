@@ -609,7 +609,9 @@ impl Shared {
                     .as_ref()
                     .is_some_and(|cached| cached.digest.is_some());
                 let version = match &store.cache {
-                    Some(cached) if removed => cached.version.checked_next().unwrap_or(cached.version),
+                    Some(cached) if removed => {
+                        cached.version.checked_next().unwrap_or(cached.version)
+                    }
                     Some(cached) => cached.version,
                     None => StoreVersion::INITIAL,
                 };
