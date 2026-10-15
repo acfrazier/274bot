@@ -40,7 +40,7 @@ pre-push proof of an unpushed rule change. `ARCH_CACHE_DIR` overrides the
 fetch cache, a bare Git cache defaulting to
 `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`.
 
-The runner checks the fetched parser before running it: SHA-256
+The runner checks the rust-analyzer executable on `PATH`: SHA-256
 `fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
 `rust-analyzer 0.3.3081-standalone`. The checker reads
 workspace and member `Cargo.toml` files, including `[dependencies]`,
@@ -54,9 +54,10 @@ and other unsupported workspace shapes fail closed. A path dependency on a
 crate that is not a listed member still appears in the scan and must be a
 policy member or external.
 
-GitHub Actions runs the same check in the `architecture` job, which
-also installs the pinned `flatc` and diffs `crates/script/schema/generated`
-against a fresh `flatc --rust` of `crates/script/schema/isolate.fbs`. That job
+GitHub Actions pins Python **3.14.8** and runs the same check on pushes and
+pull requests in one `architecture` job. It also installs the pinned
+`flatc` and diffs `crates/script/schema/generated` against a fresh
+`flatc --rust` of `crates/script/schema/isolate.fbs`. That job
 does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
 
 The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml),
