@@ -304,6 +304,94 @@ fn fifo_round_robin_runs_short_jobs_before_a_long_jobs_next_slice() {
     wait_for_jobs(&shared, 0);
 }
 
+struct SlowQueuedJob;
+
+impl CooperativeJob for SlowQueuedJob {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = MapBakePhase;
+
+    fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        if !matches!(context.checkpoint(), Checkpoint::Continue) {
+            return StepOutcome::Yielded;
+        }
+        std::thread::park_timeout(Duration::from_millis(100));
+        StepOutcome::Completed(9)
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn a_healthy_busy_worker_does_not_time_out_a_queued_receipt_after_five_seconds() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(32, 16, 16, 0),
+    };
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let first = submit(
+        &shared,
+        &input,
+        QueueJob::new(1, Arc::clone(&trace), 0, Some((entered_tx, release_rx))),
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("first job enters worker");
+
+    let queued = (0..62)
+        .map(|_| submit(&shared, &input, SlowQueuedJob, &conditions))
+        .collect::<Vec<_>>();
+    let last = submit(
+        &shared,
+        &input,
+        QueueJob::new(2, Arc::clone(&trace), 0, None),
+        &conditions,
+    );
+    let (wait_tx, wait_rx) = mpsc::sync_channel(1);
+    let waiter_service = Arc::clone(&shared);
+    let waiter_ticket = last.clone();
+    let waiter = std::thread::spawn(move || {
+        wait_tx
+            .send(WorkService::wait_terminal(&waiter_service, &waiter_ticket))
+            .expect("test receives queued result");
+    });
+    release_tx.send(()).expect("release first job");
+
+    assert!(
+        matches!(
+            wait_rx.recv_timeout(Duration::from_millis(5200)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "a busy but healthy worker must not report WorkerNotReturned at five seconds"
+    );
+    wait_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("queued receipt settles after the healthy worker drains")
+        .expect("waiting for a healthy worker succeeds");
+    waiter.join().expect("receipt waiter exits");
+    let mut service = shared.lock();
+    assert!(matches!(
+        service.consume(&first),
+        Ok(Settlement::Completed(1))
+    ));
+    for ticket in queued {
+        assert!(matches!(
+            service.consume(&ticket),
+            Ok(Settlement::Completed(9))
+        ));
+    }
+    assert!(matches!(
+        service.consume(&last),
+        Ok(Settlement::Completed(2))
+    ));
+}
+
 /// A short, ordinary Start with no qualified decode allowance.
 #[derive(Debug)]
 struct ShortProfileJob;
