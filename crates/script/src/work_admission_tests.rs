@@ -1247,7 +1247,7 @@ fn registry_qualification_is_debited_without_progress_and_exhaustion_fails_one_j
     assert!(matches!(
         shared.lock().consume(&ticket),
         Ok(Settlement::Failed(JobError::Cooperation(
-            CooperativeViolation::ChargeExceeded
+            CooperativeViolation::UnboundedSlice
         )))
     ));
     assert_eq!(*decisions.lock(), [Checkpoint::Continue, Checkpoint::Yield]);
