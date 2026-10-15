@@ -153,7 +153,7 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
     } else {
         ChildFlags::BORDERS | ChildFlags::RESIZE_Y
     };
-    let all = matches!(pane.view.scope(), LogScope::All);
+    let all = pane.view.scope().is_all();
     ui.child_window("panel-log")
         .size([0.0, height])
         .child_flags(flags)
@@ -161,46 +161,46 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
             let at_bottom = log_follow_bottom(ui.scroll_y(), ui.scroll_max_y());
             let wheel = ui.io().mouse_wheel();
             if ui.is_window_hovered() && wheel > 0.0 {
-                pane.view.follow = false;
+                pane.view.set_follow(false);
             } else if at_bottom && wheel < 0.0 {
-                pane.view.follow = true;
+                pane.view.set_follow(true);
             }
             for entry in pane.view.rows() {
                 log_row(ui, entry, all);
             }
-            if pane.view.follow {
+            if pane.view.follow() {
                 ui.set_scroll_here_y(1.0);
             }
         });
 }
 
 fn log_row(ui: &Ui, entry: &LogEntry, all: bool) {
-    ui.text_colored(TEXT_DIM, entry.clock.as_str());
+    ui.text_colored(TEXT_DIM, entry.clock().as_str());
     if ui.is_item_hovered() {
         ui.tooltip(|| {
-            ui.text(entry.slot.as_deref().unwrap_or("process"));
-            ui.text(entry.source.label());
-            ui.text(entry.level.label());
-            if let Some(tick) = entry.tick {
+            ui.text(entry.slot().unwrap_or("process"));
+            ui.text(entry.source().label());
+            ui.text(entry.level().label());
+            if let Some(tick) = entry.tick() {
                 ui.text(format!("tick {tick}"));
             }
         });
     }
     if all {
         ui.same_line();
-        ui.text_colored(TEXT_DIM, entry.slot.as_deref().unwrap_or("*"));
+        ui.text_colored(TEXT_DIM, entry.slot().unwrap_or("*"));
     }
     ui.same_line();
-    ui.text_colored(TEXT_DIM, entry.source.label());
+    ui.text_colored(TEXT_DIM, entry.source().label());
     ui.same_line();
-    let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, level_color(entry.level));
-    ui.text_wrapped(&*entry.message);
+    let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, level_color(entry.level()));
+    ui.text_wrapped(entry.message());
 }
 
 fn filter_row(ui: &Ui, pane: &mut LogPane) {
     let third = ((ui.content_region_avail()[0] - scale_px(ui, 8.0)) / 3.0).max(scale_px(ui, 40.0));
     ui.set_next_item_width(third);
-    let min = pane.view.filter().min_level;
+    let min = pane.view.filter().min_level();
     if let Some(_open) = ui.begin_combo("##log-level", min.label()) {
         for level in Level::ALL {
             if ui
@@ -208,7 +208,7 @@ fn filter_row(ui: &Ui, pane: &mut LogPane) {
                 .selected(level == min)
                 .build()
             {
-                pane.view.edit_filter(|f| f.min_level = level);
+                pane.view.edit_filter(|f| f.set_min_level(level));
             }
         }
     }
@@ -266,10 +266,12 @@ fn filter_row(ui: &Ui, pane: &mut LogPane) {
         .build()
     {
         let text = pane.search.clone();
-        pane.view.edit_filter(|f| f.text = text);
+        pane.view.edit_filter(|f| f.set_text(text));
     }
     ui.same_line();
-    ui.checkbox("follow", &mut pane.view.follow);
+    let mut follow = pane.view.follow();
+    ui.checkbox("follow", &mut follow);
+    pane.view.set_follow(follow);
 }
 
 fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {

@@ -201,9 +201,11 @@ fn empty_walk_queue_and_modal_values_are_not_status_rows() {
 fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut logged_out = frontend_core::SlotDetail::default();
-    logged_out.row.phase = frontend_core::Phase::LoggedOut;
-    logged_out.state = "logged out".into();
-    logged_out.modal = 7;
+    logged_out
+        .row_mut()
+        .set_phase(frontend_core::Phase::LoggedOut);
+    logged_out.set_state("logged out");
+    logged_out.set_modal(7);
     let hidden = draw_status_detail(&logged_out, "—", "lowmem");
     assert!(
         !hidden.contains("walk"),
@@ -220,9 +222,9 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(hidden.contains("state") && hidden.contains("logged out"));
 
     let mut ready = frontend_core::SlotDetail::default();
-    ready.row.phase = frontend_core::Phase::Ready;
-    ready.state = "ingame scene 2".into();
-    ready.modal = 0;
+    ready.row_mut().set_phase(frontend_core::Phase::Ready);
+    ready.set_state("ingame scene 2");
+    ready.set_modal(0);
     let shown = draw_status_detail(&ready, "2659 3292 0", "lowmem");
     assert!(shown.contains("walk") && shown.contains("2659 3292 0"));
     assert!(shown.contains("modals") && shown.contains("0"));
@@ -260,9 +262,9 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
         failure: None,
     };
     let mut parked = frontend_core::SlotDetail::default();
-    parked.row.phase = frontend_core::Phase::Ready;
-    parked.row.script = script::RunState::Running;
-    parked.state = "ingame scene 2".into();
+    parked.row_mut().set_phase(frontend_core::Phase::Ready);
+    parked.row_mut().set_script(script::RunState::Running);
+    parked.set_state("ingame scene 2");
     let parked = parked.with_native_status(Some(Arc::new(status)));
     let shown = draw_status_detail(&parked, "—", "lowmem");
     assert!(
@@ -3814,12 +3816,14 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     )
     .unwrap();
     let mut s = crate::session::Session::new();
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     s.load_js(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
-        s.scripts.js.cards()[0].description,
+        s.scripts.js().cards()[0].description,
         "",
         "File cards have no registry description — this is the abort path"
     );

@@ -178,11 +178,44 @@ pub enum Light {
 }
 
 /// The newest operation that targeted a slot, with this slot's outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct OpBrief {
-    pub id: OperationId,
-    pub action: ActionKind,
-    pub outcome: Outcome,
+    id: OperationId,
+    action: ActionKind,
+    outcome: Outcome,
+}
+
+impl OpBrief {
+    pub fn new(id: OperationId, action: ActionKind, outcome: Outcome) -> Self {
+        Self {
+            id,
+            action,
+            outcome,
+        }
+    }
+
+    /// The operation identity.
+    pub fn id(&self) -> OperationId {
+        self.id
+    }
+
+    /// The action this brief is for.
+    pub fn action(&self) -> ActionKind {
+        self.action
+    }
+
+    /// This slot's outcome for that operation.
+    pub fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            id: self.id,
+            action: self.action,
+            outcome: self.outcome.duplicate(),
+        }
+    }
 }
 
 impl fmt::Display for OpBrief {
@@ -195,35 +228,35 @@ impl fmt::Display for OpBrief {
 /// One slot's projected row: identifiers and scalar summaries only.
 #[derive(Debug, PartialEq)]
 pub struct FleetRow {
-    pub name: String,
+    name: String,
     /// Active public world, `None` for a local profile.
-    pub world: Option<u16>,
-    pub phase: Phase,
+    world: Option<u16>,
+    phase: Phase,
     /// Login-queue place while queued (also while a login error waits for
     /// its retry in the queue).
-    pub queue: Option<QueuePlace>,
+    queue: Option<QueuePlace>,
     /// While [`Self::phase`] is [`Phase::LoginError`]: the slot still wants
     /// the login, so the host retries it after its backoff. `false` for an
     /// error that holds the login until the operator acts, and in every
     /// other phase.
-    pub retrying: bool,
+    retrying: bool,
     /// Authenticated client session, independent of game readiness.
-    pub connected: bool,
-    pub script: RunState,
+    connected: bool,
+    script: RunState,
     /// A walk is queued on the slot.
-    pub walking: bool,
+    walking: bool,
     /// The lifetime's error. While [`Self::phase`] is an error phase this is
     /// the current error; otherwise it is the last login error, kept (as
     /// history) until the slot is ready, goes offline or a new worker
     /// lifetime starts. At most [`REASON_CAP`] bytes.
-    pub error: Option<String>,
+    error: Option<String>,
     /// Newest lifecycle operation on this slot (Load, Log in/out, Remove,
     /// Start/Pause/Resume/Stop, Apply to all) or failed profile write. Kept
     /// per slot, so it outlives the bounded operation history.
-    pub last_op: Option<OpBrief>,
+    last_op: Option<OpBrief>,
     /// Narrow status label (at most about 12 columns for a small queue):
     /// `queued 2/5`, `logging in`, `running`, `idle`, …
-    pub brief: String,
+    brief: String,
 }
 
 impl Default for FleetRow {
@@ -244,26 +277,11 @@ impl Default for FleetRow {
     }
 }
 
-impl Clone for FleetRow {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name.clone(),
-            world: self.world,
-            phase: self.phase,
-            queue: self.queue,
-            retrying: self.retrying,
-            connected: self.connected,
-            script: self.script,
-            walking: self.walking,
-            error: self.error.clone(),
-            last_op: self.last_op.clone(),
-            brief: self.brief.clone(),
-        }
-    }
-
+impl FleetRow {
     /// Reuses the destination's buffers: a front end's retained copy costs
-    /// no allocation when nothing grew.
-    fn clone_from(&mut self, source: &Self) {
+    /// no allocation when nothing grew. This is not [`Clone`]: seam rows
+    /// do not implement it.
+    pub fn copy_from(&mut self, source: &Self) {
         self.name.clone_from(&source.name);
         self.world = source.world;
         self.phase = source.phase;
@@ -273,8 +291,31 @@ impl Clone for FleetRow {
         self.script = source.script;
         self.walking = source.walking;
         self.error.clone_from(&source.error);
-        self.last_op.clone_from(&source.last_op);
+        match (&mut self.last_op, source.last_op.as_ref()) {
+            (Some(held), Some(brief)) => *held = brief.duplicate(),
+            (_, Some(brief)) => self.last_op = Some(brief.duplicate()),
+            (_, None) => self.last_op = None,
+        }
         self.brief.clone_from(&source.brief);
+    }
+
+    /// A retained copy of this row, allocating only as `copy_from` does.
+    pub fn snapshot(&self) -> Self {
+        let mut row = Self {
+            name: String::new(),
+            world: None,
+            phase: Phase::Offline,
+            queue: None,
+            retrying: false,
+            connected: false,
+            script: RunState::Idle,
+            walking: false,
+            error: None,
+            last_op: None,
+            brief: String::new(),
+        };
+        row.copy_from(self);
+        row
     }
 }
 
@@ -284,6 +325,70 @@ impl FleetRow {
             name: name.to_string(),
             ..Self::default()
         }
+    }
+
+    /// An unprojected row for `name` (offline, no host facts yet).
+    pub fn for_profile(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Profile / slot name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Active public world, `None` for a local profile.
+    pub fn world(&self) -> Option<u16> {
+        self.world
+    }
+
+    /// Where the slot is in its lifecycle.
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    /// Login-queue place while queued.
+    pub fn queue(&self) -> Option<QueuePlace> {
+        self.queue
+    }
+
+    /// While [`Self::phase`] is [`Phase::LoginError`]: the slot still wants
+    /// the login.
+    pub fn retrying(&self) -> bool {
+        self.retrying
+    }
+
+    /// Authenticated client session, independent of game readiness.
+    pub fn connected(&self) -> bool {
+        self.connected
+    }
+
+    /// Script run state on this slot.
+    pub fn script(&self) -> RunState {
+        self.script
+    }
+
+    /// A walk is queued on the slot.
+    pub fn walking(&self) -> bool {
+        self.walking
+    }
+
+    /// The lifetime's error, when one is retained.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Newest lifecycle operation on this slot.
+    pub fn last_op(&self) -> Option<&OpBrief> {
+        self.last_op.as_ref()
+    }
+
+    /// Narrow status label (`queued 2/5`, `logging in`, `running`, `idle`, …).
+    pub fn brief(&self) -> &str {
+        &self.brief
     }
 
     /// A script is running or a walk is queued.
@@ -310,7 +415,7 @@ impl FleetRow {
             || self
                 .last_op
                 .as_ref()
-                .is_some_and(|op| matches!(op.outcome, Outcome::Failed(_)))
+                .is_some_and(|op| op.outcome.is_failed())
     }
 
     /// World number (when on a public world) and login phase. This is not
@@ -378,6 +483,28 @@ impl FleetRow {
         row.write_brief();
         row
     }
+
+    /// Set this row's lifecycle phase (test fixtures).
+    pub fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.write_brief();
+    }
+
+    /// Set this row's script run state (test fixtures).
+    pub fn set_script(&mut self, script: RunState) {
+        self.script = script;
+        self.write_brief();
+    }
+
+    /// Set the retained lifetime error (test fixtures).
+    pub fn set_error(&mut self, error: Option<String>) {
+        self.error = error;
+    }
+
+    /// Set the newest operation brief (test fixtures).
+    pub fn set_last_op(&mut self, last_op: Option<OpBrief>) {
+        self.last_op = last_op;
+    }
 }
 
 /// Fleet totals for a header line.
@@ -397,59 +524,43 @@ pub struct FleetCounts {
 /// The selected slot's detail. Only this slot is materialized.
 #[derive(Debug, Default, PartialEq)]
 pub struct SlotDetail {
-    pub row: FleetRow,
+    row: FleetRow,
     /// One status line for the phase: `ingame scene 2`, `waiting in login
     /// queue (2/5)`, `login code 3: …`, …
-    pub state: String,
+    state: String,
     /// When the in-flight phase began, for an elapsed timer; `None` when no
     /// timer applies (ready, logged out, errors, a server countdown).
-    pub since: Option<Instant>,
+    since: Option<Instant>,
     /// Local-player name, empty until the player is observed.
-    pub player: String,
+    player: String,
     /// Published tile `(x, z, level)`; `-1` fields when not observed.
-    pub tile: (i32, i32, i32),
+    tile: (i32, i32, i32),
     /// The tile routing may start from: only while ready.
-    pub ready_tile: Option<(i32, i32, i32)>,
+    ready_tile: Option<(i32, i32, i32)>,
     /// Open main modal interface, -1 when none.
-    pub modal: i32,
+    modal: i32,
     /// `holding` while the welcome modal holds script work, or the bounded
     /// dismiss failure.
-    pub welcome: Option<String>,
+    welcome: Option<String>,
     /// Random-event guardian status: `dialog: mysterious old man`, with
     /// `(hold)` while the slot holds on it and `(off)` when the profile
     /// toggle is off (detection still runs).
-    pub random: Option<String>,
+    random: Option<String>,
     /// The profile's last successful script assignment (display name).
-    pub card: Option<String>,
+    card: Option<String>,
     /// Only focused detail retains the richer native output; fleet rows stay scalar.
     native_status: Option<Arc<script::native::ScriptStatus>>,
     /// Retained native/v2 walk reason; only the focused detail projects it.
-    pub walk_risk: Option<Arc<str>>,
+    walk_risk: Option<Arc<str>>,
     /// Current or last manual WalkTo reason, separate from script ownership.
-    pub manual_walk_risk: Option<Arc<str>>,
+    manual_walk_risk: Option<Arc<str>>,
 }
 
-impl Clone for SlotDetail {
-    fn clone(&self) -> Self {
-        Self {
-            row: self.row.clone(),
-            state: self.state.clone(),
-            since: self.since,
-            player: self.player.clone(),
-            tile: self.tile,
-            ready_tile: self.ready_tile,
-            modal: self.modal,
-            welcome: self.welcome.clone(),
-            random: self.random.clone(),
-            card: self.card.clone(),
-            native_status: self.native_status.clone(),
-            walk_risk: self.walk_risk.clone(),
-            manual_walk_risk: self.manual_walk_risk.clone(),
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        self.row.clone_from(&source.row);
+impl SlotDetail {
+    /// Reuses the destination's buffers. Not [`Clone`]: seam views do not
+    /// implement it.
+    pub fn copy_from(&mut self, source: &Self) {
+        self.row.copy_from(&source.row);
         self.state.clone_from(&source.state);
         self.since = source.since;
         self.player.clone_from(&source.player);
@@ -462,6 +573,116 @@ impl Clone for SlotDetail {
         self.native_status.clone_from(&source.native_status);
         self.walk_risk.clone_from(&source.walk_risk);
         self.manual_walk_risk.clone_from(&source.manual_walk_risk);
+    }
+
+    /// A retained copy of this detail.
+    pub fn snapshot(&self) -> Self {
+        let mut detail = Self::default();
+        detail.copy_from(self);
+        detail
+    }
+
+    /// The projected fleet row for this slot.
+    pub fn row(&self) -> &FleetRow {
+        &self.row
+    }
+
+    /// One status line for the phase.
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+
+    /// When the in-flight phase began, for an elapsed timer.
+    pub fn since(&self) -> Option<Instant> {
+        self.since
+    }
+
+    /// Local-player name, empty until the player is observed.
+    pub fn player(&self) -> &str {
+        &self.player
+    }
+
+    /// Published tile `(x, z, level)`; `-1` fields when not observed.
+    pub fn tile(&self) -> (i32, i32, i32) {
+        self.tile
+    }
+
+    /// The tile routing may start from: only while ready.
+    pub fn ready_tile(&self) -> Option<(i32, i32, i32)> {
+        self.ready_tile
+    }
+
+    /// Open main modal interface, -1 when none.
+    pub fn modal(&self) -> i32 {
+        self.modal
+    }
+
+    /// Welcome-modal hold or dismiss failure.
+    pub fn welcome(&self) -> Option<&str> {
+        self.welcome.as_deref()
+    }
+
+    /// Random-event guardian status line.
+    pub fn random(&self) -> Option<&str> {
+        self.random.as_deref()
+    }
+
+    /// The profile's last successful script assignment (display name).
+    pub fn card(&self) -> Option<&str> {
+        self.card.as_deref()
+    }
+
+    /// Retained native/v2 walk reason.
+    pub fn walk_risk(&self) -> Option<&str> {
+        self.walk_risk.as_deref()
+    }
+
+    /// Current or last manual WalkTo reason.
+    pub fn manual_walk_risk(&self) -> Option<&str> {
+        self.manual_walk_risk.as_deref()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl SlotDetail {
+    /// Mutable fleet row, for test fixtures.
+    pub fn row_mut(&mut self) -> &mut FleetRow {
+        &mut self.row
+    }
+
+    /// Set the phase status line (test fixtures).
+    pub fn set_state(&mut self, state: impl Into<String>) {
+        self.state = state.into();
+    }
+
+    /// Set the open main modal interface (test fixtures).
+    pub fn set_modal(&mut self, modal: i32) {
+        self.modal = modal;
+    }
+
+    /// Replace the projected fleet row (test fixtures).
+    pub fn set_row(&mut self, row: FleetRow) {
+        self.row = row;
+    }
+
+    /// Set the published tile (test fixtures).
+    pub fn set_tile(&mut self, tile: (i32, i32, i32)) {
+        self.tile = tile;
+    }
+
+    /// Set the ready-tile (test fixtures).
+    pub fn set_ready_tile(&mut self, tile: Option<(i32, i32, i32)>) {
+        self.ready_tile = tile;
+    }
+
+    /// Set the local-player name (test fixtures).
+    pub fn set_player(&mut self, player: impl Into<String>) {
+        self.player = player.into();
+    }
+
+    /// Set the retained manual WalkTo reason (test fixtures).
+    pub fn set_manual_walk_risk(&mut self, reason: Option<Arc<str>>) {
+        self.manual_walk_risk = reason;
     }
 }
 
@@ -553,18 +774,24 @@ impl<'a> FleetView<'a> {
     /// buffers: no allocation when nothing grew.
     pub fn copy_rows_into(&self, out: &mut Vec<FleetRow>) {
         let rows = self.rows();
-        out.truncate(rows.len());
-        let kept = out.len();
-        out.clone_from_slice(&rows[..kept]);
-        out.extend_from_slice(&rows[kept..]);
+        if out.len() > rows.len() {
+            out.truncate(rows.len());
+        }
+        for (dest, src) in out.iter_mut().zip(rows.iter()) {
+            dest.copy_from(src);
+        }
+        if out.len() < rows.len() {
+            out.extend(rows[out.len()..].iter().map(FleetRow::snapshot));
+        }
     }
 
     /// Copy the selected slot's detail into a front end's retained copy,
     /// reusing its buffers.
     pub fn copy_detail_into(&self, out: &mut Option<SlotDetail>) {
         match (out.as_mut(), self.detail()) {
-            (Some(held), Some(detail)) => held.clone_from(detail),
-            (_, detail) => *out = detail.cloned(),
+            (Some(held), Some(detail)) => held.copy_from(detail),
+            (_, Some(detail)) => *out = Some(detail.snapshot()),
+            (_, None) => *out = None,
         }
     }
 
@@ -734,7 +961,7 @@ impl Views {
         match rows.iter().find(|row| row.name == selected) {
             Some(member) => {
                 if detail.row != *member {
-                    detail.row.clone_from(member);
+                    detail.row.copy_from(member);
                     changed = true;
                 }
             }
@@ -785,9 +1012,7 @@ impl Views {
 pub(crate) fn tracked(change: &OpChange) -> bool {
     match change.action {
         ActionKind::Select => false,
-        ActionKind::SaveProfile | ActionKind::DeleteProfile => {
-            matches!(change.outcome, Outcome::Failed(_))
-        }
+        ActionKind::SaveProfile | ActionKind::DeleteProfile => change.outcome.is_failed(),
         _ => true,
     }
 }
@@ -807,24 +1032,23 @@ pub(crate) fn log_class(change: &OpChange) -> (Source, Level) {
         | ActionKind::SaveProfile
         | ActionKind::DeleteProfile => Source::Host,
     };
-    let level = match change.outcome {
-        Outcome::Failed(_) => Level::Error,
-        _ => Level::Info,
+    let level = if change.outcome.is_failed() {
+        Level::Error
+    } else {
+        Level::Info
     };
     (source, level)
 }
 
 fn set_last_op(row: &mut FleetRow, change: &OpChange) -> bool {
-    let outcome = match &change.outcome {
-        Outcome::Failed(reason) => Outcome::Failed(capped(reason)),
-        Outcome::Skipped(reason) => Outcome::Skipped(capped(reason)),
-        other => other.clone(),
+    let outcome = if change.outcome.is_failed() {
+        Outcome::failed(capped(change.outcome.reason().unwrap_or("")))
+    } else if change.outcome.is_skipped() {
+        Outcome::skipped(capped(change.outcome.reason().unwrap_or("")))
+    } else {
+        change.outcome.duplicate()
     };
-    let brief = OpBrief {
-        id: change.id,
-        action: change.action,
-        outcome,
-    };
+    let brief = OpBrief::new(change.id, change.action, outcome);
     // A late settlement of an older operation never replaces a newer one.
     if row.last_op.as_ref().is_some_and(|op| op.id > brief.id) {
         return false;

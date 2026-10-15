@@ -340,13 +340,13 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     use frontend_core::log::{global, LogScope, LogView};
     let mut measure = Vec::new();
     for name in &names {
-        let mut view = LogView::new(LogScope::Slot(name.clone()));
+        let mut view = LogView::new(LogScope::slot(name.clone()));
         global().refresh(&mut view);
         measure.extend(
             view.rows()
                 .iter()
-                .filter(|row| row.message.starts_with("host capacity: "))
-                .map(|row| format!("{name}: {}", row.message)),
+                .filter(|row| row.message().starts_with("host capacity: "))
+                .map(|row| format!("{name}: {}", row.message())),
         );
     }
     eprintln!("log: {measure:?}");
@@ -366,8 +366,8 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     let lines: Vec<String> = view
         .rows()
         .iter()
-        .filter(|row| row.message.starts_with("Host "))
-        .map(|row| format!("{:?} {}", row.level, row.message))
+        .filter(|row| row.message().starts_with("Host "))
+        .map(|row| format!("{:?} {}", row.level(), row.message()))
         .collect();
     for line in &lines {
         eprintln!("log: {line}");

@@ -70,22 +70,70 @@ fn put2(out: &mut [u8], v: u32) {
 }
 
 /// One structured log line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct LogEntry {
     /// Process-wide order; strictly increasing across every ring.
-    pub seq: u64,
-    pub clock: Clock,
+    seq: u64,
+    clock: Clock,
     /// Game tick the slot had observed, when the line came from a slot
     /// thread or a status poll that knows it.
-    pub tick: Option<u32>,
-    pub level: Level,
-    pub source: Source,
+    tick: Option<u32>,
+    level: Level,
+    source: Source,
     /// `None` for process lines.
-    pub slot: Option<Arc<str>>,
-    pub message: Box<str>,
+    slot: Option<Arc<str>>,
+    message: Box<str>,
 }
 
 impl LogEntry {
+    /// Process-wide order; strictly increasing across every ring.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// Local wall time `HH:MM:SS.mmm`.
+    pub fn clock(&self) -> Clock {
+        self.clock
+    }
+
+    /// Game tick the slot had observed, when known.
+    pub fn tick(&self) -> Option<u32> {
+        self.tick
+    }
+
+    /// Severity of this line.
+    pub fn level(&self) -> Level {
+        self.level
+    }
+
+    /// Which subsystem produced this line.
+    pub fn source(&self) -> Source {
+        self.source
+    }
+
+    /// Slot name, or `None` for process lines.
+    pub fn slot(&self) -> Option<&str> {
+        self.slot.as_deref()
+    }
+
+    /// The redacted message text.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// A retained copy of this line for a [`LogView`]. Not [`Clone`].
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            seq: self.seq,
+            clock: self.clock,
+            tick: self.tick,
+            level: self.level,
+            source: self.source,
+            slot: self.slot.clone(),
+            message: self.message.clone(),
+        }
+    }
+
     /// Heap plus inline bytes this entry holds (the slot name is shared by
     /// every entry of its ring and counted once per ring).
     fn heap_bytes(&self) -> usize {
@@ -129,25 +177,58 @@ impl Ring {
     }
 }
 
-/// Where a view reads from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LogScope {
-    /// One slot's ring.
-    Slot(String),
-    /// Lines no slot owns (vault, catalog, process-wide errors).
+#[derive(Debug, PartialEq, Eq)]
+enum LogScopeKind {
+    Slot { name: String },
     Process,
-    /// Every ring, newest [`ALL_VIEW_CAP`] rows in order.
     All,
+}
+
+/// Where a view reads from.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LogScope(LogScopeKind);
+
+#[allow(non_upper_case_globals)]
+impl LogScope {
+    /// Lines no slot owns (vault, catalog, process-wide errors).
+    pub const Process: Self = Self(LogScopeKind::Process);
+    /// Every ring, newest [`ALL_VIEW_CAP`] rows in order.
+    pub const All: Self = Self(LogScopeKind::All);
+
+    /// One slot's ring.
+    pub fn slot(name: impl AsRef<str>) -> Self {
+        Self(LogScopeKind::Slot {
+            name: name.as_ref().to_string(),
+        })
+    }
+
+    /// The slot name when this scope is one slot.
+    pub fn slot_name(&self) -> Option<&str> {
+        match &self.0 {
+            LogScopeKind::Slot { name } => Some(name.as_str()),
+            LogScopeKind::Process | LogScopeKind::All => None,
+        }
+    }
+
+    /// Whether this scope is every ring.
+    pub fn is_all(&self) -> bool {
+        matches!(self.0, LogScopeKind::All)
+    }
+
+    /// Whether this scope is the process ring.
+    pub fn is_process(&self) -> bool {
+        matches!(self.0, LogScopeKind::Process)
+    }
 }
 
 /// Which rows a view shows. Text search is ASCII case-insensitive over the
 /// message and the slot name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct LogFilter {
-    pub min_level: Level,
+    min_level: Level,
     /// [`Source::bit`] mask; all bits set shows every source.
-    pub sources: u8,
-    pub text: String,
+    sources: u8,
+    text: String,
 }
 
 impl Default for LogFilter {
@@ -172,6 +253,36 @@ pub const ALL_SOURCES: u8 = {
 };
 
 impl LogFilter {
+    /// Lowest severity shown.
+    pub fn min_level(&self) -> Level {
+        self.min_level
+    }
+
+    /// Set the lowest severity shown.
+    pub fn set_min_level(&mut self, min_level: Level) {
+        self.min_level = min_level;
+    }
+
+    /// [`Source::bit`] mask; all bits set shows every source.
+    pub fn sources(&self) -> u8 {
+        self.sources
+    }
+
+    /// Set the source mask.
+    pub fn set_sources(&mut self, sources: u8) {
+        self.sources = sources;
+    }
+
+    /// Text search, ASCII case-insensitive over the message and slot name.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Replace the search text.
+    pub fn set_text(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+    }
+
     pub fn matches(&self, entry: &LogEntry) -> bool {
         entry.level >= self.min_level
             && self.sources & entry.source.bit() != 0
@@ -199,6 +310,15 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     n.is_empty() || h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
+/// Length and hash of the filter text, so `edit_filter` notices an in-place
+/// edit of the same length without keeping a second copy of the text.
+fn text_fingerprint(text: &str) -> (usize, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    (text.len(), hasher.finish())
+}
+
 /// A front end's filtered copy of one scope. [`LogStore::refresh`] brings it
 /// up to date: nothing happens (no lock, no allocation) while the store and
 /// the filter are unchanged; new matching lines are appended; a scope or
@@ -216,7 +336,7 @@ pub struct LogView {
     /// Scratch for merging rings in [`LogScope::All`].
     merge: Vec<(u64, usize, usize)>,
     /// Renderer hint: keep the newest row in view.
-    pub follow: bool,
+    follow: bool,
 }
 
 impl LogView {
@@ -243,16 +363,16 @@ impl LogView {
     /// Point the view at `slot` (or the process ring for `None`) unless it
     /// shows everything. Allocates only when the slot actually changes.
     pub fn follow_slot(&mut self, slot: Option<&str>) {
-        if self.scope == LogScope::All {
+        if self.scope.is_all() {
             return;
         }
-        let same = match (&self.scope, slot) {
-            (LogScope::Slot(current), Some(slot)) => current == slot,
-            (LogScope::Process, None) => true,
+        let same = match (self.scope.slot_name(), slot) {
+            (Some(current), Some(slot)) => current == slot,
+            (None, None) => self.scope.is_process(),
             _ => false,
         };
         if !same {
-            self.set_scope(slot.map_or(LogScope::Process, |s| LogScope::Slot(s.to_string())));
+            self.set_scope(slot.map_or(LogScope::Process, LogScope::slot));
         }
     }
 
@@ -270,15 +390,30 @@ impl LogView {
 
     /// Edit the filter; a change rebuilds on the next refresh.
     pub fn edit_filter(&mut self, edit: impl FnOnce(&mut LogFilter)) {
-        let before = self.filter.clone();
+        let min_level = self.filter.min_level;
+        let sources = self.filter.sources;
+        let text = text_fingerprint(&self.filter.text);
         edit(&mut self.filter);
-        if self.filter != before {
+        if self.filter.min_level != min_level
+            || self.filter.sources != sources
+            || text_fingerprint(&self.filter.text) != text
+        {
             self.rebuild = true;
         }
     }
 
     pub fn rows(&self) -> &VecDeque<LogEntry> {
         &self.rows
+    }
+
+    /// Whether the view should keep the newest row in sight.
+    pub fn follow(&self) -> bool {
+        self.follow
+    }
+
+    /// Set whether the view should keep the newest row in sight.
+    pub fn set_follow(&mut self, follow: bool) {
+        self.follow = follow;
     }
 
     pub fn len(&self) -> usize {
@@ -309,15 +444,15 @@ impl LogView {
         if self.rows.len() == self.cap {
             self.rows.pop_front();
         }
-        self.rows.push_back(entry.clone());
+        self.rows.push_back(entry.duplicate());
     }
 }
 
 fn scope_cap(scope: &LogScope) -> usize {
-    match scope {
-        LogScope::Slot(_) => SLOT_RING_CAP,
-        LogScope::Process => PROCESS_RING_CAP,
-        LogScope::All => ALL_VIEW_CAP,
+    match &scope.0 {
+        LogScopeKind::Slot { .. } => SLOT_RING_CAP,
+        LogScopeKind::Process => PROCESS_RING_CAP,
+        LogScopeKind::All => ALL_VIEW_CAP,
     }
 }
 
@@ -468,10 +603,10 @@ impl LogStore {
         }
         let before = view.rows.back().map(|e| e.seq);
         let after = view.last_seq;
-        let single = match &view.scope {
-            LogScope::Slot(name) => Some(inner.slots.get(name.as_str())),
-            LogScope::Process => Some(Some(&inner.process)),
-            LogScope::All => None,
+        let single = match &view.scope.0 {
+            LogScopeKind::Slot { name } => Some(inner.slots.get(name.as_str())),
+            LogScopeKind::Process => Some(Some(&inner.process)),
+            LogScopeKind::All => None,
         };
         match single {
             Some(Some(ring)) => {
@@ -771,10 +906,15 @@ pub fn default_save_path(label: &str) -> PathBuf {
 }
 
 /// A Save log… in flight on its own thread; poll it from the UI.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SaveTicket(Arc<Mutex<Option<Result<PathBuf, String>>>>);
 
 impl SaveTicket {
+    /// Share the in-flight handle with the writer thread. Not [`Clone`].
+    fn share(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+
     /// The outcome once the write finished; `None` while it runs.
     pub fn poll(&self) -> Option<Result<PathBuf, String>> {
         self.0.lock().take()
@@ -785,7 +925,7 @@ impl SaveTicket {
 /// directory permissions).
 pub fn save_text(path: PathBuf, text: String) -> SaveTicket {
     let ticket = SaveTicket::default();
-    let out = ticket.clone();
+    let out = ticket.share();
     std::thread::spawn(move || {
         let result = write_text(&path, &text)
             .map(|()| path.clone())

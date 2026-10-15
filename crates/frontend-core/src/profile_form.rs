@@ -14,70 +14,182 @@
 //! form.
 
 use crate::operations::OperationId;
-use crate::profile_saves::{SaveRecord, SaveResult};
+use crate::profile_saves::SaveRecord;
 use crate::session::OperatorSession;
 
 /// The line under every refused or failed save's reason.
 pub const NOTHING_SAVED: &str = "nothing was saved.";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormNoticeKind {
+    Refused,
+    Failed,
+    Saved,
+}
+
 /// What a profile form shows under its fields. The text is built once, when
 /// the notice is set, so drawing it only borrows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FormNotice {
-    /// Refused before anything was written: the reason, shown with
-    /// [`NOTHING_SAVED`].
-    Refused(String),
-    /// The write failed after it was accepted: `label: error`, shown with
-    /// [`NOTHING_SAVED`]. The durable profile is unchanged.
-    Failed(String),
-    /// The form's save is durable: `Saved <name>.`
-    Saved(String),
+#[derive(Debug, PartialEq, Eq)]
+pub struct FormNotice {
+    kind: FormNoticeKind,
+    text: String,
 }
 
 impl FormNotice {
+    /// Refused before anything was written.
+    pub fn refused(reason: impl Into<String>) -> Self {
+        Self {
+            kind: FormNoticeKind::Refused,
+            text: reason.into(),
+        }
+    }
+
+    /// The write failed after it was accepted.
+    pub fn failed(reason: impl Into<String>) -> Self {
+        Self {
+            kind: FormNoticeKind::Failed,
+            text: reason.into(),
+        }
+    }
+
+    /// The form's save is durable.
+    pub fn saved(name: impl Into<String>) -> Self {
+        Self {
+            kind: FormNoticeKind::Saved,
+            text: name.into(),
+        }
+    }
+
+    /// Whether this notice is a durable save.
+    pub fn is_saved(&self) -> bool {
+        self.kind == FormNoticeKind::Saved
+    }
+
+    /// Whether this notice is a refused save.
+    pub fn is_refused(&self) -> bool {
+        self.kind == FormNoticeKind::Refused
+    }
+
+    /// Whether this notice is a failed write.
+    pub fn is_failed(&self) -> bool {
+        self.kind == FormNoticeKind::Failed
+    }
+
     /// The reason a refused or failed save shows above [`NOTHING_SAVED`].
     pub fn error(&self) -> Option<&str> {
-        match self {
-            Self::Refused(reason) | Self::Failed(reason) => Some(reason),
-            Self::Saved(_) => None,
+        match self.kind {
+            FormNoticeKind::Refused | FormNoticeKind::Failed => Some(self.text.as_str()),
+            FormNoticeKind::Saved => None,
         }
     }
 
     /// The notice's own line: the reason, or `Saved <name>.`.
     pub fn text(&self) -> &str {
-        match self {
-            Self::Refused(text) | Self::Failed(text) | Self::Saved(text) => text,
-        }
+        &self.text
     }
 }
 
 /// A durable save seen by [`ProfileFormSave::settle`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct SavedProfile {
     /// The operation's record of the save: the profile written
     /// (`destination`, a rename's new name) and the draft it carried.
-    pub record: SaveRecord,
+    record: SaveRecord,
     /// Whether the form it was submitted from is still showing. That form
     /// now shows `Saved <name>.`.
-    pub same_form: bool,
+    same_form: bool,
+}
+
+impl SavedProfile {
+    pub(crate) fn new(record: SaveRecord, same_form: bool) -> Self {
+        Self { record, same_form }
+    }
+
+    /// The operation's record of the save.
+    pub fn record(&self) -> &SaveRecord {
+        &self.record
+    }
+
+    /// Whether the form it was submitted from is still showing.
+    pub fn same_form(&self) -> bool {
+        self.same_form
+    }
+
+    /// Take the written profile name.
+    pub fn into_destination(self) -> String {
+        self.record.into_destination()
+    }
 }
 
 /// A save whose write failed, seen by [`ProfileFormSave::settle`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct FailedSave {
     /// The operation's record of the save: the profile it would have
     /// written and the draft that did not land.
-    pub record: SaveRecord,
+    record: SaveRecord,
     /// Whether the form it was submitted from is still showing. That form
     /// now shows the failure, and still holds the draft.
-    pub same_form: bool,
+    same_form: bool,
+}
+
+impl FailedSave {
+    pub(crate) fn new(record: SaveRecord, same_form: bool) -> Self {
+        Self { record, same_form }
+    }
+
+    /// The operation's record of the save.
+    pub fn record(&self) -> &SaveRecord {
+        &self.record
+    }
+
+    /// Whether the form it was submitted from is still showing.
+    pub fn same_form(&self) -> bool {
+        self.same_form
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum FormSettledKind {
+    Saved(SavedProfile),
+    Failed(FailedSave),
 }
 
 /// One settled save.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FormSettled {
-    Saved(SavedProfile),
-    Failed(FailedSave),
+#[derive(Debug, PartialEq)]
+pub struct FormSettled(FormSettledKind);
+
+impl FormSettled {
+    pub(crate) fn saved(profile: SavedProfile) -> Self {
+        Self(FormSettledKind::Saved(profile))
+    }
+
+    pub(crate) fn failed(save: FailedSave) -> Self {
+        Self(FormSettledKind::Failed(save))
+    }
+
+    /// A durable save.
+    pub fn as_saved(&self) -> Option<&SavedProfile> {
+        match &self.0 {
+            FormSettledKind::Saved(profile) => Some(profile),
+            FormSettledKind::Failed(_) => None,
+        }
+    }
+
+    /// Consume a durable save.
+    pub fn into_saved(self) -> Option<SavedProfile> {
+        match self.0 {
+            FormSettledKind::Saved(profile) => Some(profile),
+            FormSettledKind::Failed(_) => None,
+        }
+    }
+
+    /// A failed write.
+    pub fn as_failed(&self) -> Option<&FailedSave> {
+        match &self.0 {
+            FormSettledKind::Failed(save) => Some(save),
+            FormSettledKind::Saved(_) => None,
+        }
+    }
 }
 
 /// One profile edit form's save feedback: which form instance is showing
@@ -107,7 +219,7 @@ impl ProfileFormSave {
 
     /// The save was refused before anything was written.
     pub fn refused(&mut self, reason: impl Into<String>) {
-        self.notice = Some(FormNotice::Refused(reason.into()));
+        self.notice = Some(FormNotice::refused(reason));
     }
 
     /// The save was accepted and queued as `op`, writing profile
@@ -128,13 +240,13 @@ impl ProfileFormSave {
         let Some(draft) = core.vault().and_then(|v| v.get(&destination)).cloned() else {
             return;
         };
-        core.track_save(SaveRecord {
+        core.track_save(SaveRecord::new(
             op,
-            source: source.map(str::to_string),
+            source.map(str::to_string),
             destination,
             draft,
-            form: self.form,
-        });
+            self.form,
+        ));
     }
 
     /// This form instance's own saves that `core` has not settled: the form
@@ -143,7 +255,7 @@ impl ProfileFormSave {
         let form = self.form;
         core.saves_in_flight()
             .iter()
-            .filter(move |r| r.form == form)
+            .filter(move |r| r.form() == form)
     }
 
     /// Whether this form instance's own save is still being written:
@@ -155,7 +267,7 @@ impl ProfileFormSave {
     /// The profile the newest of this form instance's saves still in flight
     /// writes.
     pub fn saving_name<'a, Io>(&self, core: &'a OperatorSession<Io>) -> Option<&'a str> {
-        self.own(core).last().map(|r| r.destination.as_str())
+        self.own(core).last().map(|r| r.destination())
     }
 
     pub fn notice(&self) -> Option<&FormNotice> {
@@ -170,30 +282,19 @@ impl ProfileFormSave {
     pub fn settle<Io>(&mut self, core: &mut OperatorSession<Io>) -> Vec<FormSettled> {
         let mut settled = Vec::new();
         for done in core.take_settled_saves() {
-            let same_form = done.record.form == self.form;
-            match done.result {
-                SaveResult::Saved => {
-                    if same_form {
-                        self.notice = Some(FormNotice::Saved(format!(
-                            "Saved {}.",
-                            done.record.destination
-                        )));
-                    }
-                    settled.push(FormSettled::Saved(SavedProfile {
-                        record: done.record,
-                        same_form,
-                    }));
+            let same_form = done.record().form() == self.form;
+            let destination = done.record().destination().to_owned();
+            let (record, result) = done.into_parts();
+            if result.is_saved() {
+                if same_form {
+                    self.notice = Some(FormNotice::saved(format!("Saved {destination}.")));
                 }
-                SaveResult::Failed(failure) => {
-                    if same_form {
-                        self.notice = Some(FormNotice::Failed(failure.to_string()));
-                    }
-                    settled.push(FormSettled::Failed(FailedSave {
-                        record: done.record,
-                        same_form,
-                    }));
+                settled.push(FormSettled::saved(SavedProfile::new(record, same_form)));
+            } else if let Some(failure) = result.failure() {
+                if same_form {
+                    self.notice = Some(FormNotice::failed(failure.to_string()));
                 }
-                SaveResult::Gone => {}
+                settled.push(FormSettled::failed(FailedSave::new(record, same_form)));
             }
         }
         settled

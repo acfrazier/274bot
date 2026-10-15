@@ -174,7 +174,7 @@ fn frames(
 fn assert_no_start(session: &Session, step: &str) {
     if let Some(op) = session.core.last_operation() {
         assert_ne!(
-            op.action,
+            op.action(),
             frontend_core::ActionKind::ScriptStart,
             "{step}: nothing may start a script"
         );

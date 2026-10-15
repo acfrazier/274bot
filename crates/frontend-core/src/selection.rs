@@ -55,7 +55,7 @@ impl From<i32> for ProfileIdentity {
 }
 
 /// The shared checkbox state used by panel, TUI and later fleet actions.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct MarkedSelection {
     marks: BTreeSet<ProfileIdentity>,
 }
@@ -132,19 +132,55 @@ impl MarkedSelection {
 }
 
 /// One marked row that could not accept a bulk command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkSkip {
-    pub profile: String,
-    pub reason: String,
+    profile: String,
+    reason: String,
+}
+
+impl BulkSkip {
+    pub(crate) fn new(profile: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            profile: profile.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// The marked profile that could not take the command.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Why it was skipped.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 /// The report of Stop on marked rows. Every marked row is counted once:
 /// stopped, cancelled (it was still waiting for its Start) or skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StopReport {
-    pub stopped: usize,
-    pub cancelled: usize,
-    pub skipped: Vec<BulkSkip>,
+    stopped: usize,
+    cancelled: usize,
+    skipped: Vec<BulkSkip>,
+}
+
+impl StopReport {
+    /// How many marked rows were stopped.
+    pub fn stopped(&self) -> usize {
+        self.stopped
+    }
+
+    /// How many waiting Starts were cancelled.
+    pub fn cancelled(&self) -> usize {
+        self.cancelled
+    }
+
+    /// Rows that could not take Stop.
+    pub fn skipped(&self) -> &[BulkSkip] {
+        &self.skipped
+    }
 }
 
 impl StopReport {
@@ -363,15 +399,12 @@ mod tests {
             },
         );
         assert_eq!(admitted, ["alice", "bob"]);
-        assert_eq!(report.accepted, 1);
+        assert_eq!(report.accepted(), 1);
         assert_eq!(report.total(), 3);
         assert_eq!(
-            report.skipped,
+            report.skipped(),
             vec![
-                super::BulkSkip {
-                    profile: "bob".into(),
-                    reason: "not ready".into(),
-                },
+                super::BulkSkip::new("bob", "not ready"),
                 super::BulkSkip {
                     profile: format!("profile#{}", missing.raw()),
                     reason: "profile unavailable".into(),

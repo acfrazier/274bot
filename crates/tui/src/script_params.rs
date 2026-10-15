@@ -297,7 +297,7 @@ impl<'a> ParamsPane<'a> {
         let values = if self.state.choice_single {
             options.selectable()
         } else {
-            options.values.as_slice()
+            options.values()
         };
         values
             .iter()
@@ -375,7 +375,7 @@ impl<'a> ParamsPane<'a> {
             self.state.choice_single = false;
             self.state.choice_cursor = 0;
             self.state.choice_search.clear();
-            self.state.choice_searchable = opts.values.len() > 16;
+            self.state.choice_searchable = opts.values().len() > 16;
             self.state.choice_selected = current_string_list(self.bag.get(&def.id));
             self.state.scratch.clear();
             self.state.error = None;
@@ -543,7 +543,7 @@ fn stored_quest_reason<'a>(
     if !matches!(
         def.options_from.as_deref(),
         Some("released-paths" | "released-path-order")
-    ) || options.preserved == 0
+    ) || options.preserved() == 0
     {
         return None;
     }
@@ -618,7 +618,7 @@ impl Widget for ParamsPane<'_> {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
                 let mut stored_quest = None;
-                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved > 0 {
+                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved() > 0 {
                     unavailable_current = Some(display_value(self.bag, def, &opts));
                     site_reason_detail = true;
                 } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
@@ -650,7 +650,7 @@ impl Widget for ParamsPane<'_> {
                     let values = if self.state.choice_single {
                         opts.selectable()
                     } else {
-                        opts.values.as_slice()
+                        opts.values()
                     };
                     let stored = self
                         .bag
@@ -750,7 +750,7 @@ impl Widget for ParamsPane<'_> {
                     {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
-                        } else if options.preserved > 0 {
+                        } else if options.preserved() > 0 {
                             let current = display_value(self.bag, def, &options);
                             if i == self.state.cursor {
                                 unavailable_current = Some(current);
@@ -775,7 +775,7 @@ impl Widget for ParamsPane<'_> {
                         let current = display_value(self.bag, def, &options);
                         if !self.state.editing
                             && def.options_from.as_deref() == Some("gather:sites")
-                            && options.preserved > 0
+                            && options.preserved() > 0
                         {
                             unavailable_current = Some(current.clone());
                             site_reason_detail = true;
@@ -2138,7 +2138,7 @@ mod tests {
             Some(data.as_ref()),
         );
         assert!(!options.is_empty(), "Willow has alternate named sites");
-        assert_eq!(options.preserved, 1);
+        assert_eq!(options.preserved(), 1);
         let expected = options.label_for(&saved_site_id).to_owned();
         let expected_compact = expected
             .chars()
@@ -2281,7 +2281,7 @@ mod tests {
         };
         let options = pane.resolved_options(&schema[0]);
         pane.state.choice_cursor = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "removed-path")
             .unwrap();
@@ -2319,7 +2319,7 @@ mod tests {
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
         let options = pane.resolved_options(&schema[quests_row]);
         pane.state.choice_cursor = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "hauntedmine")
             .unwrap();
@@ -2503,7 +2503,7 @@ mod tests {
                 let visible = pane.choice_indices(&options);
                 pane.state.choice_cursor = visible
                     .iter()
-                    .position(|index| options.values[*index] == "hauntedmine")
+                    .position(|index| options.values()[*index] == "hauntedmine")
                     .expect("the saved unavailable priority stays visible");
                 assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
                 assert!(pane.state.choice_selected.is_empty());

@@ -20,7 +20,7 @@ use crate::layout::{contains, Screen};
 use crate::palette::{palette_commands, render_palette, PaletteState};
 use crate::profile_import::{ImportAction, ImportView};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Modal {
     Help(HelpState),
     Palette(PaletteState),
@@ -63,14 +63,14 @@ impl Modal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Confirm {
     pub kind: ConfirmKind,
     /// Shown above the buttons (for example after the scope changed).
     pub note: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ConfirmKind {
     /// Remove this member from the fleet (the target is frozen here).
     Remove(String),
@@ -90,7 +90,13 @@ pub enum ConfirmKind {
     /// core froze (its prompt names targets, skips and the unmarked count).
     ApplyMarked(String),
     /// A settings write saved successfully but its running script needs a restart.
-    RestartSettings(frontend_core::scripts::RestartPrompt),
+    RestartSettings {
+        op: frontend_core::OperationId,
+        /// Live prompt length when this summary was built. Compared on poll
+        /// so an in-place target removal redraws without allocating.
+        target_count: usize,
+        summary: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,7 +164,7 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "Relog now",
             ConfirmKind::Bulk { command, .. } => command.label(app),
             ConfirmKind::ApplyMarked(_) => Command::ScriptApplyMarked.label(app),
-            ConfirmKind::RestartSettings(_) => "Restart script settings",
+            ConfirmKind::RestartSettings { .. } => "Restart script settings",
         }
     }
 
@@ -189,8 +195,8 @@ impl Confirm {
                 prompt.clone(),
                 "Nothing is written until you confirm.".into(),
             ],
-            ConfirmKind::RestartSettings(prompt) => vec![
-                prompt.summary(),
+            ConfirmKind::RestartSettings { summary, .. } => vec![
+                summary.clone(),
                 "The current script keeps running if you choose Later.".into(),
             ],
             ConfirmKind::Bulk {
@@ -276,13 +282,13 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "[Relog y]",
             ConfirmKind::Bulk { .. } => "[Run y]",
             ConfirmKind::ApplyMarked(_) => "[Apply y]",
-            ConfirmKind::RestartSettings(_) => "[Restart y]",
+            ConfirmKind::RestartSettings { .. } => "[Restart y]",
         }
     }
 
     fn no(&self) -> &'static str {
         match self.kind {
-            ConfirmKind::RestartSettings(_) => "[Later n]",
+            ConfirmKind::RestartSettings { .. } => "[Later n]",
             _ => "[Cancel n]",
         }
     }
@@ -322,7 +328,7 @@ impl TuiApp {
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     let action = match confirm.kind {
                         ConfirmKind::ApplyMarked(_) => AppAction::ScriptSyncCancel,
-                        ConfirmKind::RestartSettings(_) => AppAction::ScriptRestartLater,
+                        ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
                         _ => AppAction::None,
                     };
                     (None, action)
@@ -438,7 +444,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::ApplyMarked(_) => (None, AppAction::ScriptSyncApply),
-            ConfirmKind::RestartSettings(_) => (None, AppAction::ScriptRestartSettings),
+            ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
             ConfirmKind::Bulk {
                 command,
                 members,
@@ -566,7 +572,7 @@ impl TuiApp {
             Modal::Confirm(confirm) => match item {
                 Some(0) => self.run_confirm(confirm),
                 Some(_) => {
-                    let action = if matches!(&confirm.kind, ConfirmKind::RestartSettings(_)) {
+                    let action = if matches!(&confirm.kind, ConfirmKind::RestartSettings { .. }) {
                         AppAction::ScriptRestartLater
                     } else {
                         AppAction::None

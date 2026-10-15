@@ -1248,20 +1248,20 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
         let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
-        session.scripts.js = script::JsLibrary::with_cache(
+        session.scripts.set_js(script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
-        );
-        session.scripts.js.load(&ts).expect("preload ts");
-        session.scripts.js.load(&js).expect("preload js");
-        session.scripts.legacy.set_str(
+        ));
+        session.scripts.js_mut().load(&ts).expect("preload ts");
+        session.scripts.js_mut().load(&js).expect("preload js");
+        session.scripts.legacy_mut().set_str(
             script::ScriptSource::File,
             "bone_burier_v2",
             "boneName",
             "stem",
         );
         let identity = script::file_identity(path);
-        session.scripts.legacy.set_str(
+        session.scripts.legacy_mut().set_str(
             script::ScriptSource::File,
             &identity,
             "boneName",
@@ -1383,7 +1383,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     assert!(
         session
             .scripts
-            .js
+            .js()
             .cards()
             .iter()
             .all(|c| c.source != script::ScriptSource::Catalog),
@@ -1404,7 +1404,7 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .expect("catalog card");
     assert_eq!(card.description, "Buries bones");
@@ -1464,7 +1464,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     std::fs::write(&helper, "export const fail = true;").unwrap();
     let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
     std::fs::write(&path, src).unwrap();
-    let card = session.scripts.js.load(&path).unwrap();
+    let card = session.scripts.js_mut().load(&path).unwrap();
     let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
@@ -1477,7 +1477,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     );
     let failure = session
         .scripts
-        .js
+        .js()
         .load_failure(&card.identity_key())
         .unwrap()
         .clone();
@@ -1504,7 +1504,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         "export default class T extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    let good = session.scripts.js.load(&good_path).unwrap();
+    let good = session.scripts.js_mut().load(&good_path).unwrap();
     assert_eq!(good.api_family, script::ApiFamily::V1);
     app.focused = Some(1);
     session.script_start(
@@ -1526,14 +1526,14 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         .unwrap()
         .contains("script already active"));
     assert_eq!(
-        session.scripts.js.load_failure(&card.identity_key()),
+        session.scripts.js().load_failure(&card.identity_key()),
         Some(&failure)
     );
     app.focused = Some(2);
     session.script_start(&mut app, &sel);
     assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
     assert_eq!(
-        session.scripts.js.load_failure(&card.identity_key()),
+        session.scripts.js().load_failure(&card.identity_key()),
         Some(&failure)
     );
 
@@ -1543,7 +1543,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     settle_starts(&mut session, &mut app);
     assert!(session
         .scripts
-        .js
+        .js()
         .load_failure(&card.identity_key())
         .is_none());
     assert_eq!(app.error, None);
@@ -1952,7 +1952,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     let mut app = TuiApp::new("274bot headless");
     app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     session.pump(&mut app);
-    assert!(!app.fleet[0].walking);
+    assert!(!app.fleet[0].walking());
 
     app.here = Some(SnapTile {
         x: 0,
@@ -1970,13 +1970,13 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     );
     assert_eq!(app.error, None);
     session.pump(&mut app);
-    assert!(app.fleet[0].walking, "the armed walk shows on the row");
+    assert!(app.fleet[0].walking(), "the armed walk shows on the row");
     assert!(app.fleet[0].busy());
 
     let arm = Arc::clone(session.travellers.lock().unwrap().get("alice").unwrap());
     arm.lock().unwrap().route = None;
     session.pump(&mut app);
-    assert!(!app.fleet[0].walking, "an ended route clears the row");
+    assert!(!app.fleet[0].walking(), "an ended route clears the row");
 }
 
 #[test]
@@ -2009,12 +2009,12 @@ fn resetting_the_same_walk_slot_session_twice_logs_one_cancellation() {
     assert!(reset_frontend_slot_session(slot, &travellers, &tick_latch));
     assert!(!reset_frontend_slot_session(slot, &travellers, &tick_latch));
 
-    let mut receipts = LogView::new(LogScope::Slot(slot.into()));
-    receipts.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    let mut receipts = LogView::new(LogScope::slot(slot));
+    receipts.edit_filter(|filter| filter.set_text("WalkTo outcome="));
     log.refresh(&mut receipts);
     assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
     assert_walk_receipt_fields(
-        receipts.rows()[0].message.as_ref(),
+        receipts.rows()[0].message(),
         "cancelled",
         "(8,9,0)",
         "unknown",
@@ -2055,34 +2055,37 @@ fn production_walk_receipt_uses_snapped_destination() {
     app.here = None;
     session.arm_walk_on(&mut app, requested);
     assert!(app.walk_dest.is_none());
-    let mut view = LogView::new(LogScope::Slot(name.into()));
-    view.edit_filter(|filter| filter.text = "WalkTo ".into());
+    let mut view = LogView::new(LogScope::slot(name));
+    view.edit_filter(|filter| filter.set_text("WalkTo "));
     log.refresh(&mut view);
     assert_eq!(view.len(), 2, "{}", view.to_text());
     let request = view
         .rows()
         .iter()
-        .find(|row| row.message.starts_with("WalkTo origin="))
+        .find(|row| row.message().starts_with("WalkTo origin="))
         .expect("request receipt");
-    assert!(request.message.contains("refused=NoOrigin"), "{request:?}");
     assert!(
-        request.message.contains(&format!(
+        request.message().contains("refused=NoOrigin"),
+        "{request:?}"
+    );
+    assert!(
+        request.message().contains(&format!(
             "destination=({},{},{})",
             target.x, target.z, target.level
         )),
         "{request:?}"
     );
     assert!(
-        request.message.contains("members_source=unknown "),
+        request.message().contains("members_source=unknown "),
         "{request:?}"
     );
     let terminal = view
         .rows()
         .iter()
-        .find(|row| row.message.starts_with("WalkTo outcome="))
+        .find(|row| row.message().starts_with("WalkTo outcome="))
         .expect("terminal receipt");
     assert_walk_receipt_fields(
-        terminal.message.as_ref(),
+        terminal.message(),
         "aborted",
         &format!("({},{},{})", target.x, target.z, target.level),
         "unknown",
@@ -2391,8 +2394,8 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
         arm.route.as_ref().map(|route| route.dest),
         Some(destination)
     );
-    let mut receipts = LogView::new(LogScope::Slot("receipt-bank-root".into()));
-    receipts.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    let mut receipts = LogView::new(LogScope::slot("receipt-bank-root"));
+    receipts.edit_filter(|filter| filter.set_text("WalkTo outcome="));
     log.refresh(&mut receipts);
     assert_eq!(receipts.len(), 0, "{}", receipts.to_text());
 
@@ -2410,7 +2413,7 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
     ));
     log.refresh(&mut receipts);
     assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
-    let message = receipts.rows()[0].message.as_ref();
+    let message = receipts.rows()[0].message();
     let tile = format!(
         "({},{},{})",
         destination.x, destination.z, destination.level
@@ -2522,15 +2525,15 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     }
     assert_eq!(finished, 1, "the route has one terminal transition");
 
-    let mut arrived = LogView::new(LogScope::Slot("receipt-arrived".into()));
-    arrived.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    let mut arrived = LogView::new(LogScope::slot("receipt-arrived"));
+    arrived.edit_filter(|filter| filter.set_text("WalkTo outcome="));
     log.refresh(&mut arrived);
-    let mut aborted = LogView::new(LogScope::Slot("receipt-aborted".into()));
-    aborted.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    let mut aborted = LogView::new(LogScope::slot("receipt-aborted"));
+    aborted.edit_filter(|filter| filter.set_text("WalkTo outcome="));
     log.refresh(&mut aborted);
     assert_eq!(arrived.len(), 1, "{}", arrived.to_text());
     assert_eq!(aborted.len(), 1, "{}", aborted.to_text());
-    let arrived_message = arrived.rows()[0].message.as_ref();
+    let arrived_message = arrived.rows()[0].message();
     let at = format!("({},{},{})", at.x, at.z, at.level);
     assert_walk_receipt_fields(arrived_message, "arrived", &at, &at, "-", "-");
     assert_eq!(
@@ -2538,7 +2541,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         Some("-"),
         "{arrived_message:?}"
     );
-    let aborted_message = aborted.rows()[0].message.as_ref();
+    let aborted_message = aborted.rows()[0].message();
     assert_walk_receipt_fields(
         aborted_message,
         "aborted",
@@ -2676,14 +2679,16 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(blocker.join("panel-ui.json"));
-    let before = app.quester_paths.clone();
-    app.quester_paths.enabled = true;
-    app.quester_paths.folder = iso.dir.join("paths");
+    let before_enabled = app.quester_paths.enabled();
+    let before_folder = app.quester_paths.folder().to_path_buf();
+    app.quester_paths.set_enabled(true);
+    app.quester_paths.set_folder(iso.dir.join("paths"));
     app.quester_paths_dirty = true;
 
     session.project_quester_paths(&mut app);
 
-    assert_eq!(app.quester_paths, before);
+    assert_eq!(app.quester_paths.enabled(), before_enabled);
+    assert_eq!(app.quester_paths.folder(), before_folder);
     assert!(!app.quester_paths_controller.is_running());
     assert!(app.quester_paths_controller.notice_is_error());
     assert!(app
@@ -2728,7 +2733,7 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(prefs.clone());
-    assert!(app.quester_paths.enabled);
+    assert!(app.quester_paths.enabled());
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(client::io::ClientRevision::R289)
             .expect("selected 289 game data")
@@ -3228,8 +3233,10 @@ fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) 
         |_| (None, None),
         |_, _, _| {},
     ));
-    session.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    session.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     let mut surface = HeadlessSurface::new();
     for name in names {
         session.core.load(name, &mut surface);
@@ -3301,12 +3308,14 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
     session.poll_scripts(&mut app);
     let prompt = session.scripts.pending_restart_prompt().unwrap();
     let summary = prompt.summary();
+    let op = prompt.operation();
     assert!(matches!(
         app.modal.as_ref(),
         Some(crate::overlay::Modal::Confirm(confirm))
             if matches!(
                 &confirm.kind,
-                crate::overlay::ConfirmKind::RestartSettings(current) if current == prompt
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
+                    if *shown_op == op && shown == &summary
             )
     ));
 
@@ -3331,6 +3340,132 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
             "{width}x{height}: missing Later action: {text}"
         );
     }
+    session.scripts.dismiss_restart_prompt();
+}
+
+#[test]
+fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
+    let iso = IsolatedEnv::enter("tui-restart-settings-stale-summary");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    session.core.play_mut().unwrap().bind_script_test_data(data);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob"] {
+        assert!(session.scripts.persist_assignment(
+            &mut session.core,
+            name,
+            script::compiled_assignment(id)
+        ));
+    }
+    session.core.flush_writes();
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .set_compiled_setting(
+                &mut session.core,
+                name,
+                id,
+                "skill",
+                serde_json::json!("Fishing"),
+            )
+            .unwrap();
+    }
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .start_profile(&mut session.core, name, None)
+            .unwrap();
+    }
+    settle_starts(&mut session, &mut app);
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play().unwrap(),
+            name,
+            script::RunState::Running,
+        );
+    }
+
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .set_compiled_setting(
+                &mut session.core,
+                name,
+                id,
+                "skill",
+                serde_json::json!("Mining"),
+            )
+            .unwrap();
+    }
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    let prompt = session.scripts.pending_restart_prompt().unwrap();
+    let op = prompt.operation();
+    let summary = prompt.summary();
+    assert_eq!(
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
+        ["alice", "bob"]
+    );
+    assert!(
+        summary.contains("alice") && summary.contains("bob"),
+        "{summary}"
+    );
+    assert!(matches!(
+        app.modal.as_ref(),
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(
+                &confirm.kind,
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
+                    if *shown_op == op && shown == &summary
+            )
+    ));
+
+    session.core.play().unwrap().script_stop("alice");
+    wait_script_state(
+        session.core.play().unwrap(),
+        "alice",
+        script::RunState::Idle,
+    );
+    session.poll_scripts(&mut app);
+
+    let prompt = session
+        .scripts
+        .pending_restart_prompt()
+        .expect("bob remains");
+    assert_eq!(prompt.operation(), op);
+    assert_eq!(
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
+        ["bob"]
+    );
+    let summary = prompt.summary();
+    assert!(
+        !summary.contains("alice"),
+        "live prompt dropped alice: {summary}"
+    );
+    assert!(summary.contains("bob"), "{summary}");
+    assert!(matches!(
+        app.modal.as_ref(),
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(
+                &confirm.kind,
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
+                    if *shown_op == op && shown == &summary
+            )
+    ));
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| app.draw_modal(frame)).unwrap();
+    let text = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(!text.contains("alice"), "modal still names alice: {text}");
+    assert!(text.contains("bob"), "{text}");
     session.scripts.dismiss_restart_prompt();
 }
 
@@ -3697,7 +3832,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let path = iso.dir.join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js.load(&path).unwrap();
+    let card = session.scripts.js_mut().load(&path).unwrap();
     assign(&mut session, "alice", &card);
     assign(&mut session, "bob", &card);
 
@@ -3753,11 +3888,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     dispatch(&mut session, &mut app, AppAction::ScriptReload);
     assert!(matches!(
         session.scripts.take_reload_outcome(),
-        Some(frontend_core::scripts::ReloadOutcome::Applied {
-            restarted: 2,
-            failed: 0,
-            ..
-        })
+        Some(outcome) if matches!(outcome.applied_counts(), Some((2, _, 0)))
     ));
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {
@@ -3788,8 +3919,8 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     std::fs::write(&thiever_path, THIEVER_TS).unwrap();
     let miner_path = iso.dir.join("miner.ts");
     std::fs::write(&miner_path, LOOPING_TS).unwrap();
-    let thiever = session.scripts.js.load(&thiever_path).unwrap();
-    let miner = session.scripts.js.load(&miner_path).unwrap();
+    let thiever = session.scripts.js_mut().load(&thiever_path).unwrap();
+    let miner = session.scripts.js_mut().load(&miner_path).unwrap();
     assign(&mut session, "alice", &thiever);
     assign(&mut session, "bob", &thiever);
     assign(&mut session, "carol", &miner);
@@ -3841,14 +3972,14 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     assert!(
         session
             .scripts
-            .legacy
+            .legacy()
             .overrides(script::ScriptSource::File, &thiever.name)
             .is_empty(),
         "the global store is not written"
     );
     let report = session.scripts.last_settings_sync().unwrap();
     assert_eq!(
-        (report.saved, report.skipped.len(), report.delivered),
+        (report.saved(), report.skipped().len(), report.delivered()),
         (1, 1, 1)
     );
     assert_eq!(app.error.as_deref(), Some(report.summary()));
@@ -3868,7 +3999,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
         "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-first-load');\nexport function tick(api) {}\n",
     )
     .unwrap();
-    let card = session.scripts.js.load(&path).unwrap();
+    let card = session.scripts.js_mut().load(&path).unwrap();
     let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
     focus_member(&mut session, &mut app, "alice");
     session.script_start(&mut app, &sel);
@@ -3888,7 +4019,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     settle_starts(&mut session, &mut app);
     assert!(session
         .scripts
-        .js
+        .js()
         .load_failure(&card.identity_key())
         .is_none());
     assert_eq!(app.error.as_deref(), Some("map: no route"));
@@ -3902,7 +4033,7 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
     let path = iso.dir.join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js.load(&path).unwrap();
+    let card = session.scripts.js_mut().load(&path).unwrap();
     for name in names {
         assign(&mut session, name, &card);
     }
@@ -3955,10 +4086,10 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
         tui_with_profiles(&iso, &["alice", "bob", "carol", "dave", "erin"]);
     let thiever = iso.dir.join("thiever.ts");
     std::fs::write(&thiever, THIEVER_TS).unwrap();
-    let card = session.scripts.js.load(&thiever).unwrap();
+    let card = session.scripts.js_mut().load(&thiever).unwrap();
     let looping = iso.dir.join("looping.ts");
     std::fs::write(&looping, LOOPING_TS).unwrap();
-    let other = session.scripts.js.load(&looping).unwrap();
+    let other = session.scripts.js_mut().load(&looping).unwrap();
     for name in ["alice", "bob", "carol", "dave"] {
         assign(&mut session, name, &card);
     }
@@ -4093,13 +4224,13 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let thiever = iso.dir.join("thiever.ts");
     std::fs::write(&thiever, THIEVER_TS).unwrap();
-    let card = session.scripts.js.load(&thiever).unwrap();
+    let card = session.scripts.js_mut().load(&thiever).unwrap();
     for name in ["alice", "bob"] {
         assign(&mut session, name, &card);
     }
     session
         .scripts
-        .legacy
+        .legacy_mut()
         .set_str(card.source, &card.name, "target", "Guard");
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
@@ -4122,7 +4253,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     session.pump(&mut app);
     let scope = session.scripts.prepared_settings_sync().unwrap();
     assert_eq!(
-        scope.overrides.get("target"),
+        scope.overrides().get("target"),
         Some(&serde_json::json!("Guard"))
     );
     assert_eq!(
@@ -4162,7 +4293,7 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
     let path = iso.dir.join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js.load(&path).unwrap();
+    let card = session.scripts.js_mut().load(&path).unwrap();
     for name in names {
         assign(&mut session, name, &card);
     }

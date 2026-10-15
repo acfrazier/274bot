@@ -56,7 +56,7 @@ use serde_json::{Number, Value};
 use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Secret, Vault};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::operations::{OperationId, Outcome};
+use crate::operations::OperationId;
 use crate::scripts::Scripts;
 use crate::session::{ArmMirror, OperatorSession};
 
@@ -1918,19 +1918,21 @@ impl ImportRun {
             StoredAccountResult::Failed(error.clone())
         } else if let Some(op) = entry.op {
             match core.operation(op).and_then(|r| r.outcome(&entry.username)) {
-                Some(Outcome::Pending) => return AccountResult::Saving,
-                Some(Outcome::Completed) if entry.status == AccountStatus::New => {
+                Some(outcome) if outcome.is_pending() => return AccountResult::Saving,
+                Some(outcome) if outcome.is_completed() && entry.status == AccountStatus::New => {
                     StoredAccountResult::Created
                 }
-                Some(Outcome::Completed) => StoredAccountResult::Overwritten,
-                Some(Outcome::Failed(error) | Outcome::Skipped(error)) => {
-                    StoredAccountResult::Failed(shown(error.clone()))
+                Some(outcome) if outcome.is_completed() => StoredAccountResult::Overwritten,
+                Some(outcome) if outcome.is_failed() || outcome.is_skipped() => {
+                    StoredAccountResult::Failed(shown(
+                        outcome.reason().unwrap_or_default().to_owned(),
+                    ))
                 }
                 // A later write of the same profile in the same commit:
                 // whether that commit held this import's data is not known.
-                Some(Outcome::Cancelled) => StoredAccountResult::Superseded,
+                Some(outcome) if outcome.is_cancelled() => StoredAccountResult::Superseded,
                 // The record was dropped before it was seen settled.
-                None => StoredAccountResult::Unknown,
+                None | Some(_) => StoredAccountResult::Unknown,
             }
         } else {
             StoredAccountResult::NotWritten(entry.status)
@@ -2137,7 +2139,7 @@ impl ProfileImport {
         };
         match read_profile_file(&path) {
             Ok(file) => {
-                self.plan = Some(plan_import(&file, vault, &scripts.js, self.choices));
+                self.plan = Some(plan_import(&file, vault, scripts.js(), self.choices));
                 self.file = Some((path, file));
             }
             Err(error) => self.refuse(error.to_string()),
@@ -2169,7 +2171,7 @@ impl ProfileImport {
 
     fn replan<Io>(&mut self, core: &OperatorSession<Io>, scripts: &Scripts) {
         if let (Some((_, file)), Some(vault)) = (self.file.as_ref(), core.vault()) {
-            self.plan = Some(plan_import(file, vault, &scripts.js, self.choices));
+            self.plan = Some(plan_import(file, vault, scripts.js(), self.choices));
         }
     }
 
@@ -2193,7 +2195,7 @@ impl ProfileImport {
             self.refuse(ImportFailure::VaultLocked.to_string());
             return;
         };
-        let plan = plan_import(&file, vault, &scripts.js, self.choices);
+        let plan = plan_import(&file, vault, scripts.js(), self.choices);
         drop(file);
         match apply_import(core, plan) {
             Ok(run) => self.run = Some((path, run)),

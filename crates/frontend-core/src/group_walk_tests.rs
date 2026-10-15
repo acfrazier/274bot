@@ -255,17 +255,13 @@ fn group_walk_reports_blocking_zone_names_for_each_failed_marked_bot() {
         .rows()
         .iter()
         .filter(|row| {
-            matches!(
-                &row.outcome,
-                BulkOutcome::Failed(reason) if reason.as_str() == "walk risk refused"
-            )
+            row.outcome().is_failed() && row.outcome().reason() == Some("walk risk refused")
         })
         .collect();
     assert_eq!(failures.len(), 2);
     for row in failures {
         assert!(
-            row.detail
-                .as_deref()
+            row.detail()
                 .is_some_and(|detail| detail.contains("Sentinel strip")),
             "{row:?}"
         );
@@ -341,7 +337,7 @@ fn mixed_outcomes_report_failures_first_and_count_each_marked_bot_once() {
     let rows: Vec<(&str, &BulkOutcome)> = report
         .rows()
         .iter()
-        .map(|row| (row.profile.as_str(), &row.outcome))
+        .map(|row| (row.profile(), row.outcome()))
         .collect();
     assert_eq!(rows.len(), 6, "each marked row appears once: {rows:?}");
     assert_eq!(

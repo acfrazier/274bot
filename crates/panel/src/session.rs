@@ -417,11 +417,14 @@ impl SlotSurface for PanelSurface<'_> {
             .unwrap()
             .renderer_by
             .insert(name.to_string(), raster != vault::RasterMode::Off);
-        SlotAttach {
-            input: Some(Arc::clone(&input)),
-            mailbox: Some(Arc::clone(&pixels)),
-            io: SlotIo { input, pixels },
-        }
+        SlotAttach::new(
+            SlotIo {
+                input: Arc::clone(&input),
+                pixels: Arc::clone(&pixels),
+            },
+            Some(input),
+            Some(pixels),
+        )
     }
 
     fn lifetime_reset(&mut self, name: &str) {
@@ -816,6 +819,11 @@ pub struct WalkSendRow {
 }
 
 impl WalkSendRow {
+    /// Profile name for this send row.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Marked and able to walk.
     pub fn checked(&self, marks: &frontend_core::MarkedSelection) -> bool {
         self.status.is_eligible() && marks.contains(self.identity)
@@ -1406,7 +1414,7 @@ impl Session {
         quester_paths.restore_at(&walk_permissions_path);
         let quester_paths_folder_edit = quester_paths
             .settings()
-            .folder
+            .folder()
             .to_string_lossy()
             .into_owned();
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
@@ -1751,7 +1759,7 @@ impl Session {
                 };
                 if let Err(error) = self
                     .scripts
-                    .js
+                    .js_mut()
                     .ensure_js(script::ScriptSource::File, &lookup)
                 {
                     watch.fail(format!("transpile: {error}"));
@@ -1759,11 +1767,11 @@ impl Session {
                 }
                 let Some(card) = self
                     .scripts
-                    .js
+                    .js()
                     .get(script::ScriptSource::File, &lookup)
                     .or_else(|| {
                         self.scripts
-                            .js
+                            .js()
                             .get(script::ScriptSource::File, &path.display().to_string())
                     })
                 else {
@@ -1772,7 +1780,7 @@ impl Session {
                 };
                 let count = self
                     .scripts
-                    .js
+                    .js()
                     .cards()
                     .iter()
                     .filter(|c| {
@@ -1858,11 +1866,10 @@ impl Session {
                     watch.fail("external loader unchanged reload lost its pending operation");
                     return;
                 }
-                match outcome {
-                    frontend_core::scripts::ReloadOutcome::NothingChanged => {
-                        watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
-                    }
-                    other => watch.fail(format!("unchanged reload: {other:?}")),
+                if outcome.is_nothing_changed() {
+                    watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
+                } else {
+                    watch.fail(format!("unchanged reload: {outcome:?}"));
                 }
             }
             Some(Operation::ReloadChanged) => {
@@ -1878,7 +1885,7 @@ impl Session {
                     let source_before = source_sha256(&before_bytes);
                     let compiled_before = self
                         .scripts
-                        .js
+                        .js()
                         .get(script::ScriptSource::File, &path.display().to_string())
                         .map(|card| card.sha256.clone())
                         .unwrap_or_default();
@@ -1918,21 +1925,20 @@ impl Session {
                     watch.fail("external loader changed reload lost its pending operation");
                     return;
                 };
-                let (applied, nothing_changed) = match &outcome {
-                    frontend_core::scripts::ReloadOutcome::Applied { .. } => (true, false),
-                    frontend_core::scripts::ReloadOutcome::NothingChanged => (false, true),
-                    frontend_core::scripts::ReloadOutcome::Failed(error) => {
-                        watch.fail(format!("changed reload: {error}"));
-                        return;
-                    }
-                    other => {
-                        watch.fail(format!("changed reload: {other:?}"));
-                        return;
-                    }
+                let (applied, nothing_changed) = if outcome.applied_counts().is_some() {
+                    (true, false)
+                } else if outcome.is_nothing_changed() {
+                    (false, true)
+                } else if let Some(error) = outcome.failure() {
+                    watch.fail(format!("changed reload: {error}"));
+                    return;
+                } else {
+                    watch.fail(format!("changed reload: {outcome:?}"));
+                    return;
                 };
                 let Some(card) = self
                     .scripts
-                    .js
+                    .js()
                     .get(script::ScriptSource::File, &path.display().to_string())
                 else {
                     watch.fail("external loader changed reload lost the File card");
@@ -1940,7 +1946,7 @@ impl Session {
                 };
                 let count = self
                     .scripts
-                    .js
+                    .js()
                     .cards()
                     .iter()
                     .filter(|candidate| {
@@ -2707,19 +2713,20 @@ impl Session {
         if let Some(fleet) = view.fleet_start {
             self.fill_rs2b0t_cards_once();
             let scripts = &mut self.scripts;
+            let (js, legacy, inject) = scripts.live_start_parts();
             let starts = live_start::fleet_catalog_starts(
                 fleet,
                 &names,
-                &mut scripts.js,
-                &scripts.legacy,
-                scripts.inject.as_ref(),
+                js,
+                legacy,
+                inject,
                 &scenario_fixture_loadouts(&view),
             )?;
             *self.pending_script.lock().unwrap() = starts;
         // Exact example files (`start_file`) Load through normal File
         // provenance and select by identity_id.
         } else if let Some(file_name) = view.start_file {
-            let card = load_live_example_card(&mut self.scripts.js, file_name)?;
+            let card = load_live_example_card(self.scripts.js_mut(), file_name)?;
             let identity = card.identity_id();
             self.script_sel = Some(script::ScriptSel::Loaded(
                 script::ScriptSource::File,
@@ -2751,12 +2758,12 @@ impl Session {
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
                 self.scripts
-                    .js
+                    .js_mut()
                     .load(&fixture)
                     .map_err(|e| format!("load {card_name} fixture: {e}"))?;
                 let card = self
                     .scripts
-                    .js
+                    .js()
                     .get(script::ScriptSource::File, stem)
                     .cloned()
                     .ok_or_else(|| format!("file fixture {card_name} missing after load"))?;
@@ -2798,12 +2805,12 @@ impl Session {
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.scripts
-                    .js
+                    .js_mut()
                     .ensure_js(script::ScriptSource::Catalog, card_name)
                     .map_err(|e| format!("transpile {card_name}: {e}"))?;
                 let card = self
                     .scripts
-                    .js
+                    .js()
                     .get(script::ScriptSource::Catalog, card_name)
                     .cloned()
                     .ok_or_else(|| {
@@ -4038,9 +4045,20 @@ impl Session {
     /// Log in every marked fleet row (loading the ones not loaded yet)
     /// through the panel's slot surface. Focus does not move.
     pub(crate) fn login_marked_rows(&mut self) -> frontend_core::BulkReport {
-        let selection = self.fleet_selection.clone();
-        let (core, mut surface) = self.core_and_surface();
-        frontend_core::login_marked(&selection, core, &mut surface)
+        frontend_core::login_marked(
+            &self.fleet_selection,
+            &mut self.core,
+            &mut PanelSurface {
+                focus: &self.focus,
+                audio: &self.audio,
+                memory_override: self.memory_override,
+                frontend_gens: &self.frontend_gens,
+                nav_states: &self.nav_states,
+                travellers: &self.travellers,
+                tick_latch: &self.tick_latch,
+                walk_dest: &mut self.walk_dest,
+            },
+        )
     }
 
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
@@ -4467,9 +4485,9 @@ impl Session {
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, now, &mut surface);
         self.sync_wall_focus();
-        if let Some(next) = removal.reselected {
-            self.select(&next);
-        } else if removal.selection_cleared {
+        if let Some(next) = removal.reselected() {
+            self.select(next);
+        } else if removal.selection_cleared() {
             self.focus.lock().unwrap().focused = None;
             self.capture_tx = None;
             // Last focused slot gone and no neighbour: no remaining drawer
@@ -4954,16 +4972,13 @@ impl Session {
         let report = frontend_core::walk_marked(
             &self.fleet_selection,
             &self.core,
-            MarkedWalk {
-                prepared,
-                destination,
-                options,
-                arms: &self.travellers,
-            },
-            |name| WalkInputs {
-                state: self.walk_state(Some(name)),
-                bank: self.walk_bank(Some(name)),
-                risk_input: self.walk_risk_input(Some(name)),
+            MarkedWalk::new(prepared, destination, options, &self.travellers),
+            |name| {
+                WalkInputs::new(
+                    self.walk_state(Some(name)),
+                    self.walk_bank(Some(name)),
+                    self.walk_risk_input(Some(name)),
+                )
             },
         );
         let walking = report.done_count();
@@ -5028,7 +5043,7 @@ impl Session {
     /// member's, or the selected slot's), else `None`: a grant, a missing
     /// row or an invalid published place clears that slot's card.
     pub fn queue_for(&self, name: &str) -> Option<frontend_core::QueuePlace> {
-        self.core.fleet_view().row(name).and_then(|row| row.queue)
+        self.core.fleet_view().row(name).and_then(|row| row.queue())
     }
 
     /// Whether the focused slot has an authenticated client session. Control
@@ -5075,19 +5090,38 @@ impl Session {
         profile.game_data()
     }
 
+    /// Persist a Quest Paths form change. The folder field is used only in
+    /// the frame the operator commits it; a checkbox toggle keeps the saved
+    /// folder.
+    pub(crate) fn persist_quester_paths_change(
+        &mut self,
+        enabled: bool,
+        folder_committed: bool,
+    ) -> Result<(), String> {
+        let folder = if folder_committed {
+            PathBuf::from(self.quester_paths_folder_edit.as_str())
+        } else {
+            self.quester_paths.settings().folder().to_path_buf()
+        };
+        self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder))
+    }
+
     pub(crate) fn persist_quester_paths(
         &mut self,
         after: frontend_core::QuesterPathsView,
     ) -> Result<(), String> {
         let selected = self.selected_game_data();
-        let result =
-            self.quester_paths
-                .apply_changed_at(&self.walk_permissions_path, after, selected, true);
+        let result = self.quester_paths.apply_changed_at(
+            &self.walk_permissions_path,
+            &after,
+            selected,
+            true,
+        );
         if result.is_ok() {
             self.quester_paths_folder_edit = self
                 .quester_paths
                 .settings()
-                .folder
+                .folder()
                 .to_string_lossy()
                 .into_owned();
         }
@@ -5182,7 +5216,7 @@ impl Session {
         &mut self,
         inject: Option<serde_json::Map<String, serde_json::Value>>,
     ) {
-        self.scripts.inject = inject;
+        self.scripts.set_inject(inject);
     }
 
     /// Schema defaults + overrides + inject. Empty schema still keeps
@@ -5388,10 +5422,10 @@ mod fleet_hold_tests {
         std::fs::copy(default_frozen_source(), &path).unwrap();
         let mut session = Session::with_instance(host_play::InstancePermit::SkipLock);
         session.persist_ui = false;
-        session.scripts.js = script::JsLibrary::with_cache(
+        session.scripts.set_js(script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
-        );
+        ));
         let mut play =
             host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {});
         play.attach_arm("alice", host_play::SlotArm::new(1, false));
@@ -5401,7 +5435,7 @@ mod fleet_hold_tests {
         assert_eq!(session.error, None);
         let card = session
             .scripts
-            .js
+            .js()
             .get(script::ScriptSource::File, &path.display().to_string())
             .unwrap();
         let watch = ExternalWatch::default();

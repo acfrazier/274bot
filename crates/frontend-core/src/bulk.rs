@@ -10,43 +10,79 @@ use std::fmt::{self, Write as _};
 /// Names listed per outcome kind in the summary; the counts cover the rest.
 const LISTED: usize = 6;
 
-/// What a command came to for one marked bot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BulkOutcome {
-    /// The command took effect (the report's `done` verb).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BulkOutcomeKind {
     Done,
-    /// The bot was not eligible; nothing was sent to it.
-    Skipped(String),
-    /// The bot was eligible but the command was refused.
-    Failed(String),
+    Skipped,
+    Failed,
 }
 
+/// What a command came to for one marked bot.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BulkOutcome {
+    kind: BulkOutcomeKind,
+    reason: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
 impl BulkOutcome {
+    /// The command took effect (the report's `done` verb).
+    pub const Done: Self = Self {
+        kind: BulkOutcomeKind::Done,
+        reason: None,
+    };
+
     fn rank(&self) -> u8 {
-        match self {
-            Self::Failed(_) => 0,
-            Self::Skipped(_) => 1,
-            Self::Done => 2,
+        match self.kind {
+            BulkOutcomeKind::Failed => 0,
+            BulkOutcomeKind::Skipped => 1,
+            BulkOutcomeKind::Done => 2,
         }
     }
 
     pub fn skipped(reason: impl Into<String>) -> Self {
-        Self::Skipped(reason.into())
+        Self {
+            kind: BulkOutcomeKind::Skipped,
+            reason: Some(reason.into()),
+        }
     }
 
     pub fn failed(reason: impl Into<String>) -> Self {
-        Self::Failed(reason.into())
+        Self {
+            kind: BulkOutcomeKind::Failed,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the command took effect.
+    pub fn is_done(&self) -> bool {
+        self.kind == BulkOutcomeKind::Done
+    }
+
+    /// Whether the bot was not eligible.
+    pub fn is_skipped(&self) -> bool {
+        self.kind == BulkOutcomeKind::Skipped
+    }
+
+    /// Whether the command was refused.
+    pub fn is_failed(&self) -> bool {
+        self.kind == BulkOutcomeKind::Failed
+    }
+
+    /// Skip or failure text, when this outcome carries one.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
     }
 }
 
 /// One marked row's outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkRow {
-    pub profile: String,
-    pub outcome: BulkOutcome,
+    profile: String,
+    outcome: BulkOutcome,
     /// Host detail carries zone labels or the legacy-grid note through row
     /// inspection and summary rendering without changing the short outcome.
-    pub detail: Option<String>,
+    detail: Option<String>,
 }
 
 impl BulkRow {
@@ -60,6 +96,21 @@ impl BulkRow {
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
+    }
+
+    /// The marked profile this row is for.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// What the command came to for this profile.
+    pub fn outcome(&self) -> &BulkOutcome {
+        &self.outcome
+    }
+
+    /// Host detail, when the short outcome is not enough.
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 }
 
@@ -81,7 +132,7 @@ fn write_row_reason(text: &mut String, row: &BulkRow, reason: &str) {
 }
 
 /// The report of one command on the marked rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkReport {
     label: &'static str,
     done_verb: &'static str,
@@ -130,22 +181,21 @@ impl BulkReport {
 
     /// Names of the bots the command took effect on, in report order.
     pub fn done(&self) -> impl Iterator<Item = &str> + '_ {
-        self.rows.iter().filter_map(|row| match row.outcome {
-            BulkOutcome::Done => Some(row.profile.as_str()),
-            _ => None,
-        })
+        self.rows
+            .iter()
+            .filter_map(|row| row.outcome.is_done().then_some(row.profile.as_str()))
     }
 
     pub fn done_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Done))
+        self.count(BulkOutcome::is_done)
     }
 
     pub fn skipped_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Skipped(_)))
+        self.count(BulkOutcome::is_skipped)
     }
 
     pub fn failed_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Failed(_)))
+        self.count(BulkOutcome::is_failed)
     }
 
     fn count(&self, pick: impl Fn(&BulkOutcome) -> bool) -> usize {
@@ -179,10 +229,10 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Failed(_)))
+            .filter(|row| row.outcome.is_failed())
             .take(LISTED)
         {
-            let BulkOutcome::Failed(reason) = &row.outcome else {
+            let Some(reason) = row.outcome.reason() else {
                 continue;
             };
             let _ = write!(text, "{sep}");
@@ -193,10 +243,10 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Skipped(_)))
+            .filter(|row| row.outcome.is_skipped())
             .take(LISTED)
         {
-            let BulkOutcome::Skipped(reason) = &row.outcome else {
+            let Some(reason) = row.outcome.reason() else {
                 continue;
             };
             let _ = write!(text, "{sep}");
@@ -211,7 +261,7 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Done) && row.detail.is_some())
+            .filter(|row| row.outcome.is_done() && row.detail.is_some())
             .take(LISTED)
         {
             let detail = row.detail.as_deref().unwrap_or_default();

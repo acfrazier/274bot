@@ -1,21 +1,36 @@
 use super::Scripts;
-use crate::operations::{OperationId, Outcome};
+use crate::operations::OperationId;
 use crate::session::OperatorSession;
 use serde_json::Value;
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParameterOptions {
-    pub values: Vec<String>,
-    pub labels: Vec<String>,
+    values: Vec<String>,
+    labels: Vec<String>,
     /// Number of trailing display-only values that are not picker choices.
-    pub preserved: usize,
+    preserved: usize,
     aliases: Vec<(String, String)>,
     case_insensitive: bool,
 }
 
 impl ParameterOptions {
+    /// Stored option keys, including preserved display-only rows.
+    pub fn values(&self) -> &[String] {
+        &self.values
+    }
+
+    /// Labels parallel to [`Self::values`].
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Number of trailing display-only values that are not picker choices.
+    pub fn preserved(&self) -> usize {
+        self.preserved
+    }
+
     fn canonical_option<'a>(&'a self, value: &'a str) -> &'a str {
         if self.values.iter().any(|option| option == value) {
             return value;
@@ -482,7 +497,7 @@ fn setting_values(def: &script::SettingDef, bag: &serde_json::Map<String, Value>
 }
 
 /// Identity of one editable field in one profile's selected card.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ParameterEditKey {
     profile: Option<String>,
     card: String,
@@ -529,6 +544,15 @@ impl ParameterEditKey {
             .and_then(|rest| rest.strip_prefix(':'))
             == Some(identity)
     }
+
+    /// Owned HashMap key for a first insert. Not [`Clone`].
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            profile: self.profile.clone(),
+            card: self.card.clone(),
+            field: self.field.clone(),
+        }
+    }
 }
 
 fn cached_parameter_key<'a>(
@@ -564,7 +588,7 @@ fn edit_mut_or_insert<'a>(
 ) -> &'a mut ParameterEdit {
     if !edits.contains_key(key) {
         edits.insert(
-            key.clone(),
+            key.duplicate(),
             ParameterEdit::new(initial_text, baseline_value.clone()),
         );
     }
@@ -718,10 +742,12 @@ impl Scripts {
         initial_text: &str,
         baseline_value: Option<Value>,
     ) -> &mut String {
-        let edit = self
-            .parameter_edits
-            .entry(key.clone())
-            .or_insert_with(|| ParameterEdit::new(initial_text, baseline_value.clone()));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            initial_text,
+            &baseline_value,
+        );
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
@@ -771,10 +797,12 @@ impl Scripts {
         def: &script::SettingDef,
         options: &[String],
     ) -> Result<Value, String> {
-        let edit = self
-            .parameter_edits
-            .entry(key.clone())
-            .or_insert_with(|| ParameterEdit::new(baseline_text, baseline_value));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            baseline_text,
+            &baseline_value,
+        );
         validate_edit(edit, def, options)
     }
 
@@ -878,10 +906,7 @@ impl Scripts {
                 )
             });
         {
-            let edit = self
-                .parameter_edits
-                .entry(key.clone())
-                .or_insert_with(|| ParameterEdit::new(&baseline_text, current.clone()));
+            let edit = edit_mut_or_insert(&mut self.parameter_edits, key, &baseline_text, &current);
             if edit.text != raw {
                 edit.text.clone_from(&raw);
                 edit.validated_text.clone_from(&raw);
@@ -974,56 +999,54 @@ impl Scripts {
     }
 
     pub(crate) fn settle_parameter_edits<Io>(&mut self, core: &OperatorSession<Io>) {
-        let mut remove = Vec::new();
-        for (key, edit) in &mut self.parameter_edits {
+        self.parameter_edits.retain(|key, edit| {
             let Some((op, value, submitted_text)) = edit.pending.as_ref() else {
-                continue;
+                return true;
+            };
+            let Some(profile) = key.profile.as_deref() else {
+                return true;
             };
             let Some(outcome) = core
                 .operation(*op)
-                .and_then(|report| report.outcome(key.profile.as_deref()?))
-                .cloned()
+                .and_then(|report| report.outcome(profile))
             else {
-                continue;
+                return true;
             };
-            if matches!(outcome, Outcome::Pending) {
-                continue;
+            if outcome.is_pending() {
+                return true;
             }
+            let completed = outcome.is_completed();
+            let failed = outcome.is_failed() || outcome.is_skipped();
+            let cancelled = outcome.is_cancelled();
+            let failed_reason = failed.then(|| outcome.reason().unwrap_or_default().to_owned());
             let value = value.clone();
             let submitted_text = submitted_text.clone();
             edit.pending = None;
-            match outcome {
-                Outcome::Completed => {
-                    edit.baseline_value = Some(value);
-                    edit.baseline_text = submitted_text.clone();
-                    edit.error = None;
-                    if edit.discard_after_pending || edit.text == submitted_text {
-                        remove.push(key.clone());
-                    } else {
-                        edit.dirty = edit.text != edit.baseline_text;
-                    }
+            let discard = edit.discard_after_pending;
+            if completed {
+                edit.baseline_value = Some(value);
+                edit.baseline_text.clone_from(&submitted_text);
+                edit.error = None;
+                if discard || edit.text == submitted_text {
+                    return false;
                 }
-                Outcome::Failed(error) | Outcome::Skipped(error) => {
-                    edit.error = Some(error);
-                    edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
+                edit.dirty = edit.text != edit.baseline_text;
+            } else if failed {
+                edit.error = Some(failed_reason.unwrap_or_default());
+                edit.dirty = edit.text != edit.baseline_text;
+                if discard {
+                    return false;
                 }
-                Outcome::Cancelled => {
-                    edit.error = Some("settings save was cancelled".into());
-                    edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
+            } else if cancelled {
+                edit.error = Some("settings save was cancelled".into());
+                edit.dirty = edit.text != edit.baseline_text;
+                if discard {
+                    return false;
                 }
-                Outcome::Pending => unreachable!(),
             }
             edit.discard_after_pending = false;
-        }
-        for key in remove {
-            self.parameter_edits.remove(&key);
-        }
+            true
+        });
     }
 }
 

@@ -2,7 +2,7 @@
 //! running on the panel-owned window loop in `crate::window`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
@@ -57,7 +57,7 @@ use crate::theme::{
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
-use frontend_core::{FleetRow, FormNotice, Phase, ResourceView};
+use frontend_core::{FleetRow, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -612,12 +612,12 @@ impl PanelState {
         for (row, labels) in self.fleet.iter().zip(&mut self.fleet_labels) {
             labels.title.clear();
             // `###cap`: the select keeps its ID while the brief changes.
-            let _ = write!(labels.title, "{}: {}###cap", row.name, row.brief);
+            let _ = write!(labels.title, "{}: {}###cap", row.name(), row.brief());
             labels.world.clear();
             labels.world_tip.clear();
-            if let Some(number) = row.world {
+            if let Some(number) = row.world() {
                 let _ = write!(labels.world, "{number}");
-                let _ = write!(labels.world_tip, "w{number} · {}", row.brief);
+                let _ = write!(labels.world_tip, "w{number} · {}", row.brief());
             }
         }
     }
@@ -631,7 +631,7 @@ impl PanelState {
         }
         self.debug_resources = generation;
         let view = self.session.core.resources();
-        eprintln!("[panel] ram={} bots={}", view.ram.text(), view.bots);
+        eprintln!("[panel] ram={} bots={}", view.ram().text(), view.bots());
         if let Some(view) = self.game_view.as_ref() {
             let s = view.present_stats;
             eprintln!(
@@ -1418,18 +1418,18 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
         });
     }
     let debug_actions = state.session.debug_ui();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
     for ((row, labels), [cx, cy, cw, ch]) in rows.iter().zip(&labels).zip(cells) {
-        let name = &row.name;
+        let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
             (
-                focus.focused.as_deref() == Some(name.as_str()),
+                focus.focused.as_deref() == Some(name),
                 draw_for_slot(&focus, name),
             )
         };
@@ -1444,8 +1444,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let identity = state
             .session
             .core
-            .profile_identity(&row.name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&row.name));
+            .profile_identity(row.name())
+            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(row.name()));
         let mut marked = state.session.fleet_selection.contains(identity);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
@@ -1492,7 +1492,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     .keyboard
                     .capture_keys(ui, state.session.capture_tx.as_ref());
             }
-            state.queue_cards.frame(ui, name, row.queue, image_min);
+            state.queue_cards.frame(ui, name, row.queue(), image_min);
             if is_focused {
                 overlay_script_paint(
                     ui,
@@ -1508,7 +1508,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         if cap_fold {
             let next = !preview;
-            state.session.ui.rail_preview.insert(name.clone(), next);
+            state.session.ui.rail_preview.insert(name.to_string(), next);
             crate::ui_state::save(&state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
@@ -1699,14 +1699,14 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
 /// elapsed timer when one applies), parked, or failing. Nothing while it is
 /// in game or not started.
 fn slot_banner(ui: &Ui, detail: &frontend_core::SlotDetail) {
-    let phase = detail.row.phase;
+    let phase = detail.row().phase();
     if matches!(phase, Phase::Ready | Phase::Offline) {
         return;
     }
-    let text = sentence_case(&detail.state);
+    let text = sentence_case(detail.state());
     if phase.is_error() {
         ui.text_colored(ERROR, &text);
-    } else if let Some(since) = detail.since {
+    } else if let Some(since) = detail.since() {
         let elapsed = since.elapsed().as_secs_f64();
         let text = text.trim_end_matches('…');
         ui.text_colored(ACCENT, format!("{text} — {elapsed:.1}s"));
@@ -1804,13 +1804,13 @@ std::thread_local! {
 fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
     #[cfg(test)]
     TEST_RESOURCE_READOUTS.set(TEST_RESOURCE_READOUTS.get() + 1);
-    kv_row(ui, "bots", &format_bots(view.bots, view.ingame));
-    if show_background && view.background > 0 {
-        kv_row(ui, "background", &format_background(view.background));
+    kv_row(ui, "bots", &format_bots(view.bots(), view.ingame()));
+    if show_background && view.background() > 0 {
+        kv_row(ui, "background", &format_background(view.background()));
     }
-    kv_row(ui, "cpu", view.cpu.text());
-    kv_row(ui, "ram", view.ram.text());
-    kv_row(ui, "traffic", view.traffic.text());
+    kv_row(ui, "cpu", view.cpu().text());
+    kv_row(ui, "ram", view.ram().text());
+    kv_row(ui, "traffic", view.traffic().text());
 }
 
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
@@ -2181,7 +2181,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .map(|sel| match sel {
             script::ScriptSel::Loaded(source, identity) => session
                 .scripts
-                .js
+                .js()
                 .get(*source, identity)
                 .map(|card| card.name.clone())
                 .unwrap_or_else(|| {
@@ -2340,7 +2340,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .core
         .fleet_view()
         .detail()
-        .and_then(|detail| detail.walk_risk.as_deref())
+        .and_then(|detail| detail.walk_risk())
     {
         kv_row(ui, "Walk risk", reason);
     }
@@ -2525,7 +2525,7 @@ fn browse_script_card(
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.js.load_failure(&loaded.identity_key()) {
+                if let Some(failure) = session.scripts.js().load_failure(&loaded.identity_key()) {
                     ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
@@ -2632,7 +2632,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         ui.spacing();
     }
     let busy = !session.transpile_queue.is_empty();
-    let need = session.scripts.js.cards_needing_transpile().len();
+    let need = session.scripts.js().cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2655,7 +2655,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.scripts.js.named_failure_output();
+    let named_failures = session.scripts.js().named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2663,7 +2663,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.scripts.js.load_failures().len()
+                session.scripts.js().load_failures().len()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2897,7 +2897,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     ui.table_next_row();
                     ui.table_next_column();
                     let glyph = if row.is_dir { GLYPH_FOLDER } else { GLYPH_FILE };
-                    let label = format!("{glyph}  {}##fdrow{i}", row.name);
+                    let label = format!("{glyph}  {}##fdrow{i}", row.name());
                     let selected = i == session.script_load_sel;
                     if ui
                         .selectable_config(&label)
@@ -2910,12 +2910,12 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     if ui.is_item_hovered() && ui.is_mouse_double_clicked(MouseButton::Left) {
                         if row.is_dir {
                             match mode {
-                                DialogMode::File => session.script_load_dir.push(&row.name),
-                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(&row.name),
+                                DialogMode::File => session.script_load_dir.push(row.name()),
+                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(row.name()),
                             }
                             persist_dialog_cwd(session, mode);
                         } else if mode == DialogMode::File {
-                            session.load_js(&cwd.join(&row.name));
+                            session.load_js(&cwd.join(row.name()));
                         }
                     }
                     ui.table_next_column();
@@ -2940,7 +2940,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
                     if ui.button_with_size("Load", [btn_w, 0.0]) {
                         if let Some(row) = rows.get(session.script_load_sel).filter(|r| !r.is_dir) {
-                            session.load_js(&cwd.join(&row.name));
+                            session.load_js(&cwd.join(row.name()));
                         }
                     }
                     ui.same_line();
@@ -3279,7 +3279,7 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     }
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.scripts.js.get(*source, name) {
+            if let Some(card) = session.scripts.js().get(*source, name) {
                 let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
                 for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
                     kv_row(ui, &label, &value);
@@ -3331,17 +3331,15 @@ fn persist_profile_setting(
             }
         }
         script::ScriptSel::Loaded(source, lookup) => {
-            let Some(card) = session.scripts.js.get(*source, lookup).cloned() else {
+            let Some(card) = session.scripts.js().get(*source, lookup).cloned() else {
                 return;
             };
             if let Some(profile) = session.focused_name() {
                 session.set_profile_setting(&profile, *source, &card.name, &card.path, id, value);
             } else {
-                session
-                    .scripts
-                    .legacy
-                    .set_value(*source, &card.name, id, value);
-                let _ = session.scripts.legacy.save();
+                let legacy = session.scripts.legacy_mut();
+                legacy.set_value(*source, &card.name, id, value);
+                let _ = legacy.save();
             }
         }
     }
@@ -3367,7 +3365,7 @@ fn unavailable_parameter_text(
     if def.options_from.as_deref() == Some("loadouts") {
         return format!("{label} (no loadouts available)");
     }
-    if def.ty == "string" && options.preserved > 0 {
+    if def.ty == "string" && options.preserved() > 0 {
         let current = bag
             .get(&def.id)
             .and_then(serde_json::Value::as_str)
@@ -3481,7 +3479,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     }
     let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
         script::ScriptSel::Loaded(source, name) => {
-            let Some(card) = session.scripts.js.get(*source, name).cloned() else {
+            let Some(card) = session.scripts.js().get(*source, name).cloned() else {
                 ui.text_disabled("(parameters unavailable)");
                 return;
             };
@@ -3692,7 +3690,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     })
                     .unwrap_or_default();
                 let mut changed = false;
-                for (index, opt) in resolved.values.iter().enumerate() {
+                for (index, opt) in resolved.values().iter().enumerate() {
                     let mut on = selected
                         .iter()
                         .any(|value| resolved.matches_option(value, opt));
@@ -3772,11 +3770,15 @@ fn restart_settings_popup(ui: &Ui, session: &mut Session) {
         ui.open_popup(RESTART_SETTINGS_POPUP);
     }
     ui.modal_popup(RESTART_SETTINGS_POPUP, || {
-        let Some(prompt) = session.scripts.pending_restart_prompt().cloned() else {
+        let Some(summary) = session
+            .scripts
+            .pending_restart_prompt()
+            .map(|prompt| prompt.summary())
+        else {
             ui.close_current_popup();
             return;
         };
-        ui.text_wrapped(prompt.summary());
+        ui.text_wrapped(&summary);
         if ui.button("Restart##script-settings") {
             session.restart_pending_settings();
             ui.close_current_popup();
@@ -3840,8 +3842,6 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     ui.separator();
     ui.text_colored(ACCENT, frontend_core::QUEST_PATHS_HEADING);
     ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-    let before_paths = session.quester_paths.settings().clone();
-    let mut after_paths = before_paths.clone();
     let mut paths_changed = false;
     let path_reload_running = session.quester_paths.is_running();
     let _path_controls_disabled = if path_reload_running {
@@ -3849,9 +3849,8 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     } else {
         None
     };
-    let mut enabled = after_paths.enabled;
+    let mut enabled = session.quester_paths.settings().enabled();
     if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
-        after_paths.enabled = enabled;
         paths_changed = true;
     }
     ui.text("Folder");
@@ -3861,9 +3860,11 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         &mut session.quester_paths_folder_edit,
     )
     .build();
+    let mut folder_committed = false;
     if ui.is_item_deactivated_after_edit() {
-        after_paths.folder = PathBuf::from(session.quester_paths_folder_edit.clone());
-        paths_changed |= after_paths.folder != before_paths.folder;
+        folder_committed = true;
+        paths_changed |= Path::new(&session.quester_paths_folder_edit)
+            != session.quester_paths.settings().folder();
     }
     drop(_path_controls_disabled);
 
@@ -3876,7 +3877,7 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
     }
     if paths_changed {
-        let _ = session.persist_quester_paths(after_paths);
+        let _ = session.persist_quester_paths_change(enabled, folder_committed);
     } else if reload_requested {
         session.start_quester_paths_reload();
     }
@@ -3928,7 +3929,7 @@ fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
     match &session.script_sel {
         None => Some("(no script selected)"),
         Some(script::ScriptSel::Loaded(source, name)) => {
-            match session.scripts.js.get(*source, name) {
+            match session.scripts.js().get(*source, name) {
                 None => Some(MissingCard::of(session, *source).rail_text()),
                 Some(card) if card.settings_schema.is_empty() => Some("(no parameters)"),
                 Some(_) => None,
@@ -3962,7 +3963,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
             frontend_core::scripts::SchemaView::Ready { .. } => None,
         },
         Some(script::ScriptSel::Loaded(source, name)) => {
-            let Some(card) = session.scripts.js.get(*source, name) else {
+            let Some(card) = session.scripts.js().get(*source, name) else {
                 return Some(MissingCard::of(session, *source).prefs_hint());
             };
             if card.settings_schema.is_empty() {
@@ -4056,7 +4057,7 @@ fn status_section(ui: &Ui, session: &mut Session) {
 }
 
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
-    kv_row(ui, "state", &d.state);
+    kv_row(ui, "state", d.state());
     if let Some(script) = d.script_phase() {
         kv_row(ui, "script", script.label());
         if let Some(phase) = script.phase() {
@@ -4069,36 +4070,40 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     kv_row(
         ui,
         "player",
-        if d.player.is_empty() { "?" } else { &d.player },
+        if d.player().is_empty() {
+            "?"
+        } else {
+            d.player()
+        },
     );
-    if let Some(world) = d.row.world {
+    if let Some(world) = d.row().world() {
         kv_row(ui, "world", &format!("w{world}"));
     }
-    kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
+    kv_row(ui, "tile", &format!("{} {}", d.tile().0, d.tile().1));
     status_kv_row(ui, "walk", walk);
-    if let Some(reason) = d.manual_walk_risk.as_deref() {
+    if let Some(reason) = d.manual_walk_risk() {
         status_kv_row(ui, "Walk risk", reason);
     }
     let queue = d
-        .row
-        .queue
+        .row()
+        .queue()
         .map_or_else(|| "—".to_string(), |q| q.to_string());
     status_kv_row(ui, "queue", &queue);
-    if matches!(d.row.phase, Phase::Ready) {
-        status_kv_row(ui, "modals", &d.modal.to_string());
+    if matches!(d.row().phase(), Phase::Ready) {
+        status_kv_row(ui, "modals", &d.modal().to_string());
     }
-    if let Some(welcome) = d.welcome.as_deref() {
+    if let Some(welcome) = d.welcome() {
         kv_row(ui, "welcome", welcome);
     }
-    if let Some(random) = d.random.as_deref() {
+    if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
-    if !d.row.phase.is_error() {
-        if let Some(error) = d.row.error.as_deref() {
+    if !d.row().phase().is_error() {
+        if let Some(error) = d.row().error() {
             kv_row(ui, "last error", error);
         }
     }
-    if let Some(op) = d.row.last_op.as_ref() {
+    if let Some(op) = d.row().last_op() {
         kv_row(ui, "operation", &op.to_string());
     }
     kv_row(ui, "mem", mem);
@@ -4808,15 +4813,15 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
         });
     }
     for (row, labels) in rows.iter().zip(&labels) {
-        let name = &row.name;
+        let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
             (
-                focus.focused.as_deref() == Some(name.as_str()),
+                focus.focused.as_deref() == Some(name),
                 draw_for_slot(&focus, name),
             )
         };
@@ -4856,7 +4861,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         };
         if cap_fold {
             let next = !preview;
-            state.session.ui.rail_preview.insert(name.clone(), next);
+            state.session.ui.rail_preview.insert(name.to_string(), next);
             crate::ui_state::save(&state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
@@ -4895,7 +4900,7 @@ fn rail_cap(
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     const MARK_W: f32 = 18.0;
-    let _id = ui.push_id(row.name.as_str());
+    let _id = ui.push_id(row.name());
     let [screen_x, screen_y] = ui.cursor_screen_pos();
     // Fractional scaled spacing can leave the next rail row between pixels.
     ui.set_cursor_screen_pos([screen_x, screen_y.round()]);
@@ -4981,10 +4986,7 @@ fn record_test_rail_item(ui: &Ui) {
 
 #[cfg(test)]
 pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4]) {
-    let row = FleetRow {
-        name: "pixel-layout".into(),
-        ..FleetRow::default()
-    };
+    let row = FleetRow::for_profile("pixel-layout");
     let labels = CapLabels {
         title: "pixel-layout".into(),
         ..CapLabels::default()
@@ -5028,10 +5030,7 @@ std::thread_local! {
 /// allow Debug, as `rail_cap` draws it.
 #[cfg(test)]
 fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
-    let row = FleetRow {
-        name: "mark-tip".into(),
-        ..FleetRow::default()
-    };
+    let row = FleetRow::for_profile("mark-tip");
     let labels = CapLabels {
         title: "mark-tip".into(),
         ..CapLabels::default()
@@ -5383,7 +5382,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             ui.spacing();
             if let Some(record) = session.core.saves_in_flight().last() {
-                let name = record.destination.as_str();
+                let name = record.destination();
                 ui.text_disabled("saving ");
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled(name);
@@ -5681,7 +5680,7 @@ fn button_rows(ui: &Ui, width: f32) -> f32 {
 
 fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
     let notice = match session.chooser_save.notice() {
-        Some(FormNotice::Saved(saved)) => wrapped_height(ui, saved, width),
+        Some(notice) if notice.is_saved() => wrapped_height(ui, notice.text(), width),
         Some(notice) => notice.error().map_or(0.0, |reason| {
             wrapped_height(ui, reason, width)
                 + wrapped_height(ui, frontend_core::NOTHING_SAVED, width)
@@ -5698,7 +5697,7 @@ fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
     // it was queued (nothing was written; the banner is hidden while
     // Profiles is open) or, once the write is durable, `Saved <name>.`.
     match session.chooser_save.notice() {
-        Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
+        Some(notice) if notice.is_saved() => ui.text_colored(GREEN, notice.text()),
         Some(notice) => {
             if let Some(reason) = notice.error() {
                 ui.text_colored(ERROR, reason);
@@ -6954,7 +6953,7 @@ mod parameter_options_tests {
         );
         assert!(parameter_array_editor_enabled(priority, &bag, &options));
         let haunted = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "hauntedmine")
             .expect("the saved unavailable priority remains displayed");
