@@ -2582,7 +2582,7 @@ fn tui_live_mode_does_not_show_or_persist_background_notice() {
     assert!(app.background_notice.is_none());
     let mut app = app;
     session.ack_background_bots(&mut app);
-    assert!(!host_play::background_bots_acked());
+    assert!(!host_play::background_bots_acked(&session.preferences));
     let _iso = iso;
 }
 
@@ -2592,7 +2592,7 @@ fn tui_notice_uses_shared_ack_file() {
     let mut session = TuiSession::new(dummy_options());
     let app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
-    host_play::persist_background_bots_ack().unwrap();
+    host_play::persist_background_bots_ack(&session.preferences).unwrap();
     let mut app = TuiApp::new("tui");
     app.names = vec!["alice".into(), "bob".into()];
     app.focused = Some(0);
@@ -2605,7 +2605,7 @@ fn tui_notice_uses_shared_ack_file() {
 #[test]
 fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     let iso = IsolatedEnv::enter("tui-map-bake");
-    let path = host_play::panel_ui_path();
+    let path = script::bot_home().join(".274bot").join("panel-ui.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, r#"{"last_focus":"alice","map_bake":"always"}"#).unwrap();
     let mut session = TuiSession::new(dummy_options());
@@ -2621,18 +2621,100 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     assert!(!app.map_bake_dirty);
     assert_eq!(session.map_bake.choice(), frontend_core::MapBakeChoice::Ask);
     assert_eq!(
-        frontend_core::load_map_bake_choice(),
+        frontend_core::load_map_bake_choice(&session.preferences),
         frontend_core::MapBakeChoice::Ask
     );
-    let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
     assert_eq!(prefs["last_focus"], "alice", "other prefs survive");
+    let _iso = iso;
+}
+
+/// T5.2 r3 round trip: the TUI's composition root saves a preference (the
+/// Settings map-bake choice, through the pump) and a Loadouts edit (Enter
+/// on the popup's name row) through the session's local-state service.
+/// Another process's service on the same home reads both back; its own
+/// edits reach the TUI's forms after they re-read, and the TUI's next saves
+/// keep them.
+#[test]
+fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
+    let iso = IsolatedEnv::enter("tui-state-round-trip");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.map_bake = frontend_core::MapBakeChoice::Always;
+    app.map_bake_dirty = true;
+    session.pump(&mut app);
+    assert_eq!(app.error, None);
+    app.loadouts_state = crate::loadouts::LoadoutsState {
+        open: true,
+        row: 1,
+        name_scratch: "roundtrip".into(),
+        carry_scratch: "Lobster:5".into(),
+        ..Default::default()
+    };
+    let enter = settings_key(crossterm::event::KeyCode::Enter);
+    assert!(app.loadouts_on_key(&mut session.loadouts, enter));
+    assert_eq!(app.loadouts_state.status, "Saved.");
+
+    // Another 274bot process on this home: its own service, same files.
+    let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+    let peer = host_play::local_state::LocalStateService::open_process(root.clone());
+    assert_eq!(
+        peer.preferences().value("map_bake"),
+        Some(serde_json::json!("always"))
+    );
+    let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    assert_eq!(
+        peer_form.get("roundtrip").unwrap().carry,
+        vec![api::loadout::CarryEntry::new("Lobster", 5)]
+    );
+    let on_disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.loadouts_file()).unwrap()).unwrap();
+    assert_eq!(on_disk[0]["name"], "roundtrip", "{on_disk}");
+
+    // The peer's edits reach the TUI through the TUI's service.
+    peer.preferences()
+        .set("peer_marker", serde_json::json!({"kept": 7}))
+        .unwrap();
+    peer_form.upsert(api::loadout::Loadout::new("peer-row"));
+    peer_form.save().unwrap();
+    session.preferences.reload().unwrap();
+    assert_eq!(
+        session.preferences.value("peer_marker"),
+        Some(serde_json::json!({"kept": 7}))
+    );
+    session.loadouts.reload().unwrap();
+    assert_eq!(session.loadouts.names(), ["roundtrip", "peer-row"]);
+
+    // The TUI's next saves keep the peer's row and preference.
+    app.loadouts_state.sel = 0;
+    app.loadouts_state.row = 4;
+    app.loadouts_state.name_scratch = "roundtrip".into();
+    app.loadouts_state.carry_scratch = "Lobster:6".into();
+    assert!(app.loadouts_on_key(&mut session.loadouts, enter));
+    assert_eq!(app.loadouts_state.status, "Saved.");
+    app.map_bake = frontend_core::MapBakeChoice::Ask;
+    app.map_bake_dirty = true;
+    session.pump(&mut app);
+    assert_eq!(app.error, None);
+    let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    reread.reload().unwrap();
+    assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
+    assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
+    let prefs = peer.preferences();
+    prefs.reload().unwrap();
+    assert_eq!(
+        prefs.value("peer_marker"),
+        Some(serde_json::json!({"kept": 7}))
+    );
+    assert_eq!(prefs.value("map_bake"), Some(serde_json::json!("ask")));
     let _iso = iso;
 }
 
 #[test]
 fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     let iso = IsolatedEnv::enter("tui-manual-walk-pause");
-    let path = host_play::panel_ui_path();
+    let path = script::bot_home().join(".274bot").join("panel-ui.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -2641,21 +2723,22 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     .unwrap();
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(path.clone());
+    app.restore_preferences(session.preferences.clone());
     assert!(!app.pause_script_on_manual_walk_abort);
 
     app.pause_script_on_manual_walk_abort = true;
     app.pause_script_on_manual_walk_abort_dirty = true;
     session.pump(&mut app);
-    let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
     assert_eq!(prefs["capture"], false);
     assert_eq!(prefs["nav"]["show_special_areas"], true);
     assert_eq!(prefs["nav"]["pause_script_on_manual_walk_abort"], true);
     assert!(!app.pause_script_on_manual_walk_abort_dirty);
 
-    let blocker = iso.dir.join("not-a-directory");
-    std::fs::write(&blocker, b"file").unwrap();
-    app.restore_preferences(blocker.join("panel-ui.json"));
+    // A corrupt preferences file refuses writes: the failure surfaces.
+    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    assert!(session.preferences.reload().is_err());
     app.pause_script_on_manual_walk_abort = false;
     app.pause_script_on_manual_walk_abort_dirty = true;
     session.pump(&mut app);
@@ -2666,16 +2749,20 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
         "failed writes must reach the TUI error surface: {:?}",
         app.error
     );
+    let _iso = iso;
 }
 
 #[test]
 fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let iso = IsolatedEnv::enter("tui-quester-paths-save-failure");
-    let blocker = iso.dir.join("not-a-directory");
-    std::fs::write(&blocker, b"file").unwrap();
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(blocker.join("panel-ui.json"));
+    app.restore_preferences(session.preferences.clone());
+    // A corrupt preferences file refuses writes: the save fails, the source
+    // stays, and no reload starts.
+    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
+    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    assert!(session.preferences.reload().is_err());
     let before = app.quester_paths.clone();
     app.quester_paths.enabled = true;
     app.quester_paths.folder = iso.dir.join("paths");
@@ -2691,6 +2778,7 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
         .notice_text()
         .unwrap()
         .starts_with("Quest Paths settings were not saved:"));
+    let _iso = iso;
 }
 
 #[test]
@@ -2712,9 +2800,10 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
         )
         .unwrap();
     }
-    let prefs = iso.dir.join("panel-ui.json");
+    let prefs_path = script::bot_home().join(".274bot").join("panel-ui.json");
+    std::fs::create_dir_all(prefs_path.parent().unwrap()).unwrap();
     std::fs::write(
-        &prefs,
+        &prefs_path,
         serde_json::to_vec(&serde_json::json!({
             "quester_paths": {
                 "enabled": true,
@@ -2727,7 +2816,7 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
 
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(prefs.clone());
+    app.restore_preferences(session.preferences.clone());
     assert!(app.quester_paths.enabled);
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -2821,7 +2910,7 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
-    let parent = host_play::panel_ui_path().parent().unwrap().to_path_buf();
+    let parent = session.preferences.path().parent().unwrap().to_path_buf();
     let _ = std::fs::remove_dir_all(&parent);
     std::fs::write(&parent, b"not-a-dir").unwrap();
     app.error = None;
@@ -2837,12 +2926,12 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
         "got {:?}",
         app.error
     );
-    assert!(!host_play::background_bots_acked());
+    assert!(!host_play::background_bots_acked(&session.preferences));
     std::fs::remove_file(&parent).unwrap();
     session.ack_background_bots(&mut app);
     assert!(app.background_notice.is_none());
     assert!(app.error.is_none(), "got {:?}", app.error);
-    assert!(host_play::background_bots_acked());
+    assert!(host_play::background_bots_acked(&session.preferences));
     let _iso = iso;
 }
 
@@ -2855,7 +2944,7 @@ fn tui_successful_ack_preserves_unrelated_error() {
     session.ack_background_bots(&mut app);
     assert!(app.background_notice.is_none());
     assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
-    assert!(host_play::background_bots_acked());
+    assert!(host_play::background_bots_acked(&session.preferences));
     let _iso = iso;
 }
 

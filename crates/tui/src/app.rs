@@ -446,7 +446,7 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
-    shared_preferences_path: Option<std::path::PathBuf>,
+    shared_preferences: Option<host_play::local_state::Preferences>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
@@ -571,7 +571,7 @@ impl TuiApp {
             quester_paths_dirty: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
-            shared_preferences_path: None,
+            shared_preferences: None,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
@@ -610,34 +610,34 @@ impl TuiApp {
         }
     }
 
-    /// Bind the shared `panel-ui.json` preference store. Walk permissions
-    /// are refreshed again for every relevant render and admission.
-    pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
-        let path = path.into();
-        self.quester_paths_controller.restore_at(&path);
+    /// Bind the shared process-service preferences. Walk permissions are
+    /// refreshed again for every relevant render and admission.
+    pub fn restore_preferences(&mut self, preferences: host_play::local_state::Preferences) {
+        self.quester_paths_controller.restore(&preferences);
         self.quester_paths = self.quester_paths_controller.settings().clone();
-        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
-            &path,
+        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
+            &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
             None,
         )
         .unwrap_or(true);
-        self.shared_preferences_path = Some(path.clone());
+        self.shared_preferences = Some(preferences.clone());
         self.refresh_walk_permissions();
-        self.map.restore_persisted_wilderness(path);
+        self.map.restore_persisted_wilderness(&preferences);
     }
 
     /// Refresh all TUI views of the shared walk permissions from their
     /// durable source. An unbound app uses its local values for isolated
-    /// widgets; production binds and rereads the shared preference file.
+    /// widgets; production binds and rereads the shared preferences (cheap
+    /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
-        let view = self.shared_preferences_path.as_deref().map_or(
+        let view = self.shared_preferences.as_ref().map_or(
             WalkGlobalsView {
                 globals: self.nav,
                 script_scope_notice_ack: self.script_scope_notice_ack,
                 survivable_routing_notice_ack: self.survivable_routing_notice_ack,
             },
-            WalkGlobalsView::read_at,
+            WalkGlobalsView::read,
         );
         self.walk_permissions = view;
         self.nav = view.globals;
@@ -651,12 +651,13 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn shared_preferences_path(&self) -> Option<&std::path::Path> {
-        self.shared_preferences_path.as_deref()
+    pub(crate) fn shared_preferences(&self) -> Option<&host_play::local_state::Preferences> {
+        self.shared_preferences.as_ref()
     }
 
     pub(crate) fn toggle_map_wilderness(&mut self) {
-        match self.map.toggle_wilderness() {
+        let preferences = self.shared_preferences.clone();
+        match self.map.toggle_wilderness(preferences.as_ref()) {
             Ok(()) => {
                 if self
                     .error

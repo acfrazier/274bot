@@ -62,6 +62,7 @@ use frontend_core::resources::background_ack_text;
 use frontend_core::{
     load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorSession,
 };
+use host_play::local_state::{LocalStateService, Preferences, StateRoot};
 use host_play::map_cache::MapDemand;
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
@@ -484,9 +485,12 @@ pub struct TuiSession {
     profile_import: frontend_core::rs2b0t_import::ProfileImport,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
-    /// Process-wide loadout presets: the form's editor over the explicit
-    /// `<state root>/loadouts.json` path (slots read the same file through
-    /// the local-state service).
+    /// The process local-state service's shared operator preferences
+    /// (`panel-ui.json` through the service): every preference read and
+    /// write in this process goes through this clone.
+    preferences: Preferences,
+    /// Process-wide loadout presets: the form's editor over the process
+    /// local-state service (slots read the same file through it).
     loadouts: script::LoadoutsStore,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
@@ -533,16 +537,25 @@ impl TuiSession {
             eprintln!("tui-play: {error}");
         }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
+        // The composition root opens the process local-state service once;
+        // every consumer clones these preferences and the loadouts form
+        // writes through the same service.
+        let service =
+            LocalStateService::open_process(StateRoot::new(script::bot_home().join(".274bot")));
         let mut core = OperatorSession::new(_instance);
-        let pause_manual_walk = frontend_core::nav_preference_at(
-            &host_play::panel_ui_path(),
+        core.bind_local_state(Arc::clone(&service));
+        let preferences = service.preferences();
+        let pause_manual_walk = frontend_core::nav_preference(
+            &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
             None,
         )
         .unwrap_or(true);
         core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
+        core.set_walk_globals_store(preferences.clone());
         // The fleet rows show the map walks this TUI arms.
         core.set_walk_arms(Arc::clone(&travellers));
+        let background_ack = background_bots_acked(&preferences);
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
@@ -554,7 +567,7 @@ impl TuiSession {
             template: None,
             server_profile: None,
             map_demand: None,
-            map_bake: MapBakeGate::new(load_map_bake_choice()),
+            map_bake: MapBakeGate::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
@@ -585,14 +598,15 @@ impl TuiSession {
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             script_category_order: Vec::new(),
-            loadouts: script::LoadoutsStore::at(script::bot_file("loadouts.json")),
+            preferences: preferences.clone(),
+            loadouts: script::LoadoutsStore::over(Arc::new(service.operator_loadouts())),
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,
             copied_meter: None,
             copied_capacity: None,
             persist_ui: true,
-            background_bots_acked: background_bots_acked(),
+            background_bots_acked: background_ack,
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
         }
@@ -930,6 +944,13 @@ impl TuiSession {
             )?,
             None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
         };
+        // `script_start_handle()` below captures the Play's state composition
+        // when called, before `core.start` adopts the bound service: adopt it
+        // here so the handle already writes through the process service
+        // (adopting the same service again in `start` is a no-op).
+        if let Some(service) = self.core.local_state().cloned() {
+            play.adopt_local_state(service);
+        }
         if let Some(number) = self.auto_world {
             play.set_auto_world(number)?;
         }
@@ -2328,15 +2349,12 @@ impl TuiSession {
             script_scope_notice_ack: app.script_scope_notice_ack,
             survivable_routing_notice_ack: app.survivable_routing_notice_ack,
         };
-        let preferences = std::mem::take(&mut app.nav_preferences_dirty);
-        let path = app
-            .shared_preferences_path()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(host_play::panel_ui_path);
-        self.core.set_walk_globals_store(path.clone());
+        let dirty = std::mem::take(&mut app.nav_preferences_dirty);
+        self.core.set_walk_globals_store(self.preferences.clone());
 
-        if !preferences.is_empty() && self.persist_ui {
-            match frontend_core::WalkGlobalsView::persist_changed_at(&path, before, after) {
+        if !dirty.is_empty() && self.persist_ui {
+            match frontend_core::WalkGlobalsView::persist_changed(&self.preferences, before, after)
+            {
                 Ok(()) => {
                     if app
                         .error
@@ -2364,12 +2382,8 @@ impl TuiSession {
         if !std::mem::take(&mut app.pause_script_on_manual_walk_abort_dirty) || !self.persist_ui {
             return;
         }
-        let path = app
-            .shared_preferences_path()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(host_play::panel_ui_path);
-        match frontend_core::nav_preference_at(
-            &path,
+        match frontend_core::nav_preference(
+            &self.preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
             Some(app.pause_script_on_manual_walk_abort),
         ) {
@@ -2393,13 +2407,13 @@ impl TuiSession {
     }
 
     /// The remembered terrain-bake choice, shared with the panel through
-    /// `panel-ui.json`.
+    /// the process service's preferences.
     fn persist_map_bake(&mut self, app: &mut TuiApp) {
         self.map_bake.set_choice(app.map_bake);
         if !self.persist_ui {
             return;
         }
-        if let Err(e) = persist_map_bake_choice(app.map_bake) {
+        if let Err(e) = persist_map_bake_choice(&self.preferences, app.map_bake) {
             app.error = Some(format!("settings: map bake: {e}"));
         }
     }
@@ -2418,12 +2432,8 @@ impl TuiSession {
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) {
         if std::mem::take(&mut app.quester_paths_dirty) {
-            let path = app
-                .shared_preferences_path()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(host_play::panel_ui_path);
-            let _ = app.quester_paths_controller.apply_changed_at(
-                &path,
+            let _ = app.quester_paths_controller.apply_changed(
+                &self.preferences,
                 app.quester_paths.clone(),
                 selected.clone(),
                 self.persist_ui,
@@ -2963,7 +2973,7 @@ impl TuiSession {
 
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
         if self.persist_ui {
-            match persist_background_bots_ack() {
+            match persist_background_bots_ack(&self.preferences) {
                 Ok(()) => {
                     self.background_bots_acked = true;
                     self.notice_sig = None;
@@ -2983,7 +2993,7 @@ impl TuiSession {
             .ack_checked_at
             .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1))
         {
-            self.background_bots_acked = background_bots_acked();
+            self.background_bots_acked = background_bots_acked(&self.preferences);
             self.ack_checked_at = Some(now);
         }
     }
@@ -3161,9 +3171,9 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 }
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
-fn new_app(title: impl Into<String>) -> TuiApp {
+fn new_app(title: impl Into<String>, preferences: &Preferences) -> TuiApp {
     let mut app = TuiApp::new(title);
-    app.restore_preferences(host_play::panel_ui_path());
+    app.restore_preferences(preferences.clone());
     app
 }
 
@@ -3192,9 +3202,6 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
-    if frontend_core::log_file::session_log_setting() {
-        frontend_core::log_file::apply_session_log(true);
-    }
     let selection = args.profile.resolve(None)?;
     if let Some(number) = args.world {
         let worlds = selection
@@ -3208,6 +3215,9 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     }
     let template = selection.prepare_template()?;
     let mut session = TuiSession::new_bound(template, permit);
+    if frontend_core::log_file::session_log_setting(&session.preferences) {
+        frontend_core::log_file::apply_session_log(true);
+    }
     session.auto_world = args.world;
     session
         .server_profile
@@ -3231,11 +3241,14 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.names = run.names.clone();
         session.load_and_login_all();
         session.focus(&run.names[0]);
-        let mut app = new_app(format!(
-            "{} memory benchmark · {}",
-            session.app_title(),
-            session.profile_label()
-        ));
+        let mut app = new_app(
+            format!(
+                "{} memory benchmark · {}",
+                session.app_title(),
+                session.profile_label()
+            ),
+            &session.preferences,
+        );
         app.names = run.names.clone();
         app.focused = Some(0);
         session.memory = Some(run);
@@ -3249,10 +3262,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
-            let mut app = new_app(format!(
-                "tui-play --live {name} · {}",
-                session.profile_label()
-            ));
+            let mut app = new_app(
+                format!("tui-play --live {name} · {}", session.profile_label()),
+                &session.preferences,
+            );
             app.names = session.names.clone();
             app.focused = Some(0);
             run_loop(session, app)
@@ -3280,11 +3293,14 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let focus = session.bootstrap_interactive_profiles(&args.users)?;
             session.load_and_login(&focus);
             session.focus(&focus);
-            let mut app = new_app(format!(
-                "{} headless · {}",
-                session.app_title(),
-                session.profile_label()
-            ));
+            let mut app = new_app(
+                format!(
+                    "{} headless · {}",
+                    session.app_title(),
+                    session.profile_label()
+                ),
+                &session.preferences,
+            );
             app.names = session.names.clone();
             app.focused = session.names.iter().position(|n| n == &focus);
             run_loop(session, app)

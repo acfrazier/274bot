@@ -21,11 +21,22 @@ use api::local_state::{
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 
+/// The port a slot's capability holds: the frozen [`LocalStatePort`] plus
+/// one cheap read, so a consumer holding the rows of one store version can
+/// see they are still current without the port copying the whole store
+/// into a new lease. The process service implements it.
+pub trait StatePort: LocalStatePort + Send + Sync {
+    /// The version a lease of `identity` would carry now, or the code the
+    /// lease would refuse with (a cold domain is `NotReady` and queues its
+    /// hydration, as a lease does). Copies no rows.
+    fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode>;
+}
+
 /// The capability one slot holds: the port and the identity its leases
 /// and submissions carry. Private fields: the identity is the
 /// composition's, never rewritten by a consumer.
 pub struct SlotState {
-    port: Arc<dyn LocalStatePort + Send + Sync>,
+    port: Arc<dyn StatePort>,
     account: AccountKey,
     scope: ContentScope,
     /// The operator rows last leased, shared by every consumer of this
@@ -36,11 +47,7 @@ pub struct SlotState {
 
 impl SlotState {
     /// Bind `port` for `account` under `scope`.
-    pub fn new(
-        port: Arc<dyn LocalStatePort + Send + Sync>,
-        account: AccountKey,
-        scope: ContentScope,
-    ) -> Self {
+    pub fn new(port: Arc<dyn StatePort>, account: AccountKey, scope: ContentScope) -> Self {
         Self {
             port,
             account,
@@ -50,7 +57,7 @@ impl SlotState {
     }
 
     /// The port itself, for a consumer that submits or observes.
-    pub fn port(&self) -> &(dyn LocalStatePort + Send + Sync) {
+    pub fn port(&self) -> &dyn StatePort {
         &*self.port
     }
 
@@ -77,13 +84,19 @@ impl SlotState {
     /// The operator's loadout rows the slot may plan with, at their
     /// current version. `NotReady` while the domain is cold; a refused file
     /// answers its typed failure. The rows of one version are shared: a
-    /// later call at the same version hands out the same `Arc`.
+    /// later call at the same version hands out the same `Arc`, and asks
+    /// the port only for the version, so the store is not copied again.
     pub fn operator_loadouts(&self) -> Result<OperatorLoadouts, ErrorCode> {
-        let lease = self.lease(LocalStateDomain::LoadoutsReferences)?;
+        let identity = self.identity(LocalStateDomain::LoadoutsReferences);
+        let version = self.port.lease_version(&identity)?;
         let mut last = self.loadouts.lock();
-        if let Some(last) = last.as_ref().filter(|last| last.version == lease.version()) {
+        if let Some(last) = last.as_ref().filter(|last| last.version == version) {
             return Ok(last.clone());
         }
+        // The version moved (or nothing is held yet): copy the rows once.
+        // The lease may already be newer than the version read above; its
+        // own version is what the rows are keyed by.
+        let lease = self.port.lease(&identity)?;
         let current = OperatorLoadouts::from_lease(&lease);
         *last = Some(current.clone());
         Ok(current)
@@ -157,19 +170,24 @@ impl OperatorLoadouts {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use api::identity::{DurableTimestamp, RequestId};
     use api::local_state::{DomainEdit, LeaseSnapshot, SubmitReceipt, WriteSettlement};
 
     /// A port whose loadouts lease is always `rows` at `version`, counting
-    /// the leases it hands out.
+    /// the leases it hands out: each lease copies every row, as the real
+    /// service's owned snapshot does.
     struct Port {
         version: Mutex<StoreVersion>,
         rows: Vec<Loadout>,
+        leases: AtomicUsize,
     }
 
     impl LocalStatePort for Port {
         fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            self.leases.fetch_add(1, Ordering::Relaxed);
             DomainLease::try_new(
                 identity.clone(),
                 *self.version.lock(),
@@ -187,6 +205,20 @@ mod tests {
         }
     }
 
+    impl StatePort for Port {
+        fn lease_version(&self, _: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            Ok(*self.version.lock())
+        }
+    }
+
+    fn slot(port: &Arc<Port>) -> SlotState {
+        SlotState::new(
+            Arc::clone(port) as Arc<dyn StatePort>,
+            AccountKey::try_new("local-289", "alice").unwrap(),
+            ContentScope::try_new(api::selected::ClientRevision::R289, "test-content").unwrap(),
+        )
+    }
+
     /// T5.2 r2 item 7: the operator rows of one store version are copied and
     /// digested once per slot, then shared, not once per lease.
     #[test]
@@ -194,12 +226,9 @@ mod tests {
         let port = Arc::new(Port {
             version: Mutex::new(StoreVersion::INITIAL),
             rows: vec![Loadout::new("melee")],
+            leases: AtomicUsize::new(0),
         });
-        let state = SlotState::new(
-            Arc::clone(&port) as Arc<dyn LocalStatePort + Send + Sync>,
-            AccountKey::try_new("local-289", "alice").unwrap(),
-            ContentScope::try_new(api::selected::ClientRevision::R289, "test-content").unwrap(),
-        );
+        let state = slot(&port);
         let first = state.operator_loadouts().unwrap();
         let again = state.operator_loadouts().unwrap();
         assert!(Arc::ptr_eq(&first.shared(), &again.shared()));
@@ -210,5 +239,35 @@ mod tests {
         assert!(!Arc::ptr_eq(&first.shared(), &moved.shared()));
         assert_eq!(moved.version(), next);
         assert_eq!(moved.rows(), first.rows());
+    }
+
+    /// T5.2 r3 (sol F4): at an unchanged version the slot takes no lease at
+    /// all, so the port never copies the store only for the copy to be
+    /// thrown away; a moved version takes exactly one.
+    #[test]
+    fn an_unchanged_version_takes_no_lease_so_the_store_is_not_copied() {
+        let port = Arc::new(Port {
+            version: Mutex::new(StoreVersion::INITIAL),
+            rows: (0..500)
+                .map(|n| Loadout::new(format!("row{n}")).with_carry("Lobster", 8))
+                .collect(),
+            leases: AtomicUsize::new(0),
+        });
+        let state = slot(&port);
+        let first = state.operator_loadouts().unwrap();
+        assert_eq!(port.leases.load(Ordering::Relaxed), 1);
+        for _ in 0..100 {
+            let again = state.operator_loadouts().unwrap();
+            assert!(Arc::ptr_eq(&first.shared(), &again.shared()));
+        }
+        assert_eq!(
+            port.leases.load(Ordering::Relaxed),
+            1,
+            "an unchanged version must not lease (and so copy) the store again"
+        );
+
+        *port.version.lock() = StoreVersion::INITIAL.checked_next().unwrap();
+        state.operator_loadouts().unwrap();
+        assert_eq!(port.leases.load(Ordering::Relaxed), 2);
     }
 }

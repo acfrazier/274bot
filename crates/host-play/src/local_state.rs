@@ -2,11 +2,12 @@
 //! [`LocalStatePort`] over the current files (`21-census-ownership-dag.md`
 //! §4.2–§4.3, D10).
 //!
-//! One [`LocalStateService`] per composition, created by the composition
-//! root with an explicit [`StateRoot`] and the set of domains it opens. It
-//! owns one `local-state-writer` thread, which does every file read and
-//! write: cold hydration, readbacks, and durable publication. Nothing here
-//! reads `HOME`, and no caller thread ever touches a file.
+//! One [`LocalStateService`] per process, created by the composition root
+//! (a frontend's session, or the `Play` of a headless host) with an
+//! explicit [`StateRoot`] and the set of domains it opens. It owns one
+//! `local-state-writer` thread, which does every file read and write: cold
+//! hydration, readbacks, and durable publication. Nothing here reads
+//! `HOME`, and no caller thread ever touches a file.
 //!
 //! - **Leases** ([`LocalStatePort::lease`]) are the immutable owned
 //!   snapshot the service last read or wrote, at the store's version. A
@@ -16,49 +17,71 @@
 //!   content scope, unreadable, larger than its bound) is never an empty
 //!   store: its leases and submissions answer [`ErrorCode::Failed`] with the
 //!   bounded reason, and the file is never written, until a later read
-//!   accepts it.
+//!   accepts it. A file whose content the service cannot hold whole is read
+//!   but never rewritten, in every domain.
 //! - **Submissions** ([`LocalStatePort::submit`]) are nonblocking: a bank
 //!   hint replaces a queued hint of the same account (the replaced request
 //!   settles `Cancelled(Superseded)`, and the service remembers which
-//!   request replaced it); loadout edits queue in order behind a small cap
-//!   and refuse `Busy` beyond it, and an edit that would take the file past
-//!   its row or byte budget is refused as a validation error. Acceptance is
-//!   not durability.
-//! - **Writes** re-read the file first. If it changed since the service
-//!   last read or wrote it (another writer: a frontend's loadouts form, an
-//!   older build, a hand edit), or changed after the edit was accepted, the
-//!   edit settles as a [`ErrorCode::Conflict`] at the version the service
-//!   now holds for what it found, and the file is left as it is. A write
-//!   publishes its bytes durably (staging file flushed, renamed over the
-//!   target, directory entries flushed) before anything acknowledges it.
-//!   A write whose bytes equal what this service already made durable
-//!   settles `Completed` at the current version without touching the disk.
+//!   request replaced it); loadout and preference edits queue in order
+//!   behind a small cap and refuse `Busy` beyond it, and a loadout edit that
+//!   would take the file past its row or byte budget is refused as a
+//!   validation error. Acceptance is not durability.
+//! - **Writes** are one transaction under the file's cross-process
+//!   [`WriteLock`](files::WriteLock): every writer this product runs (this
+//!   service, another composition's, another process's on the same `HOME`)
+//!   holds it from the precondition read to the final check, so none
+//!   interleaves with another. The write re-reads the file first; if it
+//!   changed since the service last read or wrote it (a hand edit, an older
+//!   build), or changed after the edit was accepted, the edit settles as a
+//!   [`ErrorCode::Conflict`] at the version the service now holds for what
+//!   it found, and the file is left as it is. The bytes are staged and
+//!   flushed, the file is checked once more immediately before the rename,
+//!   the directory entries are flushed (the whole chain up to the root's
+//!   parent unless this service already made the file's entry durable),
+//!   and the file is read back: only when it still holds the bytes written
+//!   is the write acknowledged; otherwise it settles `Conflict`, never
+//!   `Completed`. A write whose bytes equal what this service already made
+//!   durable settles `Completed` at the current version without touching
+//!   the disk.
 //! - **Settlements** ([`LocalStatePort::observe`]) are kept per store
 //!   identity, a few each: `Completed` with the [`DurableReceipt`] once
 //!   durable, `Failed` with a typed [`ErrorCode`], or `Cancelled`. A
 //!   request whose settlement the service no longer holds is
-//!   [`RequestState::Forgotten`], never pending forever.
+//!   [`RequestState::Forgotten`], never pending forever. Every accepted
+//!   request settles exactly once.
 //! - **Audit:** one `host_log!` info line ([`AuditCommit`]) per durable
-//!   write, after the bytes and their directory entry are durable.
+//!   write, after the bytes and their directory entries are durable and
+//!   read back; one `terminal` line per accepted write that ends any other
+//!   way (failed, conflicted, cancelled).
 //! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities are held;
 //!   a new one evicts the least recently used idle one, or is refused
 //!   `Busy` when none is idle. A lease is one bounded snapshot.
-//! - **Shutdown:** dropping the last handle stops new work, lets the writer
-//!   finish every accepted write (none is cancelled), and joins it within
-//!   [`SHUTDOWN_TIMEOUT`]; past that bound one line says what is still
-//!   queued.
+//! - **Shutdown:** dropping the last handle stops new work and lets the
+//!   writer finish every accepted write within [`SHUTDOWN_TIMEOUT`]. Past
+//!   that bound every accepted write not yet being published settles
+//!   `Cancelled(Shutdown)` with its own terminal line, and a write already
+//!   being renamed into place settles when it finishes.
 //!
 //! Versions come from one clock per service: every store change takes the
 //! next value, so a version is never reused, even by a store that was
 //! evicted and read again. The current files carry no version; expected-
 //! version writes guard this process's own races, and the write
-//! precondition (the file's content digest) guards against other writers.
+//! precondition (the file's content digest, checked under the lock and
+//! again before the rename) guards against other writers.
 //!
-//! The current files are still edited directly by the frontends' loadout
-//! forms until `T5.5` moves those forms to this port. Host-only entry
-//! points ([`LocalStateService::readback_lease`]) re-read a store on the
-//! writer thread, bounded, at the two points the old code read the file
-//! synchronously: a script Start and a session boundary.
+//! **Residual window.** A writer that does not take the lock (a text
+//! editor, a build older than T5.2 r3) is caught by the checks, except in
+//! two instants: between the last pre-rename check and the `rename(2)`
+//! itself (a few system calls), where its write is replaced by this one;
+//! and an in-place save that opened the file before the rename and writes
+//! after it, which lands in the replaced (unlinked) file. A replacement
+//! after the final read-back is a later change, not a false receipt: the
+//! acknowledged bytes were durable, and the next write sees the change.
+//!
+//! Host-only entry points re-read a store on the writer thread, bounded,
+//! where the old code read the file synchronously: a script Start
+//! ([`LocalStateService::readback_lease`]), a session boundary, a frontend
+//! form, and the shared preferences ([`Preferences`]).
 
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
@@ -79,15 +102,18 @@ use api::local_state::{
     WriteSettlement,
 };
 use parking_lot::{Condvar, Mutex};
-use script::local_state::SlotState;
+use script::local_state::{SlotState, StatePort};
 
 mod files;
+mod frontend;
 
-use files::{ContentDigest, ReadDocument, ReadError, Rewrite, StoreKey};
+use files::{ContentDigest, LockError, ReadDocument, ReadError, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION};
+pub use frontend::{Preferences, ServiceLoadouts};
 
-/// How many loadout edits may wait behind the one in flight.
-const LOADOUT_QUEUE_CAP: usize = 8;
+/// How many edits of one operator store (loadouts, preferences) may wait
+/// behind the one in flight.
+const OPERATOR_QUEUE_CAP: usize = 8;
 
 /// How many bank-hint identities the service holds at once. A new one
 /// evicts the least recently used idle store (nothing queued, in flight
@@ -108,9 +134,17 @@ pub const START_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A test's stand-in for the file publication step: run on the writer
-/// thread with no lock held, so a test can stall or fail it.
+/// thread with no state lock held (the file's write lock is held), so a
+/// test can stall or fail it. It replaces the real publication, including
+/// its last check.
 #[cfg(test)]
 pub(crate) type WriteHook = Arc<dyn Fn(&Path, &[u8]) -> std::io::Result<()> + Send + Sync>;
+
+/// A test's hand inside the real publication: run once the bytes are
+/// staged and flushed, immediately before the last check and the rename,
+/// with the file's write lock held and no state lock.
+#[cfg(test)]
+pub(crate) type PublishHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
 /// A test's stand-in for one directory flush.
 #[cfg(test)]
@@ -119,6 +153,10 @@ pub(crate) type SyncHook = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Syn
 /// A test's witness of each audit line, called where the line is logged.
 #[cfg(test)]
 pub(crate) type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
+
+/// A test's witness of each terminal line, called where the line is logged.
+#[cfg(test)]
+pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
@@ -147,6 +185,16 @@ impl StateComposition {
         &self.service
     }
 
+    /// The same namespace and scope over another `service`: a frontend's
+    /// process service replacing the one a `Play` opened for itself.
+    pub fn with_service(&self, service: Arc<LocalStateService>) -> Self {
+        Self {
+            service,
+            namespace: self.namespace.clone(),
+            scope: self.scope.clone(),
+        }
+    }
+
     pub fn scope(&self) -> &ContentScope {
         &self.scope
     }
@@ -173,7 +221,7 @@ impl StateComposition {
     pub fn slot_state(&self, username: &str) -> Option<Arc<SlotState>> {
         match self.account(username) {
             Ok(account) => Some(Arc::new(SlotState::new(
-                Arc::clone(&self.service) as Arc<dyn LocalStatePort + Send + Sync>,
+                Arc::clone(&self.service) as Arc<dyn StatePort>,
                 account,
                 self.scope.clone(),
             ))),
@@ -277,6 +325,13 @@ struct State {
     seq: u64,
     writer: WriterPhase,
     shutdown: bool,
+    /// The shutdown bound passed: every accepted write not yet being
+    /// published was cancelled, and the writer publishes nothing more.
+    abandoned: bool,
+    /// How long dropping the service waits ([`SHUTDOWN_TIMEOUT`] unless a
+    /// test shortens it).
+    #[cfg(test)]
+    shutdown_timeout: Option<Duration>,
     #[cfg(test)]
     hooks: Hooks,
 }
@@ -285,8 +340,10 @@ struct State {
 #[derive(Default, Clone)]
 struct Hooks {
     write: Option<WriteHook>,
+    publish: Option<PublishHook>,
     sync: Option<SyncHook>,
     audit: Option<AuditHook>,
+    terminal: Option<TerminalHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -309,7 +366,7 @@ struct Store {
     /// Accepted edits not yet taken by the writer thread.
     queue: VecDeque<Queued>,
     /// The writer thread holds this store's edit.
-    in_flight: Option<RequestId>,
+    in_flight: Option<InFlight>,
     /// The last few settlements, for observers.
     settled: VecDeque<Settled>,
     /// How many changes made outside this service have been observed: an
@@ -353,14 +410,89 @@ struct Cached {
     snapshot: LeaseSnapshot,
     /// The digest of the file's bytes, `None` when there is no file.
     digest: Option<ContentDigest>,
-    /// Whether this service made these bytes durable itself (flushed and
-    /// its directory entry flushed). Bytes another writer left are not
-    /// known durable, so an identical write still publishes them.
+    /// Whether this service made these bytes durable itself: flushed, and
+    /// every directory entry from the file up to the root's parent flushed.
+    /// Bytes another writer left, or bytes a write of this service renamed
+    /// into place without finishing that chain, are not known durable: an
+    /// identical write still publishes them, and flushes the whole chain.
     durable: bool,
     /// How many bytes the rows take as the service writes them.
     written_len: usize,
     /// Whether a write may replace the file.
     rewrite: Rewrite,
+}
+
+/// The edit the writer thread holds for one store.
+#[derive(Clone)]
+struct InFlight {
+    terminal: Terminal,
+    /// The writer passed its last check and is renaming the bytes into
+    /// place: past the shutdown bound it is left to finish.
+    publishing: bool,
+}
+
+/// What a `terminal` line names for one accepted write: the write's
+/// identity, operation and request, never its payload.
+#[derive(Clone)]
+struct Terminal {
+    identity: DomainIdentity,
+    action: CommitAction,
+    request: RequestId,
+}
+
+impl Terminal {
+    fn of(edit: &DomainEdit, request: RequestId) -> Self {
+        Self {
+            identity: edit.identity().clone(),
+            action: match edit {
+                DomainEdit::Preferences(_) => CommitAction::PreferencesWrite,
+                DomainEdit::Loadout(_) => CommitAction::LoadoutWrite,
+                DomainEdit::Bank(_) => CommitAction::BankHintWrite,
+                DomainEdit::Knowledge(_) => CommitAction::KnowledgeWrite,
+            },
+            request,
+        }
+    }
+
+    /// The write's terminal line, when it is not a durable commit (that one
+    /// is the [`AuditCommit`] line): the audit line's fields and the
+    /// settlement, at its level. A completed write that changed nothing is
+    /// a debug line.
+    fn line(&self, settlement: &WriteSettlement, successor: Option<RequestId>) -> (Level, String) {
+        let (level, outcome) = match settlement {
+            Settlement::Completed(receipt) => (
+                Level::Debug,
+                format!("completed-unchanged {}", receipt.version()),
+            ),
+            Settlement::Failed(ErrorCode::Conflict { expected, found }) => (
+                Level::Warn,
+                format!("conflict expected={expected} found={found}"),
+            ),
+            Settlement::Failed(code) => (Level::Warn, format!("failed ({code})")),
+            Settlement::Cancelled(Cancellation::Superseded) => (
+                Level::Info,
+                match successor {
+                    Some(next) => format!("cancelled-superseded by={}", next.get()),
+                    None => "cancelled-superseded".into(),
+                },
+            ),
+            Settlement::Cancelled(Cancellation::Shutdown) => {
+                (Level::Warn, "cancelled-shutdown".into())
+            }
+            Settlement::Cancelled(other) => (Level::Info, format!("cancelled ({other:?})")),
+        };
+        (
+            level,
+            format!(
+                "terminal domain={} profile={} account={} action={} request={} settlement={outcome}",
+                self.identity.domain().code(),
+                self.identity.account().profile(),
+                self.identity.account().account(),
+                self.action,
+                self.request.get()
+            ),
+        )
+    }
 }
 
 struct Rejection {
@@ -406,8 +538,8 @@ impl LocalStateService {
     /// Open the service at `root` for `domains`, minting request ids from
     /// the composition's `minter`. Domains not named stay closed: their
     /// leases and submissions answer [`ErrorCode::NotReady`], and no file
-    /// is ever read or written for them. The loadouts store, when open,
-    /// starts hydrating at once.
+    /// is ever read or written for them. The operator stores (loadouts,
+    /// preferences), when open, start hydrating at once.
     pub fn open(
         root: StateRoot,
         domains: &[LocalStateDomain],
@@ -439,15 +571,46 @@ impl LocalStateService {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        if service.is_open(LocalStateDomain::LoadoutsReferences) {
-            let mut state = service.shared.state.lock();
-            if state.admit(&StoreKey::Loadouts).is_ok() {
-                service
-                    .shared
-                    .request_readback(&mut state, &StoreKey::Loadouts);
+        for (domain, key) in [
+            (LocalStateDomain::LoadoutsReferences, StoreKey::Loadouts),
+            (LocalStateDomain::Preferences, StoreKey::Preferences),
+        ] {
+            if service.is_open(domain) {
+                let mut state = service.shared.state.lock();
+                if state.admit(&key).is_ok() {
+                    service.shared.request_readback(&mut state, &key);
+                }
             }
         }
         service
+    }
+
+    /// The process service a frontend's composition root opens once at
+    /// `root`: every domain with a current file (preferences, loadouts,
+    /// bank hints), with its own request ids. The same service is handed
+    /// to the frontend's `Play` ([`crate::Play::adopt_local_state`]), so one
+    /// process has one writer for these files.
+    pub fn open_process(root: StateRoot) -> Arc<Self> {
+        Self::open(
+            root,
+            &[
+                LocalStateDomain::Preferences,
+                LocalStateDomain::LoadoutsReferences,
+                LocalStateDomain::BankHints,
+            ],
+            Arc::new(RequestIdMinter::new()),
+        )
+    }
+
+    /// The operator preferences (`panel-ui.json`) through this service.
+    pub fn preferences(self: &Arc<Self>) -> Preferences {
+        Preferences::new(Arc::clone(self))
+    }
+
+    /// The operator loadouts a frontend's form edits, through this
+    /// service.
+    pub fn operator_loadouts(self: &Arc<Self>) -> ServiceLoadouts {
+        ServiceLoadouts::new(Arc::clone(self))
     }
 
     /// The explicit root every path derives from.
@@ -463,15 +626,15 @@ impl LocalStateService {
     /// Re-read `identity`'s current file on the writer thread and lease the
     /// result, waiting at most `timeout`. `Ok(None)` when there is no file
     /// for the identity yet (never written); `Ok(Some)` otherwise, with the
-    /// rows the file holds now, so an edit made by another writer (a
-    /// frontend loadouts form, an older process) is seen. A read that was
-    /// already running when this was called does not count: the answer
-    /// comes from a read that began after the call. A refused file is
-    /// [`ErrorCode::Failed`] with its reason, never `Ok(None)`; `NotReady`
-    /// when the readback did not complete within `timeout`.
+    /// rows the file holds now, so an edit made by another writer (an older
+    /// process, a hand edit) is seen. A read that was already running when
+    /// this was called does not count: the answer comes from a read that
+    /// began after the call. A refused file is [`ErrorCode::Failed`] with
+    /// its reason, never `Ok(None)`; `NotReady` when the readback did not
+    /// complete within `timeout`.
     ///
-    /// This is the host's replacement for the two synchronous file reads
-    /// the old code did: a script Start reading the loadouts file, and a
+    /// This is the host's replacement for the synchronous file reads the
+    /// old code did: a script Start reading the loadouts file, and a
     /// session boundary reading the account's hint file. Never called on a
     /// tick.
     pub fn readback_lease(
@@ -479,6 +642,17 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<Option<DomainLease>, ErrorCode> {
+        let (lease, exists) = self.readback(identity, timeout)?;
+        Ok(exists.then_some(lease))
+    }
+
+    /// [`Self::readback_lease`] that leases an absent file too: its empty
+    /// rows at the store's real version, and whether a file exists.
+    pub(crate) fn readback(
+        &self,
+        identity: &DomainIdentity,
+        timeout: Duration,
+    ) -> Result<(DomainLease, bool), ErrorCode> {
         let key = self.store_key(identity)?;
         let domain = identity.domain();
         let deadline = Instant::now() + timeout;
@@ -498,8 +672,9 @@ impl LocalStateService {
                         domain,
                         reason: rejection.reason,
                     }),
-                    FileState::Read(cached) if cached.digest.is_none() => Ok(None),
-                    FileState::Read(cached) => lease_of(identity, cached).map(Some),
+                    FileState::Read(cached) => {
+                        lease_of(identity, cached).map(|lease| (lease, cached.digest.is_some()))
+                    }
                 };
             }
             if self
@@ -510,6 +685,19 @@ impl LocalStateService {
             {
                 return Err(ErrorCode::NotReady { domain });
             }
+        }
+    }
+
+    /// Queue a re-read of `identity`'s file without waiting for it: a later
+    /// lease sees what the file holds then. Nothing happens for a closed
+    /// domain or a service that is stopping.
+    pub fn refresh(&self, identity: &DomainIdentity) {
+        let Ok(key) = self.store_key(identity) else {
+            return;
+        };
+        let mut state = self.shared.state.lock();
+        if state.admit(&key).is_ok() {
+            self.shared.request_readback(&mut state, &key);
         }
     }
 
@@ -591,12 +779,82 @@ impl LocalStateService {
         self.shared.state.lock().hooks.audit = Some(hook);
     }
 
+    /// Run `hook` inside every real publication, after staging and before
+    /// the last check.
+    #[cfg(test)]
+    pub(crate) fn set_publish_hook(&self, hook: PublishHook) {
+        self.shared.state.lock().hooks.publish = Some(hook);
+    }
+
+    /// Call `hook` with every terminal line where it is logged.
+    #[cfg(test)]
+    pub(crate) fn set_terminal_hook(&self, hook: TerminalHook) {
+        self.shared.state.lock().hooks.terminal = Some(hook);
+    }
+
+    /// Wait `timeout` instead of [`SHUTDOWN_TIMEOUT`] when dropped.
+    #[cfg(test)]
+    pub(crate) fn set_shutdown_timeout(&self, timeout: Duration) {
+        self.shared.state.lock().shutdown_timeout = Some(timeout);
+    }
+
+    /// The settlement ledger, readable after the last handle is dropped.
+    #[cfg(test)]
+    pub(crate) fn ledger(&self) -> Ledger {
+        Ledger(Arc::clone(&self.shared))
+    }
+
     fn store_key(&self, identity: &DomainIdentity) -> Result<StoreKey, ErrorCode> {
         let domain = identity.domain();
         if !self.is_open(domain) {
             return Err(ErrorCode::NotReady { domain });
         }
         StoreKey::of(identity).ok_or(ErrorCode::NotReady { domain })
+    }
+}
+
+/// A test's view of the settlements after the service's last handle went.
+#[cfg(test)]
+pub(crate) struct Ledger(Arc<Shared>);
+
+#[cfg(test)]
+impl Ledger {
+    pub(crate) fn request_state(&self, request: RequestId) -> RequestState {
+        self.0.state.lock().request_state(request)
+    }
+
+    /// Wait at most `timeout` for the writer thread to stop.
+    pub(crate) fn wait_writer_exit(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.0.state.lock();
+        while state.writer == WriterPhase::Running {
+            if self.0.settled.wait_until(&mut state, deadline).timed_out() {
+                break;
+            }
+        }
+        state.writer != WriterPhase::Running
+    }
+}
+
+impl StatePort for LocalStateService {
+    fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+        let key = self.store_key(identity)?;
+        let domain = identity.domain();
+        let mut state = self.shared.state.lock();
+        let answer = match &state.admit(&key)?.file {
+            FileState::Read(cached) => Some(Ok(cached.version)),
+            FileState::Rejected(rejection) => Some(Err(ErrorCode::Failed {
+                domain,
+                reason: rejection.reason,
+            })),
+            FileState::Cold => None,
+        };
+        if let Some(answer) = answer {
+            return answer;
+        }
+        // Cold, as a lease would be: queue the hydration, read nothing.
+        self.shared.request_readback(&mut state, &key);
+        Err(ErrorCode::NotReady { domain })
     }
 }
 
@@ -670,8 +928,11 @@ impl LocalStatePort for LocalStateService {
         let superseded = match &key {
             // A newer hint of the same account makes a queued one moot: at
             // most one waits behind the one in flight.
-            StoreKey::BankHint { .. } => store.queue.pop_front().map(|queued| queued.request),
-            StoreKey::Loadouts => None,
+            StoreKey::BankHint { .. } => store
+                .queue
+                .pop_front()
+                .map(|queued| Terminal::of(&queued.edit, queued.request)),
+            StoreKey::Loadouts | StoreKey::Preferences => None,
         };
         let external = store.external;
         store.queue.push_back(Queued {
@@ -683,18 +944,15 @@ impl LocalStatePort for LocalStateService {
             growth,
         });
         state.requests.insert(request, key.clone());
-        if let Some(superseded) = superseded {
-            state.settle(
-                &key,
-                superseded,
-                Settlement::Cancelled(Cancellation::Superseded),
-                Some(request),
-            );
-        }
+        let cancelled = Settlement::Cancelled(Cancellation::Superseded);
+        let superseded = superseded.filter(|terminal| {
+            state.settle(&key, terminal.request, cancelled.clone(), Some(request))
+        });
         drop(state);
         self.shared.wake.notify_one();
-        if superseded.is_some() {
+        if let Some(terminal) = superseded {
             self.shared.settled.notify_all();
+            self.shared.terminal(&terminal, &cancelled, Some(request));
         }
         SubmitReceipt::Accepted { request }
     }
@@ -709,10 +967,14 @@ impl LocalStatePort for LocalStateService {
 
 impl Drop for LocalStateService {
     fn drop(&mut self) {
-        let outstanding = {
+        let (outstanding, timeout) = {
             let mut state = self.shared.state.lock();
             state.shutdown = true;
-            state.outstanding_writes()
+            #[cfg(test)]
+            let timeout = state.shutdown_timeout.unwrap_or(SHUTDOWN_TIMEOUT);
+            #[cfg(not(test))]
+            let timeout = SHUTDOWN_TIMEOUT;
+            (state.outstanding_writes(), timeout)
         };
         self.shared.wake.notify_all();
         if outstanding > 0 {
@@ -722,8 +984,8 @@ impl Drop for LocalStateService {
                 "local state: stopping with {outstanding} write(s) accepted; finishing them"
             );
         }
-        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
-        let (stopped, left) = {
+        let deadline = Instant::now() + timeout;
+        let stopped = {
             let mut state = self.shared.state.lock();
             while state.writer == WriterPhase::Running {
                 if self
@@ -735,10 +997,7 @@ impl Drop for LocalStateService {
                     break;
                 }
             }
-            (
-                state.writer != WriterPhase::Running,
-                state.outstanding_writes(),
-            )
+            state.writer != WriterPhase::Running
         };
         let handle = self.shared.writer.lock().take();
         if stopped {
@@ -751,15 +1010,22 @@ impl Drop for LocalStateService {
                     );
                 }
             }
-        } else {
-            host_log!(
-                Category::Lifecycle,
-                Level::Warn,
-                "local state: {left} write(s) still queued or in flight after {}s; \
-                 the writer finishes them unless the process exits first",
-                SHUTDOWN_TIMEOUT.as_secs()
-            );
+            return;
         }
+        // Past the bound: every accepted write the writer has not begun to
+        // rename into place gets its terminal now, each with its own line;
+        // the writer publishes nothing more. One being renamed is left to
+        // settle when it finishes (or is lost unacknowledged with the
+        // process).
+        let (cancelled, publishing) = self.shared.abandon();
+        self.shared.settled.notify_all();
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "local state: shutdown bound of {timeout:?} passed; {cancelled} accepted write(s) \
+             settled cancelled, {publishing} still being renamed into place settle when they \
+             finish"
+        );
     }
 }
 
@@ -775,7 +1041,8 @@ enum Gate {
 
 /// Admit `edit` against `store`, or refuse it: a cold or refused store is
 /// read (again) first, a store whose rows a rewrite would lose is never
-/// written, and a loadouts edit is charged against the file's row and byte
+/// written, an operator store's queue is capped, a preference value must
+/// be JSON, and a loadouts edit is charged against the file's row and byte
 /// budget together with the edits queued before it.
 fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) -> Gate {
     let domain = key.domain();
@@ -797,10 +1064,18 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
             reason: FailureReason::Schema,
         });
     }
-    if let StoreKey::Loadouts = key {
-        if store.queue.len() >= LOADOUT_QUEUE_CAP {
-            return Gate::Refuse(ErrorCode::Busy { domain });
+    if key.operator_wide() && store.queue.len() >= OPERATOR_QUEUE_CAP {
+        return Gate::Refuse(ErrorCode::Busy { domain });
+    }
+    if let DomainEdit::Preferences(edit) = edit {
+        if serde_json::from_str::<serde_json::Value>(edit.value()).is_err() {
+            return Gate::Refuse(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::Schema,
+            });
         }
+    }
+    if let StoreKey::Loadouts = key {
         let rows = cached.snapshot.as_loadouts().unwrap_or(&[]);
         if let DomainEdit::Loadout(edit) = edit {
             if let LoadoutOp::Upsert(loadout) = edit.op() {
@@ -896,8 +1171,9 @@ impl State {
         let used = self.next_seq();
         if !self.stores.contains_key(key) {
             if let StoreKey::BankHint { .. } = key {
-                let held =
-                    self.stores.len() - usize::from(self.stores.contains_key(&StoreKey::Loadouts));
+                let held = self.stores.len()
+                    - usize::from(self.stores.contains_key(&StoreKey::Loadouts))
+                    - usize::from(self.stores.contains_key(&StoreKey::Preferences));
                 if held >= MAX_BANK_STORES {
                     self.evict_idle_bank_store(key)?;
                 }
@@ -945,22 +1221,31 @@ impl State {
         Ok(())
     }
 
-    /// Record `request`'s settlement in its store's bounded list. The
-    /// oldest settlement past the bound is forgotten.
+    /// Record `request`'s settlement in its store's bounded list, once: a
+    /// request already settled (cancelled at the shutdown bound while its
+    /// writer was still working) keeps its first terminal. The oldest
+    /// settlement past the bound is forgotten.
     fn settle(
         &mut self,
         key: &StoreKey,
         request: RequestId,
         settlement: WriteSettlement,
         successor: Option<RequestId>,
-    ) {
+    ) -> bool {
         let State {
             stores, requests, ..
         } = self;
         let Some(store) = stores.get_mut(key) else {
             requests.remove(&request);
-            return;
+            return false;
         };
+        if store
+            .settled
+            .iter()
+            .any(|settled| settled.request == request)
+        {
+            return false;
+        }
         store.settled.push_back(Settled {
             request,
             settlement,
@@ -971,6 +1256,42 @@ impl State {
                 requests.remove(&forgotten.request);
             }
         }
+        true
+    }
+
+    /// The shutdown bound passed: settle every accepted write the writer
+    /// has not begun to rename into place `Cancelled(Shutdown)` (the queued
+    /// ones, and an in-flight one short of its rename), and stop the writer
+    /// from publishing more. The terminals to log, and how many in-flight
+    /// writes are being renamed and settle when they finish.
+    fn abandon(&mut self) -> (Vec<Terminal>, usize) {
+        self.abandoned = true;
+        let mut terminals = Vec::new();
+        let mut publishing = 0;
+        let mut cancelled = Vec::new();
+        for (key, store) in &mut self.stores {
+            for queued in store.queue.drain(..) {
+                terminals.push(Terminal::of(&queued.edit, queued.request));
+                cancelled.push((key.clone(), queued.request));
+            }
+            match &store.in_flight {
+                Some(in_flight) if in_flight.publishing => publishing += 1,
+                Some(in_flight) => {
+                    terminals.push(in_flight.terminal.clone());
+                    cancelled.push((key.clone(), in_flight.terminal.request));
+                }
+                None => {}
+            }
+        }
+        for (key, request) in cancelled {
+            self.settle(
+                &key,
+                request,
+                Settlement::Cancelled(Cancellation::Shutdown),
+                None,
+            );
+        }
+        (terminals, publishing)
     }
 
     /// `Some(Some)` settled, `Some(None)` pending, `None` forgotten.
@@ -1056,7 +1377,7 @@ impl State {
                             host_log!(
                                 Category::Lifecycle,
                                 Level::Info,
-                                "local state: {domain} changed outside this process, now {version} path={}",
+                                "local state: {domain} changed outside this service, now {version} path={}",
                                 path.display()
                             );
                         }
@@ -1085,7 +1406,7 @@ impl State {
                             host_log!(
                                 Category::Lifecycle,
                                 Level::Info,
-                                "local state: {domain} removed outside this process, now {version} path={}",
+                                "local state: {domain} removed outside this service, now {version} path={}",
                                 path.display()
                             );
                         }
@@ -1133,8 +1454,13 @@ struct Staged {
     version: StoreVersion,
     /// Whether these bytes are already durable as the file's content.
     unchanged: bool,
-    /// Whether the file existed when the write was staged.
-    existed: bool,
+    /// The digest of what the file held when the write was decided (`None`
+    /// for no file): the last check before the rename compares against it.
+    precondition: Option<ContentDigest>,
+    /// Whether this service had made the file's current entry durable: if
+    /// not (no file yet, another writer's file, or an earlier write whose
+    /// directory chain did not finish), the whole chain is flushed.
+    durable_before: bool,
 }
 
 impl Shared {
@@ -1266,32 +1592,40 @@ impl Shared {
                 // and those queued behind it (accepted against that state),
                 // and read the file again.
                 let domain = key.domain();
-                let mut failed = vec![queued.request];
+                let mut failed = vec![Terminal::of(&queued.edit, queued.request)];
                 if let Some(store) = state.stores.get_mut(key) {
                     store.in_flight = None;
                     store.file = FileState::Cold;
-                    failed.extend(store.queue.drain(..).map(|queued| queued.request));
-                }
-                for request in failed {
-                    state.settle(
-                        key,
-                        request,
-                        Settlement::Failed(ErrorCode::Failed {
-                            domain,
-                            reason: FailureReason::Dirty,
-                        }),
-                        None,
+                    failed.extend(
+                        store
+                            .queue
+                            .drain(..)
+                            .map(|queued| Terminal::of(&queued.edit, queued.request)),
                     );
+                }
+                let settlement = Settlement::Failed(ErrorCode::Failed {
+                    domain,
+                    reason: FailureReason::Dirty,
+                });
+                let mut terminals = Vec::new();
+                for terminal in failed {
+                    if state.settle(key, terminal.request, settlement.clone(), None) {
+                        terminals.push(terminal);
+                    }
                 }
                 if !state.shutdown {
                     self.request_readback(&mut state, key);
                 }
+                drop(state);
                 host_log!(
                     Category::Lifecycle,
                     Level::Error,
                     "local state: writing {domain} panicked: {message}; the request failed and \
                      the store reads its file again"
                 );
+                for terminal in &terminals {
+                    self.terminal(terminal, &settlement, None);
+                }
             }
         }
     }
@@ -1315,11 +1649,61 @@ impl Shared {
         }
     }
 
+    /// One write, as one transaction under the file's [`files::WriteLock`]:
+    /// read the file, decide, stage and flush the bytes, check the file
+    /// once more, rename, flush the directory entries, read the file back.
+    /// Only a write whose bytes the file still holds at the end is
+    /// acknowledged `Completed`; a change by a writer that did not take the
+    /// lock settles it `Conflict`.
     fn write(&self, key: &StoreKey, queued: &Queued) {
         let domain = key.domain();
         let path = key.path(&self.root);
         let request = queued.request;
-        // The precondition: what the file holds now, read with no lock.
+        let _lock =
+            match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
+                self.state.lock().abandoned
+            }) {
+                Ok(lock) => lock,
+                Err(LockError::Abandoned) => {
+                    // The shutdown bound passed while it waited: it was settled
+                    // cancelled then.
+                    self.finish(
+                        key,
+                        queued,
+                        Settlement::Cancelled(Cancellation::Shutdown),
+                        false,
+                    );
+                    return;
+                }
+                Err(LockError::TimedOut) => {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Warn,
+                        "local state: {domain} write waited {:?} for another writer's lock \
+                     path={}; not written",
+                        files::LOCK_TIMEOUT,
+                        files::lock_path(&path).display()
+                    );
+                    self.finish(
+                        key,
+                        queued,
+                        Settlement::Failed(ErrorCode::Busy { domain }),
+                        false,
+                    );
+                    return;
+                }
+                Err(LockError::Io(error)) => {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Warn,
+                        "local state: {domain} write could not lock path={}: {error}",
+                        files::lock_path(&path).display()
+                    );
+                    self.finish(key, queued, io_failure(domain), false);
+                    return;
+                }
+            };
+        // The precondition: what the file holds now, under the lock.
         let read_at = DurableTimestamp::now();
         let read = files::read(key, &self.root, read_at);
         let staged = {
@@ -1336,8 +1720,9 @@ impl Shared {
                                 // The version space is spent: refuse, never wrap.
                                 self.finish(
                                     key,
-                                    request,
+                                    queued,
                                     Settlement::Failed(ErrorCode::Busy { domain }),
+                                    false,
                                 );
                                 return;
                             }
@@ -1347,7 +1732,7 @@ impl Shared {
                 }
                 Err(settlement) => {
                     drop(state);
-                    self.finish(key, request, settlement);
+                    self.finish(key, queued, settlement, false);
                     return;
                 }
             }
@@ -1357,42 +1742,65 @@ impl Shared {
             // write, and no commit to audit.
             self.finish(
                 key,
-                request,
+                queued,
                 Settlement::Completed(DurableReceipt::new(
                     queued.edit.identity().clone(),
                     staged.previous,
                     DurableTimestamp::now(),
                     Some(request),
                 )),
+                false,
             );
             return;
         }
-        if let Err(error) = self.publish(&path, &staged.bytes) {
-            host_log!(
-                Category::Lifecycle,
-                Level::Warn,
-                "local state: {domain} write failed path={}: {error}",
-                path.display()
-            );
-            self.finish(
-                key,
-                request,
-                Settlement::Failed(ErrorCode::Failed {
-                    domain,
-                    reason: FailureReason::Io,
-                }),
-            );
+        let mut refusal = None;
+        let published = self.publish(&path, &staged.bytes, || {
+            self.last_check(key, &path, staged.precondition)
+                .map_err(|check| {
+                    let error = std::io::Error::other(check.to_string());
+                    refusal = Some(check);
+                    error
+                })
+        });
+        if let Err(error) = published {
+            match refusal {
+                Some(LastCheck::Abandoned) => self.finish(
+                    key,
+                    queued,
+                    Settlement::Cancelled(Cancellation::Shutdown),
+                    false,
+                ),
+                Some(LastCheck::Changed) => {
+                    self.conflict_on_change(key, queued, &path, "while this write was staged");
+                }
+                Some(LastCheck::Io(_)) | None => {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Warn,
+                        "local state: {domain} write failed path={}: {error}",
+                        path.display()
+                    );
+                    self.finish(key, queued, io_failure(domain), false);
+                }
+            }
             return;
         }
-        // The bytes are flushed and renamed; now the directory entries: the
-        // whole chain when this write created the file (and maybe its
-        // directories), else the file's own directory.
-        let dirs = if staged.existed {
+        // Renamed. Now the directory entries: the whole chain up to the
+        // root's parent unless this service had already made the file's
+        // entry durable (a write that created the file, or one after an
+        // earlier write left the chain unfinished, flushes every link).
+        let dirs = if staged.durable_before {
             path.parent().map(Path::to_path_buf).into_iter().collect()
         } else {
             files::entry_chain(&path, &self.root)
         };
         let synced = self.sync_dirs(&dirs);
+        // Read it back: bytes the file no longer holds are not acknowledged.
+        let written = files::digest(&staged.bytes);
+        if files::current_digest(key, &self.root).ok() != Some(Some(written)) {
+            self.conflict_on_change(key, queued, &path, "while its directory entry was flushed");
+            return;
+        }
         {
             let mut state = self.state.lock();
             if let Some(store) = state.stores.get_mut(key) {
@@ -1401,7 +1809,7 @@ impl Shared {
                     version: staged.version,
                     at: staged.at,
                     snapshot: staged.snapshot,
-                    digest: Some(files::digest(&staged.bytes)),
+                    digest: Some(written),
                     durable: synced.is_ok(),
                     written_len: staged.bytes.len(),
                     rewrite: Rewrite::Lossless,
@@ -1416,14 +1824,7 @@ impl Shared {
                  the write is not durable path={}: {error}",
                 path.display()
             );
-            self.finish(
-                key,
-                request,
-                Settlement::Failed(ErrorCode::Failed {
-                    domain,
-                    reason: FailureReason::Io,
-                }),
-            );
+            self.finish(key, queued, io_failure(domain), false);
             return;
         }
         let now = DurableTimestamp::now();
@@ -1438,22 +1839,134 @@ impl Shared {
         ));
         self.finish(
             key,
-            request,
+            queued,
             Settlement::Completed(DurableReceipt::new(
                 identity,
                 staged.version,
                 now,
                 Some(request),
             )),
+            true,
         );
     }
 
-    fn finish(&self, key: &StoreKey, request: RequestId, settlement: WriteSettlement) {
-        let mut state = self.state.lock();
-        if let Some(store) = state.stores.get_mut(key) {
-            store.in_flight = None;
+    /// The check immediately before the rename, inside the publication:
+    /// the file still holds what the write was decided against, and the
+    /// shutdown bound has not passed. On success the write is marked as
+    /// being renamed into place.
+    fn last_check(
+        &self,
+        key: &StoreKey,
+        path: &Path,
+        precondition: Option<ContentDigest>,
+    ) -> Result<(), LastCheck> {
+        #[cfg(test)]
+        {
+            let hook = self.state.lock().hooks.publish.clone();
+            if let Some(hook) = hook {
+                hook(path);
+            }
         }
-        state.settle(key, request, settlement, None);
+        #[cfg(not(test))]
+        let _ = path;
+        if files::current_digest(key, &self.root).map_err(LastCheck::Io)? != precondition {
+            return Err(LastCheck::Changed);
+        }
+        let mut state = self.state.lock();
+        if state.abandoned {
+            return Err(LastCheck::Abandoned);
+        }
+        if let Some(in_flight) = state
+            .stores
+            .get_mut(key)
+            .and_then(|store| store.in_flight.as_mut())
+        {
+            in_flight.publishing = true;
+        }
+        Ok(())
+    }
+
+    /// A writer that does not take the lock changed the file during this
+    /// write: take what it left into the store (an outside change at a new
+    /// version) and settle the write as the conflict it is.
+    fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
+        let domain = key.domain();
+        let read_at = DurableTimestamp::now();
+        let read = files::read(key, &self.root, read_at);
+        let settlement = {
+            let mut state = self.state.lock();
+            state.adopt(key, read, read_at, path);
+            match state.stores.get(key).map(|store| &store.file) {
+                Some(FileState::Read(cached)) => Settlement::Failed(ErrorCode::Conflict {
+                    expected: queued.edit.expected().unwrap_or(queued.accepted_at),
+                    found: cached.version,
+                }),
+                Some(FileState::Rejected(rejection)) => Settlement::Failed(ErrorCode::Failed {
+                    domain,
+                    reason: rejection.reason,
+                }),
+                Some(FileState::Cold) | None => Settlement::Failed(ErrorCode::Failed {
+                    domain,
+                    reason: FailureReason::Dirty,
+                }),
+            }
+        };
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "local state: {domain} changed outside this service {when}; the write is not \
+             acknowledged and the file keeps the other writer's bytes path={}",
+            path.display()
+        );
+        self.finish(key, queued, settlement, false);
+    }
+
+    /// Settle the writer's edit, once, and log its terminal: an edit that
+    /// committed has its audit line already; one cancelled at the shutdown
+    /// bound has its terminal already.
+    fn finish(
+        &self,
+        key: &StoreKey,
+        queued: &Queued,
+        settlement: WriteSettlement,
+        committed: bool,
+    ) {
+        let mut state = self.state.lock();
+        let abandoned = state.abandoned;
+        let cancelled_at_bound = state
+            .stores
+            .get_mut(key)
+            .and_then(|store| store.in_flight.take())
+            .is_some_and(|in_flight| abandoned && !in_flight.publishing);
+        if cancelled_at_bound {
+            return;
+        }
+        if state.settle(key, queued.request, settlement.clone(), None) && !committed {
+            drop(state);
+            self.terminal(
+                &Terminal::of(&queued.edit, queued.request),
+                &settlement,
+                None,
+            );
+        }
+    }
+
+    /// Log one write's terminal line (and hand it to a test's hook).
+    fn terminal(
+        &self,
+        terminal: &Terminal,
+        settlement: &WriteSettlement,
+        successor: Option<RequestId>,
+    ) {
+        let (level, line) = terminal.line(settlement, successor);
+        host_log!(Category::Lifecycle, level, "{line}");
+        #[cfg(test)]
+        {
+            let hook = self.state.lock().hooks.terminal.clone();
+            if let Some(hook) = hook {
+                hook(&line);
+            }
+        }
     }
 
     fn sync_dirs(&self, dirs: &[PathBuf]) -> std::io::Result<()> {
@@ -1481,19 +1994,64 @@ impl Shared {
         }
     }
 
-    #[cfg(not(test))]
-    fn publish(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        vault::write_private_file(path, bytes)
+    /// The shutdown bound passed: settle what the writer has not begun to
+    /// rename into place, each with its terminal line. How many were
+    /// cancelled, and how many are being renamed.
+    fn abandon(&self) -> (usize, usize) {
+        let (terminals, publishing) = self.state.lock().abandon();
+        let cancelled = Settlement::Cancelled(Cancellation::Shutdown);
+        for terminal in &terminals {
+            self.terminal(terminal, &cancelled, None);
+        }
+        (terminals.len(), publishing)
     }
 
+    #[cfg(not(test))]
+    fn publish(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        check: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        vault::write_private_file_checked(path, bytes, check)
+    }
+
+    /// The real publication, unless a test replaced its rename: the hook
+    /// then runs after the last check, in place of the rename.
     #[cfg(test)]
-    fn publish(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    fn publish(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        check: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
         let hook = self.state.lock().hooks.write.clone();
         match hook {
-            Some(hook) => hook(path, bytes),
-            None => vault::write_private_file(path, bytes),
+            Some(hook) => {
+                check()?;
+                hook(path, bytes)
+            }
+            None => vault::write_private_file_checked(path, bytes, check),
         }
     }
+}
+
+/// Why the check before the rename stopped a write.
+#[derive(Debug, thiserror::Error)]
+enum LastCheck {
+    #[error("the file changed while the write was staged")]
+    Changed,
+    #[error("the service passed its shutdown bound")]
+    Abandoned,
+    #[error("the file could not be read before the rename: {0}")]
+    Io(std::io::Error),
+}
+
+fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
+    Settlement::Failed(ErrorCode::Failed {
+        domain,
+        reason: FailureReason::Io,
+    })
 }
 
 /// Decide `queued` against what the store holds now (after the
@@ -1582,8 +2140,42 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
                 CommitAction::LoadoutWrite,
             )
         }
-        DomainEdit::Preferences(_) | DomainEdit::Knowledge(_) => {
-            unreachable!("only loadouts and bank hints have a current file")
+        DomainEdit::Preferences(edit) => {
+            let rows = cached.snapshot.as_preferences().unwrap_or(&[]);
+            let mut document =
+                files::preference_document(rows).ok_or_else(|| schema_failure(domain))?;
+            if files::apply_preferences_edit(&mut document, edit.key(), edit.value()).is_none() {
+                // The value is JSON (admission checked); a nested key whose
+                // member is not an object cannot be written.
+                return Err(Settlement::Failed(ErrorCode::Validation {
+                    domain,
+                    reason: ValidationReason::Schema,
+                }));
+            }
+            let (next, unrepresentable) = files::preference_rows(&document);
+            if unrepresentable > 0 {
+                return Err(Settlement::Failed(ErrorCode::Validation {
+                    domain,
+                    reason: ValidationReason::TooLong,
+                }));
+            }
+            let bytes = files::preferences_bytes(&document).map_err(|_| schema_failure(domain))?;
+            if bytes.len() as u64 > files::MAX_PREFERENCES_BYTES && bytes.len() > cached.written_len
+            {
+                return Err(Settlement::Failed(ErrorCode::Validation {
+                    domain,
+                    reason: ValidationReason::TooLong,
+                }));
+            }
+            (
+                bytes,
+                LeaseSnapshot::preferences(next),
+                DurableTimestamp::now(),
+                CommitAction::PreferencesWrite,
+            )
+        }
+        DomainEdit::Knowledge(_) => {
+            unreachable!("knowledge has no current file, so no store admits it")
         }
     };
     let unchanged = cached.durable && cached.digest == Some(files::digest(&bytes));
@@ -1595,7 +2187,8 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
         previous: cached.version,
         version: cached.version,
         unchanged,
-        existed: cached.digest.is_some(),
+        precondition: cached.digest,
+        durable_before: cached.durable,
     })
 }
 
@@ -1638,7 +2231,10 @@ fn take_job(state: &mut State) -> Option<Job> {
         .map(|(key, _)| key.clone())?;
     let store = state.stores.get_mut(&key).expect("found above");
     let queued = store.queue.pop_front().expect("found above");
-    store.in_flight = Some(queued.request);
+    store.in_flight = Some(InFlight {
+        terminal: Terminal::of(&queued.edit, queued.request),
+        publishing: false,
+    });
     Some(Job::Write(key, queued))
 }
 
@@ -1654,6 +2250,7 @@ fn lease_of(identity: &DomainIdentity, cached: &Cached) -> Result<DomainLease, E
 fn empty_snapshot(key: &StoreKey) -> LeaseSnapshot {
     match key {
         StoreKey::Loadouts => LeaseSnapshot::loadouts(Vec::new()),
+        StoreKey::Preferences => LeaseSnapshot::preferences(Vec::new()),
         StoreKey::BankHint { .. } => {
             LeaseSnapshot::bank_hints(Vec::new()).expect("no rows meet the row rules")
         }
@@ -1661,10 +2258,10 @@ fn empty_snapshot(key: &StoreKey) -> LeaseSnapshot {
 }
 
 /// What an empty store's rows take as the service writes them: `[]` for
-/// loadouts.
+/// loadouts, `{}` for preferences.
 fn empty_len(key: &StoreKey) -> usize {
     match key {
-        StoreKey::Loadouts => 2,
+        StoreKey::Loadouts | StoreKey::Preferences => 2,
         StoreKey::BankHint { .. } => 0,
     }
 }

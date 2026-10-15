@@ -7533,10 +7533,16 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
         None,
         "hydrated with no file"
     );
+    // Another writer (an older build, a hand edit) saves a row after the
+    // service hydrated; the Start must read it again.
     let melee = api::loadout::Loadout::new("melee").with_slot("righthand", "Rune scimitar");
-    let mut form = script::LoadoutsStore::at(root.loadouts_file());
-    form.upsert(melee.clone());
-    form.save().unwrap();
+    vault::write_private_file(
+        &root.loadouts_file(),
+        serde_json::to_string_pretty(std::slice::from_ref(&melee))
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap();
 
     // The operator's compiled Start. It may refuse later (no game data
     // offline); the read happens before that.

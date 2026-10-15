@@ -312,7 +312,7 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
     let mut on = session.ui.session_log_file;
     if ui.checkbox("session log file", &mut on) {
         session.ui.session_log_file = on;
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
         let path = apply_session_log(on);
         session.log_pane.set_session_log_path(path);
     }

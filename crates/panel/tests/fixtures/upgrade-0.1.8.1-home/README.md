@@ -12,8 +12,13 @@ with `fixture-` and are not operator accounts.
 - Client source: `c539f24315775c71a2b8c79935ae86b155f446fd`.
 - Source/input archives:
   `.superpowers/release-0.1.9/tools/publish-0181/{source,inputs}.tar.gz`.
-- Generator: [`generate.rs`](generate.rs), copied without modification to
+- Generator: [`generate.rs`](generate.rs), copied to
   `crates/panel/examples/generate_upgrade_fixture.rs` in the extracted source.
+  The committed files came from the generator as first written, which built
+  the loadouts through the 0.1.8.1 loadouts store opened at a path. Since
+  T5.2 r3 that block writes the same wire shape as JSON (the form store no
+  longer opens a path); the array it prints is byte-identical to the
+  committed `loadouts.json`.
 - Command, run from that extracted source with the published inputs restored:
 
   ```text

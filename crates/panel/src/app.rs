@@ -1509,7 +1509,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.clone(), next);
-            crate::ui_state::save(&state.session.ui);
+            crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
@@ -1747,7 +1747,7 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
             .entry(user)
             .or_default()
             .insert(id.to_string(), !open);
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     open
 }
@@ -1782,7 +1782,7 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
                     let mut order = resolve_heading_order(&session.ui.section_order);
                     move_heading(&mut order, &from, id);
                     session.ui.section_order = order;
-                    crate::ui_state::save(&session.ui);
+                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2439,7 +2439,7 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
                     session.ui.script_category_order = order;
-                    crate::ui_state::save(&session.ui);
+                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2625,7 +2625,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
@@ -2756,7 +2756,7 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         }
     }
     if session.persist_ui {
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -3219,9 +3219,9 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     );
                 }
                 let save_result =
-                    crate::ui_state::save_at_checked(&session.walk_permissions_path, &session.ui);
-                let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
-                    &session.walk_permissions_path,
+                    crate::ui_state::save_to_checked(&session.preferences, &session.ui);
+                let routing_result = frontend_core::WalkGlobalsView::persist_changed(
+                    &session.preferences,
                     previous_permissions,
                     after_permissions,
                 );
@@ -3811,7 +3811,7 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 "Show parameters in rail",
                 &mut session.ui.show_parameters_rail,
             ) {
-                crate::ui_state::save(&session.ui);
+                crate::ui_state::save(&session.preferences, &session.ui);
             }
             ui.spacing();
             ui.text_wrapped(
@@ -4284,7 +4284,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     };
     if open != desired {
         session.ui.config_collapsed.insert(id.to_string(), !open);
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     if open {
         body(ui, session);
@@ -4310,7 +4310,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
         let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
         if ui.checkbox(*id, &mut visible) {
             crate::ui_state::set_panel_section_visible(&mut session.ui, id, visible);
-            crate::ui_state::save(&session.ui);
+            crate::ui_state::save(&session.preferences, &session.ui);
         }
     }
     ui.spacing();
@@ -4331,7 +4331,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
         session.ui.chrome = chrome;
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -4857,7 +4857,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.clone(), next);
-            crate::ui_state::save(&state.session.ui);
+            crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
@@ -6862,9 +6862,7 @@ mod parameter_options_tests {
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(
-            std::env::temp_dir().join(format!("panel-site-filter-{}.json", std::process::id())),
-        );
+        let loadouts = script::LoadoutsStore::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -6901,9 +6899,7 @@ mod parameter_options_tests {
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(
-            std::env::temp_dir().join(format!("panel-site-disabled-{}.json", std::process::id())),
-        );
+        let loadouts = script::LoadoutsStore::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -6933,10 +6929,7 @@ mod parameter_options_tests {
 
     #[test]
     fn preserved_only_priority_array_is_editable_for_removal() {
-        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "panel-priority-removal-{}.json",
-            std::process::id()
-        )));
+        let loadouts = script::LoadoutsStore::default();
         let schema = (script::quester::card::CARD.schema)();
         let priority = schema
             .iter()

@@ -899,6 +899,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/host-play/src/local_state/frontend.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/host-play/src/local_state_tests.rs",
       "owner": "T5"
     },

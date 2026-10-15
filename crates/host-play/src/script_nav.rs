@@ -99,7 +99,8 @@ impl ScriptRouteExclusions {
 pub(crate) struct NavBot {
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
-    pub(crate) walk_globals_store: Option<Arc<std::path::PathBuf>>,
+    /// The shared preferences each admission reads the globals from.
+    pub(crate) walk_globals_store: Option<super::local_state::Preferences>,
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,

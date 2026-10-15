@@ -110,7 +110,7 @@ impl Session {
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.ui.script_catalog_last_dir = Some(root.to_path_buf());
         if self.persist_ui {
-            crate::ui_state::save(&self.ui);
+            crate::ui_state::save(&self.preferences, &self.ui);
         }
         self.rs2b0t_catalog_open = false;
         Ok(n)
@@ -254,7 +254,7 @@ impl Session {
                 if let Some(parent) = path.parent() {
                     self.ui.script_load_last_dir = Some(parent.to_path_buf());
                     if self.persist_ui {
-                        crate::ui_state::save(&self.ui);
+                        crate::ui_state::save(&self.preferences, &self.ui);
                     }
                 }
                 self.script_load_open = false;
