@@ -107,8 +107,8 @@ use script::local_state::{SlotState, StatePort};
 mod files;
 mod frontend;
 
-use files::{ContentDigest, LockError, ReadDocument, ReadError, Rewrite, StoreKey};
-pub use files::{StateRoot, HINT_SCHEMA_VERSION};
+use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
+pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
 pub use frontend::{Preferences, ServiceLoadouts};
 
 /// How many edits of one operator store (loadouts, preferences) may wait
@@ -157,6 +157,11 @@ pub(crate) type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
 /// A test's witness of each terminal line, called where the line is logged.
 #[cfg(test)]
 pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// A test's witness of each preferences quarantine line (the operator's
+/// notice and the audit line), called where the line is logged.
+#[cfg(test)]
+pub(crate) type NoticeHook = Arc<dyn Fn(Level, &str) + Send + Sync>;
 
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
@@ -344,6 +349,7 @@ struct Hooks {
     sync: Option<SyncHook>,
     audit: Option<AuditHook>,
     terminal: Option<TerminalHook>,
+    notice: Option<NoticeHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -792,6 +798,12 @@ impl LocalStateService {
         self.shared.state.lock().hooks.terminal = Some(hook);
     }
 
+    /// Call `hook` with each preferences quarantine line where it is logged.
+    #[cfg(test)]
+    pub(crate) fn set_notice_hook(&self, hook: NoticeHook) {
+        self.shared.state.lock().hooks.notice = Some(hook);
+    }
+
     /// Wait `timeout` instead of [`SHUTDOWN_TIMEOUT`] when dropped.
     #[cfg(test)]
     pub(crate) fn set_shutdown_timeout(&self, timeout: Duration) {
@@ -1112,14 +1124,17 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
 }
 
 /// An upper bound of what `edit` adds to its file: a loadout upsert may
-/// add its row (one row, its printed bytes); nothing else grows a file
-/// past its bound (a hint's rows are capped by the hint itself).
+/// add its row (one row, its printed bytes), a rename replaces one (no
+/// row, its new printed bytes); nothing else grows a file past its bound
+/// (a hint's rows are capped by the hint itself).
 fn growth_of(edit: &DomainEdit) -> Result<Growth, ErrorCode> {
     let DomainEdit::Loadout(edit) = edit else {
         return Ok(Growth::default());
     };
-    let LoadoutOp::Upsert(loadout) = edit.op() else {
-        return Ok(Growth::default());
+    let (loadout, rows) = match edit.op() {
+        LoadoutOp::Upsert(loadout) => (loadout, 1),
+        LoadoutOp::Rename { loadout, .. } => (loadout, 0),
+        LoadoutOp::Remove { .. } => return Ok(Growth::default()),
     };
     let domain = LocalStateDomain::LoadoutsReferences;
     let bytes = files::row_bytes(loadout).map_err(|_| ErrorCode::Validation {
@@ -1132,7 +1147,7 @@ fn growth_of(edit: &DomainEdit) -> Result<Growth, ErrorCode> {
             reason: ValidationReason::TooLong,
         });
     }
-    Ok(Growth { rows: 1, bytes })
+    Ok(Growth { rows, bytes })
 }
 
 /// Refuse a submission past a budget or into a refused store, with one
@@ -1632,7 +1647,7 @@ impl Shared {
 
     fn readback(&self, key: &StoreKey) {
         let read_at = DurableTimestamp::now();
-        let read = files::read(key, &self.root, read_at);
+        let read = self.read_file(key, read_at, false);
         let path = key.path(&self.root);
         let mut state = self.state.lock();
         state.adopt(key, read, read_at, &path);
@@ -1646,6 +1661,132 @@ impl Shared {
                 }
                 _ => Readback::Idle,
             };
+        }
+    }
+
+    /// Read `key`'s file (`locked`: under its [`files::WriteLock`], which
+    /// this writer holds). A preferences file whose content is malformed
+    /// (not JSON, or JSON that is not an object) is quarantined first,
+    /// under that lock ([`Self::quarantine_preferences`]), and then read as
+    /// the fresh file it leaves. Every other refusal (owner, mode, size, an
+    /// I/O error, content the service cannot hold whole) stands, and the
+    /// file is left as it is.
+    fn read_file(
+        &self,
+        key: &StoreKey,
+        read_at: DurableTimestamp,
+        locked: bool,
+    ) -> Result<Option<ReadDocument>, ReadError> {
+        let read = files::read(key, &self.root, read_at);
+        if !matches!(key, StoreKey::Preferences)
+            || !matches!(&read, Err(error) if error.is_malformed())
+        {
+            return read;
+        }
+        let path = key.path(&self.root);
+        let _lock = if locked {
+            None
+        } else {
+            match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
+                self.state.lock().abandoned
+            }) {
+                Ok(lock) => Some(lock),
+                Err(error) => {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Warn,
+                        "local state: preferences file is malformed but could not be locked to \
+                         move it aside ({error:?}); it is left as it is path={}",
+                        path.display()
+                    );
+                    return read;
+                }
+            }
+        };
+        match self.quarantine_preferences(&path) {
+            Ok(()) => files::read(key, &self.root, read_at),
+            Err(error) => {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "local state: preferences file is malformed but could not be moved aside: \
+                     {error}; it is left as it is path={}",
+                    path.display()
+                );
+                read
+            }
+        }
+    }
+
+    /// Under the preferences file's lock: if `path` still holds malformed
+    /// content, keep its exact bytes in a new `<file>.corrupt-<time>`
+    /// beside it (flushed, and its directory entry flushed), then replace
+    /// the file with fresh, empty preferences, but only while it still
+    /// holds those bytes. Tells the operator (a warning) and audits the
+    /// quarantine (one info line naming both paths). A failure before the
+    /// copy is on disk leaves the file as it is.
+    fn quarantine_preferences(&self, path: &Path) -> std::io::Result<()> {
+        let Some(bytes) = files::corrupt_preferences(path)? else {
+            // Repaired or removed meanwhile: read it as it is.
+            return Ok(());
+        };
+        let quarantined = files::quarantine_copy(path, &bytes)?;
+        if let Some(dir) = path.parent() {
+            self.sync_dirs(&[dir.to_path_buf()])?;
+        }
+        let corrupt = files::digest(&bytes);
+        let fresh =
+            files::preferences_bytes(&serde_json::Map::new()).map_err(std::io::Error::other)?;
+        self.publish(path, &fresh, || {
+            let now = files::corrupt_preferences(path)?;
+            if now.as_deref().map(files::digest) == Some(corrupt) {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "the file changed while it was being moved aside",
+                ))
+            }
+        })
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "a copy is kept in {}, but the file was not replaced: {error}",
+                    quarantined.display()
+                ),
+            )
+        })?;
+        self.notice(
+            Level::Warn,
+            format!(
+                "local state: preferences file {} was not valid preferences JSON; its bytes are \
+                 kept in {} and fresh preferences were started",
+                path.display(),
+                quarantined.display()
+            ),
+        );
+        self.notice(
+            Level::Info,
+            format!(
+                "audit domain={} action=preferences-quarantine path={} quarantined={} at={}",
+                LocalStateDomain::Preferences,
+                path.display(),
+                quarantined.display(),
+                DurableTimestamp::now().unix_seconds()
+            ),
+        );
+        Ok(())
+    }
+
+    /// Log one quarantine line (and hand it to a test's hook).
+    fn notice(&self, level: Level, line: String) {
+        host_log!(Category::Lifecycle, level, "{line}");
+        #[cfg(test)]
+        {
+            let hook = self.state.lock().hooks.notice.clone();
+            if let Some(hook) = hook {
+                hook(level, &line);
+            }
         }
     }
 
@@ -1705,7 +1846,7 @@ impl Shared {
             };
         // The precondition: what the file holds now, under the lock.
         let read_at = DurableTimestamp::now();
-        let read = files::read(key, &self.root, read_at);
+        let read = self.read_file(key, read_at, true);
         let staged = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
@@ -1892,7 +2033,7 @@ impl Shared {
     fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
         let domain = key.domain();
         let read_at = DurableTimestamp::now();
-        let read = files::read(key, &self.root, read_at);
+        let read = self.read_file(key, read_at, true);
         let settlement = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, path);
@@ -2118,7 +2259,21 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
         }
         DomainEdit::Loadout(edit) => {
             let rows = cached.snapshot.as_loadouts().unwrap_or(&[]);
-            let next = files::apply_loadout_edit(rows, edit);
+            let next = files::apply_loadout_edit(rows, edit).map_err(|refusal| {
+                Settlement::Failed(match refusal {
+                    // The row the rename was written against is gone.
+                    RenameRefusal::MissingSource => ErrorCode::Conflict {
+                        expected: edit.expected().unwrap_or(cached.version),
+                        found: cached.version,
+                    },
+                    // Names key the rows: taking another row's name would
+                    // replace it.
+                    RenameRefusal::NameTaken => ErrorCode::Validation {
+                        domain,
+                        reason: ValidationReason::DuplicateId,
+                    },
+                })
+            })?;
             let bytes = files::loadouts_bytes(&next).map_err(|_| schema_failure(domain))?;
             // Admission projected an upper bound; this is the exact check.
             if next.len() > files::MAX_LOADOUT_ROWS && next.len() > rows.len() {

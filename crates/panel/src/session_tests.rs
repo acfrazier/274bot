@@ -3019,11 +3019,17 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     assert!(!session.ui.nav.allow_danger_zones);
 
-    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    // A refused file (larger than the bound; a malformed one would be moved
+    // aside and replaced with fresh preferences instead).
+    std::fs::write(
+        session.preferences.path(),
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .unwrap();
     session
         .preferences
         .reload()
-        .expect_err("corrupt preferences are refused");
+        .expect_err("refused preferences are refused");
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     assert!(!session.ui.nav.allow_danger_zones);
 }

@@ -2736,8 +2736,13 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     assert_eq!(prefs["nav"]["pause_script_on_manual_walk_abort"], true);
     assert!(!app.pause_script_on_manual_walk_abort_dirty);
 
-    // A corrupt preferences file refuses writes: the failure surfaces.
-    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    // A refused preferences file (larger than the bound) refuses writes:
+    // the failure surfaces.
+    std::fs::write(
+        session.preferences.path(),
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .unwrap();
     assert!(session.preferences.reload().is_err());
     app.pause_script_on_manual_walk_abort = false;
     app.pause_script_on_manual_walk_abort_dirty = true;
@@ -2758,10 +2763,14 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.clone());
-    // A corrupt preferences file refuses writes: the save fails, the source
-    // stays, and no reload starts.
+    // A refused preferences file (larger than the bound) refuses writes:
+    // the save fails, the source stays, and no reload starts.
     std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
-    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    std::fs::write(
+        session.preferences.path(),
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .unwrap();
     assert!(session.preferences.reload().is_err());
     let before = app.quester_paths.clone();
     app.quester_paths.enabled = true;

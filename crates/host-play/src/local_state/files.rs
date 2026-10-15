@@ -10,12 +10,16 @@
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it. A file whose content the service cannot
-//! represent whole (unknown fields, rows it cannot write back as read) is
-//! read but never rewritten ([`Rewrite::Refused`]), the same rule in every
-//! domain. What a write publishes is durable before it is acknowledged: the
-//! bytes are flushed in their staging file, renamed over the target, and
-//! then the directory entries are flushed.
+//! until a later read accepts it. The one exception is a preferences file
+//! whose content is malformed (not JSON, or JSON that is not an object):
+//! the service moves it aside under its lock, byte for byte, and starts
+//! fresh preferences ([`corrupt_preferences`], [`quarantine_copy`]). A file
+//! whose content the service cannot represent whole (unknown fields, rows
+//! it cannot write back as read) is read but never rewritten
+//! ([`Rewrite::Refused`]), the same rule in every domain. What a write
+//! publishes is durable before it is acknowledged: the bytes are flushed in
+//! their staging file, renamed over the target, and then the directory
+//! entries are flushed.
 //!
 //! Every writer this product runs holds the file's [`WriteLock`] across its
 //! whole read-check-publish-verify transaction, so two services (two
@@ -23,9 +27,9 @@
 //! interleave on one file.
 
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
@@ -100,7 +104,7 @@ pub(super) const MAX_LOADOUT_ROWS: usize = 512;
 pub(super) const MAX_LOADOUT_ROW_BYTES: usize = 64 * 1024;
 
 /// The largest preferences file read, and the largest the service writes.
-pub(super) const MAX_PREFERENCES_BYTES: u64 = 1024 * 1024;
+pub const MAX_PREFERENCES_BYTES: u64 = 1024 * 1024;
 
 /// The fields a schema-1 hint document carries. Any other field is content
 /// the service cannot write back, so a document carrying one is read but
@@ -264,6 +268,21 @@ impl ReadError {
             | ReadError::Schema { .. }
             | ReadError::Rows(_) => FailureReason::Schema,
             ReadError::Identity { .. } | ReadError::Scope { .. } => FailureReason::Identity,
+        }
+    }
+
+    /// Whether the read was refused for what the file says rather than for
+    /// the file itself: not UTF-8 or not JSON, or JSON of the wrong shape.
+    /// Never an owner, mode, size or I/O refusal (those read as
+    /// `PermissionDenied` or another I/O kind, not `InvalidData`).
+    pub(super) fn is_malformed(&self) -> bool {
+        match self {
+            ReadError::Json(_) | ReadError::NotAnArray | ReadError::NotAnObject => true,
+            ReadError::Io(error) => error.kind() == io::ErrorKind::InvalidData,
+            ReadError::Schema { .. }
+            | ReadError::Rows(_)
+            | ReadError::Identity { .. }
+            | ReadError::Scope { .. } => false,
         }
     }
 }
@@ -444,6 +463,103 @@ pub(super) fn current_digest(
     }
 }
 
+/// The bytes of the preferences file at `path` when its content is
+/// malformed (not UTF-8, not JSON, or JSON that is not an object): the
+/// file a reader may move aside. `None` when there is no file or it reads
+/// as preferences. A file refused for its owner, its mode or its size is
+/// an error here too, as it is to the reader: it is never moved.
+pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match read_private_file(path, MAX_PREFERENCES_BYTES) {
+        Ok(text) => Ok(match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(_)) => None,
+            _ => Some(text.into_bytes()),
+        }),
+        // Not UTF-8. The owner, mode and size checks passed before the
+        // bytes were read (they refuse as `PermissionDenied`), so these
+        // are the bytes to keep: read them as they are, from a regular
+        // file, within the bound.
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            let mut options = OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+            }
+            let file = options.open(path)?;
+            let refused = |what: &str| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{}: {what}", path.display()),
+                )
+            };
+            if !file.metadata()?.is_file() {
+                return Err(refused("not a regular file"));
+            }
+            let mut bytes = Vec::new();
+            file.take(MAX_PREFERENCES_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > MAX_PREFERENCES_BYTES {
+                return Err(refused(&format!(
+                    "larger than {MAX_PREFERENCES_BYTES} bytes"
+                )));
+            }
+            Ok(Some(bytes))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// How many quarantine names one second offers before giving up.
+const QUARANTINE_NAMES: u32 = 100;
+
+/// Keep `bytes`, the malformed content of `path`, in a new file beside it,
+/// `<name>.corrupt-<unix seconds>` (`-<n>` added while that name is
+/// taken): never over an existing file, read back to be sure it holds
+/// exactly `bytes`, and flushed. The caller flushes the directory entry
+/// before it replaces `path`. The quarantine's path.
+pub(super) fn quarantine_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
+        .to_string_lossy()
+        .into_owned();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    for attempt in 0..QUARANTINE_NAMES {
+        let candidate = path.with_file_name(match attempt {
+            0 => format!("{name}.corrupt-{stamp}"),
+            n => format!("{name}.corrupt-{stamp}-{n}"),
+        });
+        match vault::create_private_file(&candidate, bytes) {
+            Ok(()) => {
+                let mut file = File::open(&candidate)?;
+                let mut held = Vec::with_capacity(bytes.len());
+                (&mut file)
+                    .take(bytes.len() as u64 + 1)
+                    .read_to_end(&mut held)?;
+                if held != bytes {
+                    return Err(io::Error::other(format!(
+                        "{}: the copy does not hold the file's bytes",
+                        candidate.display()
+                    )));
+                }
+                file.sync_all()?;
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("{name}.corrupt-{stamp}: no free name"),
+    ))
+}
+
 /// The bytes a hint write publishes: the schema-1 document, stamped with
 /// the store's content scope.
 pub(super) fn hint_bytes(
@@ -490,11 +606,25 @@ pub(super) fn row_bytes(row: &Loadout) -> Result<usize, serde_json::Error> {
     Ok(serde_json::to_string_pretty(std::slice::from_ref(row))?.len() - 2)
 }
 
+/// Why [`apply_loadout_edit`] refused a rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RenameRefusal {
+    /// No row is called the rename's `from`.
+    MissingSource,
+    /// Another row already has the new name.
+    NameTaken,
+}
+
 /// Apply `edit` to `rows`: an upsert replaces the row of the same name or
-/// appends; a removal drops the row of that name. A removal that names no
-/// row leaves the rows as they are, and the write settles as the
-/// idempotent no-op it is.
-pub(super) fn apply_loadout_edit(rows: &[Loadout], edit: &LoadoutEdit) -> Vec<Loadout> {
+/// appends; a removal drops the row of that name; a rename replaces the
+/// row called `from` where it stands. A removal that names no row leaves
+/// the rows as they are, and the write settles as the idempotent no-op it
+/// is. A rename never inserts a row: one whose source is gone, or whose
+/// new name another row has, is refused and nothing changes.
+pub(super) fn apply_loadout_edit(
+    rows: &[Loadout],
+    edit: &LoadoutEdit,
+) -> Result<Vec<Loadout>, RenameRefusal> {
     let mut next = rows.to_vec();
     match edit.op() {
         LoadoutOp::Upsert(loadout) => {
@@ -505,8 +635,18 @@ pub(super) fn apply_loadout_edit(rows: &[Loadout], edit: &LoadoutEdit) -> Vec<Lo
             }
         }
         LoadoutOp::Remove { name } => next.retain(|row| row.name != *name),
+        LoadoutOp::Rename { from, loadout } => {
+            let at = next
+                .iter()
+                .position(|row| row.name == *from)
+                .ok_or(RenameRefusal::MissingSource)?;
+            if next.iter().any(|row| row.name == loadout.name) {
+                return Err(RenameRefusal::NameTaken);
+            }
+            next[at] = loadout.clone();
+        }
     }
-    next
+    Ok(next)
 }
 
 /// One preferences document (`panel-ui.json`, a JSON object) as rows. Each

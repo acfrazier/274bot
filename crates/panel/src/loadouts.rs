@@ -53,9 +53,9 @@ fn position_of(session: &Session, name: &str) -> Option<usize> {
         .position(|row| row.name == name)
 }
 
-/// A save landed: the form now holds exactly the rows the store holds, and
-/// a renamed row moved to the end of that list, so the saved row is
-/// selected by its name, not by the index it had.
+/// A save landed: the form now holds exactly the rows the store holds, so
+/// the saved row is selected by its name, not by the index it had (a new
+/// row is appended; a renamed one keeps its place).
 fn select_saved(session: &mut Session, name: &str) {
     if let Some(index) = position_of(session, name) {
         session.loadouts_sel = index;
@@ -696,10 +696,11 @@ mod tests {
         drop(fail_dir);
     }
 
-    /// A rename is written as a new row, which the store appends: the saved
-    /// row has a new index, and the form follows it by name.
+    /// A rename replaces the row where it stands (T5.2 r4): the saved row
+    /// keeps its index, in the form and in the file, and the form follows
+    /// it by name.
     #[test]
-    fn renamed_row_moves_last_and_stays_selected_by_name() {
+    fn renamed_row_keeps_its_place_and_stays_selected_by_name() {
         let (mut session, dir) = session_with(vec![
             Loadout::new("melee").with_carry("Lobster", 8),
             Loadout::new("range"),
@@ -707,17 +708,17 @@ mod tests {
         ]);
         session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
         assert!(save_draft(&mut session));
-        assert_eq!(session.loadouts.names(), ["range", "tank", "melee2"]);
-        assert_eq!(session.loadouts_sel, 2, "selected by name, not old index");
+        assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
+        assert_eq!(session.loadouts_sel, 0);
         let draft = session.loadouts_draft.as_ref().unwrap();
         assert_eq!(draft.name, "melee2");
         assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
-        assert_eq!(store_in(&dir).names(), ["range", "tank", "melee2"]);
+        assert_eq!(store_in(&dir).names(), ["melee2", "range", "tank"]);
 
-        // The next save writes the renamed row, not the one now at index 0.
+        // The next save writes the renamed row, not another one.
         session.loadouts_draft.as_mut().unwrap().carry[0].qty = 9;
         assert!(save_draft(&mut session));
-        assert_eq!(session.loadouts.names(), ["range", "tank", "melee2"]);
+        assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
         assert_eq!(session.loadouts.get("melee2").unwrap().carry[0].qty, 9);
         assert!(session.loadouts.get("range").unwrap().carry.is_empty());
     }

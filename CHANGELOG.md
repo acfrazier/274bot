@@ -8,14 +8,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 ### Saved state
 
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
-  read (damaged, from another version, for another account, larger than
-  its limit, or writable by other users) is now left untouched and named in
-  the log with the reason. It used to be treated as empty and overwritten at
-  the next save (a damaged `panel-ui.json` used to be moved aside to
-  `panel-ui.json.corrupt-<time>`); now preference saves fail with a message
-  until you repair or remove the file. A JavaScript script Start is refused,
-  with the file and the reason, while `loadouts.json` can't be read; a
-  Quester stops the Path that needs it.
+  read (from another version, for another account, larger than its limit,
+  writable by other users, or a damaged bank hint or `loadouts.json`) is now
+  left untouched and named in the log with the reason. It used to be
+  treated as empty and overwritten at the next save. A JavaScript script
+  Start is refused, with the file and the reason, while `loadouts.json`
+  can't be read; a Quester stops the Path that needs it.
+- A damaged `panel-ui.json` (not JSON, or JSON that isn't an object) is
+  still moved aside to `panel-ui.json.corrupt-<time>` and your preferences
+  start fresh, as before. Now this happens as soon as 274bot reads the
+  file, the copy keeps exactly the damaged file's bytes and is on disk
+  before the file is replaced, and the log shows a warning and an audit
+  line naming the copy. A `panel-ui.json` refused for its permissions or
+  size, or from another version, is never moved aside: preference saves
+  fail with a message until you repair or remove it.
 - A saved file holding something this version can't write back (a field it
   doesn't know in a bank hint, a loadout row it can't read, a preference it
   can't hold) is read but never rewritten, so nothing in it is lost.
@@ -26,9 +32,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   through the same saving service as the bots, so a form save and a bot's
   save can no longer overwrite each other. If the loadouts changed since
   the window loaded them (another 274bot on the same home folder), the save
-  says so and keeps your edit for another try. A renamed loadout moves to
-  the end of the list, and renaming a loadout to another loadout's name is
-  refused (it used to leave two loadouts with one name).
+  says so and keeps your edit for another try. Renaming a loadout to
+  another loadout's name is refused with "A loadout named "…" already
+  exists." (it used to leave two loadouts with one name).
+- Renaming a loadout saves it in one step, in its place in the list: a
+  failed save leaves the loadout saved under its old name, never lost.
 - Two 274bot processes on the same home folder take turns writing each
   saved file, and a save is reported done only when the file still holds it
   after it reached the disk: a change by another program in the meantime is

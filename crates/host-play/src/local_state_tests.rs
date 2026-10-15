@@ -2124,3 +2124,345 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
     assert_eq!(names, ["slot-row", "form-row"]);
     assert_eq!(form.names(), ["slot-row", "form-row"]);
 }
+
+/// T5.2 r4 (Sol r3 F1, `review_r3_sol::rename_failure_must_not_delete_the_saved_loadout`
+/// made permanent): a rename through the service-backed form never leaves
+/// the file without the loadout. Whichever file publication of the save
+/// fails, the file holds the row under its old name (the save failed and
+/// nothing was written) or under its new one, with its gear, in its place.
+/// Before r4 a rename was a removal then an upsert, two publications: a
+/// failure of the second left neither name on disk.
+#[test]
+fn a_failed_rename_never_loses_the_saved_loadout() {
+    for failing in 0..2 {
+        let scratch = IsolatedEnv::enter(&format!("local-state-r4-rename-failure-{failing}"));
+        let root = StateRoot::new(scratch.home.join(".274bot"));
+        let path = root.loadouts_file();
+        let original = Loadout::new("original").with_carry("Lobster", 8);
+        write_loadouts(&path, &[original.clone(), Loadout::new("other")]);
+        let before = std::fs::read(&path).unwrap();
+        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+        let mut editor = form(&service);
+        let writes = AtomicUsize::new(0);
+        service.set_write_hook(Arc::new(move |path, bytes| {
+            if writes.fetch_add(1, Ordering::SeqCst) == failing {
+                return Err(std::io::Error::other("publication fails (disk full)"));
+            }
+            vault::write_private_file(path, bytes)
+        }));
+        let mut renamed = original.clone();
+        renamed.name = "renamed".into();
+        assert!(editor.replace_at(0, renamed.clone()));
+        let saved = editor.save();
+        if saved.is_err() {
+            // Both frontends discard the form's unsaved rows on a failure.
+            editor.discard();
+        }
+        let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        match &saved {
+            Err(error) => {
+                assert_eq!(
+                    std::fs::read(&path).unwrap(),
+                    before,
+                    "publication {failing} failed ({error}): the file is untouched"
+                );
+                assert_eq!(editor.names(), ["original", "other"]);
+            }
+            Ok(()) => {
+                assert_eq!(
+                    rows,
+                    [renamed.clone(), Loadout::new("other")],
+                    "publication {failing}: the renamed row keeps its gear and its place"
+                );
+                assert_eq!(editor.names(), ["renamed", "other"]);
+            }
+        }
+        assert!(
+            rows.contains(&original) || rows.contains(&renamed),
+            "publication {failing}: a failed rename deleted the only persisted copy: {rows:?}"
+        );
+    }
+}
+
+/// T5.2 r4 (F0 amendment 2): a rename edit replaces its row in place in
+/// one publication, with one audit. A source that is gone is a conflict
+/// and a name another row has is a duplicate: both are refused when the
+/// edit is decided, and nothing is written or inserted.
+#[test]
+fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
+    let scratch = IsolatedEnv::enter("local-state-r4-rename-edit");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    write_loadouts(
+        &path,
+        &[
+            Loadout::new("melee").with_carry("Lobster", 8),
+            Loadout::new("range"),
+            Loadout::new("tank"),
+        ],
+    );
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let audits = audits(&service);
+    let rename = |from: &str, to: Loadout| {
+        DomainEdit::Loadout(LoadoutEdit::rename(loadouts_identity(), None, from, to).unwrap())
+    };
+    let names = || {
+        let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        rows.into_iter().map(|row| row.name).collect::<Vec<_>>()
+    };
+    assert!(service.readback_lease(&loadouts_identity(), WAIT).is_ok());
+
+    let moved = Loadout::new("melee2").with_carry("Lobster", 9);
+    completed(
+        &service,
+        request(service.submit(rename("melee", moved.clone()))),
+    );
+    assert_eq!(names(), ["melee2", "range", "tank"]);
+    assert_eq!(audits.lock().unwrap().len(), 1, "one rename, one write");
+
+    let bytes = std::fs::read(&path).unwrap();
+    let taken = request(service.submit(rename("range", Loadout::new("tank"))));
+    assert_eq!(
+        settlement(&service, taken),
+        Settlement::Failed(ErrorCode::Validation {
+            domain: LocalStateDomain::LoadoutsReferences,
+            reason: ValidationReason::DuplicateId,
+        })
+    );
+    let gone = request(service.submit(rename("melee", Loadout::new("again"))));
+    assert!(
+        matches!(
+            settlement(&service, gone),
+            Settlement::Failed(ErrorCode::Conflict { .. })
+        ),
+        "a rename of a row that is gone conflicts and inserts nothing"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing written");
+    assert_eq!(audits.lock().unwrap().len(), 1);
+}
+
+/// Every preferences quarantine line the service logs, with its level.
+fn quarantine_lines(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<(Level, String)>>> {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    service.set_notice_hook(Arc::new(move |level, line| {
+        sink.lock().unwrap().push((level, line.to_string()))
+    }));
+    seen
+}
+
+/// The names beside `path` that start with its name, except the lock.
+fn siblings(path: &std::path::Path) -> Vec<String> {
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let mut found: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|entry| entry.starts_with(&name) && *entry != format!("{name}.lock"))
+        .collect();
+    found.sort();
+    found
+}
+
+/// A preferences service on its own root under `scratch`.
+fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
+    let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    LocalStateService::open(
+        root,
+        &[LocalStateDomain::Preferences],
+        Arc::new(RequestIdMinter::new()),
+    )
+    .preferences()
+}
+
+/// T5.2 r4 (the pre-T5.2 recovery, made safe): a preferences file whose
+/// content is malformed (not JSON, not UTF-8, JSON that is not an object)
+/// is moved aside to `panel-ui.json.corrupt-<time>` holding exactly its
+/// bytes, flushed with its directory entry before the file is replaced
+/// with fresh preferences; the operator is told (a warning) and one info
+/// audit line names the quarantine. Preferences then read and write again.
+#[test]
+fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh() {
+    let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine");
+    for (case, bytes) in [
+        ("not-json", b"{not valid json".to_vec()),
+        ("not-utf8", vec![b'{', 0xff, 0xfe, b'}']),
+        ("not-an-object", b"[1, 2, 3]".to_vec()),
+    ] {
+        let preferences = preferences_at(&scratch, case);
+        let path = preferences.path();
+        write_private(&path, &bytes);
+        let notices = quarantine_lines(preferences.service());
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let synced = Arc::clone(&order);
+        preferences.service().set_sync_hook(Arc::new(move |dir| {
+            synced
+                .lock()
+                .unwrap()
+                .push(format!("sync {}", dir.display()));
+            files::sync_directory(dir)
+        }));
+        let written = Arc::clone(&order);
+        preferences
+            .service()
+            .set_write_hook(Arc::new(move |path, bytes| {
+                written
+                    .lock()
+                    .unwrap()
+                    .push(format!("write {}", path.display()));
+                vault::write_private_file(path, bytes)
+            }));
+
+        let document = preferences.reload().expect(case);
+        assert!(document.is_empty(), "{case}: fresh preferences");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}", "{case}");
+        let found = siblings(&path);
+        assert_eq!(found.len(), 2, "{case}: {found:?}");
+        assert!(
+            found[1].starts_with("panel-ui.json.corrupt-"),
+            "{case}: {found:?}"
+        );
+        let quarantined = path.with_file_name(&found[1]);
+        assert_eq!(
+            std::fs::read(&quarantined).unwrap(),
+            bytes,
+            "{case}: the quarantine holds the exact bytes"
+        );
+        assert_eq!(
+            *order.lock().unwrap(),
+            [
+                format!("sync {}", path.parent().unwrap().display()),
+                format!("write {}", path.display()),
+            ],
+            "{case}: the quarantine's entry is flushed before the file is replaced"
+        );
+        let notices = notices.lock().unwrap().clone();
+        assert_eq!(notices.len(), 2, "{case}: {notices:?}");
+        assert_eq!(notices[0].0, Level::Warn, "{case}: the operator's notice");
+        assert!(
+            notices[0].1.contains(&quarantined.display().to_string()),
+            "{case}: {notices:?}"
+        );
+        assert_eq!(notices[1].0, Level::Info, "{case}: the audit line");
+        assert!(
+            notices[1]
+                .1
+                .starts_with("audit domain=preferences action=preferences-quarantine"),
+            "{case}: {notices:?}"
+        );
+        assert!(
+            notices[1]
+                .1
+                .contains(&format!("quarantined={}", quarantined.display())),
+            "{case}: {notices:?}"
+        );
+
+        preferences
+            .set("map_bake", serde_json::json!("always"))
+            .expect(case);
+        assert_eq!(preferences.value("map_bake").unwrap(), "always");
+        assert_eq!(std::fs::read(&quarantined).unwrap(), bytes, "{case}: kept");
+    }
+}
+
+/// T5.2 r4: the quarantine runs under the preferences file's write lock:
+/// while another writer holds it, the malformed file stays where it is.
+#[test]
+fn a_preferences_quarantine_waits_for_the_files_lock() {
+    let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine-lock");
+    let preferences = preferences_at(&scratch, "locked");
+    let path = preferences.path();
+    let bytes = b"{not valid json".to_vec();
+    write_private(&path, &bytes);
+    let lock = files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap();
+    let reader = {
+        let preferences = preferences.clone();
+        std::thread::spawn(move || preferences.reload().map(|document| document.len()))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "not moved under another's lock"
+    );
+    assert_eq!(siblings(&path), ["panel-ui.json"]);
+    drop(lock);
+    assert_eq!(reader.join().unwrap().unwrap(), 0);
+    let found = siblings(&path);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(
+        std::fs::read(path.with_file_name(&found[1])).unwrap(),
+        bytes
+    );
+}
+
+/// T5.2 r4: only malformed content is quarantined. A preferences file
+/// refused for the file itself (its mode, its size) or holding what this
+/// build cannot hold whole (another version's members) is never moved or
+/// replaced: reads or writes refuse visibly, every byte stays, and no
+/// quarantine file appears.
+#[test]
+fn preferences_refused_for_size_or_foreign_content_are_never_quarantined() {
+    let scratch = IsolatedEnv::enter("local-state-r4-preferences-refused");
+
+    // Larger than the bound (and not JSON either): refused for its size.
+    let preferences = preferences_at(&scratch, "oversize");
+    let path = preferences.path();
+    let oversize = vec![b'x'; MAX_PREFERENCES_BYTES as usize + 1];
+    write_private(&path, &oversize);
+    let notices = quarantine_lines(preferences.service());
+    assert!(preferences.reload().is_err(), "oversize is refused");
+    assert!(preferences
+        .set("map_bake", serde_json::json!("always"))
+        .is_err());
+    assert!(std::fs::read(&path).unwrap() == oversize, "oversize kept");
+    assert_eq!(siblings(&path), ["panel-ui.json"]);
+    assert!(notices.lock().unwrap().is_empty());
+
+    // Another version's document: valid JSON, with a schema marker and a
+    // member this build cannot hold as a row. Read, never rewritten.
+    let preferences = preferences_at(&scratch, "foreign");
+    let path = preferences.path();
+    let foreign = br#"{"schema_version":99,"last_focus":"alice","nav.v2":{"zones":"all"}}"#;
+    write_private(&path, foreign);
+    let notices = quarantine_lines(preferences.service());
+    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+    assert!(preferences
+        .set("map_bake", serde_json::json!("always"))
+        .is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), foreign, "foreign kept");
+    assert_eq!(siblings(&path), ["panel-ui.json"]);
+    assert!(notices.lock().unwrap().is_empty());
+}
+
+/// T5.2 r4: a preferences file refused for its permissions is never
+/// quarantined, whatever it holds: group/other-writable or unreadable,
+/// even with malformed content, it is refused and keeps every byte.
+#[cfg(unix)]
+#[test]
+fn preferences_refused_for_permissions_are_never_quarantined() {
+    if running_as_root() {
+        return;
+    }
+    let scratch = IsolatedEnv::enter("local-state-r4-preferences-permissions");
+    for mode in [0o666, 0o000] {
+        let preferences = preferences_at(&scratch, &format!("mode-{mode:o}"));
+        let path = preferences.path();
+        let bytes = b"{not valid json".to_vec();
+        write_private(&path, &bytes);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let notices = quarantine_lines(preferences.service());
+        let refused = preferences.reload();
+        assert!(refused.is_err(), "mode {mode:o}: refused");
+        assert!(
+            preferences
+                .set("map_bake", serde_json::json!("always"))
+                .is_err(),
+            "mode {mode:o}"
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "mode {mode:o}: kept");
+        assert_eq!(siblings(&path), ["panel-ui.json"], "mode {mode:o}");
+        assert!(notices.lock().unwrap().is_empty(), "mode {mode:o}");
+    }
+}

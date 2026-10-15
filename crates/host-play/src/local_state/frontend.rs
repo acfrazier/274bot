@@ -19,7 +19,7 @@ use api::identity::Settlement;
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, DurableReceipt, ErrorCode,
     LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, PreferencesEdit, StoreVersion,
-    SubmitReceipt, MAX_PREF_VALUE_BYTES,
+    SubmitReceipt, ValidationReason, MAX_PREF_VALUE_BYTES,
 };
 use parking_lot::Mutex;
 use script::local_state::StatePort;
@@ -196,6 +196,7 @@ impl Preferences {
                     .map_err(|error| self.wrap(error))?
                 {
                     Settled::Durable(receipt) => expected = receipt.version(),
+                    Settled::Refused(code) => return Err(self.error(code)),
                     Settled::Conflict(code) => {
                         conflict = Some(code);
                         conflicted = true;
@@ -304,7 +305,8 @@ fn preference_edits(
 /// The operator loadouts a frontend's form edits ([`script::LoadoutsStore`]
 /// over this backing): loads read the file again on the writer thread, and
 /// saves are typed edits against the version the form loaded, each
-/// durable before the next.
+/// durable before the next. A rename is one edit, so the row is replaced
+/// in place in one write and never lost between two.
 pub struct ServiceLoadouts {
     service: Arc<LocalStateService>,
     identity: DomainIdentity,
@@ -342,6 +344,10 @@ impl LoadoutsBacking for ServiceLoadouts {
     ) -> Result<LoadoutsBaseline, LoadoutsSaveError> {
         let mut expected = expected;
         for op in ops {
+            let renamed_to = match &op {
+                LoadoutOp::Rename { loadout, .. } => Some(loadout.name.clone()),
+                LoadoutOp::Upsert(_) | LoadoutOp::Remove { .. } => None,
+            };
             let edit = match op {
                 LoadoutOp::Upsert(loadout) => {
                     LoadoutEdit::upsert(self.identity.clone(), Some(expected), loadout)
@@ -349,12 +355,29 @@ impl LoadoutsBacking for ServiceLoadouts {
                 LoadoutOp::Remove { name } => {
                     LoadoutEdit::remove(self.identity.clone(), Some(expected), &name)
                 }
+                LoadoutOp::Rename { from, loadout } => {
+                    LoadoutEdit::rename(self.identity.clone(), Some(expected), &from, loadout)
+                }
             }
             .map_err(|code| LoadoutsSaveError::Failed(self.describe(code)))?;
             match settle(&self.service, DomainEdit::Loadout(edit))
                 .map_err(|error| LoadoutsSaveError::Failed(self.describe(error)))?
             {
                 Settled::Durable(receipt) => expected = receipt.version(),
+                Settled::Refused(code) => {
+                    // A rename onto a name another row has: the editors
+                    // refuse that first, so that row is another writer's.
+                    return Err(LoadoutsSaveError::Failed(match (code, renamed_to) {
+                        (
+                            ErrorCode::Validation {
+                                reason: ValidationReason::DuplicateId,
+                                ..
+                            },
+                            Some(name),
+                        ) => format!("A loadout named \"{name}\" already exists."),
+                        (code, _) => self.describe(code),
+                    }));
+                }
                 Settled::Conflict(code) => {
                     let latest = self.load().map_err(LoadoutsSaveError::Failed)?;
                     return Err(LoadoutsSaveError::Conflict {
@@ -379,29 +402,27 @@ fn baseline_of(lease: &DomainLease) -> LoadoutsBaseline {
     }
 }
 
-/// How a frontend's write ended, short of an error.
+/// How a frontend's write ended, short of a failure to settle it.
 enum Settled {
     Durable(DurableReceipt),
     /// Another writer changed the store first: retry against what it holds.
     Conflict(ErrorCode),
+    /// The service refused the edit, at submission or when it decided it.
+    Refused(ErrorCode),
 }
 
 /// Submit `edit` and wait, bounded, for its terminal.
 fn settle(service: &LocalStateService, edit: DomainEdit) -> io::Result<Settled> {
     let request = match service.submit(edit) {
         SubmitReceipt::Accepted { request } => request,
-        SubmitReceipt::Refused(code) => {
-            return Err(io::Error::new(error_kind(code), code.to_string()));
-        }
+        SubmitReceipt::Refused(code) => return Ok(Settled::Refused(code)),
     };
     match service.wait_request(request, FRONTEND_TIMEOUT) {
         RequestState::Settled(Settlement::Completed(receipt)) => Ok(Settled::Durable(receipt)),
         RequestState::Settled(Settlement::Failed(code @ ErrorCode::Conflict { .. })) => {
             Ok(Settled::Conflict(code))
         }
-        RequestState::Settled(Settlement::Failed(code)) => {
-            Err(io::Error::new(error_kind(code), code.to_string()))
-        }
+        RequestState::Settled(Settlement::Failed(code)) => Ok(Settled::Refused(code)),
         RequestState::Settled(Settlement::Cancelled(why)) => Err(io::Error::new(
             io::ErrorKind::Interrupted,
             format!("the write was cancelled ({why:?})"),

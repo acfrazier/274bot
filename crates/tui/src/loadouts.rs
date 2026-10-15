@@ -55,8 +55,8 @@ impl<'a> LoadoutsPane<'a> {
         }
     }
 
-    /// Re-select the saved row by name: the store writes a rename as a new
-    /// row, so it moves to the end of the list.
+    /// Re-select the saved row by name: a new row is appended, a renamed
+    /// one keeps its place.
     fn select_saved(&mut self, name: &str) {
         if let Some(index) = self
             .store
