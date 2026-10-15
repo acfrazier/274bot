@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -107,6 +107,10 @@ impl std::fmt::Display for RelogParkReason {
     }
 }
 
+/// Maximum unconsumed session boundaries per slot. Overflow drops the oldest
+/// boundary and reports its count with the next consuming read.
+const SESSION_BOUNDARY_LIMIT: usize = 32;
+
 /// The frozen mailbox, the one currently running handshake, and owner-clock
 /// evidence share one lock. Posting an invalidating row takes its cancel
 /// handle under this lock and fires it only after dropping the lock.
@@ -116,9 +120,10 @@ struct SlotLifecycle {
     last_session: Option<SessionKey>,
     scene_ready: bool,
     latest_event: Option<Event<SessionEventOut>>,
-    /// A boundary event remains available until a consumer takes it, even
-    /// when a later slot event changes the latest status.
-    pending_session_end: Option<Event<SessionEventOut>>,
+    /// Bounded, chronological unconsumed session boundaries. Overflow is
+    /// counted separately rather than silently replacing an unread boundary.
+    pending_session_ends: VecDeque<Event<SessionEventOut>>,
+    missed_session_ends: u64,
     last_queue: Option<SessionEventOut>,
     attempt: Option<LoginCancel>,
     unexpected_logout_times: [Option<Instant>; UNEXPECTED_LOGOUT_THRESHOLD],
@@ -139,12 +144,12 @@ impl SlotLifecycle {
                 .observe(key, &payload)
                 .expect("owner stamped current session");
             let event = Event::new(Scope::Session(key), None, payload);
-            if matches!(payload, SessionEventOut::SessionEnded { .. })
-                && self.pending_session_end.is_none()
-            {
-                // The consumer takes the oldest unread boundary. The latest
-                // view still reports the current session's event.
-                self.pending_session_end = Some(event.clone());
+            if matches!(payload, SessionEventOut::SessionEnded { .. }) {
+                if self.pending_session_ends.len() == SESSION_BOUNDARY_LIMIT {
+                    self.pending_session_ends.pop_front();
+                    self.missed_session_ends = self.missed_session_ends.saturating_add(1);
+                }
+                self.pending_session_ends.push_back(event.clone());
             }
             self.latest_event = Some(event);
         }
@@ -302,7 +307,8 @@ impl SlotArm {
                 last_session: None,
                 scene_ready: false,
                 latest_event: None,
-                pending_session_end: None,
+                pending_session_ends: VecDeque::new(),
+                missed_session_ends: 0,
                 last_queue: None,
                 attempt: None,
                 unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
@@ -559,22 +565,27 @@ impl SlotArm {
     }
 
     /// The most recently published event, including a newer session's exit.
-    /// Consumers that must not miss a boundary use `take_lifecycle_event`.
+    /// Consumers requiring ordered boundaries and overflow accounting use
+    /// `take_lifecycle_event`.
     pub fn latest_lifecycle_event(&self) -> Option<Event<SessionEventOut>> {
         self.lifecycle.lock().latest_event.clone()
     }
 
-    /// Consume the oldest unread session boundary before the latest
-    /// replaceable status event. At most one of each is retained.
-    pub fn take_lifecycle_event(&self) -> Option<Event<SessionEventOut>> {
+    /// Consume the oldest retained boundary before the latest replaceable
+    /// status event. The second value counts boundaries dropped since the
+    /// previous read. At most `SESSION_BOUNDARY_LIMIT` boundaries and one
+    /// status are stored; callers must inspect the count even when no event
+    /// is returned. `latest_lifecycle_event` is only a replaceable view.
+    pub fn take_lifecycle_event(&self) -> (Option<Event<SessionEventOut>>, u64) {
         let mut lifecycle = self.lifecycle.lock();
-        if let Some(event) = lifecycle.pending_session_end.take() {
+        let missed = std::mem::take(&mut lifecycle.missed_session_ends);
+        if let Some(event) = lifecycle.pending_session_ends.pop_front() {
             if lifecycle.latest_event.as_ref() == Some(&event) {
                 lifecycle.latest_event = None;
             }
-            return Some(event);
+            return (Some(event), missed);
         }
-        lifecycle.latest_event.take()
+        (lifecycle.latest_event.take(), missed)
     }
 
     pub(super) fn prepared(&self) {
@@ -1103,7 +1114,9 @@ impl SlotArm {
                 .mailbox
                 .post(Intent::LoginIdentityChanged)
                 .expect("slot identity change generation exhausted");
-            lifecycle.clean_exit = None;
+            if uid_changed {
+                lifecycle.clean_exit = None;
+            }
             lifecycle.last_queue = None;
             lifecycle.slot_event(SessionEventOut::IntentApplied {
                 generation: receipt.generation(),

@@ -123,6 +123,156 @@ fn cancelling_published_token_before_start_settles_once_without_connect() {
 }
 
 #[test]
+fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let mut permit = granted_for_arm(&queue, &arm, 7);
+    let mut client = tcp_client(listener.local_addr().unwrap().port());
+    let backoff = LoginBackoff::new();
+    let result = permit.attempt(
+        |cancel| arm.begin_attempt(command, world, cancel),
+        |deadline, cancel| {
+            arm.request_logout();
+            assert!(cancel.is_cancelled());
+            SlotLogin {
+                client: &mut client,
+                arm: &arm,
+                command,
+                world_generation: world,
+                username: "alice",
+                password: "secret",
+                reconnect: false,
+                backoff: &backoff,
+            }
+            .run(deadline, cancel, |_| {
+                panic!("cancelled before Client::login")
+            })
+            .0
+        },
+        |_| None,
+    );
+    assert!(matches!(result, Some(Ok(false))), "{result:?}");
+    assert!(listener.accept().is_err(), "cancelled attempt connected");
+    assert_eq!(
+        arm.latest_lifecycle_event().unwrap().payload(),
+        &SessionEventOut::HandshakeAborted {
+            reason: AbortedAttempt::Cancelled
+        }
+    );
+    drop(permit);
+    let mut q = queue.lock();
+    q.enqueue_owner(99, 8);
+    assert!(matches!(
+        q.head_blocker(99, Instant::now()),
+        Some(AdmitBlocker::Spacing { .. })
+    ));
+}
+
+#[test]
+fn switch_world_after_capture_refuses_unused_grant_without_charge() {
+    let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let mut permit = granted_for_arm(&queue, &arm, 7);
+    arm.switch_world(5);
+    let result = permit.attempt(
+        |cancel| arm.begin_attempt(command, world, cancel),
+        |_, _| panic!("stale world reached Connect"),
+        |_: &Result<(), ()>| None,
+    );
+    assert_eq!(result, None);
+    drop(permit);
+    let mut q = queue.lock();
+    q.enqueue_owner(99, 8);
+    assert_eq!(q.head_blocker(99, Instant::now()), None);
+}
+
+#[test]
+fn password_read_does_not_acquire_slot_lock_in_reverse_order() {
+    let arm = SlotArm::new(7, true);
+    let lifecycle = arm.lifecycle.lock();
+    let (sent, received) = std::sync::mpsc::channel();
+    let reader = {
+        let arm = Arc::clone(&arm);
+        thread::spawn(move || sent.send(arm.login_password()).unwrap())
+    };
+    let result = received.recv_timeout(Duration::from_secs(2));
+    drop(lifecycle);
+    reader.join().unwrap();
+    assert!(
+        result.is_ok(),
+        "password read waited for K4 under password lock"
+    );
+}
+
+#[test]
+fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (accepted_tx, accepted_rx) = std::sync::mpsc::channel();
+    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        accepted_tx.send(()).unwrap();
+        let mut byte = [0; 1];
+        eof_tx.send(socket.read(&mut byte).unwrap()).unwrap();
+    });
+    let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let mut permit = granted_for_arm(&queue, &arm, 7);
+    let mut client = tcp_client(port);
+    let poster = {
+        let arm = Arc::clone(&arm);
+        thread::spawn(move || {
+            accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            arm.request_logout();
+        })
+    };
+    let began = Instant::now();
+    let result = permit.attempt(
+        |cancel| arm.begin_attempt(command, world, cancel),
+        |deadline, cancel| {
+            SlotLogin {
+                client: &mut client,
+                arm: &arm,
+                command,
+                world_generation: world,
+                username: "alice",
+                password: "secret",
+                reconnect: false,
+                backoff: &LoginBackoff::new(),
+            }
+            .run(deadline, cancel, |_| {})
+            .0
+        },
+        |_| {
+            assert_eq!(eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(), 0);
+            None
+        },
+    );
+    poster.join().unwrap();
+    server.join().unwrap();
+    assert!(matches!(result, Some(Ok(false))), "{result:?}");
+    assert!(began.elapsed() < Duration::from_secs(5));
+    assert_eq!(arm.session_key(), None);
+    assert!(client.stream.is_none());
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::OperatorLogout)
+    );
+}
+
+#[test]
 fn password_revision_change_refuses_old_authorization_without_charging_queue() {
     let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
     let arm = SlotArm::new(7, true);
@@ -447,7 +597,7 @@ fn session_ended_survives_later_intent_until_consumed() {
     let key = arm.session_key().unwrap();
     arm.observe_session_exit(SessionEndCause::ServerLogout, false);
     arm.arm_explicit_login();
-    let event = arm.take_lifecycle_event().unwrap();
+    let event = arm.take_lifecycle_event().0.unwrap();
     assert_eq!(event.scope(), Scope::Session(key));
     assert!(matches!(
         event.payload(),
@@ -477,13 +627,52 @@ fn newer_session_exit_stays_latest_while_older_boundary_awaits_consumption() {
         Scope::Session(second)
     );
     assert_eq!(
-        arm.take_lifecycle_event().unwrap().scope(),
+        arm.take_lifecycle_event().0.unwrap().scope(),
         Scope::Session(first)
     );
     assert_eq!(
-        arm.take_lifecycle_event().unwrap().scope(),
+        arm.take_lifecycle_event().0.unwrap().scope(),
         Scope::Session(second)
     );
+}
+
+#[test]
+fn two_unconsumed_session_boundaries_keep_order_and_report_overflow() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let first = arm.session_key().unwrap();
+    arm.observe_session_exit(SessionEndCause::ServerLogout, false);
+    arm.complete_login_for_test();
+    let second = arm.session_key().unwrap();
+    arm.observe_session_exit(SessionEndCause::ReadEof, true);
+    arm.post_intent(Intent::StopScript);
+    assert_eq!(
+        arm.take_lifecycle_event().0.unwrap().scope(),
+        Scope::Session(first)
+    );
+    assert_eq!(
+        arm.take_lifecycle_event().0.unwrap().scope(),
+        Scope::Session(second)
+    );
+
+    for _ in 0..SESSION_BOUNDARY_LIMIT + 2 {
+        arm.complete_login_for_test();
+        arm.observe_session_exit(SessionEndCause::ReadEof, true);
+    }
+    let (first_retained, missed) = arm.take_lifecycle_event();
+    assert!(matches!(
+        first_retained.unwrap().payload(),
+        SessionEventOut::SessionEnded { .. }
+    ));
+    assert_eq!(missed, 2);
+    for _ in 1..SESSION_BOUNDARY_LIMIT {
+        let (event, missed) = arm.take_lifecycle_event();
+        assert!(matches!(
+            event.unwrap().payload(),
+            SessionEventOut::SessionEnded { .. }
+        ));
+        assert_eq!(missed, 0);
+    }
 }
 
 fn assert_transport_event(
@@ -1082,7 +1271,7 @@ fn reaffirming_login_and_load_all_keep_bound_release_evidence() {
 #[test]
 fn agreeing_commands_keep_fifo_place_with_and_without_release_wait() {
     for release in [false, true] {
-        for action in 0..2 {
+        for action in 0..3 {
             let arm = SlotArm::new(7, true);
             if release {
                 arm.record_session_exit_at(true, HOST, PORT, Instant::now());
@@ -1106,6 +1295,15 @@ fn agreeing_commands_keep_fifo_place_with_and_without_release_wait() {
                 match action {
                     0 => arm.arm_explicit_login(),
                     1 => arm.set_auto_login(true),
+                    2 => sync_profile_arm(
+                        &arm,
+                        &Profile {
+                            username: "alice".into(),
+                            password: "new-password".into(),
+                            uid: 7,
+                            settings: vault::ProfileSettings::default(),
+                        },
+                    ),
                     _ => unreachable!(),
                 }
                 assert_eq!(

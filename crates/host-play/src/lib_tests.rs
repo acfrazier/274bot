@@ -3485,6 +3485,78 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
     server.join().unwrap();
 }
 
+/// A profile edit reaches the running worker, not just its next spawn. The
+/// worker must not recycle an unused grant at full speed after the uid changes.
+#[test]
+fn uid_save_on_running_slot_connects_without_requeue_spin() {
+    use std::sync::mpsc;
+
+    #[cfg(target_os = "linux")]
+    fn worker_cpu_ticks() -> u64 {
+        let task = std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| std::fs::read_to_string(path.join("comm")).unwrap() == "uid-r3\n")
+            .expect("named slot worker");
+        let stat = std::fs::read_to_string(task.join("stat")).unwrap();
+        let fields: Vec<_> = stat[stat.rfind(')').unwrap() + 2..]
+            .split_whitespace()
+            .collect();
+        fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        accepted_tx.send(()).unwrap();
+        drop(socket);
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, false);
+    arm.set_lowmem_handshake(false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("uid-r3", 42), None, None, Some(Arc::clone(&arm)));
+    assert!(wait_until(2_000, || arm.latest_lifecycle_event().is_some()));
+    play.remember_profile(profile("uid-r3", 43));
+    assert_eq!(arm.uid.load(Ordering::Relaxed), 43);
+    arm.arm_explicit_login();
+    play.wake("uid-r3");
+    #[cfg(target_os = "linux")]
+    let before = worker_cpu_ticks();
+    thread::sleep(Duration::from_secs(2));
+    #[cfg(target_os = "linux")]
+    let ticks = worker_cpu_ticks() - before;
+    let reached = accepted_rx.try_recv().is_ok();
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("uid-r3");
+    if reached {
+        server.join().unwrap();
+    }
+    assert!(
+        reached,
+        "uid edit must connect rather than recycle its grant"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        ticks < 25,
+        "refused grants burned {ticks} worker CPU ticks in 2s"
+    );
+}
+
 /// Spacing counts from each attempt's real start: a worker delayed after its
 /// grant, whose connect then fails at once, does not let the next attempt
 /// start right behind it.

@@ -1090,6 +1090,12 @@ fn spawn_slot_thread(
                     else {
                         continue;
                     };
+                    // The slot can outlive a profile uid edit. Prepare the
+                    // next handshake and its queue accounting from the live
+                    // identity; K4's publication fence rejects an edit that
+                    // races this snapshot.
+                    let uid = arm.uid.load(Ordering::Acquire);
+                    client.login_uid = uid;
                     if world_dirty {
                         let round = world_round.as_ref().expect("public world round");
                         let worlds = connection.profile().and_then(|p| p.public_worlds())
@@ -1157,6 +1163,14 @@ fn spawn_slot_thread(
                         continue;
                     };
                     if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
+                        drop(permit);
+                        // A returned grant must not immediately re-enter the
+                        // queue while the world preference stays mismatched.
+                        arm.wait_for_retry(
+                            Duration::from_millis(50),
+                            None,
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        );
                         continue;
                     }
                     // Script demand may change during the FIFO wait. Reduce
@@ -1190,10 +1204,7 @@ fn spawn_slot_thread(
                     // before it must not charge start spacing or UID/IP TTLs.
                     let hold = Cell::new(None);
                     let Some(login) = permit.attempt(
-                        |cancel| {
-                            arm.uid.load(Ordering::Acquire) == uid
-                                && arm.begin_attempt(login_command, login_world_generation, cancel)
-                        },
+                        |cancel| arm.begin_attempt(login_command, login_world_generation, cancel),
                         |deadline, cancel| {
                             mark_login_started(&slot_statuses, &username);
                             let (result, server_hold) = SlotLogin {
@@ -1213,6 +1224,14 @@ fn spawn_slot_thread(
                         |_| hold.get(),
                     ) else {
                         arm.clear_unused_attempt();
+                        drop(permit);
+                        // Refusal returns the unused grant before a bounded
+                        // park; a stable stale capture cannot spin the queue.
+                        arm.wait_for_retry(
+                            Duration::from_millis(50),
+                            None,
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        );
                         continue;
                     };
                     match login {
