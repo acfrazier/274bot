@@ -8,22 +8,41 @@ lint stack.
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
-The allowed crate edges are defined in `tools/architecture/policy.toml` and
-checked by `tools/architecture/check.py`. Runtime semantics that a manifest
+The allowed crate edges are defined in the operator-owned
+[`274bot-arch` policy](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
+and checked by its `check.py`. Runtime semantics that a manifest
 cannot prove stay **review requirements**. Changing a crate edge is a
-deliberate policy edit plus documentation and review; do not sneak a reverse
-or convenience dependency through an alias, target table, or optional rename.
+deliberate rule change in `274bot-arch` (proposed as a patch or branch bundle
+for the operator to review and push) plus documentation and review here; do
+not sneak a reverse or convenience dependency through an alias, target table,
+or optional rename.
 
 ## Local command
 
-Python **3.11+** (stdlib `tomllib`). No Rust rebuild.
+Python **3.11+** (stdlib `tomllib`). No Rust rebuild. The checker and its
+rules live only in [`acfrazier/274bot-arch`](https://github.com/acfrazier/274bot-arch)
+`main`, as decided in ADR 0010. See the
+[checker README](https://github.com/acfrazier/274bot-arch/blob/main/README.md)
+for its runtime pins and rule-change process. This repo holds only the
+runner `tools/architecture/run.sh`, which fetches `274bot-arch` `main` into
+a local cache and runs it against a tree. Agents and Main use the same
+runner locally.
 
 ```bash
-python3 tools/architecture/check.py
-python3 tools/architecture/check.py --self-test
+tools/architecture/run.sh
+tools/architecture/run.sh --root /path/to/tree
 ```
 
-If `python3` is older than 3.11, use `python3.11` or newer. The checker reads
+With no `--root`, the runner checks the product root it lives in.
+`ARCH_REPO` overrides where the rules come from: a URL (the default remote
+is always `main`) or a local clone, whose selected local `HEAD` is used as
+pre-push proof of an unpushed rule change. `ARCH_CACHE_DIR` overrides the
+fetch cache, a bare Git cache defaulting to
+`${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`.
+
+The runner checks the fetched parser before running it: SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`. The checker reads
 workspace and member `Cargo.toml` files, including `[dependencies]`,
 `[dev-dependencies]`, `[build-dependencies]`, `[target.*.dependencies]`,
 `optional`, `workspace = true` aliases, `path`, and `package` renames. It
@@ -35,12 +54,15 @@ and other unsupported workspace shapes fail closed. A path dependency on a
 crate that is not a listed member still appears in the scan and must be a
 policy member or external.
 
-GitHub Actions runs the same two commands in the `architecture` job, which
+GitHub Actions runs the same check in the `architecture` job, which
 also installs the pinned `flatc` and diffs `crates/script/schema/generated`
 against a fresh `flatc --rust` of `crates/script/schema/isolate.fbs`. That job
 does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
 
-The explicit allowlist is [`tools/architecture/policy.toml`](../tools/architecture/policy.toml).
+The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml),
+with [`ownership.json`](https://github.com/acfrazier/274bot-arch/blob/main/ownership.json)
+and [`inventories.json`](https://github.com/acfrazier/274bot-arch/blob/main/inventories.json)
+beside it.
 Every workspace member must appear there, and every edge the manifests
 declare needs an `[[allow]]` with its kind. Unknown members and unlisted
 edges fail closed. crates.io and other non-path crates are ignored. `client`
@@ -112,8 +134,10 @@ claim that `e2e` owns those crates' production behavior.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 
-If a future change needs a new edge or kind, edit the policy and this page
-and get review. Do not add a second hidden graph.
+If a future change needs a new edge or kind, propose the `274bot-arch`
+policy edit (a patch or branch bundle for the operator to review and push —
+agents cannot push that repo), update this page, and get review. Do not add
+a second hidden graph.
 
 ## Cargo features
 
@@ -680,7 +704,7 @@ need nothing. Profile files and the instance lock are owned by `host-play`
 
 ## Runtime ownership
 
-These are product boundaries. The crate checker does not prove them.
+These are product boundaries. The crate checker (in `274bot-arch`, run via `tools/architecture/run.sh`) does not prove them.
 
 | Boundary | Owner | Not the owner |
 | --- | --- | --- |
@@ -697,7 +721,7 @@ the JavaScript surface onto Rust host APIs.
 
 ## Behavioral invariants (review unless noted)
 
-The checker does **not** pretend to prove the following. They remain
+The checker in `274bot-arch` does **not** pretend to prove the following. They remain
 independent-review and test requirements unless a later, robust check exists.
 
 - **Isolate ↔ host and game-action wire:** FlatBuffers only. No extra JS↔Rust
@@ -733,8 +757,13 @@ nav, rendering, or the isolate.
 
 ## Changing a boundary
 
-1. Edit [`tools/architecture/policy.toml`](../tools/architecture/policy.toml)
-   with the new or removed `[[allow]]` and a reason.
+1. Prepare the `274bot-arch` rule change — the new or removed `[[allow]]`,
+   ownership row, inventory row, or foreign-type row, with a reason — as a
+   patch or branch bundle. Only the operator can push `274bot-arch`;
+   agents cannot. If the product change needs a new allowance first (a
+   crate edge, an ownership row, a seam type), the operator pushes that
+   rule change before the product change lands.
 2. Update the tables on this page so the public description matches.
-3. Run the local commands above (including `--self-test`).
+3. Run the local command above (point `ARCH_REPO` at a local `274bot-arch`
+   clone to prove an unpushed rule change before review).
 4. Get review. Do not land a graph change as a drive-by import.
