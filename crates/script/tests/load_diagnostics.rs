@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use script::load::{JsLibrary, LoadStage};
+use script::load::{CardPreparationOutcome, JsLibrary, LoadIsolate, LoadStage};
 use script::{ApiFamily, ScriptSource};
 
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
@@ -26,6 +26,8 @@ const V2_ON_COMPAT: &str = concat!(
     "export const apiVersion = 2;\n",
     "export default class T extends LoopingBot { override loop() {} }\n"
 );
+
+static VALIDATION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -52,6 +54,37 @@ fn write(dir: &Path, rel: &str, src: &str) -> PathBuf {
     }
     std::fs::write(&path, src).unwrap();
     path
+}
+
+fn prepare_snapshot(
+    js: &JsLibrary,
+    source: ScriptSource,
+    name: &str,
+) -> CardPreparationOutcome {
+    js.card_preparation_snapshot(source, name, None)
+        .unwrap_or_else(|error| panic!("{name}: snapshot failed: {error}"))
+        .prepare()
+        .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
+}
+
+fn validate_prepared(
+    cards: Vec<script::PreparedCard>,
+) -> Vec<(script::PreparedCard, Result<(), String>)> {
+    let _guard = VALIDATION_TEST_LOCK
+        .lock()
+        .expect("validation test lock poisoned");
+    script::bootstrap_v8_platform().expect("bootstrap validation platform");
+    let batch =
+        LoadIsolate::validate_prepared_batch(cards).expect("start validation batch");
+    loop {
+        match batch.try_recv() {
+            Ok(batch) => return batch,
+            Err(std::sync::mpsc::TryRecvError::Empty) => std::thread::yield_now(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panic!("validation worker exited without a result")
+            }
+        }
+    }
 }
 
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
@@ -163,10 +196,21 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
     assert!(js.load_failures().is_empty());
 
     std::fs::write(&path, BAD_RUNTIME).unwrap();
-    let prepared = js
-        .prepare_card_unvalidated(ScriptSource::File, &path.to_string_lossy())
-        .unwrap();
-    let err = prepared.validate().unwrap_err();
+    let prepared = match prepare_snapshot(
+        &js,
+        ScriptSource::File,
+        &path.to_string_lossy(),
+    ) {
+        CardPreparationOutcome::Prepared(prepared) => prepared,
+        CardPreparationOutcome::Failed { error, .. } => panic!("prepare failed: {error}"),
+        CardPreparationOutcome::Unchanged | CardPreparationOutcome::Confirmed => {
+            panic!("changed candidate was not prepared")
+        }
+    };
+    let (prepared, result) = validate_prepared(vec![prepared])
+        .pop()
+        .expect("one validation result");
+    let err = result.unwrap_err();
     js.record_prepared_failure(&prepared, &err);
     assert!(err.contains("runtime boom"), "{err}");
 
@@ -223,13 +267,19 @@ fn catalog_mixed_batch_retains_named_failures() {
     let diff = js.diff_catalog(&root).unwrap();
     assert!(diff.changed.iter().any(|n| n == "GoodBot"));
     let mut prepared_ok = Vec::new();
-    for name in &diff.changed.clone() {
-        if let Ok(prepared) = js.prepare_card_unvalidated(ScriptSource::Catalog, name) {
-            if let Err(error) = prepared.validate() {
-                js.record_prepared_failure(&prepared, &error);
-            } else {
-                prepared_ok.push(prepared);
+    for name in &diff.changed {
+        match prepare_snapshot(&js, ScriptSource::Catalog, name) {
+            CardPreparationOutcome::Prepared(candidate) => {
+                let (candidate, result) = validate_prepared(vec![candidate])
+                    .pop()
+                    .expect("one validation result");
+                match result {
+                    Ok(()) => prepared_ok.push(candidate),
+                    Err(error) => js.record_prepared_failure(&candidate, &error),
+                }
             }
+            CardPreparationOutcome::Failed { failure, .. } => js.record_failure(failure),
+            CardPreparationOutcome::Unchanged | CardPreparationOutcome::Confirmed => {}
         }
     }
     assert_eq!(prepared_ok.len(), 1);
