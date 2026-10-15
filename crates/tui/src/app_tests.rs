@@ -1015,13 +1015,9 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     assert!(!app.map_route_through_zones);
     assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
 
-    std::fs::write(
-        preferences.path(),
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .unwrap();
-    // A directly written file is seen after an explicit re-read; a refused
-    // one (larger than the bound) is refused from here on.
+    std::fs::write(preferences.path(), "{corrupt").unwrap();
+    // A directly written file is seen after an explicit re-read; a corrupt
+    // one is refused from here on.
     assert!(preferences.reload().is_err());
     let corrupt = text(&draw(&mut app, 120, 40));
     assert!(

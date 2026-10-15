@@ -171,7 +171,10 @@ impl Preferences {
     /// row, each changed member), each against the version the one before
     /// left and each durable before the next. When another writer changed
     /// the file first, read and merge again (a few times at most). A
-    /// preference `merge` removes cannot be written and is an error.
+    /// preference `merge` removes cannot be written and is an error. The
+    /// read is a save's ([`LocalStateService::readback_for_save`]): a file
+    /// whose content is malformed is moved aside and the update starts
+    /// from fresh preferences, as the old shared writer did.
     pub fn update(
         &self,
         mut merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
@@ -181,7 +184,7 @@ impl Preferences {
         for _ in 0..UPDATE_ATTEMPTS {
             let (lease, _) = shared
                 .service
-                .readback(&shared.identity, FRONTEND_TIMEOUT)
+                .readback_for_save(&shared.identity, FRONTEND_TIMEOUT)
                 .map_err(|code| self.error(code))?;
             let before = self.adopt(&lease)?;
             let mut after = (*before).clone();

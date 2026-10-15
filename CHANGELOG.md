@@ -15,13 +15,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Start is refused, with the file and the reason, while `loadouts.json`
   can't be read; a Quester stops the Path that needs it.
 - A damaged `panel-ui.json` (not JSON, or JSON that isn't an object) is
-  still moved aside to `panel-ui.json.corrupt-<time>` and your preferences
-  start fresh, as before. Now this happens as soon as 274bot reads the
-  file, the copy keeps exactly the damaged file's bytes and is on disk
-  before the file is replaced, and the log shows a warning and an audit
-  line naming the copy. A `panel-ui.json` refused for its permissions or
-  size, or from another version, is never moved aside: preference saves
-  fail with a message until you repair or remove it.
+  still moved aside to `panel-ui.json.corrupt-<time>` by the next
+  preference save, which then starts fresh preferences, as before; until
+  then, settings read from it fail closed. Now the copy keeps exactly the
+  damaged file's bytes and is on disk before the file is replaced, and the
+  log shows a warning and an audit line naming the copy. A `panel-ui.json`
+  refused for its permissions or size, or from another version, is never
+  moved aside: preference saves fail with a message until you repair or
+  remove it.
 - A saved file holding something this version can't write back (a field it
   doesn't know in a bank hint, a loadout row it can't read, a preference it
   can't hold) is read but never rewritten, so nothing in it is lost.

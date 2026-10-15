@@ -601,22 +601,16 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     );
     assert!(!session.ui.nav.allow_danger_zones);
 
-    // A refused file (larger than the bound; a malformed one would be moved
-    // aside and replaced with fresh preferences instead).
-    std::fs::write(
-        session.preferences.path(),
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .unwrap();
+    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
     session
         .preferences
         .reload()
-        .expect_err("refused preferences are refused");
+        .expect_err("corrupt preferences are refused");
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     assert_ne!(
         super::last_picker_layout().route_zones_rect,
         [[0.0, 0.0], [0.0, 0.0]],
-        "refused preferences fail closed and show the guarded one-shot control"
+        "corrupt preferences fail closed and show the guarded one-shot control"
     );
     assert!(!session.ui.nav.allow_danger_zones);
 }

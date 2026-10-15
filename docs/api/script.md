@@ -1445,13 +1445,14 @@ each write so another process takes its turn. Both frontends refresh a
 shared durable walk-permission projection for danger controls and inherited
 script rows (re-read from the file at most once a second), and manual
 admission reads it again. An absent file or a valid old file without the new
-key uses the middle-level default. A file that is not a JSON object is moved
-aside, byte for byte, to `panel-ui.json.corrupt-<time>` under the lock (with
-a warning and an audit line) and fresh preferences start, so it reads as
-absent. A file refused for itself (owner, mode, size) clears every grant and
-is never rewritten; one holding content this build cannot hold whole is
-read but never rewritten. A peer frontend's change therefore updates both
-the warning and the next walk's options.
+key uses the middle-level default. A file that is not a JSON object clears
+every grant until the next preference save moves it aside, byte for byte,
+to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
+audit line) and starts fresh preferences. A file refused for itself (owner,
+mode, size) clears every grant and is never rewritten; one holding content
+this build cannot hold whole is read but never rewritten. A peer
+frontend's change therefore updates both the warning and the next walk's
+options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.

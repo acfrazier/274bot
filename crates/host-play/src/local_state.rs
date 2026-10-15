@@ -369,6 +369,9 @@ struct Store {
     readback_seq: u64,
     /// How many readbacks have completed: a bounded wait follows it.
     readbacks: u64,
+    /// A save asked for the next readback: a preferences file whose
+    /// content is malformed is quarantined by it ([`Shared::read_recovering`]).
+    recover: bool,
     /// Accepted edits not yet taken by the writer thread.
     queue: VecDeque<Queued>,
     /// The writer thread holds this store's edit.
@@ -659,11 +662,38 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<(DomainLease, bool), ErrorCode> {
+        self.readback_with(identity, timeout, false)
+    }
+
+    /// [`Self::readback`] for a save about to be made: the one read that
+    /// quarantines a preferences file whose content is malformed and
+    /// starts fresh preferences (the recovery the old shared writer made
+    /// on a save). A read for anything else refuses such a file, so its
+    /// readers fail closed until a save recovers it.
+    pub(crate) fn readback_for_save(
+        &self,
+        identity: &DomainIdentity,
+        timeout: Duration,
+    ) -> Result<(DomainLease, bool), ErrorCode> {
+        self.readback_with(identity, timeout, true)
+    }
+
+    fn readback_with(
+        &self,
+        identity: &DomainIdentity,
+        timeout: Duration,
+        recover: bool,
+    ) -> Result<(DomainLease, bool), ErrorCode> {
         let key = self.store_key(identity)?;
         let domain = identity.domain();
         let deadline = Instant::now() + timeout;
         let mut state = self.shared.state.lock();
         state.admit(&key)?;
+        if recover {
+            if let Some(store) = state.stores.get_mut(&key) {
+                store.recover = true;
+            }
+        }
         let Some(target) = self.shared.request_readback(&mut state, &key) else {
             return Err(ErrorCode::NotReady { domain });
         };
@@ -1646,8 +1676,18 @@ impl Shared {
     }
 
     fn readback(&self, key: &StoreKey) {
+        let recover = self
+            .state
+            .lock()
+            .stores
+            .get_mut(key)
+            .is_some_and(|store| std::mem::take(&mut store.recover));
         let read_at = DurableTimestamp::now();
-        let read = self.read_file(key, read_at, false);
+        let read = if recover {
+            self.read_recovering(key, read_at)
+        } else {
+            files::read(key, &self.root, read_at)
+        };
         let path = key.path(&self.root);
         let mut state = self.state.lock();
         state.adopt(key, read, read_at, &path);
@@ -1664,18 +1704,17 @@ impl Shared {
         }
     }
 
-    /// Read `key`'s file (`locked`: under its [`files::WriteLock`], which
-    /// this writer holds). A preferences file whose content is malformed
-    /// (not JSON, or JSON that is not an object) is quarantined first,
-    /// under that lock ([`Self::quarantine_preferences`]), and then read as
-    /// the fresh file it leaves. Every other refusal (owner, mode, size, an
-    /// I/O error, content the service cannot hold whole) stands, and the
-    /// file is left as it is.
-    fn read_file(
+    /// Read `key`'s file for a save ([`LocalStateService::readback_for_save`]).
+    /// A preferences file whose content is malformed (not JSON, or JSON
+    /// that is not an object) is quarantined first, under the file's
+    /// [`files::WriteLock`] ([`Self::quarantine_preferences`]), and then
+    /// read as the fresh file it leaves. Every other refusal (owner, mode,
+    /// size, an I/O error, content the service cannot hold whole) stands,
+    /// and the file is left as it is.
+    fn read_recovering(
         &self,
         key: &StoreKey,
         read_at: DurableTimestamp,
-        locked: bool,
     ) -> Result<Option<ReadDocument>, ReadError> {
         let read = files::read(key, &self.root, read_at);
         if !matches!(key, StoreKey::Preferences)
@@ -1684,25 +1723,22 @@ impl Shared {
             return read;
         }
         let path = key.path(&self.root);
-        let _lock = if locked {
-            None
-        } else {
+        let _lock =
             match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned
             }) {
-                Ok(lock) => Some(lock),
+                Ok(lock) => lock,
                 Err(error) => {
                     host_log!(
                         Category::Lifecycle,
                         Level::Warn,
                         "local state: preferences file is malformed but could not be locked to \
-                         move it aside ({error:?}); it is left as it is path={}",
+                     move it aside ({error:?}); it is left as it is path={}",
                         path.display()
                     );
                     return read;
                 }
-            }
-        };
+            };
         match self.quarantine_preferences(&path) {
             Ok(()) => files::read(key, &self.root, read_at),
             Err(error) => {
@@ -1846,7 +1882,7 @@ impl Shared {
             };
         // The precondition: what the file holds now, under the lock.
         let read_at = DurableTimestamp::now();
-        let read = self.read_file(key, read_at, true);
+        let read = files::read(key, &self.root, read_at);
         let staged = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
@@ -2033,7 +2069,7 @@ impl Shared {
     fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
         let domain = key.domain();
         let read_at = DurableTimestamp::now();
-        let read = self.read_file(key, read_at, true);
+        let read = files::read(key, &self.root, read_at);
         let settlement = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, path);

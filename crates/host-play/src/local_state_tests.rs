@@ -2277,10 +2277,11 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
 
 /// T5.2 r4 (the pre-T5.2 recovery, made safe): a preferences file whose
 /// content is malformed (not JSON, not UTF-8, JSON that is not an object)
-/// is moved aside to `panel-ui.json.corrupt-<time>` holding exactly its
-/// bytes, flushed with its directory entry before the file is replaced
-/// with fresh preferences; the operator is told (a warning) and one info
-/// audit line names the quarantine. Preferences then read and write again.
+/// is refused by reads, so readers fail closed, and untouched by them. The
+/// next save moves it aside to `panel-ui.json.corrupt-<time>` holding
+/// exactly its bytes, flushed with its directory entry before the file is
+/// replaced with fresh preferences, and then lands; the operator is told
+/// (a warning) and one info audit line names the quarantine.
 #[test]
 fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh() {
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine");
@@ -2313,9 +2314,27 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
                 vault::write_private_file(path, bytes)
             }));
 
-        let document = preferences.reload().expect(case);
-        assert!(document.is_empty(), "{case}: fresh preferences");
-        assert_eq!(std::fs::read(&path).unwrap(), b"{}", "{case}");
+        assert!(preferences.reload().is_err(), "{case}: reads refuse it");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            bytes,
+            "{case}: reads keep it"
+        );
+        assert_eq!(siblings(&path), ["panel-ui.json"], "{case}");
+        assert!(
+            order.lock().unwrap().is_empty(),
+            "{case}: reads write nothing"
+        );
+
+        preferences
+            .set("map_bake", serde_json::json!("always"))
+            .expect(case);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            serde_json::to_vec_pretty(&serde_json::json!({"map_bake": "always"})).unwrap(),
+            "{case}: the save lands in fresh preferences"
+        );
+        assert_eq!(preferences.value("map_bake").unwrap(), "always");
         let found = siblings(&path);
         assert_eq!(found.len(), 2, "{case}: {found:?}");
         assert!(
@@ -2329,12 +2348,14 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             "{case}: the quarantine holds the exact bytes"
         );
         assert_eq!(
-            *order.lock().unwrap(),
+            order.lock().unwrap()[..3],
             [
                 format!("sync {}", path.parent().unwrap().display()),
                 format!("write {}", path.display()),
+                format!("write {}", path.display()),
             ],
-            "{case}: the quarantine's entry is flushed before the file is replaced"
+            "{case}: the quarantine's entry is flushed before the file is replaced \
+             with fresh preferences, and then the save is written"
         );
         let notices = notices.lock().unwrap().clone();
         assert_eq!(notices.len(), 2, "{case}: {notices:?}");
@@ -2356,17 +2377,13 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
                 .contains(&format!("quarantined={}", quarantined.display())),
             "{case}: {notices:?}"
         );
-
-        preferences
-            .set("map_bake", serde_json::json!("always"))
-            .expect(case);
-        assert_eq!(preferences.value("map_bake").unwrap(), "always");
         assert_eq!(std::fs::read(&quarantined).unwrap(), bytes, "{case}: kept");
     }
 }
 
 /// T5.2 r4: the quarantine runs under the preferences file's write lock:
-/// while another writer holds it, the malformed file stays where it is.
+/// while another writer holds it, a save waits and the malformed file
+/// stays where it is.
 #[test]
 fn a_preferences_quarantine_waits_for_the_files_lock() {
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine-lock");
@@ -2375,9 +2392,9 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     let bytes = b"{not valid json".to_vec();
     write_private(&path, &bytes);
     let lock = files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap();
-    let reader = {
+    let saver = {
         let preferences = preferences.clone();
-        std::thread::spawn(move || preferences.reload().map(|document| document.len()))
+        std::thread::spawn(move || preferences.set("map_bake", serde_json::json!("always")))
     };
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(
@@ -2387,7 +2404,7 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     );
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
-    assert_eq!(reader.join().unwrap().unwrap(), 0);
+    saver.join().unwrap().unwrap();
     let found = siblings(&path);
     assert_eq!(found.len(), 2, "{found:?}");
     assert_eq!(
