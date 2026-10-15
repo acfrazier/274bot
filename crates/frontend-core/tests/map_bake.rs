@@ -427,13 +427,22 @@ fn catalogue_only_demand_never_asks_even_when_cold() {
     assert_eq!(producer.image_runs(), 0);
 }
 
+/// The process service's preferences at the isolated home's state root.
+fn preferences(iso: &script::IsolatedEnv) -> host_play::local_state::Preferences {
+    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
+        iso.home.join(".274bot"),
+    ))
+    .preferences()
+}
+
 #[test]
 fn the_remembered_always_choice_bakes_without_asking() {
-    let _iso = script::IsolatedEnv::enter("map-bake-always");
-    persist_map_bake_choice(MapBakeChoice::Always).unwrap();
+    let iso = script::IsolatedEnv::enter("map-bake-always");
+    let preferences = preferences(&iso);
+    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
     let scratch = Scratch::new("always");
     let (manager, producer) = manager(&scratch);
-    let mut gate = MapBakeGate::new(load_map_bake_choice());
+    let mut gate = MapBakeGate::new(load_map_bake_choice(&preferences));
     let handle = gate
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
@@ -445,9 +454,14 @@ fn the_remembered_always_choice_bakes_without_asking() {
 
 #[test]
 fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
-    let _iso = script::IsolatedEnv::enter("map-bake-choice");
-    assert_eq!(load_map_bake_choice(), MapBakeChoice::Ask, "no prefs file");
-    let path = host_play::panel_ui_path();
+    let iso = script::IsolatedEnv::enter("map-bake-choice");
+    let preferences = preferences(&iso);
+    assert_eq!(
+        load_map_bake_choice(&preferences),
+        MapBakeChoice::Ask,
+        "no prefs file"
+    );
+    let path = preferences.path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     // A 0.1.8.1 prefs file has no `map_bake` key.
     std::fs::write(
@@ -455,13 +469,15 @@ fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
         r#"{"last_focus":"alice","background_bots_ack":true}"#,
     )
     .unwrap();
-    assert_eq!(load_map_bake_choice(), MapBakeChoice::Ask);
-    persist_map_bake_choice(MapBakeChoice::Always).unwrap();
-    assert_eq!(load_map_bake_choice(), MapBakeChoice::Always);
+    preferences.reload().unwrap();
+    assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
+    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
+    assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Always);
     let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(prefs["last_focus"], "alice");
     assert_eq!(prefs["background_bots_ack"], true);
     assert_eq!(prefs["map_bake"], "always");
     std::fs::write(&path, r#"{"map_bake":"sometimes"}"#).unwrap();
-    assert_eq!(load_map_bake_choice(), MapBakeChoice::Ask);
+    preferences.reload().unwrap();
+    assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
 }

@@ -56,7 +56,7 @@ pub use marked::{
     prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
     RestartScope,
 };
-pub use nav_prefs::{nav_preference_at, NavPreference};
+pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,

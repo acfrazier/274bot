@@ -1,7 +1,9 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+
+use host_play::local_state::{LocalStateService, Preferences, StateRoot};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -63,6 +65,28 @@ impl AsRef<Path> for TestPath {
     fn as_ref(&self) -> &Path {
         &self.path
     }
+}
+
+/// The state root a `Session` on this thread opens its service at: this
+/// thread's pinned scratch home, never the operator's.
+pub(crate) fn thread_state_root() -> StateRoot {
+    script::IsolatedEnv::ensure_thread();
+    StateRoot::new(script::bot_home().join(".274bot"))
+}
+
+/// A process service opened on `dir` itself, a scratch state root: its
+/// files (`panel-ui.json`, `loadouts.json`) sit directly in `dir`.
+pub(crate) fn scratch_service(dir: &Path) -> Arc<LocalStateService> {
+    LocalStateService::open_process(StateRoot::new(dir.to_path_buf()))
+}
+
+/// The preferences of a new service on [`thread_state_root`]: the files a
+/// `Session` on this thread uses, before one exists, or as a second writer
+/// of them (a peer process, as far as the files go). A `Session` sees a
+/// write of this handle after its own preferences re-read
+/// (`Preferences::reload`).
+pub(crate) fn thread_preferences() -> Preferences {
+    LocalStateService::open_process(thread_state_root()).preferences()
 }
 
 impl Drop for TestDir {

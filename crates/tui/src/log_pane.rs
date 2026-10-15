@@ -12,6 +12,7 @@ use frontend_core::log::{
     default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
 use frontend_core::log_file::{apply_session_log, persist_session_log_setting};
+use host_play::local_state::Preferences;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -146,8 +147,14 @@ impl LogPaneState {
     }
 
     /// One key while the view has keyboard focus. Returns whether the view
-    /// used it; Esc outside the search line is left to the router.
-    pub fn on_key(&mut self, key: KeyEvent, focused: Option<&str>) -> bool {
+    /// used it; Esc outside the search line is left to the router. The
+    /// session-file toggle writes through the process service's preferences.
+    pub fn on_key(
+        &mut self,
+        key: KeyEvent,
+        focused: Option<&str>,
+        preferences: Option<&Preferences>,
+    ) -> bool {
         let text = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
@@ -191,7 +198,7 @@ impl LogPaneState {
                 self.view.follow = true;
             }
             KeyCode::Char('w') if text => self.save(focused),
-            KeyCode::Char('F') if text => self.toggle_session_file(),
+            KeyCode::Char('F') if text => self.toggle_session_file(preferences),
             _ => return false,
         }
         true
@@ -209,9 +216,13 @@ impl LogPaneState {
     }
 
     /// Flip the shared session-file preference and apply it.
-    pub fn toggle_session_file(&mut self) {
+    pub fn toggle_session_file(&mut self, preferences: Option<&Preferences>) {
         let on = !global().file_open();
-        self.status = Some(match persist_session_log_setting(on) {
+        let Some(preferences) = preferences else {
+            self.status = Some("session file setting: preferences not bound".into());
+            return;
+        };
+        self.status = Some(match persist_session_log_setting(preferences, on) {
             Ok(()) => match apply_session_log(on) {
                 Some(path) => format!("session file {}", path.display()),
                 None => "session file off".into(),

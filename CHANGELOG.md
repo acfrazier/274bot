@@ -7,20 +7,37 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Saved state
 
-- A saved bank hint or `loadouts.json` that 274bot can't read (damaged,
-  from another version, for another account, larger than its limit, or
-  writable by other users) is now left untouched and named in the log with
-  the reason. It used to be treated as empty and overwritten at the next
-  save. A JavaScript script Start is refused, with the file and the reason,
-  while `loadouts.json` can't be read; a Quester stops the Path that needs
-  it.
+- A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
+  read (damaged, from another version, for another account, larger than
+  its limit, or writable by other users) is now left untouched and named in
+  the log with the reason. It used to be treated as empty and overwritten at
+  the next save (a damaged `panel-ui.json` used to be moved aside to
+  `panel-ui.json.corrupt-<time>`); now preference saves fail with a message
+  until you repair or remove the file. A JavaScript script Start is refused,
+  with the file and the reason, while `loadouts.json` can't be read; a
+  Quester stops the Path that needs it.
+- A saved file holding something this version can't write back (a field it
+  doesn't know in a bank hint, a loadout row it can't read, a preference it
+  can't hold) is read but never rewritten, so nothing in it is lost.
 - A bank hint now records the game content it was seen under, and a hint
   from other content is not used. The log says so; remove the file to start
   a new hint.
-- A bank hint changed on disk by something else since 274bot read it is no
-  longer overwritten by an older save, and no save is reported done before
-  the file and its folder entry are on disk. Closing 274bot finishes saves
-  still waiting (up to 10 seconds) instead of dropping them.
+- The Loadouts window (panel and TUI) and every preference save now go
+  through the same saving service as the bots, so a form save and a bot's
+  save can no longer overwrite each other. If the loadouts changed since
+  the window loaded them (another 274bot on the same home folder), the save
+  says so and keeps your edit for another try. A renamed loadout moves to
+  the end of the list, and renaming a loadout to another loadout's name is
+  refused (it used to leave two loadouts with one name).
+- Two 274bot processes on the same home folder take turns writing each
+  saved file, and a save is reported done only when the file still holds it
+  after it reached the disk: a change by another program in the meantime is
+  reported as a conflict, never as saved.
+- No save is reported done before the file and its folder entries are on
+  disk, also after a failed attempt. Closing 274bot finishes saves still
+  waiting (up to 10 seconds); a save still waiting past that is reported
+  cancelled in the log, one line per save, instead of being dropped
+  silently.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

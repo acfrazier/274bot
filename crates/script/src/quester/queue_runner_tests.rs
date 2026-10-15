@@ -422,7 +422,7 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
 fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
     use api::local_state::{
         AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
-        FailureReason, LocalStatePort, SubmitReceipt, WriteSettlement,
+        FailureReason, LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
     };
     struct Refusing;
     impl LocalStatePort for Refusing {
@@ -439,6 +439,11 @@ fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
         }
         fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
             None
+        }
+    }
+    impl crate::local_state::StatePort for Refusing {
+        fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            self.lease(identity).map(|lease| lease.version())
         }
     }
     // The tick builder quantifies over its own lifetime: the capability it

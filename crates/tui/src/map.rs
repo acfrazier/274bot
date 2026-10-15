@@ -7,7 +7,8 @@
 //! toggled from the command palette.
 
 use std::io;
-use std::path::{Path, PathBuf};
+
+use host_play::local_state::Preferences;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -31,16 +32,20 @@ pub const ZOOMS: [usize; 4] = [8, 4, 2, 1];
 /// courtyard, same default as the headed picker.
 pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
-/// Read the shared panel/TUI special-area preference from an explicitly
-/// configured store. `MapView::new` does not touch the operator's home.
-fn persisted_wilderness(path: &Path) -> bool {
-    frontend_core::nav_preference_at(path, frontend_core::NavPreference::ShowSpecialAreas, None)
-        .unwrap_or(false)
+/// Read the shared panel/TUI special-area preference from the process
+/// service's preferences. `MapView::new` does not touch the operator's home.
+fn persisted_wilderness(preferences: &Preferences) -> bool {
+    frontend_core::nav_preference(
+        preferences,
+        frontend_core::NavPreference::ShowSpecialAreas,
+        None,
+    )
+    .unwrap_or(false)
 }
 
-fn persist_wilderness(path: &Path, enabled: bool) -> io::Result<()> {
-    frontend_core::nav_preference_at(
-        path,
+fn persist_wilderness(preferences: &Preferences, enabled: bool) -> io::Result<()> {
+    frontend_core::nav_preference(
+        preferences,
         frontend_core::NavPreference::ShowSpecialAreas,
         Some(enabled),
     )
@@ -116,12 +121,11 @@ pub struct MapView {
     /// The operator's selected tile (`+` crosshair); `None` once Esc
     /// clears it.
     pub selection: Option<Tile>,
-    preference_path: Option<PathBuf>,
 }
 
 impl MapView {
     /// A fresh view: centred on the player, finest zoom, no selection.
-    /// Preference I/O is configured explicitly by the binary.
+    /// Preference I/O goes through the process service's preferences.
     pub fn new() -> Self {
         Self {
             pan: (0, 0),
@@ -129,23 +133,23 @@ impl MapView {
             plane: 0,
             layers: MapLayers::default(),
             selection: None,
-            preference_path: None,
         }
     }
 
-    /// Attach the shared preference store and restore the wilderness toggle.
-    pub fn restore_persisted_wilderness(&mut self, path: impl Into<PathBuf>) {
-        let path = path.into();
-        self.layers.wilderness = persisted_wilderness(&path);
-        self.preference_path = Some(path);
+    /// Restore the wilderness toggle from the shared preferences.
+    pub fn restore_persisted_wilderness(&mut self, preferences: &Preferences) {
+        self.layers.wilderness = persisted_wilderness(preferences);
     }
 }
 
 impl MapView {
-    pub(crate) fn toggle_wilderness(&mut self) -> io::Result<()> {
+    pub(crate) fn toggle_wilderness(
+        &mut self,
+        preferences: Option<&Preferences>,
+    ) -> io::Result<()> {
         self.layers.wilderness = !self.layers.wilderness;
-        if let Some(path) = self.preference_path.as_deref() {
-            persist_wilderness(path, self.layers.wilderness)?;
+        if let Some(preferences) = preferences {
+            persist_wilderness(preferences, self.layers.wilderness)?;
         }
         Ok(())
     }

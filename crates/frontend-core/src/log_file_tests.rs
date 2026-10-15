@@ -26,11 +26,20 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// The preferences of a process service opened at the state root `dir`.
+fn preferences(dir: &Path) -> host_play::local_state::Preferences {
+    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
+        dir.to_path_buf(),
+    ))
+    .preferences()
+}
+
 #[test]
 fn the_session_file_is_off_unless_the_preference_says_on() {
     let dir = scratch("pref");
-    let prefs = dir.join("panel-ui.json");
-    assert!(!session_log_setting_at(&prefs), "no prefs file: off");
+    let preferences = preferences(&dir);
+    let prefs = preferences.path();
+    assert!(!session_log_setting(&preferences), "no prefs file: off");
     std::fs::create_dir_all(&dir).unwrap();
     // A 0.1.8.1 prefs file has no such key.
     std::fs::write(
@@ -38,23 +47,28 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
         br#"{"last_focus":"alice","collapsed":{},"background_bots_ack":true}"#,
     )
     .unwrap();
-    assert!(!session_log_setting_at(&prefs), "absent key: off");
+    preferences.reload().unwrap();
+    assert!(!session_log_setting(&preferences), "absent key: off");
 
-    persist_session_log_setting_at(&prefs, true).unwrap();
-    assert!(session_log_setting_at(&prefs));
+    persist_session_log_setting(&preferences, true).unwrap();
+    assert!(session_log_setting(&preferences));
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(value["last_focus"], "alice", "other keys survive");
     assert_eq!(value["background_bots_ack"], true);
-    persist_session_log_setting_at(&prefs, false).unwrap();
-    assert!(!session_log_setting_at(&prefs));
+    persist_session_log_setting(&preferences, false).unwrap();
+    assert!(!session_log_setting(&preferences));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A peer process's preference transaction holds the shared lock: the
+/// service's write waits for it, then merges from the peer's newer
+/// document instead of overwriting it.
 #[test]
 fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     let dir = scratch("peer-nav-lock");
     std::fs::create_dir_all(&dir).unwrap();
-    let prefs = dir.join("panel-ui.json");
+    let preferences = preferences(&dir);
+    let prefs = preferences.path();
     std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -66,10 +80,10 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     lock.lock().unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let writer_path = prefs.clone();
+    let writer_preferences = preferences.clone();
     let writer = std::thread::spawn(move || {
         started_tx.send(()).unwrap();
-        let result = persist_session_log_setting_at(&writer_path, true);
+        let result = persist_session_log_setting(&writer_preferences, true);
         done_tx.send(result).unwrap();
     });
     started_rx.recv().unwrap();

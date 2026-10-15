@@ -668,7 +668,7 @@ fn persist_special_area_toggle(session: &mut Session, map: &WalkMapRenderer) {
     }
     session.ui.nav.show_special_areas = map.show_special_areas;
     if session.persist_ui {
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 

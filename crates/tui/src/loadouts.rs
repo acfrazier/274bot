@@ -39,6 +39,9 @@ pub struct LoadoutsPane<'a> {
 
 impl<'a> LoadoutsPane<'a> {
     pub fn sync_scratch_from_selection(&mut self) {
+        if let Some(error) = self.store.load_error() {
+            self.state.status = error.to_string();
+        }
         if let Some(loadout) = self.store.loadouts().get(self.state.sel) {
             self.state.name_scratch = loadout.name.clone();
             self.state.worn_scratch = format_worn(loadout);
@@ -52,31 +55,53 @@ impl<'a> LoadoutsPane<'a> {
         }
     }
 
+    /// Re-select the saved row by name: the store writes a rename as a new
+    /// row, so it moves to the end of the list.
+    fn select_saved(&mut self, name: &str) {
+        if let Some(index) = self
+            .store
+            .loadouts()
+            .iter()
+            .position(|row| row.name == name)
+        {
+            self.state.sel = index;
+        } else {
+            self.state.sel = self.store.loadouts().len().saturating_sub(1);
+        }
+        self.sync_scratch_from_selection();
+    }
+
     fn commit_scratch(&mut self) -> bool {
         let name = self.state.name_scratch.trim();
         if name.is_empty() {
             self.state.status = "Name is required.".into();
             return false;
         }
-        let backup = self.store.snapshot();
+        let name = name.to_string();
         let loadout = Loadout {
-            name: name.to_string(),
+            name: name.clone(),
             worn: parse_worn(&self.state.worn_scratch),
             unassigned: split_csv(&self.state.unassigned_scratch),
             carry: parse_carry(&self.state.carry_scratch),
         };
         if self.state.sel < self.store.loadouts().len() {
-            self.store.replace_at(self.state.sel, loadout);
+            // The name is the row's key in the store: a rename onto another
+            // row's name is refused rather than replacing that row.
+            if !self.store.replace_at(self.state.sel, loadout) {
+                self.state.status = format!("A loadout named \"{name}\" already exists.");
+                return false;
+            }
         } else {
             self.store.upsert(loadout);
         }
         match self.store.save() {
             Ok(()) => {
+                self.select_saved(&name);
                 self.state.status = "Saved.".into();
                 true
             }
             Err(err) => {
-                self.store.restore(backup);
+                self.store.discard();
                 self.state.status = format!("Save failed: {err}");
                 false
             }
@@ -121,17 +146,15 @@ impl<'a> LoadoutsPane<'a> {
                 }
                 5 => {
                     let next = unique_loadout_name(self.store.loadouts(), "loadout");
-                    let backup = self.store.snapshot();
-                    self.store.upsert(Loadout::new(next));
+                    self.store.upsert(Loadout::new(next.clone()));
                     match self.store.save() {
                         Ok(()) => {
-                            self.state.sel = self.store.loadouts().len().saturating_sub(1);
-                            self.sync_scratch_from_selection();
+                            self.select_saved(&next);
                             self.state.status = "Saved.".into();
                             LoadoutsKey::Changed
                         }
                         Err(err) => {
-                            self.store.restore(backup);
+                            self.store.discard();
                             self.state.status = format!("Save failed: {err}");
                             LoadoutsKey::Consumed
                         }
@@ -144,17 +167,16 @@ impl<'a> LoadoutsPane<'a> {
                             self.store.loadouts(),
                             &format!("{} copy", src.name),
                         );
-                        let backup = self.store.snapshot();
+                        let name = dup.name.clone();
                         self.store.upsert(dup);
                         match self.store.save() {
                             Ok(()) => {
-                                self.state.sel = self.store.loadouts().len().saturating_sub(1);
-                                self.sync_scratch_from_selection();
+                                self.select_saved(&name);
                                 self.state.status = "Saved.".into();
                                 LoadoutsKey::Changed
                             }
                             Err(err) => {
-                                self.store.restore(backup);
+                                self.store.discard();
                                 self.state.status = format!("Save failed: {err}");
                                 LoadoutsKey::Consumed
                             }
@@ -166,7 +188,6 @@ impl<'a> LoadoutsPane<'a> {
                 7 => {
                     if let Some(loadout) = self.store.loadouts().get(self.state.sel) {
                         let name = loadout.name.clone();
-                        let backup = self.store.snapshot();
                         self.store.remove(&name);
                         match self.store.save() {
                             Ok(()) => {
@@ -178,7 +199,7 @@ impl<'a> LoadoutsPane<'a> {
                                 LoadoutsKey::Changed
                             }
                             Err(err) => {
-                                self.store.restore(backup);
+                                self.store.discard();
                                 self.state.status = format!("Save failed: {err}");
                                 LoadoutsKey::Consumed
                             }
@@ -357,12 +378,14 @@ impl Widget for LoadoutsPane<'_> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
     use api::loadout::{CarryEntry, Loadout};
+    use host_play::local_state::{LocalStateService, StateRoot};
     use script::LoadoutsStore;
 
     use super::{
@@ -376,18 +399,22 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn tmp_store() -> LoadoutsStore {
+    fn scratch_service(label: &str) -> Arc<LocalStateService> {
         let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-loadouts-{n}-{}",
+            "274bot-tui-loadouts-{label}-{n}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("loadouts.json");
-        let mut store = LoadoutsStore::at(path);
+        LocalStateService::open_process(StateRoot::new(dir.join(".274bot")))
+    }
+
+    fn tmp_store() -> LoadoutsStore {
+        let service = scratch_service("store");
+        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
         store.upsert(Loadout::new("fish").with_carry("net", 1));
         store.save().unwrap();
         store
@@ -444,18 +471,8 @@ mod tests {
 
     #[test]
     fn apply_scratch_renames_in_place() {
-        let mut store = LoadoutsStore::at({
-            let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "274bot-tui-loadout-rename-{n}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
-            dir.join("loadouts.json")
-        });
+        let service = scratch_service("rename");
+        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
         store.upsert(Loadout::new("melee"));
 
         let mut state = LoadoutsState {
@@ -477,6 +494,42 @@ mod tests {
         assert_eq!(store.loadouts()[0].name, "melee2");
         assert_eq!(state.sel, 0);
         assert_eq!(state.status, "Saved.");
+    }
+
+    /// Rows are keyed by name in the store: renaming onto another row's
+    /// name is refused and both rows stay, in the form and in the file.
+    #[test]
+    fn renaming_onto_another_loadouts_name_is_refused_and_keeps_both() {
+        let service = scratch_service("collide");
+        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
+        store.upsert(Loadout::new("range"));
+        store.save().unwrap();
+
+        let mut state = LoadoutsState {
+            open: true,
+            sel: 1,
+            row: 1,
+            name_scratch: "melee".into(),
+            ..Default::default()
+        };
+        let result = {
+            let mut pane = LoadoutsPane {
+                store: &mut store,
+                state: &mut state,
+            };
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(result, LoadoutsKey::Consumed);
+        assert_eq!(state.status, "A loadout named \"melee\" already exists.");
+        assert_eq!(store.names(), ["melee", "range"]);
+        assert!(!store.is_dirty());
+        let reread = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        assert_eq!(reread.names(), ["melee", "range"]);
+        assert_eq!(
+            reread.get("melee").unwrap().carry,
+            vec![CarryEntry::new("Lobster", 8)]
+        );
     }
 
     #[test]

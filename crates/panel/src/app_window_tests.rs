@@ -626,10 +626,13 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
             .unwrap();
     }
     drop(vault);
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
-        last_focus: Some("alice".into()),
-        ..Default::default()
-    });
+    crate::ui_state::save(
+        &crate::test_support::thread_preferences(),
+        &crate::ui_state::PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        },
+    );
     let mut session = Session::new();
     session.persist_ui = false;
     session.core.set_spawn_workers(false);

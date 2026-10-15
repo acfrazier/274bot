@@ -125,6 +125,17 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) {
     vault::write_private_file(path, bytes).unwrap();
 }
 
+/// `rows` written to the loadouts file by another writer (an older build's
+/// form, a hand edit), in the pretty array every build writes.
+fn write_loadouts(path: &std::path::Path, rows: &[Loadout]) {
+    write_private(path, serde_json::to_string_pretty(rows).unwrap().as_bytes());
+}
+
+/// A frontend's loadouts form over `service`.
+fn form(service: &Arc<LocalStateService>) -> script::LoadoutsStore {
+    script::LoadoutsStore::over(Arc::new(service.operator_loadouts()))
+}
+
 /// A writer held inside the publication of `blocker` until released, so
 /// later submissions queue behind it.
 struct Stall {
@@ -209,9 +220,7 @@ fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
     let first = Loadout::new("starter")
         .with_slot("righthand", "Bronze sword")
         .with_carry("Shrimps", 4);
-    let mut operator_store = script::LoadoutsStore::at(path.clone());
-    operator_store.upsert(first.clone());
-    operator_store.save().unwrap();
+    write_loadouts(&path, std::slice::from_ref(&first));
 
     let service = LocalStateService::open(
         root,
@@ -231,7 +240,7 @@ fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
     let rows = vec![first, second];
     let expected = serde_json::to_string_pretty(&rows).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
-    let operator_store = script::LoadoutsStore::at(path);
+    let operator_store = form(&service);
     assert_eq!(operator_store.loadouts(), rows.as_slice());
     assert_eq!(receipt.version(), lease.version().checked_next().unwrap());
 
@@ -510,9 +519,7 @@ fn external_loadout_edit_is_read_back_at_a_higher_version() {
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
     let first = Loadout::new("first");
-    let mut store = script::LoadoutsStore::at(path.clone());
-    store.upsert(first.clone());
-    store.save().unwrap();
+    write_loadouts(&path, std::slice::from_ref(&first));
     let service = LocalStateService::open(
         root,
         &[LocalStateDomain::LoadoutsReferences],
@@ -526,9 +533,7 @@ fn external_loadout_edit_is_read_back_at_a_higher_version() {
     );
 
     let second = Loadout::new("external");
-    let mut store = script::LoadoutsStore::at(path);
-    store.upsert(second.clone());
-    store.save().unwrap();
+    write_loadouts(&path, &[first.clone(), second.clone()]);
     let after = service.readback_lease(&identity, WAIT).unwrap().unwrap();
     assert_eq!(after.snapshot().as_loadouts().unwrap(), &[first, second]);
     assert!(after.version() > before.version());
@@ -825,9 +830,8 @@ fn a_loadout_edit_after_a_form_saved_a_row_conflicts_and_keeps_the_row() {
     let hydrated = service.readback_lease(&loadouts_identity(), WAIT).unwrap();
     assert!(hydrated.is_none());
     let version = service.lease(&loadouts_identity()).unwrap().version();
-    let mut form = script::LoadoutsStore::at(path.clone());
-    form.upsert(Loadout::new("frontend-saved"));
-    form.save().unwrap();
+    // Another writer (an older build's form, a hand edit) saves a row.
+    write_loadouts(&path, &[Loadout::new("frontend-saved")]);
     let saved = std::fs::read(&path).unwrap();
 
     let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("service"))));
@@ -1259,11 +1263,10 @@ fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
     let scratch = IsolatedEnv::enter("local-state-loadout-budget");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
-    let mut form = script::LoadoutsStore::at(path.clone());
-    for n in 0..files::MAX_LOADOUT_ROWS {
-        form.upsert(Loadout::new(format!("row{n}")));
-    }
-    form.save().unwrap();
+    let rows: Vec<Loadout> = (0..files::MAX_LOADOUT_ROWS)
+        .map(|n| Loadout::new(format!("row{n}")))
+        .collect();
+    write_loadouts(&path, &rows);
     let service = LocalStateService::open(
         root.clone(),
         &[LocalStateDomain::LoadoutsReferences],
@@ -1300,12 +1303,8 @@ fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
     let wide = |name: String| Loadout::new(name).with_carry("z".repeat(60 * 1024), 1);
     let row_bytes = files::row_bytes(&wide("wide000".into())).unwrap();
     let fit = (files::MAX_LOADOUTS_BYTES as usize - 2) / row_bytes;
-    let mut form = script::LoadoutsStore::at(path.clone());
-    form.restore(Vec::new());
-    for n in 0..fit {
-        form.upsert(wide(format!("wide{n:03}")));
-    }
-    form.save().unwrap();
+    let wides: Vec<Loadout> = (0..fit).map(|n| wide(format!("wide{n:03}"))).collect();
+    write_loadouts(&path, &wides);
     assert_eq!(
         std::fs::metadata(&path).unwrap().len() as usize,
         2 + fit * row_bytes,
@@ -1425,15 +1424,14 @@ fn durable_receipts_are_exact_to_account_and_versions_are_never_reused() {
 }
 
 /// The composition's Start-time lease: what `ScriptStartHandle` posts as
-/// the operator's rows. A row the frontend's form saved after the service
-/// hydrated is seen (the readback), the slot's capability carries the
+/// the operator's rows. A row the frontend's form saved through the same
+/// service is seen by the next Start, the slot's capability carries the
 /// account the server would log in, and a name the server would refuse
 /// gets neither rows nor a capability.
 #[test]
 fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_names() {
     let scratch = IsolatedEnv::enter("local-state-composition");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
     let service = LocalStateService::open(
         root,
         &[
@@ -1453,10 +1451,10 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
         Vec::new()
     );
 
-    // The frontend's form writes the file directly (T5.5 moves it to the
-    // port); the next Start's readback sees the row.
+    // The frontend's form saves through the same service; the next Start's
+    // readback sees the row.
     let melee = Loadout::new("melee").with_slot("righthand", "Rune scimitar");
-    let mut form = script::LoadoutsStore::at(path);
+    let mut form = form(composition.service());
     form.upsert(melee.clone());
     form.save().unwrap();
     assert_eq!(
@@ -1488,4 +1486,641 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
     assert!(composition
         .identity(LocalStateDomain::BankHints, "a/b")
         .is_err());
+}
+
+// ---- T5.2 r3 ----
+
+/// Every audit line the service logs, collected.
+fn audits(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<AuditCommit>>> {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    service.set_audit_hook(Arc::new(move |audit| {
+        sink.lock().unwrap().push(audit.clone())
+    }));
+    seen
+}
+
+/// Every terminal line the service logs, collected.
+fn terminals(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<String>>> {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    service.set_terminal_hook(Arc::new(move |line| {
+        sink.lock().unwrap().push(line.to_string())
+    }));
+    seen
+}
+
+/// A schema-1 hint document stamped for `identity`, as another writer of
+/// this build would leave it.
+fn stamped_hint(identity: &DomainIdentity, rows: &[(i32, i32)], at: u64) -> Vec<u8> {
+    files::hint_bytes(
+        &StoreKey::of(identity).unwrap(),
+        rows,
+        DurableTimestamp::from_unix_seconds(at),
+    )
+    .unwrap()
+}
+
+/// T5.2 r3 (grok P1 "between read and rename"): a writer that does not take
+/// the lock (a hand edit, a build before r3) replaces the hint while this
+/// service stages its write. The write is not acknowledged, nothing is
+/// audited for it, the file keeps the other writer's bytes, and the
+/// service now holds them.
+#[test]
+fn an_outside_write_while_a_write_is_staged_conflicts_and_keeps_the_outside_bytes() {
+    let scratch = IsolatedEnv::enter("local-state-r3-staged-race");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
+    let path = root.bank_hint_file(PROFILE, "alice");
+    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
+    completed(
+        &service,
+        request(service.submit(hint_edit(&alice, None, vec![(995, 10)], 10))),
+    );
+    let audits = audits(&service);
+    let outside = stamped_hint(&alice, &[(995, 77)], 77);
+    let once = AtomicBool::new(false);
+    let written = outside.clone();
+    service.set_publish_hook(Arc::new(move |path| {
+        if !once.swap(true, Ordering::SeqCst) {
+            // An editor saving in place, taking no lock.
+            std::fs::write(path, &written).unwrap();
+        }
+    }));
+
+    let edit = request(service.submit(hint_edit(&alice, None, vec![(995, 20)], 20)));
+    let settled = settlement(&service, edit);
+    assert!(
+        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
+        "an outside replace during staging must conflict, not complete: {settled:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        outside,
+        "the outside bytes stay"
+    );
+    assert!(
+        audits.lock().unwrap().is_empty(),
+        "nothing committed, nothing audited"
+    );
+    let lease = service.lease(&alice).unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 77)]);
+}
+
+/// T5.2 r3 (sol F1): a form of a build before r3 (or a hand edit) saves a
+/// loadout row while the service stages its own edit. The service never
+/// writes over the saved row: its edit conflicts and the row stays.
+#[test]
+fn a_form_save_during_a_service_publication_is_never_overwritten() {
+    let scratch = IsolatedEnv::enter("local-state-r3-form-publication");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    write_loadouts(&path, &[Loadout::new("original")]);
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let version = service
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap()
+        .version();
+    let once = AtomicBool::new(false);
+    service.set_publish_hook(Arc::new(move |path| {
+        if !once.swap(true, Ordering::SeqCst) {
+            // A form of a build before r3 saving in place, taking no lock.
+            let rows = [Loadout::new("original"), Loadout::new("frontend-saved")];
+            std::fs::write(path, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
+        }
+    }));
+
+    let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("service-edit"))));
+    let settled = settlement(&service, edit);
+    assert!(
+        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
+        "{settled:?}"
+    );
+    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        rows,
+        [Loadout::new("original"), Loadout::new("frontend-saved")],
+        "the saved row is never overwritten"
+    );
+}
+
+/// T5.2 r3 (grok P1 "during the directory flush"): another writer replaces
+/// the file after the rename, while the directory entry is being flushed.
+/// The service reads the file back before acknowledging: it no longer holds
+/// the written bytes, so the write is a conflict, never `Completed`, and no
+/// audit line names it.
+#[test]
+fn an_outside_write_during_the_directory_flush_is_not_acknowledged() {
+    let scratch = IsolatedEnv::enter("local-state-r3-flush-race");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
+    let path = root.bank_hint_file(PROFILE, "alice");
+    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
+    completed(
+        &service,
+        request(service.submit(hint_edit(&alice, None, vec![(995, 10)], 10))),
+    );
+    let audits = audits(&service);
+    let outside = stamped_hint(&alice, &[(995, 88)], 88);
+    let once = AtomicBool::new(false);
+    let (hint_file, written) = (path.clone(), outside.clone());
+    service.set_sync_hook(Arc::new(move |dir| {
+        if !once.swap(true, Ordering::SeqCst) {
+            write_private(&hint_file, &written);
+        }
+        files::sync_directory(dir)
+    }));
+
+    let edit = request(service.submit(hint_edit(&alice, None, vec![(995, 20)], 20)));
+    let settled = settlement(&service, edit);
+    assert!(
+        !matches!(settled, Settlement::Completed(_)),
+        "a receipt for bytes the file no longer holds is a false acknowledgement: {settled:?}"
+    );
+    assert!(
+        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
+        "{settled:?}"
+    );
+    assert!(
+        audits.lock().unwrap().is_empty(),
+        "no audit for an unheld commit"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), outside);
+    assert_eq!(
+        service
+            .lease(&alice)
+            .unwrap()
+            .snapshot()
+            .as_bank_hints()
+            .unwrap(),
+        &[(995, 88)]
+    );
+}
+
+/// T5.2 r3 (sol F1, grok P1): two services on one state root (two
+/// compositions, or two processes on one `HOME`) never interleave on a
+/// file: while one holds its write transaction the other waits for the
+/// lock, then sees the first one's commit; no settlement is `Completed`
+/// for a row the file does not hold.
+#[test]
+fn two_services_on_one_root_never_interleave_their_writes() {
+    let scratch = IsolatedEnv::enter("local-state-r3-two-services");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    write_loadouts(&path, &[Loadout::new("original")]);
+    let first = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let second = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let first_version = first
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap()
+        .version();
+    let second_version = second
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap()
+        .version();
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    first.set_publish_hook(Arc::new(move |_| {
+        let _ = entered_tx.send(());
+        let _ = release_rx.lock().unwrap().recv();
+    }));
+
+    let a = request(first.submit(loadout_edit(Some(first_version), Loadout::new("a-row"))));
+    entered.recv_timeout(WAIT).unwrap();
+    let b = request(second.submit(loadout_edit(Some(second_version), Loadout::new("b-row"))));
+    assert_eq!(
+        settled_within(&second, b, Duration::from_millis(300)),
+        None,
+        "the second writer must wait for the first one's transaction"
+    );
+    release.send(()).unwrap();
+    let a_settled = settlement(&first, a);
+    let b_settled = settlement(&second, b);
+
+    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (row, settled) in [("a-row", &a_settled), ("b-row", &b_settled)] {
+        if matches!(settled, Settlement::Completed(_)) {
+            assert!(
+                rows.iter().any(|held| held.name == row),
+                "{row} was acknowledged but the file lost it: {rows:?}"
+            );
+        }
+    }
+    assert!(
+        matches!(a_settled, Settlement::Completed(_)),
+        "{a_settled:?}"
+    );
+    assert!(
+        matches!(b_settled, Settlement::Failed(ErrorCode::Conflict { .. })),
+        "the second edit was written against the file before the first commit: {b_settled:?}"
+    );
+
+    // Retried against what the file holds now, both rows survive.
+    let current = second
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap()
+        .version();
+    completed(
+        &second,
+        request(second.submit(loadout_edit(Some(current), Loadout::new("b-row")))),
+    );
+    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(names, ["original", "a-row", "b-row"]);
+}
+
+/// The other process of [`a_writer_in_another_process_holding_the_lock_makes_the_write_wait`]:
+/// it takes the file's write lock, says so, holds it while it writes the
+/// file, then lets it go.
+#[test]
+#[ignore = "lock-holding subprocess of the cross-process lock test"]
+fn lock_holding_child() {
+    let file = std::path::PathBuf::from(std::env::var_os("T52_LOCK_FILE").unwrap());
+    let ready = std::path::PathBuf::from(std::env::var_os("T52_LOCK_READY").unwrap());
+    let lock = files::lock_for_write(&file, std::time::Instant::now() + WAIT, &|| false)
+        .expect("the child takes the lock");
+    std::fs::write(&ready, b"locked").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    write_loadouts(
+        &file,
+        &[Loadout::new("original"), Loadout::new("child-row")],
+    );
+    drop(lock);
+}
+
+/// T5.2 r3: a writer in another process (a second 274bot on the same
+/// `HOME`) holds the file's lock: this service's write waits for it, then
+/// finds the other process's commit and conflicts instead of overwriting
+/// it.
+#[test]
+fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
+    let scratch = IsolatedEnv::enter("local-state-r3-other-process");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    write_loadouts(&path, &[Loadout::new("original")]);
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let version = service
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap()
+        .version();
+    let ready = scratch.home.join("child-ready");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "local_state::tests::lock_holding_child",
+        ])
+        .env("T52_LOCK_FILE", &path)
+        .env("T52_LOCK_READY", &ready)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the child never locked"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("parent-row"))));
+    assert_eq!(
+        settled_within(&service, edit, Duration::from_millis(200)),
+        None,
+        "the write must wait for the other process's lock"
+    );
+    assert!(child.wait().unwrap().success());
+    let settled = settlement(&service, edit);
+    assert!(
+        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
+        "{settled:?}"
+    );
+    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(rows, [Loadout::new("original"), Loadout::new("child-row")]);
+}
+
+/// T5.2 r3 (sol F2): the first write of a new hint fails flushing the state
+/// root. The retry, though its bytes and digest match what the failed
+/// attempt left, must flush every link of the chain again (profile
+/// directory, `bank-hints`, the root, the root's parent) before it is
+/// acknowledged and audited.
+#[test]
+fn a_retry_after_a_failed_ancestor_flush_flushes_the_whole_chain() {
+    let scratch = IsolatedEnv::enter("local-state-r3-flush-retry");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
+    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
+    let flushed = Arc::new(std::sync::Mutex::new(Vec::<std::path::PathBuf>::new()));
+    let fail_root = Arc::new(AtomicBool::new(true));
+    let (seen, fail, state_root) = (
+        Arc::clone(&flushed),
+        Arc::clone(&fail_root),
+        root.path().to_path_buf(),
+    );
+    service.set_sync_hook(Arc::new(move |dir| {
+        seen.lock().unwrap().push(dir.to_path_buf());
+        if dir == state_root && fail.swap(false, Ordering::SeqCst) {
+            return Err(std::io::Error::other("root flush failed"));
+        }
+        files::sync_directory(dir)
+    }));
+    let audits = audits(&service);
+
+    let first = request(service.submit(hint_edit(&alice, None, vec![(995, 5)], 5)));
+    assert!(matches!(
+        settlement(&service, first),
+        Settlement::Failed(ErrorCode::Failed {
+            reason: FailureReason::Io,
+            ..
+        })
+    ));
+    assert!(audits.lock().unwrap().is_empty());
+
+    flushed.lock().unwrap().clear();
+    let retry = request(service.submit(hint_edit(&alice, None, vec![(995, 5)], 5)));
+    let receipt = completed(&service, retry);
+    let hint_dir = root.path().join("bank-hints").join(PROFILE);
+    assert_eq!(
+        *flushed.lock().unwrap(),
+        vec![
+            hint_dir,
+            root.path().join("bank-hints"),
+            root.path().to_path_buf(),
+            scratch.home.clone(),
+        ],
+        "the retry re-flushes the unfinished chain"
+    );
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].version(), receipt.version());
+}
+
+/// T5.2 r3 (grok P2): past the shutdown bound no accepted write is dropped
+/// silently. A write the writer holds short of its rename and a write
+/// queued behind it each settle `Cancelled(Shutdown)` with their own
+/// terminal line; the held one is never renamed into place afterwards.
+#[test]
+fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
+    let scratch = IsolatedEnv::enter("local-state-r3-shutdown-bound");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    service.set_shutdown_timeout(Duration::from_millis(300));
+    let lines = terminals(&service);
+    let (alice, bob) = (bank_identity("alice"), bank_identity("bob"));
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    service.set_publish_hook(Arc::new(move |_| {
+        let _ = entered_tx.send(());
+        let _ = release_rx.lock().unwrap().recv();
+    }));
+    for identity in [&alice, &bob] {
+        assert!(service.readback_lease(identity, WAIT).unwrap().is_none());
+    }
+    let held = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
+    entered.recv_timeout(WAIT).unwrap();
+    let queued = request(service.submit(hint_edit(&bob, None, vec![(995, 2)], 2)));
+    let ledger = service.ledger();
+
+    let started = std::time::Instant::now();
+    drop(service);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "drop is bounded"
+    );
+    for request in [held, queued] {
+        assert_eq!(
+            ledger.request_state(request),
+            RequestState::Settled(Settlement::Cancelled(Cancellation::Shutdown)),
+            "request {} has its terminal at the bound",
+            request.get()
+        );
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.contains(&format!(
+                    "request={} settlement=cancelled-shutdown",
+                    request.get()
+                ))),
+            "request {} has its own terminal line: {:?}",
+            request.get(),
+            lines.lock().unwrap()
+        );
+    }
+
+    release.send(()).unwrap();
+    assert!(ledger.wait_writer_exit(WAIT), "the writer stops");
+    assert_eq!(
+        ledger.request_state(held),
+        RequestState::Settled(Settlement::Cancelled(Cancellation::Shutdown)),
+        "one terminal per request"
+    );
+    assert!(
+        !root.bank_hint_file(PROFILE, "alice").exists(),
+        "never renamed"
+    );
+    assert!(!root.bank_hint_file(PROFILE, "bob").exists());
+}
+
+/// T5.2 r3: a write already being renamed into place when the shutdown
+/// bound passes is not cancelled: it settles when it finishes, durable and
+/// audited.
+#[test]
+fn a_write_being_renamed_at_the_shutdown_bound_settles_when_it_finishes() {
+    let scratch = IsolatedEnv::enter("local-state-r3-shutdown-publishing");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    service.set_shutdown_timeout(Duration::from_millis(300));
+    let alice = bank_identity("alice");
+    let path = root.bank_hint_file(PROFILE, "alice");
+    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
+    let stall = stall_on(&service, path.clone());
+    let audits = audits(&service);
+    let write = request(service.submit(hint_edit(&alice, None, vec![(995, 3)], 3)));
+    stall.entered.recv_timeout(WAIT).unwrap();
+    let ledger = service.ledger();
+    drop(service);
+    assert_eq!(ledger.request_state(write), RequestState::Pending);
+    stall.release.send(()).unwrap();
+    assert!(ledger.wait_writer_exit(WAIT));
+    assert!(matches!(
+        ledger.request_state(write),
+        RequestState::Settled(Settlement::Completed(_))
+    ));
+    assert_eq!(audits.lock().unwrap().len(), 1);
+    assert!(path.exists());
+}
+
+/// T5.2 r3 (grok P2): a hint carrying a field this build does not know is
+/// read, but never rewritten (the loadouts rule): the submission is refused
+/// and the field stays.
+#[test]
+fn a_hint_with_a_field_this_build_does_not_know_is_read_but_never_rewritten() {
+    let scratch = IsolatedEnv::enter("local-state-r3-hint-field");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
+    let path = root.bank_hint_file(PROFILE, "alice");
+    let document = serde_json::to_vec(&serde_json::json!({
+        "schema_version": HINT_SCHEMA_VERSION,
+        "profile": PROFILE,
+        "account": "alice",
+        "observed_at_unix": 7,
+        "rows": [[995, 7]],
+        "note": "keep",
+    }))
+    .unwrap();
+    write_private(&path, &document);
+    let lease = service.readback_lease(&alice, WAIT).unwrap().unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
+
+    assert_eq!(
+        service.submit(hint_edit(&alice, None, vec![(995, 8)], 8)),
+        SubmitReceipt::Refused(ErrorCode::Failed {
+            domain: LocalStateDomain::BankHints,
+            reason: FailureReason::Schema,
+        })
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), document, "the note is kept");
+}
+
+fn preferences(scratch: &IsolatedEnv) -> Preferences {
+    LocalStateService::open_process(StateRoot::new(scratch.home.join(".274bot"))).preferences()
+}
+
+/// T5.2 r3 (scope): the shared `panel-ui.json` is the preferences domain.
+/// A write sets one member, keeps every other one (nested values too),
+/// writes the pretty object the old shared writer wrote, and is audited.
+#[test]
+fn a_preference_write_sets_one_member_and_keeps_every_other() {
+    let scratch = IsolatedEnv::enter("local-state-r3-preferences");
+    let preferences = preferences(&scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_private(
+        &path,
+        br#"{"last_focus":"alice","nav":{"allow_teleports":true,"custom":{"keep":7}},"collapsed":{}}"#,
+    );
+    let audits = audits(&preferences.service);
+    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+
+    preferences
+        .set("map_bake", serde_json::json!("always"))
+        .unwrap();
+
+    let mut expected: serde_json::Value = serde_json::json!({
+        "last_focus": "alice",
+        "nav": {"allow_teleports": true, "custom": {"keep": 7}},
+        "collapsed": {},
+    });
+    expected["map_bake"] = serde_json::json!("always");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        serde_json::to_vec_pretty(&expected).unwrap()
+    );
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action(), CommitAction::PreferencesWrite);
+    assert_eq!(preferences.value("map_bake").unwrap(), "always");
+}
+
+/// T5.2 r3: a preference object too long for one row (the panel's
+/// per-profile `collapsed` map of a large fleet) is held one row per
+/// member, and a change to one member writes only that member; the file
+/// keeps its shape and every other member.
+#[test]
+fn an_oversize_preference_object_is_written_member_by_member() {
+    let scratch = IsolatedEnv::enter("local-state-r3-preferences-wide");
+    let preferences = preferences(&scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let collapsed: serde_json::Map<String, serde_json::Value> = (0..80)
+        .map(|n| {
+            (
+                format!("profile_{n:03}"),
+                serde_json::json!({"status": false, "resource": true, "profile": false,
+                    "script": true, "debug": false, "log": false, "parameters": true}),
+            )
+        })
+        .collect();
+    let document = serde_json::json!({"collapsed": collapsed, "lowmem": true});
+    assert!(document["collapsed"].to_string().len() > api::local_state::MAX_PREF_VALUE_BYTES);
+    write_private(&path, &serde_json::to_vec_pretty(&document).unwrap());
+    preferences.reload().unwrap();
+    let lease = preferences.service.lease(&preferences.identity).unwrap();
+    let rows = lease.snapshot().as_preferences().unwrap();
+    assert_eq!(rows.len(), 81, "one row per profile, plus lowmem");
+    assert!(rows.iter().any(|row| row.key() == "collapsed.profile_007"));
+
+    let audits = audits(&preferences.service);
+    preferences
+        .update(|document| {
+            document["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(audits.lock().unwrap().len(), 1, "one member, one write");
+    let mut expected = document.clone();
+    expected["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written, expected);
+}
+
+/// T5.2 r3 (grok P2, the same rule in every domain): a preferences file
+/// with a member the service cannot hold as a row is read, but never
+/// rewritten: a write fails and the file keeps every byte.
+#[test]
+fn a_preferences_file_the_service_cannot_hold_whole_is_never_rewritten() {
+    let scratch = IsolatedEnv::enter("local-state-r3-preferences-refused");
+    let preferences = preferences(&scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let document = br#"{"last_focus":"alice","not a key":1}"#;
+    write_private(&path, document);
+    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+    assert!(preferences
+        .set("map_bake", serde_json::json!("always"))
+        .is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+/// T5.2 r3 (scope, sol F1 by construction): a frontend's loadouts form and
+/// a slot-side edit write through the one process service: they never
+/// overwrite each other. The form's stale save conflicts, and saving again
+/// keeps both rows.
+#[test]
+fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
+    let scratch = IsolatedEnv::enter("local-state-r3-form-and-slot");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let service = LocalStateService::open_process(root.clone());
+    let mut form = form(&service);
+    assert!(form.loadouts().is_empty());
+    let version = service.lease(&loadouts_identity()).unwrap().version();
+    completed(
+        &service,
+        request(service.submit(loadout_edit(Some(version), Loadout::new("slot-row")))),
+    );
+
+    form.upsert(Loadout::new("form-row"));
+    let error = form.save().unwrap_err();
+    assert!(error.contains("conflict"), "{error}");
+    form.save().unwrap();
+    let rows: Vec<Loadout> =
+        serde_json::from_slice(&std::fs::read(root.loadouts_file()).unwrap()).unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(names, ["slot-row", "form-row"]);
+    assert_eq!(form.names(), ["slot-row", "form-row"]);
 }

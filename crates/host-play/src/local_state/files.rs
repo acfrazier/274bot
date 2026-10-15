@@ -1,30 +1,41 @@
 //! The current files behind the state service (T5.2): the operator's
-//! `loadouts.json` and one `bank-hints/<profile>/<account>.json` per
-//! account. Each backend reads the file its old private reader read and
-//! writes the shape its old private writer wrote, so a file written before
-//! this service is read by it, and a file it writes is read by an older
-//! build.
+//! `loadouts.json` and `panel-ui.json` preferences, and one
+//! `bank-hints/<profile>/<account>.json` per account. Each backend reads the
+//! file its old private reader read and writes the shape its old private
+//! writer wrote, so a file written before this service is read by it, and a
+//! file it writes is read by an older build.
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it. What a write publishes is durable before
-//! it is acknowledged: the bytes are flushed in their staging file, renamed
-//! over the target, and then the directory entries are flushed
-//! ([`publish`]).
+//! until a later read accepts it. A file whose content the service cannot
+//! represent whole (unknown fields, rows it cannot write back as read) is
+//! read but never rewritten ([`Rewrite::Refused`]), the same rule in every
+//! domain. What a write publishes is durable before it is acknowledged: the
+//! bytes are flushed in their staging file, renamed over the target, and
+//! then the directory entries are flushed.
+//!
+//! Every writer this product runs holds the file's [`WriteLock`] across its
+//! whole read-check-publish-verify transaction, so two services (two
+//! processes on one `HOME`, or two compositions in one process) never
+//! interleave on one file.
 
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
 use api::loadout::{parse_loadout, Loadout};
 use api::local_state::{
     DomainIdentity, FailureReason, LeaseSnapshot, LoadoutEdit, LoadoutOp, LocalStateDomain,
+    PreferenceRow,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use vault::read_private_file;
 
@@ -49,6 +60,12 @@ impl StateRoot {
     /// `<root>/loadouts.json`: the one operator loadouts file.
     pub fn loadouts_file(&self) -> PathBuf {
         self.0.join("loadouts.json")
+    }
+
+    /// `<root>/panel-ui.json`: the one operator preferences file the panel
+    /// and the TUI share.
+    pub fn preferences_file(&self) -> PathBuf {
+        self.0.join("panel-ui.json")
     }
 
     /// `<root>/bank-hints/<profile>/<account>.json`: the account's hint
@@ -82,6 +99,22 @@ pub(super) const MAX_LOADOUT_ROWS: usize = 512;
 /// The largest one loadout row may be, as it is written in the file.
 pub(super) const MAX_LOADOUT_ROW_BYTES: usize = 64 * 1024;
 
+/// The largest preferences file read, and the largest the service writes.
+pub(super) const MAX_PREFERENCES_BYTES: u64 = 1024 * 1024;
+
+/// The fields a schema-1 hint document carries. Any other field is content
+/// the service cannot write back, so a document carrying one is read but
+/// never rewritten.
+const HINT_FIELDS: [&str; 7] = [
+    "schema_version",
+    "profile",
+    "account",
+    "revision",
+    "content",
+    "observed_at_unix",
+    "rows",
+];
+
 /// Which current file a store is, and under which identity it is read.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum StoreKey {
@@ -90,6 +123,9 @@ pub(super) enum StoreKey {
     /// or a content's: its rows are operator-authored presets, the same for
     /// every account and content scope.
     Loadouts,
+    /// The one operator preferences file (`panel-ui.json`): every
+    /// `preferences` identity maps to it, for the same reason.
+    Preferences,
     /// One account's hint file, read and written under one content scope:
     /// two scopes of one account are two stores, and a document stamped
     /// with one scope is refused under the other.
@@ -103,23 +139,25 @@ pub(super) enum StoreKey {
 
 impl StoreKey {
     /// The store `identity` reads and writes, or `None` for a domain that
-    /// has no current file (preferences, knowledge).
+    /// has no current file (knowledge).
     pub(super) fn of(identity: &DomainIdentity) -> Option<Self> {
         match identity.domain() {
             LocalStateDomain::LoadoutsReferences => Some(StoreKey::Loadouts),
+            LocalStateDomain::Preferences => Some(StoreKey::Preferences),
             LocalStateDomain::BankHints => Some(StoreKey::BankHint {
                 profile: identity.account().profile().to_string(),
                 account: identity.account().account().to_string(),
                 revision: identity.scope().revision().as_i32(),
                 content: identity.scope().content().to_string(),
             }),
-            LocalStateDomain::Preferences | LocalStateDomain::Knowledge => None,
+            LocalStateDomain::Knowledge => None,
         }
     }
 
     pub(super) fn domain(&self) -> LocalStateDomain {
         match self {
             StoreKey::Loadouts => LocalStateDomain::LoadoutsReferences,
+            StoreKey::Preferences => LocalStateDomain::Preferences,
             StoreKey::BankHint { .. } => LocalStateDomain::BankHints,
         }
     }
@@ -127,10 +165,17 @@ impl StoreKey {
     pub(super) fn path(&self, root: &StateRoot) -> PathBuf {
         match self {
             StoreKey::Loadouts => root.loadouts_file(),
+            StoreKey::Preferences => root.preferences_file(),
             StoreKey::BankHint {
                 profile, account, ..
             } => root.bank_hint_file(profile, account),
         }
+    }
+
+    /// Whether every identity of the domain shares this one store (the
+    /// operator files), rather than one store per account and scope.
+    pub(super) fn operator_wide(&self) -> bool {
+        matches!(self, StoreKey::Loadouts | StoreKey::Preferences)
     }
 }
 
@@ -144,7 +189,11 @@ pub(super) fn digest(bytes: &[u8]) -> ContentDigest {
 }
 
 /// Whether the service may rewrite a file it read: only when the rows it
-/// holds are everything the file holds, so a rewrite loses nothing.
+/// holds are everything the file holds, so a rewrite loses nothing. The
+/// rule is the same in every domain: content the service cannot hold as
+/// rows (a loadout it cannot parse or write back as read, a hint field it
+/// does not know, a preference it cannot represent as a row) makes the file
+/// read-only to the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rewrite {
     /// Every row was read and writes back as it was read.
@@ -161,14 +210,14 @@ pub(super) struct ReadDocument {
     /// The rows, under the domain's row contract.
     pub(super) snapshot: LeaseSnapshot,
     /// When the rows were observed: the hint's own stamp, or `read_at`
-    /// for a loadouts file (which carries none).
+    /// for the operator files (which carry none).
     pub(super) at: DurableTimestamp,
     /// The digest of the bytes read.
     pub(super) digest: ContentDigest,
     /// How many bytes the rows take as this service writes them: the
     /// pretty-printed array for loadouts (what the size budget projects
     /// from, whatever formatting the file on disk had), the file's length
-    /// for a hint.
+    /// for a hint or the preferences.
     pub(super) written_len: usize,
     /// Whether a write may replace the file.
     pub(super) rewrite: Rewrite,
@@ -185,6 +234,8 @@ pub(super) enum ReadError {
     Json(#[from] serde_json::Error),
     #[error("not a JSON array of loadouts")]
     NotAnArray,
+    #[error("not a JSON object of preferences")]
+    NotAnObject,
     #[error("schema_version {found} (this build reads {HINT_SCHEMA_VERSION})")]
     Schema { found: u32 },
     #[error("file names profile {profile:?} account {account:?}")]
@@ -209,6 +260,7 @@ impl ReadError {
             ReadError::Io(_) => FailureReason::Io,
             ReadError::Json(_)
             | ReadError::NotAnArray
+            | ReadError::NotAnObject
             | ReadError::Schema { .. }
             | ReadError::Rows(_) => FailureReason::Schema,
             ReadError::Identity { .. } | ReadError::Scope { .. } => FailureReason::Identity,
@@ -244,10 +296,7 @@ pub(super) fn read(
     read_at: DurableTimestamp,
 ) -> Result<Option<ReadDocument>, ReadError> {
     let path = key.path(root);
-    let max = match key {
-        StoreKey::Loadouts => MAX_LOADOUTS_BYTES,
-        StoreKey::BankHint { .. } => MAX_HINT_BYTES,
-    };
+    let max = max_bytes(key);
     let raw = match read_private_file(&path, max) {
         Ok(raw) => raw,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -290,13 +339,43 @@ pub(super) fn read(
                 rewrite,
             }))
         }
+        StoreKey::Preferences => {
+            let Value::Object(document) = serde_json::from_str(&raw)? else {
+                return Err(ReadError::NotAnObject);
+            };
+            let (rows, unrepresentable) = preference_rows(&document);
+            Ok(Some(ReadDocument {
+                snapshot: LeaseSnapshot::preferences(rows),
+                at: read_at,
+                digest,
+                written_len: raw.len(),
+                rewrite: if unrepresentable == 0 {
+                    Rewrite::Lossless
+                } else {
+                    Rewrite::Refused {
+                        unreadable: unrepresentable,
+                        lossy: 0,
+                    }
+                },
+            }))
+        }
         StoreKey::BankHint {
             profile,
             account,
             revision,
             content,
         } => {
-            let document: HintDocument = serde_json::from_str(&raw)?;
+            let value: Value = serde_json::from_str(&raw)?;
+            // A field this build does not know is content a rewrite would
+            // drop: the hint is read, but never rewritten (the loadouts
+            // rule).
+            let unknown = value.as_object().map_or(0, |fields| {
+                fields
+                    .keys()
+                    .filter(|field| !HINT_FIELDS.contains(&field.as_str()))
+                    .count()
+            });
+            let document: HintDocument = serde_json::from_value(value)?;
             if document.schema_version != HINT_SCHEMA_VERSION {
                 return Err(ReadError::Schema {
                     found: document.schema_version,
@@ -329,9 +408,39 @@ pub(super) fn read(
                 at: DurableTimestamp::from_unix_seconds(document.observed_at_unix),
                 digest,
                 written_len: raw.len(),
-                rewrite: Rewrite::Lossless,
+                rewrite: if unknown == 0 {
+                    Rewrite::Lossless
+                } else {
+                    Rewrite::Refused {
+                        unreadable: 0,
+                        lossy: unknown,
+                    }
+                },
             }))
         }
+    }
+}
+
+/// The largest file of `key`'s kind the service reads.
+fn max_bytes(key: &StoreKey) -> u64 {
+    match key {
+        StoreKey::Loadouts => MAX_LOADOUTS_BYTES,
+        StoreKey::Preferences => MAX_PREFERENCES_BYTES,
+        StoreKey::BankHint { .. } => MAX_HINT_BYTES,
+    }
+}
+
+/// The digest of what `key`'s file holds now, `None` when there is no
+/// file: the checks a write makes immediately before its rename and after
+/// its directory flush.
+pub(super) fn current_digest(
+    key: &StoreKey,
+    root: &StateRoot,
+) -> io::Result<Option<ContentDigest>> {
+    match read_private_file(&key.path(root), max_bytes(key)) {
+        Ok(raw) => Ok(Some(digest(raw.as_bytes()))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -398,6 +507,179 @@ pub(super) fn apply_loadout_edit(rows: &[Loadout], edit: &LoadoutEdit) -> Vec<Lo
         LoadoutOp::Remove { name } => next.retain(|row| row.name != *name),
     }
     next
+}
+
+/// One preferences document (`panel-ui.json`, a JSON object) as rows. Each
+/// top-level member is one row: its name, and its value as compact JSON
+/// text. A member whose value is too long for one row and is an object is
+/// held as one row per nested member, `<member>.<nested>` (a member name
+/// carries no `.`, so the first `.` splits the key). A member that fits
+/// neither way (a name outside the row alphabet or carrying a `.`, a nested
+/// value still too long) cannot be held: it is counted, and a file with any
+/// is read but never rewritten.
+pub(super) fn preference_rows(document: &Map<String, Value>) -> (Vec<PreferenceRow>, usize) {
+    let mut rows = Vec::with_capacity(document.len());
+    let mut unrepresentable = 0;
+    for (name, value) in document {
+        if name.contains('.') {
+            unrepresentable += 1;
+            continue;
+        }
+        if let Ok(row) = PreferenceRow::try_new(name, &value.to_string()) {
+            rows.push(row);
+            continue;
+        }
+        let nested = match value {
+            Value::Object(members) if !members.is_empty() => members
+                .iter()
+                .map(|(member, value)| {
+                    PreferenceRow::try_new(&format!("{name}.{member}"), &value.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .ok(),
+            _ => None,
+        };
+        match nested {
+            Some(nested) => rows.extend(nested),
+            None => unrepresentable += 1,
+        }
+    }
+    (rows, unrepresentable)
+}
+
+/// The preferences document `rows` hold: the inverse of
+/// [`preference_rows`]. `None` when a row's value is not JSON, or a member
+/// is both one row and nested rows (never produced by a read or a write).
+pub(super) fn preference_document(rows: &[PreferenceRow]) -> Option<Map<String, Value>> {
+    let mut document = Map::new();
+    for row in rows {
+        let value: Value = serde_json::from_str(row.value()).ok()?;
+        match row.key().split_once('.') {
+            Some((name, member)) => {
+                let Value::Object(members) = document
+                    .entry(name.to_string())
+                    .or_insert_with(|| Value::Object(Map::new()))
+                else {
+                    return None;
+                };
+                members.insert(member.to_string(), value);
+            }
+            None => {
+                if document.insert(row.key().to_string(), value).is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(document)
+}
+
+/// Apply one preferences write to `document`: key `<member>` sets that
+/// member to `value` (JSON text); key `<member>.<nested>` sets one member
+/// of the object `<member>`, creating it when absent. `None` (nothing
+/// changed) when `value` is not JSON or `<member>` is not an object.
+pub(super) fn apply_preferences_edit(
+    document: &mut Map<String, Value>,
+    key: &str,
+    value: &str,
+) -> Option<()> {
+    let value: Value = serde_json::from_str(value).ok()?;
+    match key.split_once('.') {
+        Some((name, member)) => {
+            let Value::Object(members) = document
+                .entry(name.to_string())
+                .or_insert_with(|| Value::Object(Map::new()))
+            else {
+                return None;
+            };
+            members.insert(member.to_string(), value);
+        }
+        None => {
+            document.insert(key.to_string(), value);
+        }
+    }
+    Some(())
+}
+
+/// The bytes a preferences write publishes: the pretty-printed object,
+/// exactly as the old shared writer serialized it.
+pub(super) fn preferences_bytes(
+    document: &Map<String, Value>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec_pretty(document)
+}
+
+/// How long a writer waits for another writer's [`WriteLock`] on a file
+/// before it gives the write up as busy.
+pub(super) const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The advisory lock every writer this product runs holds on one current
+/// file across its whole read-check-publish-verify transaction: an
+/// exclusive lock (`flock` on Unix, `LockFileEx` on Windows, through std's
+/// `File::try_lock`) on `<file>.lock` beside it. It is the rule the shared
+/// `panel-ui.json` writer already followed (`resource_view.rs` before T5.2
+/// r3), so a preference writer of an older build and this service exclude
+/// each other too. The lock file is never removed: removing it while
+/// another process holds it open would let two writers lock two different
+/// files. Released when dropped.
+pub(super) struct WriteLock {
+    _file: File,
+}
+
+/// Why [`lock_for_write`] gave up.
+#[derive(Debug)]
+pub(super) enum LockError {
+    /// Another writer held the lock past the deadline.
+    TimedOut,
+    /// The caller asked to stop waiting (the service's shutdown bound).
+    Abandoned,
+    /// The lock file could not be created or locked.
+    Io(io::Error),
+}
+
+/// `<file>.lock`, beside `path`.
+pub(super) fn lock_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// Take `path`'s [`WriteLock`], waiting until `deadline` while another
+/// writer holds it, and giving up early once `abandoned` says so. The
+/// directory is created (`0o700`) when missing, as a write would.
+pub(super) fn lock_for_write(
+    path: &Path,
+    deadline: Instant,
+    abandoned: &dyn Fn() -> bool,
+) -> Result<WriteLock, LockError> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        vault::create_private_dir(parent).map_err(LockError::Io)?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(lock_path(path)).map_err(LockError::Io)?;
+    let mut wait = Duration::from_millis(1);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(WriteLock { _file: file }),
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(error)) => return Err(LockError::Io(error)),
+        }
+        if abandoned() {
+            return Err(LockError::Abandoned);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(LockError::TimedOut);
+        }
+        std::thread::sleep(wait.min(deadline - now));
+        wait = (wait * 2).min(Duration::from_millis(50));
+    }
 }
 
 /// The directories whose entries make `path` reachable after a crash,
