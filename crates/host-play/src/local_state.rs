@@ -1786,7 +1786,8 @@ impl Shared {
     /// while the file still holds the bytes kept, and the directory entry
     /// is flushed. The operator is told (a warning naming the copy and each
     /// rename) and the repair is audited (one info line). A failure before
-    /// the publication leaves the file as it is.
+    /// the publication leaves the file as it is (a copy already made stays,
+    /// holding the file's exact bytes), and the next read tries again.
     fn dedupe_loadouts(&self, key: &StoreKey, path: &Path) -> std::io::Result<()> {
         let Some((text, mut rows)) = files::loadouts_sharing_names(path)? else {
             // Repaired or removed meanwhile: read it as it is.

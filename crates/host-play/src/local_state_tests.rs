@@ -2921,6 +2921,59 @@ fn rows_another_writer_leaves_sharing_a_name_are_renamed_apart_before_an_edit() 
     );
 }
 
+/// T5.2 r5 (F1): the copy a rename apart keeps never replaces an existing
+/// file: with the `loadouts.json.duplicates-<time>` names of the next few
+/// seconds already taken (earlier copies), the new copy takes the next
+/// free name, holds the file's exact bytes, and every earlier copy keeps
+/// its own.
+#[test]
+fn a_rename_apart_never_overwrites_an_earlier_copy() {
+    let scratch = IsolatedEnv::enter("local-state-r5-dedupe-copy-names");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    write_loadouts(
+        &path,
+        &[
+            Loadout::new("same").with_carry("Lobster", 1),
+            Loadout::new("same").with_carry("Shark", 2),
+        ],
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let earlier: Vec<String> = (now..now + 3)
+        .map(|second| format!("loadouts.json.duplicates-{second}"))
+        .collect();
+    for name in &earlier {
+        write_private(&path.with_file_name(name), b"an earlier copy");
+    }
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let lease = service
+        .readback_lease(&loadouts_identity(), WAIT)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.snapshot().as_loadouts().unwrap()[1].name, "same (2)");
+    for name in &earlier {
+        assert_eq!(
+            std::fs::read(path.with_file_name(name)).unwrap(),
+            b"an earlier copy",
+            "{name} keeps its bytes"
+        );
+    }
+    let made: Vec<String> = siblings(&path)
+        .into_iter()
+        .filter(|name| name.starts_with("loadouts.json.duplicates-") && !earlier.contains(name))
+        .collect();
+    assert_eq!(made.len(), 1, "one new copy: {made:?}");
+    assert_eq!(
+        std::fs::read(path.with_file_name(&made[0])).unwrap(),
+        bytes,
+        "the new copy holds the file's exact bytes"
+    );
+}
+
 /// T5.2 r5 (F1): the rename apart runs under the loadouts file's write
 /// lock: while another writer holds it, nothing is renamed or copied; once
 /// it is released, the waiting read renames the file apart.
