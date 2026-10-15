@@ -70,6 +70,7 @@ mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;
+pub mod work_admission;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]
