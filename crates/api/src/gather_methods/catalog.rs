@@ -1,6 +1,6 @@
 //! Typed gathering family: the shared, lazily prepared catalog of resource methods, their targets, products,
 //! tools, consumed supplies, requirements and world placements. Built once per selected pin from the checked
-//! `gathering.json` family (see `wire` and `cache`), shared by `Arc` and released after its last consumer.
+//! `gathering.json` family (see `wire` and `cache`), shared by `Arc` and retained for the process.
 //!
 //! Facts are three-valued. `Known` is an examined complete set, `Partial` keeps useful rows next to explicit
 //! gaps and `Unknown` is an honest extraction gap: no query turns Unknown into an empty answer.

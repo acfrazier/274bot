@@ -15,15 +15,17 @@ fn prepare(data: &Arc<SelectedGameData>) -> Arc<GatherCatalog> {
 }
 
 #[test]
-fn the_catalog_is_lazy_shared_and_released_after_its_last_user() {
+fn the_catalog_is_lazy_shared_and_retained_for_the_process() {
     let data = for_revision(ClientRevision::R289).unwrap();
     assert!(
         data.try_gathering().is_none(),
-        "loading the selected data decodes no gathering placements"
+        "loading selected data does not decode gathering placements"
     );
 
     let first = prepare(&data);
-    let hit = data.try_gathering().expect("a held catalog is a cache hit");
+    let hit = data
+        .try_gathering()
+        .expect("the prepared catalog is cached");
     assert!(
         Arc::ptr_eq(&first, &hit),
         "the tick path shares the allocation"
@@ -31,28 +33,28 @@ fn the_catalog_is_lazy_shared_and_released_after_its_last_user() {
     let second = prepare(&data);
     assert!(
         Arc::ptr_eq(&first, &second),
-        "a second preparation does not decode another copy"
+        "another preparation shares it"
     );
+    let identity = Arc::downgrade(&first);
 
-    drop((first, hit));
-    assert!(data.try_gathering().is_some(), "one user still holds it");
-    drop(second);
-    assert!(
-        data.try_gathering().is_none(),
-        "the allocation is released after the last user, and a tick cannot revive it"
-    );
-
+    drop((first, hit, second));
+    let cached = data
+        .try_gathering()
+        .expect("the bounded cache owns the catalog after the last caller");
+    assert!(Arc::ptr_eq(&cached, &identity.upgrade().unwrap()));
     let again = prepare(&data);
-    assert!(!again.methods().is_empty());
-    assert!(data.try_gathering().is_some());
+    assert!(Arc::ptr_eq(&again, &cached), "the family is decoded once");
 
-    // Another revision is a separate cache entry; releasing one leaves the other.
+    // The other pinned revision occupies its own one of the two fixed slots.
     let data_274 = for_revision(ClientRevision::R274).unwrap();
     assert!(data_274.try_gathering().is_none());
     let old = prepare(&data_274);
     assert!(!Arc::ptr_eq(&old, &again));
-    assert!(Arc::ptr_eq(&old, &data_274.try_gathering().unwrap()));
+    let old_identity = Arc::downgrade(&old);
     drop(old);
-    assert!(data_274.try_gathering().is_none());
-    assert!(data.try_gathering().is_some());
+    assert!(Arc::ptr_eq(
+        &data_274.try_gathering().unwrap(),
+        &old_identity.upgrade().unwrap()
+    ));
+    assert!(Arc::ptr_eq(&data.try_gathering().unwrap(), &again));
 }
