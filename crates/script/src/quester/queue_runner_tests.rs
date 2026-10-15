@@ -211,6 +211,7 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
                 &selected,
                 &quests,
                 cap,
+                &crate::local_state::OperatorLoadouts::absent(),
             )
         }
     })

@@ -753,7 +753,15 @@ fn start_sheep(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) -> St
         let path = api::selected::FamilyPreparation::run({
             let selected = Arc::clone(&selected);
             let quests = Arc::clone(&quests);
-            move |cap| compile_path(&bytes, &selected, &quests, cap)
+            move |cap| {
+                compile_path(
+                    &bytes,
+                    &selected,
+                    &quests,
+                    cap,
+                    &script::local_state::OperatorLoadouts::absent(),
+                )
+            }
         })
         .map_err(|error| format!("prepare bundled Sheep Path: {error}"))?
         .join()
