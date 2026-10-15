@@ -729,3 +729,78 @@ fn release_probe_catalogue_cooperative_action_max() {
         wall_time.as_micros(),
     );
 }
+
+#[test]
+#[ignore = "release-only declared-maxima catalogue probe"]
+fn release_probe_catalogue_at_4096_registrations_and_8192_files() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    const WITH_SIBLING: &str = concat!(
+        "import { helper } from './helper.js';\n",
+        "export default class T extends LoopingBot { override loop() { void helper; } }\n",
+    );
+    let dir = scratch("catalogue-declared-maxima");
+    let root = dir.join("catalog");
+    let names: Vec<_> = (0..4096).map(|index| format!("Probe{index}")).collect();
+    let bots: Vec<_> = names
+        .iter()
+        .map(|name| (name.as_str(), WITH_SIBLING))
+        .collect();
+    fake_catalog(&root, &bots);
+    for name in &names {
+        let sibling = root.join("src/bot/scripts").join(name).join("helper.ts");
+        std::fs::write(sibling, "export const helper = 1;\n").unwrap();
+    }
+    let js = library(&dir);
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(&root)
+            .expect("capture declared-maxima catalogue"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let service = script::work_admission::WorkService::shared().unwrap();
+    let drops_before = service.lock().dropped_progress_reports();
+    let actions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = std::sync::Arc::clone(&actions);
+    let mut work = snapshot.cooperative_prepare();
+    let started = Instant::now();
+    let task = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        move |context| {
+            observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            work(context)
+        },
+    )
+    .expect("admit declared-maxima catalogue");
+    let identity = task.identity();
+    let prepared = task
+        .join()
+        .expect("worker completes declared-maxima catalogue")
+        .expect("bounded catalogue completes");
+    assert_eq!(prepared.warmed.len(), 4096, "{:?}", prepared.prepare_failed);
+    assert!(prepared.prepare_failed.is_empty());
+    let service = service.lock();
+    assert_eq!(service.dropped_progress_reports(), drops_before);
+    let mut sequence = 0;
+    service.publications().progress().read(|_, snapshot| {
+        let latest = snapshot.as_ref().expect("sealed catalogue progress");
+        assert_eq!(latest.identity(), identity);
+        sequence = latest.sequence();
+    });
+    eprintln!(
+        "scenario=catalogue-declared-maxima registrations=4096 source_files=8192 actions={} progress_snapshots={sequence} input_charge={} scratch_charge={} result_charge={} wall_ms={}",
+        actions.load(std::sync::atomic::Ordering::Relaxed),
+        input.charge().input_bytes(),
+        input.charge().scratch_bytes(),
+        input.charge().result_bytes(),
+        started.elapsed().as_millis(),
+    );
+    assert!(sequence <= 1027);
+    let _ = std::fs::remove_dir_all(dir);
+}

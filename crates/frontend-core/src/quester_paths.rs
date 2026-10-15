@@ -277,7 +277,7 @@ impl ReloadPaths {
     }
 
     fn is_running(&self) -> bool {
-        self.worker.is_some()
+        self.worker.is_some() || self.pending.is_some()
     }
 }
 
@@ -374,7 +374,7 @@ impl QuesterPathsController {
                 return;
             }
         }
-        if !self.reload.is_running() {
+        if self.reload.worker.is_none() {
             let was_pending = self.reload.pending.is_some();
             match self.reload.retry_pending() {
                 Ok(()) if was_pending && self.reload.pending.is_none() => {
@@ -679,18 +679,43 @@ mod tests {
             reload.pending.is_some(),
             "Path reload must encounter temporary Full"
         );
+        assert!(
+            reload.is_running(),
+            "a reload waiting for WorkAdmission capacity is running"
+        );
+        let replacement = FolderSource {
+            enabled: true,
+            folder: store.dir().join("replacement"),
+        };
+        assert!(
+            reload.start(Arc::clone(&selected), replacement).is_err(),
+            "queued Path reload demand must not be replaced"
+        );
+        assert_eq!(
+            reload
+                .pending
+                .as_ref()
+                .map(|pending| &pending.source.folder),
+            Some(&folder),
+            "the original queued demand remains intact"
+        );
         released.store(true, Ordering::Release);
         for job in held {
             job.join().expect("temporary capacity worker completes");
         }
         queued.expect("Full Path reload remains pending");
         assert!(reload.pending.is_some());
-        reload
-            .retry_pending()
-            .expect("retry Path reload after temporary Full");
-        assert!(reload.pending.is_none());
-        assert!(reload.is_running());
-        let summary = finish_reload(&mut reload).expect("folder reload report");
+        let mut controller = super::QuesterPathsController {
+            reload,
+            ..Default::default()
+        };
+        controller.advance(Some(Arc::clone(&selected)));
+        assert!(
+            controller.reload.pending.is_none(),
+            "controller retries queued demand"
+        );
+        assert!(controller.is_running());
+        let summary = finish_reload(&mut controller.reload).expect("folder reload report");
         assert!(summary.contains("Reload Paths:"), "{summary}");
         let published = script::quester::registry::snapshot();
         for (id, label) in [
@@ -724,10 +749,11 @@ mod tests {
         }
 
         write_cook(&folder, "cook", "Edited Again", false);
-        reload
+        controller
+            .reload
             .start(Arc::clone(&selected), source.clone())
             .expect("restart asynchronous reload");
-        finish_reload(&mut reload).expect("second folder reload report");
+        finish_reload(&mut controller.reload).expect("second folder reload report");
         let edited = script::quester::registry::snapshot();
         assert!(edited
             .rows()

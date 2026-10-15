@@ -29,6 +29,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A card's source and sibling graph is limited to 8 MiB. The rs2b0t catalog
   accepts at most 4,096 registrations and 8,192 source files. Exceeding
   either limit reports a catalogue error rather than consuming unbounded resources.
+- Background preparation coalesces replaceable progress rather than failing
+  a valid large catalogue at a progress-count limit. If an arbitrary job
+  fills its immutable progress custody, it still completes; later progress
+  updates are dropped and reported as diagnostics. A contained job panic is
+  reported as **background work job failed internally**, not as a slice
+  allowance violation.
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.

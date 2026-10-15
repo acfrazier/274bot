@@ -487,6 +487,40 @@ fn progress_remains_latest_after_sixty_four_updates() {
 }
 
 #[test]
+fn replaceable_progress_over_capacity_does_not_fail_the_job() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let conditions = conditions(&shared);
+    let yields = MAX_PROGRESS_SNAPSHOTS_PER_JOB + 1024;
+    let ticket = submit(
+        &shared,
+        &TestInput {
+            charge: WorkCharge::new(0, 0, 0, 0),
+        },
+        QueueJob::new(8, Arc::new(Mutex::new(Vec::new())), yields, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &ticket).expect("job settles after progress fills");
+    let mut service = shared.lock();
+    assert_eq!(
+        service.progress(&ticket).unwrap().sequence(),
+        MAX_PROGRESS_SNAPSHOTS_PER_JOB as u64,
+    );
+    assert_eq!(service.dropped_progress_reports(), 1025);
+    eprintln!(
+        "PROGRESS_POLICY immutable_snapshots={} progress_bytes_per_job={} service_bytes={} dropped={}",
+        MAX_PROGRESS_SNAPSHOTS_PER_JOB,
+        PROGRESS_BYTES_PER_JOB,
+        MAX_WORK_BYTES,
+        service.dropped_progress_reports(),
+    );
+    assert!(matches!(
+        service.consume(&ticket),
+        Ok(Settlement::Completed(8))
+    ));
+    assert!(service.worker_available());
+}
+
+#[test]
 fn admission_bounds_refuse_without_taking_job_custody() {
     let shared = new_service(Arc::new(ManualClock::new()));
     let conditions = conditions(&shared);
@@ -803,12 +837,15 @@ fn panicking_job_fails_only_itself_and_worker_accepts_following_job() {
     };
     let panicking = submit(&shared, &input, PanickingJob, &conditions);
     WorkService::wait_terminal(&shared, &panicking).expect("panic is terminal");
-    assert!(matches!(
-        shared.lock().consume(&panicking),
-        Ok(Settlement::Failed(JobError::Cooperation(
-            CooperativeViolation::UnboundedSlice
-        )))
-    ));
+    let terminal = shared
+        .lock()
+        .consume(&panicking)
+        .expect("contained panic settles one job");
+    let Settlement::Failed(error) = terminal else {
+        panic!("contained panic must be a failed job");
+    };
+    assert!(matches!(error, JobError::FailedInternally));
+    assert_eq!(error.to_string(), "background work job failed internally");
     assert!(shared.lock().worker_available());
     assert_eq!(shared.lock().health(), None);
     let healthy = submit(

@@ -121,8 +121,9 @@ impl PreparationInput {
 
     /// Reserve the bounded Quester folder's retained documents, current
     /// file, compiled rows and terminal in addition to the actual settings
-    /// tree. This is a source-size-derived bound, not the old fixed 128 MiB
-    /// reservation. Scanning and parsing stay on the worker.
+    /// tree. Folder bytes reserve their fixed declared maxima (rather than
+    /// the old 128 MiB reservation); settings and path bytes are measured.
+    /// Scanning and parsing stay on the worker.
     pub fn for_quester_folder(
         revision: u64,
         settings: Self,
@@ -188,6 +189,12 @@ impl<R> CooperativePreparationStep<R> {
     }
 }
 
+// Progress is replaceable. Keep the first Prepare observation, then sample
+// at 1,024-action boundaries; always report the final Prepare result. The
+// finite sample budget leaves room for Load/Seal and does not bound work.
+const PREPARE_PROGRESS_INTERVAL: u16 = 1024;
+const MAX_PREPARE_PROGRESS_MILESTONES: u16 = 1024;
+
 struct CooperativePreparationJob<R, W> {
     phase: PreparationPhase,
     work: Option<W>,
@@ -195,6 +202,8 @@ struct CooperativePreparationJob<R, W> {
     retained_input: u32,
     retained_scratch: u32,
     retained_output: u32,
+    actions_since_progress: u16,
+    progress_milestones: u16,
 }
 
 impl<R, W> CooperativeJob for CooperativePreparationJob<R, W>
@@ -222,7 +231,17 @@ where
                 let work = self.work.as_mut().expect("prepare phase has work");
                 let result = FamilyPreparation::within(step, work);
                 let (completed, total) = result.progress();
-                step.publish_progress(PreparationPhase::Prepare, completed, total);
+                self.actions_since_progress = self.actions_since_progress.saturating_add(1);
+                let finished = matches!(&result, CooperativePreparationStep::Complete { .. });
+                if finished
+                    || (self.progress_milestones < MAX_PREPARE_PROGRESS_MILESTONES
+                        && (self.progress_milestones == 0
+                            || self.actions_since_progress == PREPARE_PROGRESS_INTERVAL))
+                {
+                    step.publish_progress(PreparationPhase::Prepare, completed, total);
+                    self.progress_milestones += u16::from(!finished);
+                    self.actions_since_progress = 0;
+                }
                 let _ = step.consume_unit();
                 match result {
                     CooperativePreparationStep::Continue { .. } => StepOutcome::Yielded,
@@ -601,6 +620,8 @@ where
         retained_input: input.charge.input_bytes() as u32,
         retained_scratch: input.charge.scratch_bytes() as u32,
         retained_output: input.charge.result_bytes() as u32,
+        actions_since_progress: 0,
+        progress_milestones: 0,
     };
     submit_job(kind, scope, input, job)
 }
@@ -681,4 +702,109 @@ where
         ticket: Some(ticket),
         _output: PhantomData,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PreparationInput;
+    use crate::quester::registry::{
+        FolderSource, PathRow, MAX_REGISTRY_FILE_BYTES, MAX_REGISTRY_ROWS,
+        MAX_RETAINED_FOLDER_DOCUMENT_BYTES,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn folder_reserves_fixed_declared_maxima_plus_measured_settings_and_path() {
+        let settings = PreparationInput::new(1, 4096, 2 << 20, 2 << 20).unwrap();
+        let first = PreparationInput::for_quester_folder(
+            1,
+            settings,
+            &FolderSource {
+                enabled: true,
+                folder: PathBuf::from("/a"),
+            },
+        )
+        .unwrap();
+        let second = PreparationInput::for_quester_folder(
+            1,
+            settings,
+            &FolderSource {
+                enabled: true,
+                folder: PathBuf::from("/longer"),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            first.charge().input_bytes(),
+            4096 + MAX_RETAINED_FOLDER_DOCUMENT_BYTES + MAX_REGISTRY_FILE_BYTES + 2
+        );
+        assert_eq!(
+            first.charge().scratch_bytes(),
+            (2 << 20) + 4 * MAX_REGISTRY_FILE_BYTES
+        );
+        assert_eq!(
+            first.charge().result_bytes(),
+            (2 << 20)
+                + 2 * MAX_RETAINED_FOLDER_DOCUMENT_BYTES
+                + MAX_REGISTRY_ROWS * std::mem::size_of::<PathRow>()
+        );
+        assert_eq!(
+            second.charge().input_bytes() - first.charge().input_bytes(),
+            "/longer".len() - "/a".len()
+        );
+        assert_eq!(
+            second.charge().scratch_bytes(),
+            first.charge().scratch_bytes()
+        );
+        assert_eq!(
+            second.charge().result_bytes(),
+            first.charge().result_bytes()
+        );
+    }
+    #[test]
+    fn contained_preparation_panic_says_failed_internally() {
+        let input = PreparationInput::new(1, 0, 0, 0).unwrap();
+        let task = super::submit(
+            super::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            |_| -> () { panic!("injected preparation panic") },
+        )
+        .unwrap();
+        let error = task.join().expect_err("panicking job fails");
+        assert!(
+            error
+                .to_string()
+                .contains("background work job failed internally"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn forty_thousand_preparation_dispatches_complete_without_progress_refusal() {
+        let input = PreparationInput::new(1, 0, 0, 0).unwrap();
+        let mut actions = 0_u32;
+        let task = super::submit_cooperative(
+            super::PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            input,
+            move |_| {
+                actions += 1;
+                if actions == 40_000 {
+                    super::CooperativePreparationStep::Complete {
+                        output: actions,
+                        completed: actions,
+                        total: Some(actions),
+                    }
+                } else {
+                    super::CooperativePreparationStep::Continue {
+                        completed: actions,
+                        total: Some(40_000),
+                    }
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(task.join().expect("large valid job completes"), 40_000);
+    }
 }
