@@ -155,6 +155,33 @@ impl<'a> ZoneTableView<'a> {
         Ok(self.zone(bound)?.kind())
     }
 
+    /// Member zone keys of a bound group key, bound to this pack, in pack
+    /// order. Not public: the frozen facade names a group by its key; the
+    /// owner boundary judges a group member by member
+    /// (`crate::producer::group_members`). A zone key or an unknown group
+    /// is [`ContractError::UnknownKey`].
+    pub(crate) fn members(
+        self,
+        group: BoundZoneKey,
+    ) -> Result<impl Iterator<Item = BoundZoneKey> + 'a, ContractError> {
+        if group.pack != self.pack {
+            return Err(ContractError::PackMismatch);
+        }
+        let ZoneKey::Group(index) = group.key else {
+            return Err(ContractError::UnknownKey);
+        };
+        let group = self
+            .table
+            .groups()
+            .get(usize::from(index))
+            .ok_or(ContractError::UnknownKey)?;
+        let pack = self.pack;
+        Ok(group.members.iter().map(move |&member| BoundZoneKey {
+            pack,
+            key: ZoneKey::Zone(member),
+        }))
+    }
+
     /// Zones geometrically containing `tile` (inclusive plane-aware bounds,
     /// shapes and carves).
     pub fn containing(self, tile: WorldTile) -> impl Iterator<Item = ZoneView<'a>> + 'a {

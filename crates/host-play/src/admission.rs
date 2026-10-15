@@ -9,14 +9,13 @@ use std::sync::Arc;
 
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
+use nav::contract::BoundZoneKey;
 use nav::producer;
 use nav::router::{AvoidRect, FindOptions, Route};
 use nav::world::NavWorld;
 use nav::zones::{ZoneExempt, ZoneKey};
 use script::combat::frame::Frame;
-use script::combat::risk::{
-    self, Estimate, KindSource, RiskTables, RouteAssessment, UnknownWhy, Verdict,
-};
+use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
 pub use script::combat::risk::{PoisonState, RiskInput};
 use script::combat::{CombatTables, ThreatSet};
 use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
@@ -325,36 +324,33 @@ pub fn permits(
 
 /// Check every member of a witness group; one unsupported or lethal member
 /// refuses the one-round expansion. This never relaxes any hard constraint.
+/// Each raw witness key is bound to the world's zone view (the identity its
+/// lease serves) and judged through the facade kind view.
 pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey]) -> bool {
     if keys.is_empty() || keys.len() > 8 || matches!(input.poison, PoisonState::Unknown { .. }) {
         return false;
     }
-    let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {
+    let (Ok(Some(zones)), Some(tables)) = (producer::zones_view(world), tables(world)) else {
         return false;
     };
-    let acceptable = |index: u16| {
-        zones
-            .zones()
-            .get(usize::from(index))
-            .and_then(|zone| zones.kinds().get(usize::from(zone.kind)))
-            .map(|kind| {
-                let hazard = kind.npc_id == -1;
-                tables.risks.facts(KindSource {
-                    npc_id: (!hazard).then_some(kind.npc_id),
-                    hazard_damage: hazard
-                        .then(|| nav::zones::curated::hazard_damage(kind.id.as_ref()))
-                        .flatten(),
-                })
-            })
-            .is_some_and(|kind| {
-                kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
-            })
+    let acceptable = |bound: BoundZoneKey| {
+        zones.zone(bound).is_ok_and(|zone| {
+            let kind = tables.risks.zone_kind(zone.kind());
+            kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
+        })
     };
-    keys.iter().all(|key| match *key {
-        ZoneKey::Zone(index) => acceptable(index),
-        ZoneKey::Group(index) => zones.groups().get(usize::from(index)).is_some_and(|group| {
-            !group.members.is_empty() && group.members.iter().copied().all(acceptable)
-        }),
+    keys.iter().all(|&key| {
+        let Ok(bound) = producer::bind_key(zones, key) else {
+            return false;
+        };
+        match key {
+            ZoneKey::Zone(_) => acceptable(bound),
+            // An empty group refuses; every member must be acceptable.
+            ZoneKey::Group(_) => producer::group_members(zones, bound).is_ok_and(|members| {
+                let mut members = members.peekable();
+                members.peek().is_some() && members.all(acceptable)
+            }),
+        }
     })
 }
 

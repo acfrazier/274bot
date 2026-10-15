@@ -14,18 +14,6 @@ use super::super::select::facts::npc_max_hit;
 use super::super::tables::CombatTables;
 use super::Style;
 
-/// One zone kind's semantic facts, as `nav::contract::ZoneKindView` names
-/// them: the packed NPC id, or for a hazard its curated damage. The host
-/// builds one at its owner boundary; script reads the same facts through
-/// the kind view ([`RiskTables::zone_kind`]). Neither carries a pack index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KindSource {
-    /// The NPC id, or `None` for a non-NPC hazard (the pack's `-1`).
-    pub npc_id: Option<i32>,
-    /// Curated hazard damage, unknown when absent. Ignored for an NPC kind.
-    pub hazard_damage: Option<u8>,
-}
-
 /// Why a kind is not supported by the bounded risk model.
 ///
 /// `Known` is the compact known sentinel. Poison is conditional: it is unknown
@@ -347,17 +335,10 @@ impl RiskTables {
             .map(|index| &mut self.npcs[index].1)
     }
 
-    /// Facts of a zone kind: its NPC's, its curated hazard damage, or
-    /// missing facts for an NPC the selection lacks.
-    pub fn facts(&self, kind: KindSource) -> KindRisk {
-        match kind.npc_id {
-            None => KindRisk::from_hazard(kind.hazard_damage),
-            Some(id) => self.npc_or_missing(id),
-        }
-    }
-
-    /// Facts of the kind a facade zone names. A hazard's curated damage is
-    /// read only for a hazard kind.
+    /// Facts of the kind a facade zone names: its NPC's, its curated hazard
+    /// damage, or missing facts for an NPC the selection lacks. This is the
+    /// one zone-kind path; a hazard's curated damage is read only for a
+    /// hazard kind.
     pub fn zone_kind(&self, kind: ZoneKindView<'_>) -> KindRisk {
         match kind.npc_id() {
             None => KindRisk::from_hazard(kind.hazard_damage()),
@@ -440,20 +421,6 @@ mod tests {
             counter_protect: false,
             poison_severity: Some(0),
             forcemulti: false,
-        }
-    }
-
-    fn npc_kind(id: i32) -> KindSource {
-        KindSource {
-            npc_id: Some(id),
-            hazard_damage: None,
-        }
-    }
-
-    fn hazard(damage: Option<u8>) -> KindSource {
-        KindSource {
-            npc_id: None,
-            hazard_damage: damage,
         }
     }
 
@@ -585,7 +552,7 @@ mod tests {
             UnknownKind::Overflow
         );
 
-        let missing = RiskTables::build(&combat).facts(npc_kind(i32::MAX));
+        let missing = RiskTables::build(&combat).npc_or_missing(i32::MAX);
         assert_eq!(missing.unknown, UnknownKind::MissingFacts);
         assert_eq!(missing.unknown_for(false), Some(UnknownKind::MissingFacts));
     }
@@ -595,12 +562,12 @@ mod tests {
         // The host reads curated damage through `ZoneKindView::hazard_damage`
         // (`ikov-lava-bridge` is 20; an uncurated hazard is unknown).
         let risk = RiskTables::build(&combat());
-        let known = risk.facts(hazard(Some(20)));
+        let known = KindRisk::from_hazard(Some(20));
         assert_eq!(known.max_hit, 20);
         assert_eq!(known.rate, 1);
         assert!(known.hazard());
         assert_eq!(known.unknown_for(false), None);
-        let unknown = risk.facts(hazard(None));
+        let unknown = KindRisk::from_hazard(None);
         assert_eq!(unknown.unknown, UnknownKind::HazardDamage);
         assert_eq!(unknown.unknown_for(false), Some(UnknownKind::HazardDamage));
         assert!(risk.npc(-1).is_none(), "a hazard is never an NPC row");
@@ -620,19 +587,19 @@ mod tests {
                 row.config
             );
             assert_eq!(
-                risk.facts(npc_kind(row.id)),
+                risk.npc_or_missing(row.id),
                 KindRisk::from_npc(combat.npc(row.id).unwrap(), &combat)
             );
         }
         assert_eq!(
-            risk.facts(npc_kind(-7)).unknown,
+            risk.npc_or_missing(-7).unknown,
             UnknownKind::MissingFacts,
             "an NPC id below -1 is unsupported, not a hazard"
         );
         assert!(risk.npc(-1).is_none());
         assert!(risk.npc(i32::MAX).is_none());
         assert_eq!(risk.poison_unknown_v, 11);
-        assert_eq!(risk.facts(npc_kind(ice.id)).max_hit, 6);
+        assert_eq!(risk.npc_or_missing(ice.id).max_hit, 6);
 
         let worked = [
             ("icewarrior", 6, 4),
