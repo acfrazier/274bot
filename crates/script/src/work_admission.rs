@@ -44,14 +44,15 @@ pub const WORK_SLICE: Duration = Duration::from_millis(10);
 /// 1,411,973 embedded input bytes). Only the first Profile Prepare step may
 /// use this qualified allowance; later steps return to the ordinary quantum.
 pub(crate) const GATHERING_DECODE_SLICE: Duration = Duration::from_millis(100);
-/// One bounded Quester registry action (at most a 1 MiB document). The
-/// release-build maximum for a 1 MiB action was 5.85 ms; the 250 ms reporting
-/// allowance also clears the 110–136 ms debug compile observations with
-/// margin. The seal returns to the ordinary quantum.
+/// One bounded Quester registry action (at most a 1 MiB document). Release
+/// samples were 1.324 ms in T1.2 r2 and 1.99 ms in r2 review; the 250 ms
+/// reporting allowance also clears the prior 110–136 ms debug observations.
+/// The seal returns to the ordinary quantum.
 pub(crate) const QUESTER_REGISTRY_SLICE: Duration = Duration::from_millis(250);
 /// One bounded Quester Path profile compilation. The largest bundled Path
-/// measured 6.69 ms in release, versus 110–136 ms in the debug host probe;
-/// the 250 ms reporting allowance leaves margin on both configurations.
+/// measured 6.197 ms in T1.2 r2 and 7.94 ms in r2 review (release), versus
+/// 110–136 ms in the debug host probe. The 250 ms reporting allowance
+/// leaves margin on both configurations.
 pub(crate) const QUESTER_PROGRESS_SLICE: Duration = Duration::from_millis(250);
 
 /// Closed, T1-internal declarations of the only longer units in this endpoint.
@@ -73,10 +74,11 @@ const MAX_WORK_JOBS: usize = 64;
 const MAX_WORK_BYTES: usize = 256 * 1024 * 1024 + MAX_WORK_JOBS * PROGRESS_BYTES_PER_JOB;
 /// WorkAdmission operation handles across all accepted jobs.
 const MAX_OPERATION_HANDLES: u32 = 8;
-/// The admitted catalogue has at most 4,096 cards and 8,192 source files;
-/// 32,768 snapshots cover its bounded scan/analysis/prepare stages. Allocate
-/// history in 64-snapshot chunks, but reserve the full cap for borrowed
-/// immutable references returned by WorkAdmission::progress.
+/// Immutable borrowed snapshots cannot be overwritten while a reader holds
+/// `WorkAdmission::progress`. Reserve bounded custody; after it fills, drop
+/// later replaceable progress reports without failing the accepted job.
+/// Cooperative preparations publish at most 1,027 snapshots regardless of
+/// their dispatch count.
 const MAX_PROGRESS_SNAPSHOTS_PER_JOB: usize = 32_768;
 /// A qualified registry dispatch consumes one scheduler-owned action even
 /// when the job yields without reporting progress. The 4,096-entry scan,
@@ -195,6 +197,7 @@ impl WorkService {
             publications,
             notifier,
             slice_overruns: AtomicU64::new(0),
+            progress_drops: AtomicU64::new(0),
             shutdown_requested: AtomicBool::new(false),
             unavailable: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -302,6 +305,12 @@ impl WorkService {
     /// checkpoint. Such delay never changes an accepted job's terminal.
     pub fn slice_overruns(&self) -> u64 {
         self.shared.slice_overruns.load(Ordering::Acquire)
+    }
+
+    /// Replaceable progress reports dropped after one job's immutable
+    /// snapshot custody fills. Dropping them never changes its terminal.
+    pub fn dropped_progress_reports(&self) -> u64 {
+        self.shared.progress_drops.load(Ordering::Acquire)
     }
 
     /// Current internal notification epoch. Publication and shutdown state
@@ -644,6 +653,7 @@ struct WorkerShared {
     publications: Arc<WorkPublications>,
     notifier: Arc<ServiceNotifier>,
     slice_overruns: AtomicU64,
+    progress_drops: AtomicU64,
     shutdown_requested: AtomicBool,
     unavailable: AtomicBool,
     exited: AtomicBool,
@@ -722,6 +732,7 @@ struct EntryControl {
     stranded: api::process_condition::StrandedCustody,
     abandoned: bool,
     progress_sequence: u64,
+    progress_dropped: bool,
     qualified_unit: Option<QualifiedUnit>,
     qualified_dispatches: usize,
 }
@@ -994,6 +1005,7 @@ where
 enum ServiceTerminal {
     Cancelled(Cancellation),
     Cooperation(CooperativeViolation),
+    FailedInternally,
     Unavailable(api::process_condition::UnavailableTerminal),
 }
 
@@ -1003,6 +1015,7 @@ fn erase_service_terminal<F: WorkFamilySpec>(terminal: ServiceTerminal) -> Erase
         ServiceTerminal::Cooperation(violation) => {
             Settlement::Failed(JobError::Cooperation(violation))
         }
+        ServiceTerminal::FailedInternally => Settlement::Failed(JobError::FailedInternally),
         ServiceTerminal::Unavailable(unavailable) => {
             Settlement::Failed(JobError::Unavailable(unavailable))
         }
@@ -1122,12 +1135,10 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Error,
-                "background work job {:?} panicked; only this job failed",
+                "background work job {:?} failed internally (contained panic); only this job failed",
                 entry.identity.job(),
             );
-            let published = entry.publish_service_terminal(ServiceTerminal::Cooperation(
-                CooperativeViolation::UnboundedSlice,
-            ));
+            let published = entry.publish_service_terminal(ServiceTerminal::FailedInternally);
             if published {
                 shared.publish_terminal(&entry);
             }
@@ -1235,9 +1246,16 @@ fn process_step(
                         control.progress_sequence = sequence;
                         shared.publish_progress(progress);
                     } else {
-                        // A pathological job exhausted even its declared
-                        // progress custody; it cannot silently lose updates.
-                        violation = Some(CooperativeViolation::ChargeExceeded);
+                        shared.progress_drops.fetch_add(1, Ordering::AcqRel);
+                        if !control.progress_dropped {
+                            control.progress_dropped = true;
+                            api::host_log!(
+                                api::hostlog::Category::Lifecycle,
+                                api::hostlog::Level::Warn,
+                                "background work job {:?} coalesced progress after immutable snapshot custody filled",
+                                entry.identity.job(),
+                            );
+                        }
                     }
                 }
             }
@@ -1583,6 +1601,7 @@ impl WorkService {
                 progress_sequence: 0,
                 qualified_unit,
                 qualified_dispatches: 0,
+                progress_dropped: false,
             }),
             cancellation: Arc::new(SharedCancellation::new()),
             terminal: TerminalCell::new(),

@@ -222,97 +222,106 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub(super) fn take_native_deliveries(&mut self, wait: bool) {
-        let mut index = 0;
-        while index < self.deliveries.len() {
-            if let Some((id, revision)) = self.deliveries[index].admission {
-                let result = self
-                    .play
-                    .as_ref()
-                    .ok_or_else(|| {
-                        script::preparation::PreparationError::Unavailable("no play".into())
-                    })
-                    .and_then(|play| {
-                        play.script_prepare_config(
-                            id,
-                            revision,
-                            Arc::clone(&self.deliveries[index].live.bag),
-                        )
-                    });
-                match result {
-                    Ok(worker) => {
-                        self.deliveries[index].worker = Some(worker);
-                        self.deliveries[index].admission = None;
-                    }
-                    Err(script::preparation::PreparationError::Refused(
-                        api::work::SubmissionRefusal::Full,
-                    )) => {
-                        if wait {
-                            std::thread::park_timeout(Duration::from_millis(5));
-                        } else {
-                            index += 1;
-                        }
-                        continue;
-                    }
-                    Err(error) => {
-                        let pending = self.deliveries.remove(index);
-                        self.settings_writes.push(SettingsWrite {
-                            op: pending.op,
-                            profile: pending.name,
-                            result: SettingsResult::saved(LiveDelivery::rejected(
-                                error.to_string(),
-                            )),
+        loop {
+            let mut index = 0;
+            let mut blocked_on_admission = false;
+            while index < self.deliveries.len() {
+                if let Some((id, revision)) = self.deliveries[index].admission {
+                    let result = self
+                        .play
+                        .as_ref()
+                        .ok_or_else(|| {
+                            script::preparation::PreparationError::Unavailable("no play".into())
+                        })
+                        .and_then(|play| {
+                            play.script_prepare_config(
+                                id,
+                                revision,
+                                Arc::clone(&self.deliveries[index].live.bag),
+                            )
                         });
-                        continue;
+                    match result {
+                        Ok(worker) => {
+                            self.deliveries[index].worker = Some(worker);
+                            self.deliveries[index].admission = None;
+                        }
+                        Err(script::preparation::PreparationError::Refused(
+                            api::work::SubmissionRefusal::Full,
+                        )) => {
+                            if wait {
+                                blocked_on_admission = true;
+                            }
+                            // Keep later receipts moving: joining one releases
+                            // its retained WorkAdmission charge.
+                            index += 1;
+                            continue;
+                        }
+                        Err(error) => {
+                            let pending = self.deliveries.remove(index);
+                            self.settings_writes.push(SettingsWrite {
+                                op: pending.op,
+                                profile: pending.name,
+                                result: SettingsResult::saved(LiveDelivery::rejected(
+                                    error.to_string(),
+                                )),
+                            });
+                            continue;
+                        }
                     }
                 }
-            }
-            if !wait
-                && !self.deliveries[index]
+                if !wait
+                    && !self.deliveries[index]
+                        .worker
+                        .as_ref()
+                        .is_some_and(PreparedTask::is_finished)
+                {
+                    index += 1;
+                    continue;
+                }
+                let mut pending = self.deliveries.remove(index);
+                let worker = pending
                     .worker
-                    .as_ref()
-                    .is_some_and(PreparedTask::is_finished)
-            {
-                index += 1;
-                continue;
-            }
-            let mut pending = self.deliveries.remove(index);
-            let worker = pending
-                .worker
-                .take()
-                .expect("admitted delivery has a worker");
-            let identity = worker.identity();
-            let prepared = worker
-                .join()
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
-            let delivery =
-                if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op) {
-                    LiveDelivery::Stale
-                } else if let Some(play) = &self.play {
-                    if play.script_native_run(&pending.name) != pending.live.run {
+                    .take()
+                    .expect("admitted delivery has a worker");
+                let identity = worker.identity();
+                let prepared = worker
+                    .join()
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()));
+                let delivery =
+                    if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op)
+                    {
                         LiveDelivery::Stale
-                    } else {
-                        match prepared.and_then(|config| {
-                            config.commit(identity).map_err(|error| error.to_string())
-                        }) {
-                            Ok(config) => {
-                                pending.live.prepared = Some(config);
-                                deliver_settings(play, &pending.name, Some(pending.live))
+                    } else if let Some(play) = &self.play {
+                        if play.script_native_run(&pending.name) != pending.live.run {
+                            LiveDelivery::Stale
+                        } else {
+                            match prepared.and_then(|config| {
+                                config.commit(identity).map_err(|error| error.to_string())
+                            }) {
+                                Ok(config) => {
+                                    pending.live.prepared = Some(config);
+                                    deliver_settings(play, &pending.name, Some(pending.live))
+                                }
+                                Err(error) => LiveDelivery::rejected(error),
                             }
-                            Err(error) => LiveDelivery::rejected(error),
                         }
-                    }
-                } else {
-                    LiveDelivery::Stale
-                };
-            self.settings_writes.push(SettingsWrite {
-                op: pending.op,
-                profile: pending.name,
-                result: SettingsResult::saved(delivery),
-            });
+                    } else {
+                        LiveDelivery::Stale
+                    };
+                self.settings_writes.push(SettingsWrite {
+                    op: pending.op,
+                    profile: pending.name,
+                    result: SettingsResult::saved(delivery),
+                });
+            }
+            if !wait || !blocked_on_admission {
+                return;
+            }
+            // Retry admissions only after later receipts have been consumed.
+            std::thread::park_timeout(Duration::from_millis(5));
         }
     }
-
     /// A parameter editor can compose a newer edit over its still-preparing
     /// draft. Starts and spawns use the durable profile, not this projection.
     pub fn settings_for_edit(&self, name: &str) -> Option<&ProfileSettings> {

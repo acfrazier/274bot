@@ -15,7 +15,12 @@ fn run_exact_child(test: &str, env: &str) {
         .env(env, "1")
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // Harness liveness bound only: the product deadline oracle is the inner
+    // per-attempt `< 3s` assertion inside the child. The heaviest child does
+    // three such attempts (~9s of owned work) plus test-binary spawn and V8
+    // bootstrap, which stretches under machine load, so the outer bound stays
+    // generous while still killing (never hanging on) a truly stuck child.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "{test} child failed: {status}");
