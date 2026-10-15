@@ -3066,7 +3066,7 @@ fn load_all_picks_focus_when_none_was_focused() {
 }
 
 #[test]
-fn settings_popup_writes_only_guardian_fields() {
+fn settings_popup_persists_guardian_fields_and_live_policy() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let alice = SlotArm::new(7, true);
@@ -3080,6 +3080,15 @@ fn settings_popup_writes_only_guardian_fields() {
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
+    session
+        .core
+        .set_random_event_policy("alice", "river troll", vault::RandomEventPolicy::Fight)
+        .unwrap();
+    session.core.flush_writes();
+    assert_eq!(
+        alice.random_event_policies.lock().unwrap()["river troll"],
+        vault::RandomEventPolicy::Fight
+    );
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
     session.last_focused = Some("alice".into());
@@ -3087,7 +3096,8 @@ fn settings_popup_writes_only_guardian_fields() {
     let open = app.run_command(crate::commands::Command::Settings);
     dispatch(&mut session, &mut app, open);
     session.pump(&mut app);
-    // A stale popup draft: every non-guardian field at its default.
+    // A stale popup draft restores the supported Flee policy and changes the
+    // other Guardian fields without replacing unrelated profile settings.
     app.settings = vault::ProfileSettings {
         random_events: false,
         lamp_skill: "Magic".into(),
@@ -3109,8 +3119,41 @@ fn settings_popup_writes_only_guardian_fields() {
     assert!(saved.settings.lamp_auto);
     assert_eq!(saved.settings.world, Some(2), "world pin survives");
     assert!(saved.settings.auto_login, "auto-login survives");
+    assert_eq!(
+        saved.settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee
+    );
+    assert_eq!(
+        alice.random_event_policies.lock().unwrap()["river troll"],
+        vault::RandomEventPolicy::Flee
+    );
     assert!(!alice.random_events.load(Ordering::Relaxed));
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Magic");
+}
+
+#[test]
+fn settings_popup_shows_unavailable_policy_refusal() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .core
+        .start(lifecycle_vault("settings-policy-refusal"), empty_play());
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    app.settings_state.row = 4;
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.")
+    );
 }
 
 #[test]
@@ -4252,4 +4295,58 @@ fn memory_relog_confirms_while_a_script_runs() {
     );
     assert!(alice.login_latched(), "the confirmed relog logs out");
     assert!(alice.wants_logout());
+}
+
+/// Review R3-H3: the import overlay built from a real preview of an export
+/// whose password is repeated as the account's tab holds no copy of the
+/// password, so its derived `Debug` shows none. (The redaction registry is
+/// process-wide: this test's password is its own.)
+#[test]
+fn import_overlay_debug_holds_no_export_password() {
+    const SECRET: &str = "r4t-tui-pw-60234";
+    let iso = IsolatedEnv::enter("tui-import-redacted");
+    let (mut session, mut app) = tui_with_profiles(&iso, &[]);
+    let path = iso
+        .dir
+        .join(frontend_core::rs2b0t_import::PROFILE_FILE_NAME);
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "kind": frontend_core::rs2b0t_import::PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [{ "username": "rvr4probe", "password": SECRET, "tab": SECRET }],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": { "rvr4probe": {} },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let open = app.run_command(crate::commands::Command::ImportProfiles);
+    dispatch(&mut session, &mut app, open);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ProfileImport(crate::profile_import::ImportAction::Preview(
+            path.display().to_string(),
+        )),
+    );
+    let Some(crate::overlay::Modal::ProfileImport(view)) = app.modal.as_ref() else {
+        panic!("the import overlay is not open");
+    };
+    assert_eq!(
+        view.stage,
+        frontend_core::rs2b0t_import::Stage::Preview,
+        "{:?}",
+        view.error
+    );
+    assert!(
+        view.lines
+            .iter()
+            .any(|line| line.contains("not imported: tab")),
+        "{:?}",
+        view.lines
+    );
+    let shown = format!("{view:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
 }

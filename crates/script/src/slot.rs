@@ -2547,6 +2547,13 @@ impl SlotScript {
             let runtime_generation = self.runtime_generation;
             self.stop();
             if let Some(receipt) = script_stop {
+                api::host_log!(
+                    api::hostlog::Category::ScriptLifecycle,
+                    api::hostlog::Level::Info,
+                    "script requested stop tick={} reason={}",
+                    receipt.tick,
+                    receipt.reason
+                );
                 self.last_error = Some(format!(
                     "script requested stop on tick {}: {}",
                     receipt.tick, receipt.reason

@@ -55,7 +55,6 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
         "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
-        "random_event_casket_id": api::content::random_event_casket_id(game_data).unwrap_or(-1),
         "rune_routes": RUNE_ROUTES.iter().map(|route| {
             serde_json::json!({
                 "rune": route.rune,

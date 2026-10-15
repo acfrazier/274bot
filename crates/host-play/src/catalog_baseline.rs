@@ -416,7 +416,6 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::GreenDragonBankPrepared
         | CoreCase::GreenDragonBankDefaultPrepared
         | CoreCase::GreenDragonTele
-        | CoreCase::GreenDragonTelePrepared
         | CoreCase::FireGiantApproach
         | CoreCase::FireGiantBank
         | CoreCase::FireGiantBankPrepared
@@ -469,7 +468,7 @@ pub fn validate_case_baseline_with_preparation(
                     | CoreCase::GreenDragonPotionsPrepared
                     | CoreCase::GreenDragonBankPrepared
                     | CoreCase::GreenDragonBankDefaultPrepared
-                    | CoreCase::GreenDragonTelePrepared
+                    | CoreCase::GreenDragonTele
                     | CoreCase::FireGiantPrepared
                     | CoreCase::FireGiantBankPrepared
                     | CoreCase::FireGiantCamelotPrepared
@@ -480,13 +479,6 @@ pub fn validate_case_baseline_with_preparation(
                     }
                     CoreCase::GreenDragonBank => {
                         baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
-                    }
-                    CoreCase::GreenDragonTele => {
-                        baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
-                            && baseline.level("magic") >= VARROCK_TELE_MAGIC
-                            && baseline.item_id(catalog_item_id("lawrune")) >= 1
-                            && baseline.item_id(catalog_item_id("airrune")) >= 3
-                            && baseline.item_id(catalog_item_id("firerune")) >= 1
                     }
                     CoreCase::FireGiantBank => {
                         baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
@@ -903,9 +895,6 @@ pub fn validate_case_baseline_with_preparation(
             "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, source-default loot inventory-pressure Flee to bank"
         }
         CoreCase::GreenDragonTele => {
-            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
-        }
-        CoreCase::GreenDragonTelePrepared => {
             "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99 at exactly 70 current HP, zero lobster, Magic 25, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, Law/Air/Fire runes, panicHp 98, escape Teleport to Varrock, no death recovery"
         }
         CoreCase::FireGiantApproach => {

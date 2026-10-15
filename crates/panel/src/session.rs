@@ -51,7 +51,7 @@ use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use nav::WorldState;
-use vault::{Profile, ProfileSettings, Secret, Vault};
+use vault::{Profile, ProfileSettings, RandomEventPolicy, Secret, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -1021,6 +1021,19 @@ pub struct Session {
     /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
     pub pending_profile_delete: Option<String>,
     pub delete_understood: bool,
+    /// The rs2b0t profile import in the Profiles window: whether it is
+    /// open, its flow (shared with the TUI), the text it shows (rebuilt on
+    /// each step and while its writes settle) and the delete-file confirm.
+    /// The text is the flow's own lines, which the flow redacts as it
+    /// builds them, so no export password is held here.
+    pub profile_import_open: bool,
+    pub profile_import: frontend_core::rs2b0t_import::ProfileImport,
+    pub profile_import_lines: Vec<String>,
+    pub profile_import_settled: bool,
+    pub import_delete_understood: bool,
+    /// Where the Profiles divider sits, as a fraction of the split region:
+    /// `[0]` the list's width side by side, `[1]` its height stacked.
+    pub profiles_split: [f32; 2],
     /// Live-harness overlay: the scenario's `NavSettings` for this session
     /// without writing prefs. `None` = operator `ui.nav`.
     pub nav_overlay: Option<NavSettings>,
@@ -1441,6 +1454,12 @@ impl Session {
             pending_edit_switch: None,
             window_focus: None,
             chooser_save: frontend_core::ProfileFormSave::default(),
+            profile_import_open: false,
+            profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
+            profile_import_lines: Vec::new(),
+            profile_import_settled: false,
+            import_delete_understood: false,
+            profiles_split: [0.4, 0.35],
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
@@ -3830,7 +3849,7 @@ impl Session {
 
     /// Confirm the render-all warning: wall members draw from now on. With
     /// `remember`, also save "Don't show again", after which unchecking
-    /// "only render selected" applies at once. Without it the choice lasts
+    /// "only render focused" applies at once. Without it the choice lasts
     /// this launch only.
     pub fn confirm_render_all(&mut self, remember: bool) {
         self.focus.lock().unwrap().only_render_selected = false;
@@ -4080,6 +4099,19 @@ impl Session {
         let result = self
             .core
             .set_random_settings(name, random_events, lamp_skill, lamp_auto)
+            .map(|_| ());
+        self.apply_result(result)
+    }
+
+    pub fn set_random_event_policy(
+        &mut self,
+        name: &str,
+        event: &str,
+        policy: RandomEventPolicy,
+    ) -> bool {
+        let result = self
+            .core
+            .set_random_event_policy(name, event, policy)
             .map(|_| ());
         self.apply_result(result)
     }
@@ -5320,12 +5352,6 @@ fn warn_stress50_debug() {
             "panel-play: stress50 is a release RAM watch — run with cargo run --release -p panel --bin panel-play -- --live stress50"
         );
     }
-}
-
-/// Fresh uid for a profile with no existing vault entry: one past the max
-/// (host-play assigns uids from the same 274M base range).
-fn fresh_uid(vault: &Vault) -> i32 {
-    vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
 /// Detach the picker's nav world only after the play's slot threads are

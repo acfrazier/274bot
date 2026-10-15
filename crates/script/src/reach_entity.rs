@@ -49,6 +49,17 @@ struct Tile {
     level: i32,
 }
 
+/// Frozen `isUnderground` / `needsHop` (`primitives.ts:51-56`), shared with
+/// the native walk-hops tile rule below.
+const UNDERGROUND_Z_MIN: f64 = 5_000.0;
+
+pub(crate) fn is_underground_z(z: f64) -> bool {
+    z >= UNDERGROUND_Z_MIN
+}
+
+pub(crate) fn needs_hop_z(here_z: f64, anchor_z: f64) -> bool {
+    is_underground_z(here_z) != is_underground_z(anchor_z)
+}
 impl Tile {
     fn world(self) -> WorldTile {
         WorldTile {
@@ -74,7 +85,7 @@ impl Tile {
 
     /// Frozen `isUnderground`.
     fn underground(self) -> bool {
-        self.z >= 5000
+        is_underground_z(f64::from(self.z))
     }
 }
 
@@ -401,17 +412,13 @@ pub(crate) fn chat_mark() -> i32 {
     })
 }
 
-/// Frozen `sawSince(mark, CANT_REACH)` (`/^i can't reach that/i`).
+/// Frozen `sawSince(mark, CANT_REACH)` ([`crate::shop_open::is_cant_reach`]).
 fn saw_cant_reach(mark: i32) -> bool {
-    const PREFIX: &[u8] = b"i can't reach that";
     observed::with(|scene| {
         scene.since_login().chat_lines().is_some_and(|lines| {
-            lines.iter().any(|line| {
-                let bytes = line.text.as_bytes();
-                line.seq > mark
-                    && bytes.len() >= PREFIX.len()
-                    && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
-            })
+            lines
+                .iter()
+                .any(|line| line.seq > mark && crate::shop_open::is_cant_reach(&line.text))
         })
     })
 }

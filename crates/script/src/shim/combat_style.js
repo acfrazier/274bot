@@ -40,3 +40,35 @@ export function parseRangeStyle(name) {
 export function describeCombatStyle(resolution) {
     return globalThis.__rs2b0t_describe_combat_style(resolution);
 }
+
+export function resolveCombatStyle(style, offeredModes) {
+    return globalThis.rustyscript.functions.__rs2b0t_resolve_combat_style_modes(style, offeredModes);
+}
+
+export function parseInterfaceCombatStyle(label) {
+    return globalThis.rustyscript.functions.__rs2b0t_parse_interface_combat_style(String(label));
+}
+
+export class CombatStyleController {
+    #backend;
+
+    constructor(backend) {
+        this.#backend = backend;
+    }
+
+    resolution(style) {
+        return globalThis.__rs2b0t_combat_style_controller('resolution', this.#backend, style);
+    }
+
+    mode(style) {
+        return globalThis.__rs2b0t_combat_style_controller('mode', this.#backend, style);
+    }
+
+    has(style) {
+        return globalThis.__rs2b0t_combat_style_controller('has', this.#backend, style);
+    }
+
+    set(style) {
+        return globalThis.__rs2b0t_combat_style_controller('set', this.#backend, style);
+    }
+}

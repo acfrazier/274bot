@@ -28,8 +28,8 @@ inventory count as “all catalog scripts / all options qualified.”
 Members that still stop a script with `not impl` include `Game.castOnNpc`,
 `Shop.buyById`, `ChatDialog.makeOne`, `Quests.journal`, `Traversal.remaining`
 and `requestRepath`, `EntityQuery.inside` and `nearestPreferLocal`, script
-events (`events.on`/`off`, `registerScript`), the `InvItem` class, the
-task-tree classes (`AcquireTask`, `BranchTask`, `LeafTask`) and several
+events (`events.on`/`off`, `registerScript`), the task-tree classes
+(`AcquireTask`, `BranchTask`, `LeafTask`) and several
 gathering, fishing and banking data helpers. The generated
 `crates/script/src/shim/declared_surface.js` and
 `crates/script/compat-js/overlay-not-impl.json` list the unconditional ones. A

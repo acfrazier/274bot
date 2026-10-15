@@ -75,6 +75,8 @@ mod scene_v8;
 mod selected_facts_v8;
 mod shape;
 #[cfg(feature = "load")]
+mod shop_ops_v8;
+#[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;
 #[cfg(feature = "load")]
@@ -83,6 +85,8 @@ mod targets_v8;
 mod tools_v8;
 #[cfg(feature = "load")]
 mod wait_clock;
+#[cfg(feature = "load")]
+mod walk_opening_v8;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,

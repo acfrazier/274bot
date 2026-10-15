@@ -5,6 +5,7 @@
 //! calculation without the level penalty. Script-supplied coordinates are JS
 //! numbers, computed in `f64` the same way `Math.abs` would.
 
+use super::callback_v8::{self as cb, Callback};
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -18,6 +19,13 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     global
         .set(&mut scope, name.into(), func.into())
         .ok_or_else(|| "distance set".to_string())?;
+    let clue_tiles_to_name = v8::String::new(&mut scope, "__rs2b0t_clue_tiles_to")
+        .ok_or_else(|| "clue tiles-to name".to_string())?;
+    let clue_tiles_to = v8::Function::new(&mut scope, tiles_to_callback)
+        .ok_or_else(|| "clue tiles-to fn".to_string())?;
+    global
+        .set(&mut scope, clue_tiles_to_name.into(), clue_tiles_to.into())
+        .ok_or_else(|| "clue tiles-to set".to_string())?;
     Ok(())
 }
 
@@ -50,6 +58,28 @@ fn run_distance<'s>(
     let to = required_tile(scope, args.get(1), "to")?;
     let planar = args.get(2).boolean_value(scope);
     Ok(v8::Number::new(scope, js_tile_distance(from, to, planar)).into())
+}
+
+fn tiles_to_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let target = args.get(0);
+        if !cb::truthy(scope, target) {
+            return Ok(v8::null(scope).into());
+        }
+        let world_tile = Callback::plain(scope, args.get(1), "worldTile");
+        let here = world_tile.call(scope, &[])?;
+        if !cb::truthy(scope, here) {
+            return Ok(v8::null(scope).into());
+        }
+        let from = required_tile(scope, here, "here").map_err(|e| cb::type_error(scope, &e))?;
+        let to = required_tile(scope, target, "target").map_err(|e| cb::type_error(scope, &e))?;
+        Ok(v8::Number::new(scope, js_tile_distance(from, to, true)).into())
+    })();
+    cb::finish(scope, rv, result);
 }
 
 #[derive(Clone, Copy)]

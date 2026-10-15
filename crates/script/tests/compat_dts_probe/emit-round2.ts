@@ -5,7 +5,7 @@ import { SettingsBag } from '*runtime/Settings.js';
 import { reader } from '*adapter/ClientAdapter.js';
 import { SHOP_DB } from '*data/shopdb.js';
 import { DROP_DB } from '*data/dropdb.js';
-import { resolveRockIds } from '*data/miningRocks.js';
+import { ROCK_TIER_ORDER, rockTierById, resolveRockIds } from '*data/miningRocks.js';
 import { nearestCowLocation } from '*data/cowKillerLocations.js';
 import { PERIODIC_BANK_SETTINGS } from '*api/bank/Banking.js';
 
@@ -103,9 +103,11 @@ const wrongKeepers: number[] = SHOP_DB['fishingshop'].keepers;
 // @ts-expect-error the drop table contains item names, not numbers
 const wrongDrops: number[] = DROP_DB['Cow'];
 void wrongKeepers; void wrongDrops;
-export function unsupportedRocks(): void {
-  // @ts-expect-error resolveRockIds always throws; it does not yield a usable Set
-  resolveRockIds(['Copper']).has(1);
+export function supportedRocks(): void {
+  const ids: Set<number> = resolveRockIds(['Copper']);
+  const tiers: readonly string[] = ROCK_TIER_ORDER;
+  const tier: number = rockTierById(2090);
+  void ids; void tiers; void tier;
 }
 const strategy = PERIODIC_BANK_SETTINGS.bankStrategy;
 void strategy;

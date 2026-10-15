@@ -67,9 +67,11 @@ use host_play::map_cache::MapDemand;
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
 use crate::overlay::{ConfirmKind, Modal};
+use crate::profile_import::ImportAction;
 use crate::script_shape::{
     categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
 };
+use frontend_core::rs2b0t_import::Stage;
 
 /// What `tui-play` should do this run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -478,6 +480,8 @@ pub struct TuiSession {
     /// First-run rs2b0t clone-root folder browser.
     rs2b0t_catalog_open: bool,
     rs2b0t_catalog_dir: PathBuf,
+    /// The rs2b0t profile import shown by [`Modal::ProfileImport`].
+    profile_import: frontend_core::rs2b0t_import::ProfileImport,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
     /// Process-wide loadout presets (`~/.274bot/loadouts.json`).
@@ -577,6 +581,7 @@ impl TuiSession {
             ),
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
+            profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             script_category_order: Vec::new(),
             loadouts: script::LoadoutsStore::with_default_path(),
             script_load_last_dir: None,
@@ -1759,6 +1764,82 @@ impl TuiSession {
         app.rs2b0t_catalog_open = false;
     }
 
+    /// Run one step of the rs2b0t profile import on the shared flow, then
+    /// show the result in the overlay.
+    fn profile_import(&mut self, app: &mut TuiApp, action: ImportAction) {
+        // Script names map through the catalog: register it from its known
+        // root first (no folder prompt; without a root the preview says so).
+        if matches!(action, ImportAction::Preview(_)) && !self.scripts.catalog_filled() {
+            if let Some(root) = self.catalog_root() {
+                self.scripts.fill_catalog_once(Some(&root));
+            }
+        }
+        let flow = &mut self.profile_import;
+        match action {
+            ImportAction::Preview(path) => {
+                *flow.path_mut() = path;
+                flow.preview(&self.core, &self.scripts);
+            }
+            ImportAction::Policy(policy) => flow.set_policy(&self.core, &self.scripts, policy),
+            ImportAction::IncludeUnusable(include) => {
+                flow.set_include_unusable(&self.core, &self.scripts, include)
+            }
+            ImportAction::Confirm => flow.confirm(&mut self.core, &self.scripts),
+            ImportAction::Back => flow.back(),
+            ImportAction::AskDelete => flow.ask_delete(),
+            ImportAction::CancelDelete => flow.cancel_delete(),
+            ImportAction::ConfirmDelete => flow.confirm_delete(&self.core),
+            ImportAction::Close => {
+                *flow = frontend_core::rs2b0t_import::ProfileImport::new();
+                return;
+            }
+        }
+        self.show_profile_import(app);
+    }
+
+    /// Copy the import flow into its open overlay. A flow whose overlay was
+    /// closed is dropped (with any parsed file and its passwords); a report
+    /// follows its writes until they settle.
+    fn project_profile_import(&mut self, app: &mut TuiApp) {
+        match app.modal.as_ref() {
+            Some(Modal::ProfileImport(view)) => {
+                if view.stage == Stage::Report && !view.settled {
+                    self.show_profile_import(app);
+                }
+            }
+            _ if !self.profile_import.is_fresh() => {
+                self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
+            }
+            _ => {}
+        }
+    }
+
+    fn show_profile_import(&self, app: &mut TuiApp) {
+        let Some(Modal::ProfileImport(view)) = app.modal.as_mut() else {
+            return;
+        };
+        let flow = &self.profile_import;
+        let stage = flow.stage();
+        if view.stage != stage {
+            view.scroll = 0;
+        }
+        view.stage = stage;
+        view.path.clear();
+        view.path.push_str(flow.path());
+        view.lines = match stage {
+            Stage::Path => Vec::new(),
+            Stage::Preview => flow.preview_lines(),
+            Stage::Report => flow.report_lines(&self.core),
+        };
+        view.error = flow.error().map(str::to_owned);
+        view.policy = flow.policy();
+        view.unusable = flow.plan().map_or(0, |plan| plan.unusable());
+        view.include_unusable = flow.include_unusable();
+        view.settled = flow.settled(&self.core);
+        view.can_delete = flow.can_delete(&self.core);
+        view.delete_asked = flow.delete_asked();
+    }
+
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<usize, String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
@@ -2172,6 +2253,21 @@ impl TuiSession {
         let Some(name) = app.settings_profile.clone() else {
             return;
         };
+        let changed_policies = self
+            .core
+            .vault()
+            .and_then(|vault| vault.get(&name))
+            .map(|profile| {
+                vault::RANDOM_EVENT_POLICY_EVENTS
+                    .iter()
+                    .filter_map(|(event, _)| {
+                        let policy = app.settings.random_event_policy(event);
+                        (profile.settings.random_event_policy(event) != policy)
+                            .then_some((*event, policy))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         // Field edit, not a whole-settings replacement: the popup owns the
         // guardian fields and the memory row, and each arm change lands
         // through its own write (the form tracks the latest).
@@ -2206,6 +2302,18 @@ impl TuiSession {
                 let reason = format!("settings: {e}");
                 app.settings_save.refused(reason.clone());
                 app.error = Some(reason);
+            }
+        }
+        for (event, policy) in changed_policies {
+            match self.core.set_random_event_policy(&name, event, policy) {
+                Ok(op) => app
+                    .settings_save
+                    .submitted(&mut self.core, op, Some(&name), &name),
+                Err(e) => {
+                    let reason = format!("settings: {e}");
+                    app.settings_save.refused(reason.clone());
+                    app.error = Some(reason);
+                }
             }
         }
     }
@@ -2365,6 +2473,7 @@ impl TuiSession {
         // commits the Starts that settled.
         self.core.poll();
         self.poll_scripts(app);
+        self.project_profile_import(app);
 
         // The strip is the fleet: a removed member leaves it at once (its
         // worker may still be logging out). Both copies reuse the app's
@@ -3213,8 +3322,7 @@ impl TuiSession {
         let uid = self
             .core
             .vault()
-            .map(|v| v.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1)
-            .unwrap_or(274_000_001);
+            .map_or(274_000_001, frontend_core::fresh_uid);
         let profile = Profile {
             username: username.into(),
             password: profile_password(username).into(),
@@ -3443,6 +3551,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::ScriptRestartLater => session.scripts.dismiss_restart_prompt(),
         AppAction::AckBackground => session.ack_background_bots(app),
+        AppAction::ProfileImport(action) => session.profile_import(app, action),
         AppAction::ParamsKey(key) => {
             let action = session.params_key(app, key);
             dispatch(session, app, action);

@@ -57,7 +57,11 @@ fn curated(bank: &str) -> Option<CookPlan> {
 
 /// Frozen `nearestCookSurface(origin, MAX_SURFACE_CHEB)`: same plane, within
 /// the Chebyshev radius, an oven beats a fire, else the strictly nearer one.
-fn nearest_surface(origin: WorldTile, surfaces: &[CookSurface]) -> Option<&CookSurface> {
+pub(crate) fn nearest_surface(
+    origin: WorldTile,
+    surfaces: &[CookSurface],
+    max_cheb: f64,
+) -> Option<&CookSurface> {
     let mut best: Option<(&CookSurface, i32)> = None;
     for surface in surfaces {
         if surface.level != origin.level {
@@ -66,7 +70,7 @@ fn nearest_surface(origin: WorldTile, surfaces: &[CookSurface]) -> Option<&CookS
         let d = (origin.x - surface.x)
             .abs()
             .max((origin.z - surface.z).abs());
-        if d > MAX_SURFACE_CHEB {
+        if f64::from(d) > max_cheb {
             continue;
         }
         let better = best.is_none_or(|(current, current_d)| {
@@ -114,7 +118,9 @@ pub(crate) fn build(banks: &[NamedBank], surfaces: &[CookSurface]) -> Vec<CookLo
             CookLocation {
                 bank: index,
                 name: bank.name,
-                surface: curated.or_else(|| nearest_surface(bank.tile, surfaces).map(derived)),
+                surface: curated.or_else(|| {
+                    nearest_surface(bank.tile, surfaces, f64::from(MAX_SURFACE_CHEB)).map(derived)
+                }),
                 verified,
             }
         })
