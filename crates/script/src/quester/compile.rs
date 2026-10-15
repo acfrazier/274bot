@@ -6,6 +6,7 @@ use super::path::{
 };
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
+use crate::local_state::OperatorLoadouts;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use crate::native_bank::BankItem;
 use api::game_data::SelectedGameData;
@@ -423,6 +424,10 @@ struct CacheKey {
     digest: [u8; 32],
     abi: u64,
     gang: Option<super::pair::Gang>,
+    /// The operator loadout rows the path was compiled against: an
+    /// operator row overrides a compiled kit of the same name, so rows
+    /// are part of the compiled identity.
+    loadouts: [u8; 32],
 }
 
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
@@ -457,13 +462,16 @@ pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// Compile `bytes` against the selected facts and the operator's loadout
+/// rows (`operator`: the slot's local-state lease, or explicitly absent).
 pub fn compile_path(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
     worker: &mut FamilyPreparation,
+    operator: &OperatorLoadouts,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_path_for_gang(bytes, selected, quests, worker, None)
+    compile_path_for_gang(bytes, selected, quests, worker, None, operator)
 }
 
 /// Select an immutable gang role after the owned membership read.
@@ -473,6 +481,7 @@ pub fn compile_path_for_gang(
     quests: &QuestCatalog,
     worker: &mut FamilyPreparation,
     gang: Option<super::pair::Gang>,
+    operator: &OperatorLoadouts,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
     let (revision, engine, content) = match selected.selected_pin() {
@@ -496,6 +505,7 @@ pub fn compile_path_for_gang(
         digest,
         abi: abi_set(),
         gang,
+        loadouts: operator.digest(),
     };
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
@@ -506,7 +516,7 @@ pub fn compile_path_for_gang(
         .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
     let gathering = prepare_gathering(&document, selected, worker)?;
     let compiled = Arc::new(compile_uncached(
-        &document, digest, selected, quests, gathering, gang,
+        &document, digest, selected, quests, gathering, gang, operator,
     )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
@@ -553,11 +563,23 @@ pub fn prepare_for_test<R: Send + 'static>(
         .expect("join test family preparation")
 }
 
-/// Test helper: compile without the process cache.
+/// Test helper: compile without the process cache and with no operator
+/// loadout rows.
 pub fn compile_uncached_for_test(
     document: &PathDocument,
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_loadouts(document, selected, quests, &OperatorLoadouts::absent())
+}
+
+/// Test helper: compile without the process cache, against `operator`'s
+/// rows.
+pub fn compile_uncached_for_test_with_loadouts(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    operator: &OperatorLoadouts,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let gathering = uses_gathering(document)
         .then(|| api::gather_methods::cached(selected))
@@ -569,6 +591,7 @@ pub fn compile_uncached_for_test(
         quests,
         gathering,
         None,
+        operator,
     )
     .map(Arc::new)
 }
@@ -648,6 +671,7 @@ pub(super) fn compile_uncached(
     quests: &QuestCatalog,
     gathering: Option<Arc<GatherCatalog>>,
     gang: Option<super::pair::Gang>,
+    operator: &OperatorLoadouts,
 ) -> Result<CompiledPath, CompileError> {
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
@@ -747,7 +771,7 @@ pub(super) fn compile_uncached(
         .collect::<Result<Vec<_>, CompileError>>()
         .map_err(|error| error.with_path(document.id.clone()))?;
     let loadouts =
-        super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
+        super::loadouts::LoadoutOverlay::new(operator.shared(), Arc::from(compiled_loadouts));
     let mut compiled_items: Vec<CompiledQuestItem> = header
         .items
         .iter()
@@ -1804,13 +1828,28 @@ mod tests {
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
-            let first = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
-            let hit = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            let first = compile_path(
+                cook_bytes(),
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+            )
+            .unwrap();
+            let hit = compile_path(
+                cook_bytes(),
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+            )
+            .unwrap();
             assert!(Arc::ptr_eq(&first, &hit));
             let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
             changed["id"] = serde_json::json!("cook-cache-different");
             let bytes = serde_json::to_vec(&changed).unwrap();
-            let miss = compile_path(&bytes, &data, &quests, worker).unwrap();
+            let miss =
+                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
             assert!(!Arc::ptr_eq(&first, &miss));
             assert_eq!(first.id.0.as_ref(), "cook");
             assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
@@ -1846,7 +1885,8 @@ mod tests {
             });
             document["roles"][0]["progress_reader"] = reader;
             let bytes = serde_json::to_vec(&document).unwrap();
-            let compiled = compile_path(&bytes, &data, &quests, worker).unwrap();
+            let compiled =
+                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
             assert_eq!(
                 compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
                 "gather-progress-reader"
@@ -2707,10 +2747,13 @@ mod tests {
 
         let potion = data.item_by_alias("4doseprayerrestore").unwrap();
         let display = potion.name.as_deref().unwrap();
-        let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
-        store.upsert(api::loadout::Loadout::new("cook/cash").with_carry(display, 2));
-        store.save().unwrap();
-        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let rows: Arc<[api::loadout::Loadout]> =
+            Arc::from(vec![
+                api::loadout::Loadout::new("cook/cash").with_carry(display, 2)
+            ]);
+        let operator = OperatorLoadouts::from_rows(rows, api::local_state::StoreVersion::INITIAL);
+        let path =
+            compile_uncached_for_test_with_loadouts(&document, &data, &quests, &operator).unwrap();
         let carry = &path.provisioning.loadout_carry["cook/cash"];
         assert_eq!(carry.len(), 1);
         assert_eq!(

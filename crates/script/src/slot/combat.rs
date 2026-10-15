@@ -254,7 +254,13 @@ impl SlotScript {
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())))
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(ctx, &mut retained, &mut self.native_runtime, None)
+            run.tick(
+                ctx,
+                &mut retained,
+                &mut self.native_runtime,
+                None,
+                self.local_state.as_deref(),
+            )
         };
         let changed = match seat
             .combat_page

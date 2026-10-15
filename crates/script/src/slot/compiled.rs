@@ -410,6 +410,7 @@ impl CompiledRun {
         retained: &mut RetainedMemory,
         runtime: &mut crate::native::ledger::Runtime,
         pairs: Option<&dyn crate::quester::pair::QuestPairPort>,
+        state: Option<&crate::local_state::SlotState>,
     ) -> Result<ScriptFlow, ScriptFailure> {
         if let Some(port) = pairs {
             let dead = crate::native::death::hitpoints_zero(
@@ -450,6 +451,7 @@ impl CompiledRun {
                 cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
                 output: &mut self.output,
                 pairs,
+                state,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,

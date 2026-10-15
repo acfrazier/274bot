@@ -444,7 +444,13 @@ impl SlotScript {
                     .expect("seat retention")
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                run.tick(ctx, &mut retained, &mut self.native_runtime, None)
+                run.tick(
+                    ctx,
+                    &mut retained,
+                    &mut self.native_runtime,
+                    None,
+                    self.local_state.as_deref(),
+                )
             };
             let changed = match seat.page.as_ref().and_then(|page| page.status.as_ref()) {
                 Some(status) => run

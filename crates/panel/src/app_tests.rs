@@ -921,19 +921,20 @@ fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
 #[test]
 fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     let dir = TestDir::new("legacy-log-ui-state");
-    let path = dir.join("panel-ui.json");
+    let preferences = crate::test_support::scratch_service(&dir).preferences();
     std::fs::write(
-        &path,
+        preferences.path(),
         r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
     )
     .unwrap();
+    preferences.reload().unwrap();
 
-    let loaded = crate::ui_state::load_at(&path);
+    let loaded = crate::ui_state::load_from(&preferences);
     assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
     assert!(!loaded.collapsed["alice"]["status"]);
     assert!(!loaded.capture);
 
-    crate::ui_state::save(&loaded);
+    crate::ui_state::save(&preferences, &loaded);
     let session = crate::session::Session::new();
     assert!(!session.log_window_open);
     assert_eq!(session.ui.last_focus.as_deref(), Some("alice"));
@@ -951,8 +952,7 @@ fn loadout_combo_lists_store_names() {
     use api::loadout::Loadout;
     use script::{resolve_setting_options, LoadoutsStore, SettingDef};
 
-    let dir = TestDir::new("loadout-combo");
-    let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
+    let mut store = LoadoutsStore::default();
     store.upsert(Loadout::new("guard"));
     store.upsert(Loadout::new("stall"));
     let def = SettingDef {
@@ -5796,7 +5796,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         "it does what OK does"
     );
     assert!(
-        crate::ui_state::load().render_all_warning_ack,
+        crate::ui_state::load(&session.preferences).render_all_warning_ack,
         "the choice is written to the preferences"
     );
 
@@ -5833,7 +5833,7 @@ fn render_all_ok_applies_for_this_launch_only() {
     assert!(!session.wall.render_all_warn_open);
     assert!(!session.focus.lock().unwrap().only_render_selected);
     assert!(!session.ui.render_all_warning_ack);
-    assert!(!crate::ui_state::load().render_all_warning_ack);
+    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
 
     let mut next = crate::session::Session::new();
     assert!(next.focus.lock().unwrap().only_render_selected);

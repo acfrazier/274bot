@@ -341,7 +341,13 @@ impl PathRegistry {
         let bytes = self
             .bytes(id)
             .ok_or_else(|| CompileError::code("unavailable-path"))?;
-        compile::compile_path(bytes.as_ref(), selected, quests, worker)
+        compile::compile_path(
+            bytes.as_ref(),
+            selected,
+            quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
     }
     pub fn report(&self) -> Option<&Arc<str>> {
         match self {
@@ -755,6 +761,10 @@ fn read_document(
             .with_detail(format!("Filename id {id:?} differs from document id")));
     }
     // Revalidate every file, including one whose digest is already in the active cache.
+    // Validation judges the document's own content: operator loadout rows
+    // only override a compiled kit by name at a slot's compile, so none
+    // are consulted here.
+    let operator = crate::local_state::OperatorLoadouts::absent();
     let gathering = compile::prepare_gathering(&document, selected, worker)?;
     let digest = compile::digest_bytes(&bytes);
     if let Some(partner) = &document.partner {
@@ -766,6 +776,7 @@ fn read_document(
                 quests,
                 gathering.clone(),
                 Some(role.gang),
+                &operator,
             )
             .map_err(|mut error| {
                 let detail = format!(
@@ -778,7 +789,9 @@ fn read_document(
             })?;
         }
     } else {
-        compile::compile_uncached(&document, digest, selected, quests, gathering, None)?;
+        compile::compile_uncached(
+            &document, digest, selected, quests, gathering, None, &operator,
+        )?;
     }
     Ok(FolderDocument {
         bytes: Arc::new(bytes),

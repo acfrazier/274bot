@@ -306,6 +306,7 @@ fn with_tick<R>(
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
+        state: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,

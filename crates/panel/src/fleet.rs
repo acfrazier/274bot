@@ -389,7 +389,7 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
         }
     }
     if changed && session.persist_ui {
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 

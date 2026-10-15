@@ -246,11 +246,13 @@ struct HintDocument {
 }
 
 fn hint_path(account: &str) -> Result<PathBuf, String> {
-    let identity = script::bank_hints::account_component(account)
-        .map_err(|error| format!("account {account:?} has no hint identity: {error:?}"))?;
-    Ok(script::bot_file("bank-hints")
-        .join(PROFILE)
-        .join(format!("{identity}.json")))
+    let identity = api::local_state::AccountKey::try_new(PROFILE, account)
+        .map_err(|error| format!("account {account:?} has no hint identity: {error}"))?;
+    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
+    Ok(
+        host_play::local_state::StateRoot::new(PathBuf::from(home).join(".274bot"))
+            .bank_hint_file(PROFILE, identity.account()),
+    )
 }
 
 fn read_hint(path: &Path) -> Result<HintDocument, String> {
@@ -424,7 +426,15 @@ fn production_start(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) 
         let path = api::selected::FamilyPreparation::run({
             let selected = Arc::clone(&selected);
             let quests = Arc::clone(&quests);
-            move |cap| compile_path(COOK_PATH_JSON.as_bytes(), &selected, &quests, cap)
+            move |cap| {
+                compile_path(
+                    COOK_PATH_JSON.as_bytes(),
+                    &selected,
+                    &quests,
+                    cap,
+                    &script::local_state::OperatorLoadouts::absent(),
+                )
+            }
         })
         .map_err(|error| format!("prepare bundled Cook Path: {error}"))?
         .join()
@@ -737,7 +747,9 @@ fn live_quester_hint() {
     assert_eq!(hint_after.profile, PROFILE);
     assert_eq!(
         hint_after.account,
-        script::bank_hints::account_component(&account).unwrap()
+        api::local_state::AccountKey::try_new(PROFILE, &account)
+            .unwrap()
+            .account()
     );
     assert!(
         hint_after.observed_at_unix >= started,

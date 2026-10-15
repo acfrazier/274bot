@@ -2422,6 +2422,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.20",
  "vault",
  "windows-sys 0.59.0",
  "zeroize",

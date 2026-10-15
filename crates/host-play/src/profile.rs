@@ -54,6 +54,9 @@ pub struct ProfileSelection {
     nav_flags: PathBuf,
     content_dir: PathBuf,
     vault_path: PathBuf,
+    /// `<home>/.274bot`, resolved once here: the root the process
+    /// local-state service derives every state path from.
+    state_root: PathBuf,
     catalog_root: Option<PathBuf>,
     cache_manifest: Option<PathBuf>,
     rsa_modulus: Option<String>,
@@ -305,6 +308,7 @@ pub struct ServerProfile {
     #[cfg(feature = "debug-catalog")]
     debug_engine_dir: PathBuf,
     vault_path: PathBuf,
+    state_root: PathBuf,
     catalog_root: Option<PathBuf>,
     world_members: WorldMembersFact,
     public_worlds: Option<Arc<PublicWorlds>>,
@@ -416,6 +420,12 @@ impl ServerProfile {
     }
     pub fn vault_path(&self) -> &Path {
         &self.vault_path
+    }
+    /// The explicit state root (`<home>/.274bot`) the process local-state
+    /// service is opened at. Resolved once at selection; nothing below the
+    /// composition root reads `HOME` for state.
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
     }
     /// Suggested source directory only; scripts are not revision-bound resources.
     pub fn catalog_root(&self) -> Option<&Path> {

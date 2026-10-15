@@ -118,6 +118,7 @@ fn throwers_crossing_path_compiles_with_current_schema() {
             &selected,
             &quests,
             cap,
+            &script::local_state::OperatorLoadouts::absent(),
         )
     })
     .expect("the live crossing fixture must compile before launching a client");
@@ -1777,7 +1778,15 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
-        move |cap| compile_path(path_json(dest).as_bytes(), &selected, &quests, cap)
+        move |cap| {
+            compile_path(
+                path_json(dest).as_bytes(),
+                &selected,
+                &quests,
+                cap,
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        }
     })
     .unwrap_or_else(|error| panic!("compile W1 path: {error:?}"));
     let names = super::mint_live_names(1);

@@ -22,6 +22,7 @@ fn load_slot(incarnation: u64, data: bool) -> SlotScript {
         crate::load::LoadShape::NativeTick,
         None,
         vec![],
+        &[],
         data.then(selected),
         Arc::default(),
     )

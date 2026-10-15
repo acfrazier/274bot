@@ -583,6 +583,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                     &data,
                     &quests,
                     cap,
+                    &crate::local_state::OperatorLoadouts::absent(),
                 )
             }
         })
