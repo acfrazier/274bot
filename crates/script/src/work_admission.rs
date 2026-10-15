@@ -41,12 +41,20 @@ pub const WORK_SLICE: Duration = Duration::from_millis(10);
 /// 1,411,973 embedded input bytes). Only the first Profile Prepare step may
 /// use this qualified allowance; later steps return to the ordinary quantum.
 pub(crate) const GATHERING_DECODE_SLICE: Duration = Duration::from_millis(100);
+/// One bounded Quester registry preparation action. A folder document is at
+/// most 1 MiB; scan/read actions are smaller. The seal remains ordinary.
+pub(crate) const QUESTER_REGISTRY_SLICE: Duration = Duration::from_millis(100);
+/// One pinned bundled Quester Path profile compilation (the live Cook Path is
+/// 12,979 bytes; all bundled documents are bounded by the Path format).
+pub(crate) const QUESTER_PROGRESS_SLICE: Duration = Duration::from_millis(100);
 
-/// Closed, T1-internal declaration of the only longer unit admitted in this
-/// endpoint. Callers cannot supply a duration or widen an arbitrary unit.
+/// Closed, T1-internal declarations of the only longer units in this endpoint.
+/// Callers cannot supply a duration or widen an arbitrary preparation family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QualifiedUnit {
     GatheringFamilyDecode,
+    QuesterRegistryAction,
+    QuesterProgressCompile,
 }
 
 /// A worker that remains inside a step this long makes the service unavailable.
@@ -687,16 +695,31 @@ impl JobEntry {
             && self.revision == ticket.revision()
     }
 
-    fn slice_allowance(&self) -> (Duration, bool) {
+    fn slice_allowance(&self) -> (Duration, Option<QualifiedUnit>) {
         let mut control = self.control.lock();
-        let ready = self
-            .progress
-            .latest()
-            .is_some_and(|progress| progress.phase() == PreparationPhase::Load.index());
-        if ready && control.qualified_unit.take().is_some() {
-            (GATHERING_DECODE_SLICE, true)
-        } else {
-            (WORK_SLICE, false)
+        let phase = self.progress.latest().map(|progress| progress.phase());
+        match control.qualified_unit {
+            Some(unit @ (QualifiedUnit::GatheringFamilyDecode | QualifiedUnit::QuesterProgressCompile))
+                if phase == Some(PreparationPhase::Load.index()) =>
+            {
+                control.qualified_unit = None;
+                let allowance = match unit {
+                    QualifiedUnit::GatheringFamilyDecode => GATHERING_DECODE_SLICE,
+                    QualifiedUnit::QuesterProgressCompile => QUESTER_PROGRESS_SLICE,
+                    QualifiedUnit::QuesterRegistryAction => unreachable!("one-shot unit"),
+                };
+                (allowance, Some(unit))
+            }
+            Some(QualifiedUnit::QuesterRegistryAction)
+                if matches!(phase, Some(phase) if phase == PreparationPhase::Load.index()
+                    || phase == PreparationPhase::Prepare.index()) =>
+            {
+                (
+                    QUESTER_REGISTRY_SLICE,
+                    Some(QualifiedUnit::QuesterRegistryAction),
+                )
+            }
+            _ => (WORK_SLICE, None),
         }
     }
 
@@ -1041,7 +1064,7 @@ fn process_step(
     started: Instant,
     returned_at: Instant,
     allowance: Duration,
-    qualified: bool,
+    qualified: Option<QualifiedUnit>,
 ) {
     let over_time = returned_at.saturating_duration_since(started) >= allowance;
     let violation = if report.continued {
@@ -1051,7 +1074,7 @@ fn process_step(
     } else {
         None
     };
-    let restore_qualification = qualified
+    let restore_qualification = qualified.is_some()
         && matches!(&outcome, ErasedStep::Yielded)
         && report.progress.is_none()
         && !report.exceeded;
@@ -1059,15 +1082,24 @@ fn process_step(
     let mut yielded = false;
     {
         let mut control = entry.control.lock();
-        if restore_qualification {
-            // A pre-work checkpoint yielded without using its declared unit.
-            control.qualified_unit = Some(QualifiedUnit::GatheringFamilyDecode);
+        if restore_qualification && control.qualified_unit.is_none() {
+            // A pre-work checkpoint yielded without using its one-shot unit.
+            control.qualified_unit = qualified;
         }
         if shared.shutdown_requested.load(Ordering::Acquire) {
             let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
         }
         if entry.terminal.is_pending() {
             if let Some(report) = report.progress {
+                if control.qualified_unit == Some(QualifiedUnit::QuesterRegistryAction)
+                    && report.phase() == PreparationPhase::Prepare.index()
+                    && report.total() == Some(report.completed())
+                {
+                    // The cooperative Quester adapter publishes a known total
+                    // only when its final Prepare action has completed. Seal
+                    // must return to the ordinary allowance.
+                    control.qualified_unit = None;
+                }
                 if let Some(sequence) = control.progress_sequence.checked_add(1) {
                     let progress = WorkProgress::new(
                         entry.identity,
@@ -1349,7 +1381,18 @@ impl WorkService {
         F: WorkFamilySpec,
         J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
     {
-        if qualified_unit.is_some() && F::FAMILY != WorkFamily::ProfilePreparation {
+        if qualified_unit.is_some_and(|unit| {
+            !matches!(
+                (unit, F::FAMILY),
+                (
+                    QualifiedUnit::GatheringFamilyDecode | QualifiedUnit::QuesterProgressCompile,
+                    WorkFamily::ProfilePreparation
+                ) | (
+                    QualifiedUnit::QuesterRegistryAction,
+                    WorkFamily::CataloguePreparation
+                )
+            )
+        }) {
             return Err(api::work::Refused::new(
                 SubmissionRefusal::InvalidArgument,
                 job,

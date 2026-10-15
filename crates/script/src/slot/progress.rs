@@ -207,7 +207,7 @@ impl SlotScript {
             2 * 1024 * 1024,
             2 * 1024 * 1024,
         ) {
-            Ok(input) => input,
+            Ok(input) => input.with_quester_progress_compile(),
             Err(error) => {
                 seat.progress_page = Some(ProgressPage::Refused {
                     token,
