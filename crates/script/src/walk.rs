@@ -66,7 +66,7 @@
 //!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
 //!   bounds the frozen PathFinder's probe and big-budget rebake; the host
 //!   router is a different, stronger search with its own bound
-//!   (`nav::router::NODE_BUDGET`, 4,000,000 expansions) that never searches
+//!   (the router's node budget, 4,000,000 expansions) that never searches
 //!   less than a frozen caller asked, and has no `budget` outcome, so the
 //!   option is accepted and there is no big-budget rebake
 //!   (`walkLadder.ts:73–75`).
@@ -230,7 +230,7 @@ const MAX_AVOID: usize = 16;
 /// Frozen ids accepted for compat `avoidZones`; their geometry is resolved
 /// by host-play once the walk's endpoints and combat level are known.
 pub(crate) fn known_avoid_catalog_id(id: &str) -> bool {
-    nav::zones::AVOID_CATALOG_IDS.contains(&id)
+    nav::contract::AVOID_CATALOG_IDS.contains(&id)
 }
 
 /// Why `avoid` cannot route, if it cannot: an unknown catalog id, a
