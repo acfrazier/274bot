@@ -310,6 +310,15 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     n.is_empty() || h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
+/// Length and hash of the filter text, so `edit_filter` notices an in-place
+/// edit of the same length without keeping a second copy of the text.
+fn text_fingerprint(text: &str) -> (usize, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    (text.len(), hasher.finish())
+}
+
 /// A front end's filtered copy of one scope. [`LogStore::refresh`] brings it
 /// up to date: nothing happens (no lock, no allocation) while the store and
 /// the filter are unchanged; new matching lines are appended; a scope or
@@ -383,13 +392,11 @@ impl LogView {
     pub fn edit_filter(&mut self, edit: impl FnOnce(&mut LogFilter)) {
         let min_level = self.filter.min_level;
         let sources = self.filter.sources;
-        let text_ptr = self.filter.text.as_ptr();
-        let text_len = self.filter.text.len();
+        let text = text_fingerprint(&self.filter.text);
         edit(&mut self.filter);
         if self.filter.min_level != min_level
             || self.filter.sources != sources
-            || self.filter.text.len() != text_len
-            || !std::ptr::eq(self.filter.text.as_ptr(), text_ptr)
+            || text_fingerprint(&self.filter.text) != text
         {
             self.rebuild = true;
         }
