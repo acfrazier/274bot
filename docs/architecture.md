@@ -457,7 +457,7 @@ libtest exception.
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
-| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8 only; producer `IHDR`/`IDAT`/`IEND` chunks, 512 KiB input, 1.25 MiB scratch plus 266,256-byte result) |
+| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input and parser limit, 2 MiB scratch for one bounded eXIf copy plus row/inflater state, 266,256-byte result; unused text/ICC chunks are skipped) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
