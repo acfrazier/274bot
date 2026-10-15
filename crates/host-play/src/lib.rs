@@ -68,6 +68,8 @@ pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
 mod debug_replies;
+#[cfg(test)]
+mod gatherer_recovery_live;
 mod instance_lock;
 #[cfg(any(test, feature = "live-probe"))]
 mod manual_click_live_probe;

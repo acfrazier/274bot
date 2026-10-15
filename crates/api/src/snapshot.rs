@@ -442,6 +442,12 @@ impl GameSnapshot {
         self.inventory_size = size;
     }
 
+    /// Offline fixture observation of main-inventory and bank-side packet revisions.
+    pub fn seed_inventory_packet_generations(&mut self, main: Option<u64>, side: Option<u64>) {
+        self.inventory_packet_generation = main;
+        self.bank_side_packet_generation = side;
+    }
+
     /// Offline fixture observation of a trade page; production uses decoded widgets.
     pub fn seed_trade(&mut self, trade: TradeView) {
         self.trade = trade;
