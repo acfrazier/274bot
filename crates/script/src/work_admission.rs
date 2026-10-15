@@ -1205,9 +1205,9 @@ fn process_step(
             }) || matches!(&outcome, ErasedStep::Completed(_) | ErasedStep::Failed(_)))
         {
             // A returned registry action after the scheduler's finite
-            // qualified inventory is a per-job violation, not a renewal
-            // granted by an untrusted progress total.
-            violation = Some(CooperativeViolation::ChargeExceeded);
+            // qualified-unit allowance exceeds the slice allowance; progress
+            // totals cannot renew it. ChargeExceeded is reserved for bytes.
+            violation = Some(CooperativeViolation::UnboundedSlice);
         }
         if shared.shutdown_requested.load(Ordering::Acquire) {
             let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
