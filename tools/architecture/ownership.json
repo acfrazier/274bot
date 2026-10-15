@@ -3335,11 +3335,19 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/load/isolate/supervisor.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/isolate/teardown.rs",
       "owner": "T1"
     },
     {
       "path": "crates/script/src/load/isolate/thread.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/load/isolate/validation.rs",
       "owner": "T1"
     },
     {
@@ -3413,6 +3421,10 @@
     {
       "path": "crates/script/src/load/run_policy_v8.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/runtime_bridge.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/src/load/scene_v8.rs",

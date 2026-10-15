@@ -74,7 +74,10 @@ where
 }
 
 fn main() -> ExitCode {
-    script::bootstrap_v8_platform();
+    if let Err(error) = script::bootstrap_v8_platform() {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+        return ExitCode::FAILURE;
+    }
     let args = match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
         Err(msg) => {

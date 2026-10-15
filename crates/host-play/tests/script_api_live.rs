@@ -721,6 +721,69 @@ fn journal_cell() {
     save("script-api-progress-journal-receipt.json", &receipt);
 }
 
+const RUNTIME_SOURCE: &str = r#"
+export const apiVersion = 2;
+let ticks = 0;
+export function tick(api) {
+  if (++ticks === 1) api.log('runtime-started');
+}
+"#;
+
+fn runtime_cell(restart: bool) {
+    let (play, account, fixture) = start_fixture(false);
+    let mut generations = Vec::new();
+    let mut observed_logs = Vec::new();
+    for _ in 0..if restart { 2 } else { 1 } {
+        play.script_start_load(
+            &account,
+            RUNTIME_SOURCE.into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start real Load script");
+        generations.push(play.script_runtime_generation(&account).unwrap());
+        let mut logs = Vec::new();
+        wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+            take_logs(play, &account, &mut logs);
+            play.script_state(&account) == script::RunState::Running
+                && logs.iter().any(|line| line.contains("runtime-started"))
+        });
+        observed_logs.push(logs);
+        play.script_stop(&account);
+        wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+            play.script_state(&account) == script::RunState::Idle
+        });
+    }
+    if restart {
+        assert_ne!(
+            generations[0], generations[1],
+            "restart needs a new generation"
+        );
+    }
+    let status = script::load::isolate_capacity_status().unwrap();
+    assert_eq!(status.retiring_gameplay, 0, "physical join: {status:?}");
+    no_drops(&account);
+    save(
+        if restart {
+            "script-runtime-restart-receipt.json"
+        } else {
+            "script-runtime-load-receipt.json"
+        },
+        &json!({"cell":if restart {"script_runtime_restart"} else {"script_runtime_load"},
+                "account":account, "generations":generations, "logs":observed_logs,
+                "retiring_gameplay":status.retiring_gameplay, "quarantined":status.quarantined}),
+    );
+}
+
+fn runtime_load_cell() {
+    runtime_cell(false);
+}
+
+fn runtime_restart_cell() {
+    runtime_cell(true);
+}
+
 fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
@@ -808,7 +871,10 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         );
         assert!(drops >= 54 && !drop_batches.is_empty());
         receipt["driver"] = json!({"trace":trace,"accepted_requests":requests,"drop_packets":drops,"drop_batches":drop_batches,"max_packets_on_drop_tick":packets.values().filter(|rows| rows.contains(&drop_opcode)).map(Vec::len).max()});
-    } else if cell == "script_api_gather_walk_options" {
+    } else if matches!(
+        cell,
+        "script_api_gather_walk_options" | "script_runtime_load" | "script_runtime_restart"
+    ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
     } else {
@@ -847,6 +913,26 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         "PASS {cell}: receipt={} trace={}",
         path.display(),
         trace.display()
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
+fn script_runtime_load() {
+    run_captured(
+        "script_runtime_load",
+        "script-runtime-load-receipt.json",
+        runtime_load_cell,
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
+fn script_runtime_restart() {
+    run_captured(
+        "script_runtime_restart",
+        "script-runtime-restart-receipt.json",
+        runtime_restart_cell,
     );
 }
 

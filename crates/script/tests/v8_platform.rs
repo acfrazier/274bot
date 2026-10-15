@@ -95,9 +95,16 @@ fn describe_status(status: &ExitStatus) -> String {
 }
 
 fn run_child() {
+    let late = thread::spawn(script::bootstrap_v8_platform)
+        .join()
+        .expect("late worker returned");
+    assert!(
+        matches!(late, Err(script::LoadIsolateError::PlatformNotMainThread)),
+        "worker bootstrap must fail before it can initialize V8: {late:?}"
+    );
     // Keep this as the single root bootstrap call: removing this line must
     // leave only the worker's deliberately late, lazy-initializer call below.
-    script::bootstrap_v8_platform();
+    script::bootstrap_v8_platform().expect("process-main protected bootstrap");
 
     let (start_a_tx, start_a_rx) = mpsc::channel();
     let (ready_a_tx, ready_a_rx) = mpsc::channel();
@@ -109,7 +116,7 @@ fn run_child() {
 
             // Harmless after the main-thread bootstrap; this reproduces the
             // original lazy initializer when the root call is mutation-deleted.
-            script::bootstrap_v8_platform();
+            script::bootstrap_v8_platform().expect("already bootstrapped");
             let isolate = new_native_tick_isolate("slot-a");
             ready_a_tx.send(()).expect("report slot-a ready");
             receive(&release_a_rx, "release slot-a");

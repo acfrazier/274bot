@@ -19,33 +19,42 @@ pub(super) enum ExecutionInterrupt {
     Watchdog,
     Pause,
     SessionReset,
+    NoDeadline(DeadlineRefusal),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum DeadlineRefusal {
+    Capacity,
+    Stopped,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct InterruptedExecution {
     pub(super) owner: ExecutionInterrupt,
-    /// Set only by the V8-entry fence around the call that consumed the
-    /// terminate. A request that arrived after a call returned is cancelled,
-    /// never treated as a cut.
+    /// Set by the V8-entry fence when the call consumed termination. A
+    /// refused independent deadline is terminal even before entry and is
+    /// marked here at refusal; later stale requests are cancelled, not cuts.
     pub(super) consumed: bool,
 }
 
 /// Teardown coordination and an independent producer evidence sequence.
-/// Finish and the one-shot worker decide under this same mutex.
+/// Hook and supervisor decisions use the same mutex.
 pub(super) struct TeardownState {
     pub(super) phase: TeardownPhase,
     pub(super) deadline: Option<Instant>,
     pub(super) interrupt_issued: bool,
-    /// Dropped at Done so a sleeping one-shot worker exits without terminate.
-    pub(super) cancel: Option<Sender<()>>,
+    /// Isolate-scoped test seam for the shared supervisor.
     /// Isolate-scoped test seam: sleep after the deadline owner is armed
     /// and before getter/body, without a process-global switch.
     pub(super) hook_entry_delay: Option<Duration>,
-    /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
-    pub(super) fail_deadline_spawn: bool,
+    /// Test seam: pretend the supervisor cannot accept a hook deadline.
+    pub(super) fail_hook_registration: bool,
     /// Unit-test-only wider budget for success-path hook assertions.
     #[cfg(test)]
     pub(super) test_hook_timeout: Option<Duration>,
+    /// Isolate-local fault seam; no process-global supervisor state is changed.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(super) fail_execution_registration: Option<DeadlineRefusal>,
     /// An interruptible tick/recovery eval is currently inside V8. Stop,
     /// Pause, connection reset, and the dispatch watchdog may terminate only
     /// while this is true.
@@ -56,9 +65,8 @@ pub(super) struct TeardownState {
     pub(super) execution_tick: u64,
     pub(super) execution_generation: u64,
     pub(super) execution_started: Option<Instant>,
-    /// At most one execution-scoped deadline worker is live. Pause and a
-    /// session reset may replace its owner without changing its original
-    /// cadence-independent deadline.
+    /// An active execution has at most one registration with the shared
+    /// deadline supervisor; Pause/reset may replace its diagnostic owner.
     pub(super) execution_deadline_armed: bool,
     pub(super) execution_deadline_owner: Option<ExecutionInterrupt>,
     /// Pause intent published synchronously by the host. It blocks the next
@@ -78,9 +86,10 @@ impl TeardownState {
             phase: TeardownPhase::Running,
             deadline: None,
             interrupt_issued: false,
-            cancel: None,
             hook_entry_delay: None,
-            fail_deadline_spawn: false,
+            fail_hook_registration: false,
+            #[cfg(any(test, feature = "test-hooks"))]
+            fail_execution_registration: None,
             #[cfg(test)]
             test_hook_timeout: None,
             execution_active: false,
@@ -109,7 +118,6 @@ pub struct TeardownProof {
 pub(super) struct TeardownProofInner {
     pub(super) invoked: AtomicBool,
     pub(super) finished: AtomicBool,
-    pub(super) worker_live: AtomicUsize,
 }
 
 impl TeardownProof {
@@ -118,7 +126,6 @@ impl TeardownProof {
             inner: std::sync::Arc::new(TeardownProofInner {
                 invoked: AtomicBool::new(false),
                 finished: AtomicBool::new(false),
-                worker_live: AtomicUsize::new(0),
             }),
         }
     }
@@ -132,22 +139,9 @@ impl TeardownProof {
             .finished
             .load(std::sync::atomic::Ordering::SeqCst)
     }
-
-    pub fn deadline_workers(&self) -> usize {
-        self.inner
-            .worker_live
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-pub(super) struct DeadlineWorkerGuard {
-    proof: std::sync::Arc<TeardownProofInner>,
-}
-impl Drop for DeadlineWorkerGuard {
-    fn drop(&mut self) {
-        self.proof
-            .worker_live
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    /// The independent process supervisor, including after this isolate exits.
+    pub fn supervisor_workers(&self) -> usize {
+        super::supervisor::worker_count()
     }
 }
 
@@ -229,7 +223,6 @@ pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>
 pub(super) fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) {
     let mut st = teardown.lock().unwrap();
     st.phase = TeardownPhase::Done;
-    st.cancel.take();
 }
 
 pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
@@ -248,66 +241,35 @@ pub(super) fn take_hook_entry_delay(
     teardown.lock().unwrap().hook_entry_delay.take()
 }
 
-/// One-shot worker spawned only at Hook entry. Sleeps until the
-/// Hook-entry deadline, then issues at most one terminate while still
-/// Hook, under the same mutex as finish. Cancelled by dropping `cancel`.
-///
-/// The old tick interrupt is cleared under the Hook lock *before* spawn
-/// so a deschedule cannot let this worker fire and then be cancelled.
+/// Register the hook's one absolute deadline on the process supervisor.
+/// The phase check and eventual terminate share the teardown mutex.
 pub(super) fn arm_hook_deadline(
     runtime: &mut Runtime,
     teardown: &std::sync::Arc<Mutex<TeardownState>>,
-    proof: &std::sync::Arc<TeardownProofInner>,
-) -> Option<JoinHandle<()>> {
-    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
-    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
+) -> bool {
     let deadline = {
-        let mut st = teardown.lock().unwrap();
-        if st.phase != TeardownPhase::Hook {
-            return None;
+        let st = teardown.lock().unwrap();
+        if st.phase != TeardownPhase::Hook || st.fail_hook_registration {
+            return false;
         }
-        runtime
-            .deno_runtime()
-            .v8_isolate()
-            .cancel_terminate_execution();
-        if st.fail_deadline_spawn {
-            return None;
-        }
-        st.cancel = Some(cancel_tx);
         st.deadline
             .unwrap_or_else(|| Instant::now() + ON_STOP_DEADLINE)
     };
-    let wd_teardown = teardown.clone();
-    let wd_proof = proof.clone();
-    match std::thread::Builder::new()
-        .name("js-onstop-deadline".into())
-        .spawn(move || {
-            wd_proof
-                .worker_live
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let _guard = DeadlineWorkerGuard { proof: wd_proof };
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match cancel_rx.recv_timeout(remaining) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            }
-            let mut st = wd_teardown.lock().unwrap();
-            if st.phase == TeardownPhase::Hook && !st.interrupt_issued {
-                st.interrupt_issued = true;
-                handle.terminate_execution();
-            }
-        }) {
-        Ok(h) => {
-            if let Some(delay) = take_hook_entry_delay(teardown) {
-                std::thread::sleep(delay);
-            }
-            Some(h)
-        }
-        Err(_) => {
-            teardown.lock().unwrap().cancel.take();
-            None
-        }
+    runtime
+        .deno_runtime()
+        .v8_isolate()
+        .cancel_terminate_execution();
+    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+    if super::supervisor::get()
+        .and_then(|service| service.arm_hook(teardown.clone(), handle, deadline))
+        .is_err()
+    {
+        return false;
     }
+    if let Some(delay) = take_hook_entry_delay(teardown) {
+        std::thread::sleep(delay);
+    }
+    true
 }
 
 pub(super) fn complete_teardown_without_hook(
@@ -327,10 +289,8 @@ pub(super) fn complete_teardown_without_hook(
     let _ = out.send(ThreadMsg::Stopped);
 }
 
-/// Exactly-once isolate-thread teardown. The 50 ms deadline is the
-/// Instant captured at Hook entry; a one-shot worker (not a parked
-/// per-bot thread) issues at most one interrupt under the same mutex
-/// as finish. Getter, body, and log-drain share that budget.
+/// Exactly-once isolate-thread teardown. The shared supervisor enforces
+/// the 50 ms hook-entry budget across getter, body and log drain.
 ///
 /// Fail closed: if no deadline owner can be created, skip user
 /// getter/body/drain, emit a native diagnostic, and finish cleanup.
@@ -348,7 +308,7 @@ pub(super) fn teardown_once(
         complete_teardown_without_hook(runtime, out, teardown, None);
         return;
     }
-    let Some(worker) = arm_hook_deadline(runtime, teardown, proof) else {
+    if !arm_hook_deadline(runtime, teardown) {
         complete_teardown_without_hook(
             runtime,
             out,
@@ -356,7 +316,7 @@ pub(super) fn teardown_once(
             Some("onStop skipped: no deadline owner"),
         );
         return;
-    };
+    }
     proof
         .invoked
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -381,6 +341,5 @@ pub(super) fn teardown_once(
         .deno_runtime()
         .v8_isolate()
         .cancel_terminate_execution();
-    let _ = worker.join();
     let _ = out.send(ThreadMsg::Stopped);
 }
