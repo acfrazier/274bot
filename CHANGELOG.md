@@ -7,61 +7,52 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 
 ### Profiles
 
-- You can now import your accounts from rs2b0t instead of typing each one
-  again. In rs2b0t, export your profiles from Settings (this writes
-  `rs2b0t-profiles.json`), then in 274bot choose **Import from rs2b0t…** in
-  the panel's Profiles window, or **Import rs2b0t profiles…** in the TUI
-  command palette, and give the file's path. The vault must be unlocked.
-  A preview lists every account and setting before anything is saved.
-  The import brings over each account's username, password (into the
-  encrypted vault) and world, its selected script and the script
-  parameters it saved (matched by script name in your rs2b0t script
-  catalog, so import the catalog first), and the rs2b0t Global settings
-  274bot keeps per account:
-  genie lamp skill and clue duel partner. rs2b0t's renderer-off setting
-  turns the profile's display off. Everything else, such as tabs, rs2b0t's
-  run-energy and route-drawing options, loadouts and order books, is listed
-  in the preview and the final report with the reason it isn't imported.
-  Accounts already in the vault are kept as they are unless you choose
-  Overwrite. Overwrite changes only what the export carries: a script
-  setting the export doesn't have, or one it can't read, keeps its current
-  value, and the preview shows each setting's old and new value. Importing
-  the same file again changes nothing. An account the game server would
-  refuse at login (a username over 12 characters, or an empty password or
-  one over 20 characters) is listed as unusable and isn't imported unless
-  you ask for it; its password is never shortened. The export file holds
-  your passwords in plain text: once every account you imported is
-  confirmed saved, 274bot offers to delete it (it asks you to confirm
-  first). If a save fails, the report says so and keeps the file. A
-  password from the file never appears in the text of the preview, the
-  report or a log message: where it turns up in another field, such as a
-  tab name or a clue duel partner, it shows as `***` (the vault still gets
-  the field's real value). The log's account column always shows the
-  account name, so an account named the same as a password shows it there.
+- **Import your accounts from rs2b0t.** In rs2b0t, export your profiles from
+  Settings (this writes `rs2b0t-profiles.json`). Then choose **Import from
+  rs2b0t…** in the panel's Profiles window, or **Import rs2b0t profiles…** in
+  the TUI command palette, and give the file's path. The vault must be
+  unlocked, and nothing is saved until you confirm the preview.
+  - **What comes over:** each account's username, password (into the
+    encrypted vault) and world; its selected script and saved script
+    settings, matched by name in your rs2b0t script catalog (import the
+    catalog first); its genie lamp skill and clue duel partner; and
+    rs2b0t's renderer-off setting, which turns the profile's display off.
+  - **What doesn't:** tabs, rs2b0t's run-energy and route-drawing options,
+    loadouts and order books. The preview and the report list each one with
+    the reason.
+  - **Accounts you already have** are kept unless you choose Overwrite,
+    which changes only what the export carries. The preview shows each
+    setting's old and new value, and importing the same file again changes
+    nothing.
+  - **Accounts the server would refuse** (a username over 12 characters, or
+    a password that's empty or over 20 characters) are listed as unusable
+    and skipped unless you ask for them. Passwords are never shortened.
+  - **Your passwords stay private.** The export file holds them in plain
+    text, so once every imported account is confirmed saved, 274bot offers
+    to delete it. A password never appears in the preview, the report or a
+    log message; one that turns up in another field, such as a tab name,
+    shows as `***`. The log's account column still shows account names,
+    even one that matches a password.
 
 ### Quests and dialogues
 
-- A conversation closed by an attack is no longer counted as finished. An
-  NPC hit closes the chat even when it misses (0 damage), and that used to
-  look exactly like the talk ending on its own, so a quest step could move
-  on without the conversation happening. The step now stops with
-  "dialogue interrupted by combat" and can be retried, and script
-  dialogues (`driveDialog` / `talkThrough`) report failure the same way.
+- A conversation closed by an attack no longer counts as finished. Any hit,
+  even a miss, closes the chat; a quest step now stops with "dialogue
+  interrupted by combat" and can be retried, and script dialogues
+  (`driveDialog` / `talkThrough`) report failure the same way.
 
 ### Random-event guardian
 
 - When a random event attacks (a River troll, a Swarm, an angry Strange plant
-  and similar), the bot now keeps running away between the attacker's hits,
-  including hits that miss. Before, it could walk straight back to its
-  fishing or gathering spot between hits, next to the attacker. It runs far
-  enough that the attacker gives up chasing, which now also outruns a Swarm,
-  and normally returns only once the attacker has gone. If the bot is still
-  being attacked but gets no farther away for about 13 seconds (it is boxed
-  in), it stops trying, stops walking and lets the script resume, including
-  eating.
-  Only an attacker out of sight or no longer attacking can keep the script
-  paused for up to about 10 minutes. After either limit, the bot does not
-  walk back toward the attacker.
+  and similar), the bot keeps running between hits, misses included, instead
+  of walking back to its spot next to the attacker. It runs until the
+  attacker stops chasing and returns once the attacker is gone.
+  - If it's boxed in and gets no farther away for about 13 seconds while
+    still being attacked, it stops and hands back to the script, which can
+    then eat or fight.
+  - An attacker that's out of sight or has stopped attacking can keep the
+    script paused for up to about 10 minutes.
+  - Either way, the bot doesn't walk back toward the attacker.
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
 - When a chopped tree becomes an Ent, the Guardian stops chopping and waits
@@ -87,9 +78,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   stops the script with a named `not impl` message instead of a missing-export
   error at Start.
 - When a catalog script uses an rs2b0t API member this version doesn't
-  provide, Start now names the member without saying the catalog is newer
-  than this version. Some members of the older API are also missing, so that
-  claim could be wrong.
+  provide, Start names the member, without claiming the catalog is newer than
+  this version (some older members are missing too).
 - Jive Dragons, Jive Demons and Jive KBD imports now pass, and their loot
   checks know which held items stack, including noted, poisoned and
   untradeable items. CowKiller uses its supported locations and bank choices.
@@ -116,10 +106,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
 - The "only render selected" checkbox is now called "only render focused".
   It always meant the bot shown in the Game pane, not the bots selected in
   the fleet list.
-- On Linux desktops running Wayland (such as KDE Plasma), Ctrl+V now pastes
-  into the panel's text fields, including the vault password and profile
-  fields. Before, the panel could only reach the X11 clipboard, which is
-  empty while a Wayland window has focus, so nothing pasted.
+- On Linux Wayland desktops (such as KDE Plasma), Ctrl+V now pastes into the
+  panel's text fields, including the vault password and profile fields.
 - The Profiles window shows the profile list and the editor side by side
   when there is room, each scrolling on its own, with a divider you can
   drag. In the narrow default dock the editor sits under the list, and

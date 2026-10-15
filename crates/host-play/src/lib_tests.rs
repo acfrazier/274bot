@@ -19354,13 +19354,6 @@ fn plant_npc(c: &mut Client, slot: usize, name: &str, overhead: Option<&str>) {
     plant_npc_with_face(c, slot, name, -1, overhead);
 }
 
-/// Plant NPC `name` in client table slot `slot` facing the local
-/// player (`face_entity` >= 32768 decodes as Player kind; + self_slot
-/// 0 targets us — the host-owned evade shape).
-fn plant_attacking_npc(c: &mut Client, slot: usize, name: &str) {
-    plant_npc_with_face(c, slot, name, 32768, None);
-}
-
 fn plant_npc_with_face(
     c: &mut Client,
     slot: usize,
@@ -23607,7 +23600,9 @@ fn load_ignored_randoms_decline_only_listed_events() {
     // The host detector canonicalizes the event label to lower-case; the
     // frozen `isIgnored` contract matches names case-insensitively.
     let mut c = guardian_client();
-    plant_attacking_npc(&mut c, 0, "Swarm");
+    // A Swarm by its content NPC id: the Guardian identifies attackers by
+    // the event NPC type, not the display name.
+    plant_typed_npc_with_face(&mut c, 0, 411, "Swarm", 32768, None);
     plant_positive_hit(&mut c);
     let mut g = Guardian::new();
     let mut drv = GuardRec::default();
