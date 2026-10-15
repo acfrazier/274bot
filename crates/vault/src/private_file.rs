@@ -946,16 +946,17 @@ mod tests {
         let target = dir.join("vault");
         let start = Arc::new(std::sync::Barrier::new(8));
 
-        let creators: Vec<_> = (0..8u8)
-            .map(|id| {
-                let (target, start) = (target.clone(), start.clone());
-                thread::spawn(move || {
-                    start.wait();
-                    create_private_file(&target, &[id; 4096]).map(|()| id)
-                })
-            })
-            .collect();
-        let outcomes: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+        // Spawn every creator before joining any: the barrier needs all eight
+        // racers waiting at once, so a fused spawn-join chain would deadlock.
+        let mut handles = Vec::with_capacity(8);
+        for id in 0..8u8 {
+            let (target, start) = (target.clone(), start.clone());
+            handles.push(thread::spawn(move || {
+                start.wait();
+                create_private_file(&target, &[id; 4096]).map(|()| id)
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|c| c.join().unwrap()).collect();
 
         let winners: Vec<u8> = outcomes
             .iter()
