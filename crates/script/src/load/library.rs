@@ -925,8 +925,9 @@ pub struct PreparedCard {
 
 #[cfg(feature = "load")]
 impl PreparedCard {
-    /// Evaluate this candidate in a bounded throwaway isolate. Callers that
-    /// serve UI actions must run this method on a worker thread.
+    /// Evaluate this candidate on the serialized ValidationSeat. This call
+    /// waits for a terminal result; UI refreshes submit a cancellable batch
+    /// instead of calling it on the control thread.
     pub fn validate(&self) -> Result<(), String> {
         crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
             .map_err(|error| format!("prepare {}: {error}", self.card.name))

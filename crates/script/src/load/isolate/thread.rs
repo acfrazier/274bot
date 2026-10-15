@@ -159,6 +159,7 @@ pub(super) fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    runtime_handle: tokio::runtime::Handle,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     setup: Sender<SetupMessage>,
@@ -175,12 +176,15 @@ pub(super) fn isolate_main(
     // Declared before `runtime` so the counter decrements only after the
     // Runtime destructor has completed.
     let _runtime_lifetime: RuntimeLifetime;
-    let mut runtime = match Runtime::new(RuntimeOptions {
-        extensions: vec![isolate_timer_guards::init()],
-        timeout: RUNTIME_TIMEOUT,
-        max_heap_size: Some(MAX_HEAP),
-        ..Default::default()
-    }) {
+    let mut runtime = match Runtime::with_tokio_runtime_handle(
+        RuntimeOptions {
+            extensions: vec![isolate_timer_guards::init()],
+            timeout: RUNTIME_TIMEOUT,
+            max_heap_size: Some(MAX_HEAP),
+            ..Default::default()
+        },
+        runtime_handle,
+    ) {
         Ok(runtime) => runtime,
         Err(e) => {
             let _ = setup.send(SetupMessage::Ready(Err(format!("js engine init: {e}"))));

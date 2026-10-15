@@ -101,6 +101,41 @@ fn wait_until(timeout: Duration, mut pred: impl FnMut() -> bool) -> bool {
 }
 
 #[test]
+fn ten_isolates_share_one_deadline_supervisor() {
+    let mut isolates = Vec::new();
+    for _ in 0..10 {
+        let isolate =
+            spawn_class("export default class T extends LoopingBot { loop() {} onStop() {} }");
+        assert_eq!(isolate.probe("1").unwrap(), 1);
+        isolates.push(isolate);
+    }
+    for isolate in &isolates {
+        assert_eq!(isolate.teardown_proof().supervisor_workers(), 1);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let names = std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .map(|task| {
+                let task = task.unwrap();
+                std::fs::read_to_string(task.path().join("comm")).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let count = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
+        assert_eq!(count("js-deadline"), 1, "one OS deadline supervisor");
+        assert_eq!(count("script-async"), 1, "one OS async bridge");
+        assert_eq!(
+            count("js-isolate"),
+            10,
+            "one OS V8 owner per active isolate"
+        );
+    }
+    for isolate in isolates {
+        isolate.join();
+    }
+}
+
+#[test]
 fn self_stop_hostile_onstop_without_later_tick_or_probe() {
     let iso = spawn_class(
         r#"
@@ -113,9 +148,9 @@ export default class T extends LoopingBot {
     );
     let proof = iso.teardown_proof();
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "no idle deadline fleet while Running"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor is active before the hook"
     );
     iso.on_game_tick(1);
     let t0 = Instant::now();
@@ -142,9 +177,9 @@ export default class T extends LoopingBot {
         "onStop must have entered and been interrupted before join: {logs:?}"
     );
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "deadline worker must not remain after self-stop"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor persists after self-stop"
     );
     assert!(proof.invoked(), "hostile self-stop entered onStop");
 }
@@ -161,9 +196,9 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "no idle deadline fleet while Running"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor is shared while the isolate runs"
     );
     assert!(!proof.finished(), "Running isolate has not consumed Stop");
     let t0 = Instant::now();
@@ -182,9 +217,9 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
         "raw Drop must not invoke onStop after the isolate consumed Stop"
     );
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "deadline workers must not remain after Drop"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor persists after raw Drop"
     );
     let iso = spawn_class(
         "export default class T extends LoopingBot { loop() { globalThis.__fresh = 1; } }",
@@ -223,7 +258,7 @@ fn delayed_hook_entry_keeps_deadline_interrupt() {
 }
 
 #[test]
-fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
+fn deadline_registration_failure_skips_hook_and_stays_bounded() {
     let iso = spawn_class(
         "export default class T extends LoopingBot {
             loop() {}
@@ -233,7 +268,7 @@ fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
     let proof = iso.teardown_proof();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    iso.fail_onstop_deadline_spawn();
+    iso.fail_onstop_deadline_registration();
     let t0 = Instant::now();
     let logs = iso.join();
     let elapsed = t0.elapsed();
@@ -254,7 +289,7 @@ fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
         "fail-closed isolate must still finish within the generous hang guard"
     );
     assert!(!proof.invoked(), "fail-closed must not invoke onStop");
-    assert_eq!(proof.deadline_workers(), 0);
+    assert_eq!(proof.supervisor_workers(), 1);
 }
 
 #[test]
