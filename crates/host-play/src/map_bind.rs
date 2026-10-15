@@ -207,6 +207,9 @@ pub fn map_ready_images(
 
 /// Maximum compressed terrain bytes admitted to the shared walk-map decoder.
 pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
+/// Inline job storage and the shared PNG allocation's two reference counts.
+pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize =
+    std::mem::size_of::<WalkMapDecodeJob>() + 2 * std::mem::size_of::<usize>();
 /// WorkAdmission scratch reservation for png 0.18.1: 512 KiB parser limits
 /// for raw chunks, one bounded eXIf copy, ≤136 KiB row buffering, and inflater state.
 pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
@@ -309,12 +312,14 @@ impl CooperativeJob for WalkMapDecodeJob {
     }
 
     fn retained(&self) -> RetainedState {
-        let input_bytes = self.png.as_ref().map_or(0, |png| png.len());
+        let input_bytes = self.png.as_ref().map_or(0, |png| {
+            png.len().saturating_add(2 * std::mem::size_of::<usize>())
+        });
         let result_bytes = self
             .decoded
             .as_ref()
             .and_then(|decoded| decoded.as_ref().ok())
-            .map_or(0, Vec::len);
+            .map_or(0, Vec::capacity);
         RetainedState::clean(input_bytes + result_bytes + std::mem::size_of::<Self>())
     }
 }

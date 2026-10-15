@@ -1,7 +1,6 @@
 //! Revision-fenced WalkTo tile decode requests over the shared WorkAdmission worker.
 
 use std::fmt;
-use std::mem::size_of;
 use std::sync::Arc;
 
 use api::identity::{Cancellation, IdentityError, PublishSequence, Scope, Settlement};
@@ -11,8 +10,8 @@ use api::work::{
     WorkAdmission, WorkCharge, WorkFamily, WorkFamilySpec, WorkTicket,
 };
 use host_play::map_bind::{
-    WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_PNG_LIMIT,
-    WALK_MAP_DECODE_SCRATCH_LIMIT,
+    WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_INPUT_OVERHEAD,
+    WALK_MAP_DECODE_PNG_LIMIT, WALK_MAP_DECODE_SCRATCH_LIMIT,
 };
 use nav::map::identity::ImageIdentity;
 use nav::map::spatial::{TileKey, TILE_RGBA_BYTES};
@@ -43,7 +42,7 @@ impl WorkFamilySpec for DecodeSpec {
         let input_bytes = input
             .png
             .len()
-            .saturating_add(size_of::<WalkMapDecodeJob>());
+            .saturating_add(WALK_MAP_DECODE_INPUT_OVERHEAD);
         WorkCharge::new(
             input_bytes,
             WALK_MAP_DECODE_SCRATCH_LIMIT,
