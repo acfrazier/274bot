@@ -47,19 +47,21 @@ pub fn valid_component(value: &str) -> bool {
 ///
 /// Every write stages its bytes in its own temp file, `.<name>.<random>.tmp`,
 /// created with `create_new` (so it can never be an existing name, a planted
-/// symlink or a directory) and `0o600` from the moment it exists. This call
-/// removes only the temp it created, and only while the name still refers to
-/// that same file; before publishing it checks that it does, and returns an
-/// error instead of acknowledging bytes that are not its own. The target
-/// directory is created `0o700` when missing. On Unix it must be owned by this
-/// user or root and not writable by group or others: a directory this user
-/// owns that is group/other-writable (an older or `umask 002` install) is
-/// tightened to `mode & !0o022` on first publication, then re-checked; one
-/// owned by anyone else that is writable by others is refused, and a sticky
-/// directory such as `/tmp` is accepted as it is (others cannot remove or
-/// rename this user's entries in it). That check is what keeps the temp bound
-/// to this writer between the check and the rename; a failing one is
-/// `PermissionDenied`.
+/// symlink or a directory) and `0o600` from the moment it exists, and removes
+/// that temp again when the write fails. The target directory is created
+/// `0o700` when missing. On Unix it must be owned by this user or root and not
+/// writable by group or others: a directory this user owns that is
+/// group/other-writable (an older or `umask 002` install) is tightened to
+/// `mode & !0o022` on first publication, then re-checked; one owned by anyone
+/// else that is writable by others is refused, and a sticky directory such as
+/// `/tmp` is accepted as it is (others cannot remove or rename this user's
+/// entries in it). That check keeps other users from replacing the file while
+/// it is written; a failing one is `PermissionDenied`.
+///
+/// Threat model: concurrent writers in this process and in other 274bot
+/// processes are handled; tampering with the directory from outside 274bot
+/// (another program running as this user that moves or replaces its files) is
+/// not defended against.
 ///
 /// Writers to the same target inside one process are serialized, so the file
 /// left behind is the one whose call returned last. Processes are not
@@ -147,13 +149,6 @@ fn publish_staged(
     before_publish: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<()> {
     let staged = Staged::write(dir, name, data)?;
-    if !staged.is_ours() {
-        // The name now belongs to someone else: leave it alone.
-        return Err(io::Error::other(format!(
-            "{}: the staging file was replaced while it was written; nothing was published",
-            staged.path.display()
-        )));
-    }
     if let Err(error) = before_publish() {
         staged.discard();
         return Err(error);
@@ -208,6 +203,8 @@ fn link_without_replacing(staged: &Staged, path: &Path, data: &[u8]) -> io::Resu
             let claimed = Identity::of(&file)?;
             if let Err(error) = file.write_all(data).and_then(|()| file.sync_all()) {
                 drop(file);
+                // Another 274bot process may have replaced the name since it
+                // was claimed; its file is not this call's to remove.
                 if claimed.names(path) {
                     let _ = fs::remove_file(path);
                 }
@@ -218,10 +215,9 @@ fn link_without_replacing(staged: &Staged, path: &Path, data: &[u8]) -> io::Resu
     }
 }
 
-/// A temp file this call created, with the identity it had when created.
+/// A temp file this call created.
 struct Staged {
     path: PathBuf,
-    id: Identity,
 }
 
 impl Staged {
@@ -238,10 +234,7 @@ impl Staged {
             let path = dir.join(format!(".{prefix}.{:016x}.tmp", OsRng.next_u64()));
             match open_exclusive(&path) {
                 Ok(mut file) => {
-                    let staged = Staged {
-                        id: Identity::of(&file)?,
-                        path,
-                    };
+                    let staged = Staged { path };
                     return match file.write_all(data).and_then(|()| file.sync_all()) {
                         Ok(()) => Ok(staged),
                         Err(error) => {
@@ -259,22 +252,15 @@ impl Staged {
         Err(last.unwrap_or_else(|| io::Error::other("no free temp file name")))
     }
 
-    /// Whether the temp name still refers to the file this call created.
-    fn is_ours(&self) -> bool {
-        self.id.names(&self.path)
-    }
-
-    /// Removes the temp name if, and only if, it is still this call's file.
+    /// Removes the temp this call created.
     fn discard(&self) {
-        if self.is_ours() {
-            let _ = fs::remove_file(&self.path);
-        }
+        let _ = fs::remove_file(&self.path);
     }
 }
 
 /// Which file a name refers to: device and inode on Unix. There is no stable
 /// equivalent in `std` on Windows, where the check always holds and the
-/// unique name plus the sharing-denied handle stand in for it.
+/// exclusive, sharing-denied handle stands in for it.
 #[cfg(unix)]
 struct Identity {
     dev: u64,
@@ -634,7 +620,6 @@ fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict 
 mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
 
     use super::*;
@@ -842,62 +827,6 @@ mod tests {
         assert_eq!(bytes.len(), size, "a whole payload, not a torn one");
         assert!(bytes.iter().all(|b| *b == bytes[0]), "one writer's bytes");
         assert_eq!(names(&dir), ["state.json"], "no temp survives");
-    }
-
-    /// An actor that can already write the directory unlinks the writer's
-    /// staging file mid-write and puts its own bytes at that name. The writer
-    /// must not acknowledge those bytes as its own, and must not remove them.
-    #[test]
-    fn a_swapped_staging_file_is_never_acknowledged_as_the_writers_data() {
-        let dir = scratch("swap");
-        let target = dir.join("state.json");
-        fs::write(&target, "old").unwrap();
-        let payload = vec![b'W'; 32 * 1024 * 1024];
-
-        let mut swaps = 0;
-        for _ in 0..5 {
-            let stop = Arc::new(AtomicBool::new(false));
-            let attacker = {
-                let (dir, stop) = (dir.clone(), stop.clone());
-                thread::spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        for entry in fs::read_dir(&dir).unwrap().flatten() {
-                            let path = entry.path();
-                            if path.extension().is_some_and(|e| e == "tmp") {
-                                let _ = fs::remove_file(&path);
-                                fs::write(&path, b"ATTACKER").unwrap();
-                                return Some(path);
-                            }
-                        }
-                    }
-                    None
-                })
-            };
-            let outcome = write_private_file(&target, &payload);
-            stop.store(true, Ordering::Relaxed);
-            let Some(planted) = attacker.join().unwrap() else {
-                continue;
-            };
-            swaps += 1;
-
-            match outcome {
-                Ok(()) => assert!(
-                    fs::read(&target).unwrap() == payload,
-                    "acknowledged, but the target does not hold the writer's bytes"
-                ),
-                Err(_) => {
-                    assert_eq!(fs::read(&target).unwrap(), b"old", "nothing published");
-                    assert_eq!(
-                        fs::read(&planted).unwrap(),
-                        b"ATTACKER",
-                        "the writer removed a file it did not create"
-                    );
-                }
-            }
-            let _ = fs::remove_file(&planted);
-            fs::write(&target, "old").unwrap();
-        }
-        assert!(swaps > 0, "the attacker never got to swap a staging file");
     }
 
     #[test]
