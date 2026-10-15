@@ -54,6 +54,35 @@ impl From<i32> for ProfileIdentity {
     }
 }
 
+/// The identity of member `index`: the caller's parallel vault identity
+/// when it has one, else the deterministic fixture identity of its name.
+/// `None` only when `index` has no name.
+pub fn profile_id_at(
+    ids: &[ProfileIdentity],
+    names: &[String],
+    index: usize,
+) -> Option<ProfileIdentity> {
+    ids.get(index).copied().or_else(|| {
+        names
+            .get(index)
+            .map(|name| ProfileIdentity::synthetic(name))
+    })
+}
+
+/// The identity of the member called `name` (see [`profile_id_at`]); a
+/// name with no member gets its fixture identity, which marks nothing.
+pub fn profile_id_for_name(
+    names: &[String],
+    ids: &[ProfileIdentity],
+    name: &str,
+) -> ProfileIdentity {
+    names
+        .iter()
+        .position(|candidate| candidate == name)
+        .and_then(|index| profile_id_at(ids, names, index))
+        .unwrap_or_else(|| ProfileIdentity::synthetic(name))
+}
+
 /// The shared checkbox state used by panel, TUI and later fleet actions.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MarkedSelection {
@@ -101,6 +130,17 @@ impl MarkedSelection {
         I: IntoIterator<Item = ProfileIdentity>,
     {
         self.marks.extend(identities);
+    }
+
+    /// Mark every shown member: `shown` indices into `names`, resolved
+    /// through the parallel `ids` (see [`profile_id_at`]). Existing marks
+    /// are retained.
+    pub fn mark_shown(&mut self, names: &[String], ids: &[ProfileIdentity], shown: &[usize]) {
+        for &index in shown {
+            if let Some(identity) = profile_id_at(ids, names, index) {
+                self.marks.insert(identity);
+            }
+        }
     }
 
     /// Remove a deleted profile's mark. Returns whether a mark was removed.
@@ -248,6 +288,33 @@ pub fn start_marked<Io>(
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
+}
+
+/// Whether a Start on the marked profiles could start anything, in the
+/// terms [`start_marked`] uses: with a selected card, any mark counts
+/// (rows that cannot take it are named in its report); without one, at
+/// least one marked profile needs a saved assignment [`start_marked`]
+/// can start. Front ends use this to enable their Start control.
+pub fn marked_startable<Io>(
+    selection: &MarkedSelection,
+    core: &OperatorSession<Io>,
+    card: Option<&script::ScriptSel>,
+) -> bool {
+    if selection.is_empty() {
+        return false;
+    }
+    if card.is_some() {
+        return true;
+    }
+    let Some(vault) = core.vault() else {
+        return false;
+    };
+    vault.profiles().any(|profile| {
+        selection.contains(ProfileIdentity::uid(profile.uid))
+            && Scripts::assignment(core, &profile.username)
+                .and_then(|a| crate::scripts::sel_from_assignment(&a))
+                .is_some()
+    })
 }
 
 /// Stop the selected profiles through [`OperatorSession::stop_scripts`]. A

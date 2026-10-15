@@ -705,11 +705,7 @@ impl TuiApp {
         self.focused.and_then(|i| self.names.get(i)).cloned()
     }
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
-        self.names
-            .iter()
-            .position(|candidate| candidate == name)
-            .and_then(|index| self.profile_ids.get(index).copied())
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+        frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
     }
     pub(crate) fn is_marked_name(&self, name: &str) -> bool {
         self.table
@@ -720,13 +716,9 @@ impl TuiApp {
         self.names
             .iter()
             .enumerate()
-            .filter(|(index, name)| {
-                self.table.selection.contains(
-                    self.profile_ids
-                        .get(*index)
-                        .copied()
-                        .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name)),
-                )
+            .filter(|(index, _)| {
+                frontend_core::profile_id_at(&self.profile_ids, &self.names, *index)
+                    .is_some_and(|identity| self.table.selection.contains(identity))
             })
             .map(|(_, name)| name.clone())
             .collect()

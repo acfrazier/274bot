@@ -258,11 +258,15 @@ impl Confirm {
                         None => vec!["Browse to pick a script first.".into()],
                     },
                     Command::ScriptRestartMarked => match app.script_sel.as_ref() {
-                        Some(sel) => vec![
-                            format!("Assign {} to {scope} and start it:", sel.label()),
-                            names,
-                            "Running scripts on these bots are stopped first.".into(),
-                        ],
+                        Some(sel) => {
+                            let scope = frontend_core::RestartScope::from_rows(
+                                members.iter().map(String::as_str),
+                                &app.fleet,
+                            );
+                            let mut lines = vec![format!("Assign {} and start it:", sel.label())];
+                            lines.extend(scope.prompt_lines());
+                            lines
+                        }
                         None => vec!["Browse to pick a script first.".into()],
                     },
                     _ => vec![format!("{} over {scope}: {names}", command.label(app))],

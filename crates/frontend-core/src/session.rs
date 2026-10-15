@@ -901,6 +901,13 @@ impl<Io> OperatorSession<Io> {
             .map(|profile| crate::selection::ProfileIdentity::uid(profile.uid))
     }
 
+    /// [`Self::profile_identity`], or the deterministic fixture identity
+    /// for a name with no vault row (it marks nothing real).
+    pub fn profile_identity_or_synthetic(&self, name: &str) -> crate::selection::ProfileIdentity {
+        self.profile_identity(name)
+            .unwrap_or_else(|| crate::selection::ProfileIdentity::synthetic(name))
+    }
+
     pub fn profile_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .vault
