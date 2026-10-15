@@ -110,6 +110,18 @@ impl Fixture {
             "script Start did not settle"
         );
     }
+    fn settle_catalog_work(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.scripts.catalog_work_pending() && Instant::now() < deadline {
+            self.core.poll();
+            self.scripts.poll(&mut self.core);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !self.scripts.catalog_work_pending(),
+            "catalog work did not settle"
+        );
+    }
 
     fn wait_state(&mut self, name: &str, want: script::RunState) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -3231,6 +3243,7 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     let present = f
         .scripts
         .js
@@ -3267,6 +3280,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(failed_scripts.join("index.ts"), "const x = 1;\n").unwrap();
 
     f.scripts.fill_catalog_once(Some(&failed_root));
+    f.settle_catalog_work();
     assert!(
         !f.scripts.catalog_filled,
         "a failed registry parse must not mark the catalog filled"
@@ -3289,6 +3303,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     assert!(f.scripts.catalog_filled);
     assert_eq!(f.scripts.catalog_root.as_deref(), Some(root.as_path()));
     assert!(
@@ -3298,6 +3313,126 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
     );
+}
+
+#[test]
+fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work() {
+    const LIMIT: usize = 64;
+    let mut f = fixture("loaded-start-bound", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let accepted = (0..LIMIT)
+        .map(|index| format!("profile-{index}"))
+        .collect::<Vec<_>>();
+
+    for profile in &accepted {
+        f.scripts
+            .queue_loaded_start(
+                profile,
+                script::ScriptSource::Catalog,
+                "BoneBurier",
+                Some(&root),
+                super::StartKind::Start,
+                false,
+            )
+            .expect("demand within the pending bound");
+    }
+
+    assert!(matches!(
+        f.scripts.queue_loaded_start(
+            &accepted[0],
+            script::ScriptSource::Catalog,
+            "BoneBurier",
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        ),
+        Err(script::StartLoadError::Waiting(_))
+    ));
+    assert!(matches!(
+        f.scripts.queue_loaded_start(
+            "profile-over-limit",
+            script::ScriptSource::Catalog,
+            "BoneBurier",
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        ),
+        Err(script::StartLoadError::Refused(error))
+            if error.contains("limit") && error.contains("64")
+    ));
+    for profile in &accepted {
+        assert!(
+            matches!(
+                f.scripts.queue_loaded_start(
+                    profile,
+                    script::ScriptSource::Catalog,
+                    "BoneBurier",
+                    Some(&root),
+                    super::StartKind::Start,
+                    false,
+                ),
+                Err(script::StartLoadError::Waiting(_))
+            ),
+            "accepted Start demand for {profile} must remain pending"
+        );
+    }
+
+    for profile in accepted {
+        f.scripts.cancel_start_preparation(&profile);
+    }
+    f.settle_catalog_work();
+}
+
+#[test]
+fn marked_catalog_assignment_reports_pending_until_scan_settles() {
+    let mut f = fixture("marked-catalog-assignment-pending", &["alice", "bob"]);
+    let root = f.dir.join("catalog-root");
+    let scripts = root.join("src/bot/scripts");
+    let card_dir = scripts.join("BoneBurier");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import BoneBurier from './BoneBurier/BoneBurier.js';\n\
+         ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });\n",
+    )
+    .unwrap();
+    std::fs::write(card_dir.join("BoneBurier.ts"), LOOPING).unwrap();
+    let selection = mark_uids(&[1, 2]);
+    let card = script::ScriptSel::Loaded(
+        script::ScriptSource::Catalog,
+        "BoneBurier".into(),
+    );
+
+    let report = crate::marked::assign_marked(
+        &selection,
+        &mut f.core,
+        &mut f.scripts,
+        &card,
+        Some(&root),
+    );
+    assert_eq!(report.pending_count(), 2);
+    assert_eq!(report.failed_count(), 0);
+    assert!(
+        report.summary().contains("pending 2")
+            && report.summary().contains("alice: catalog scan pending"),
+        "{}",
+        report.summary()
+    );
+    assert!(
+        report.rows().iter().all(|row| matches!(
+            &row.outcome,
+            crate::bulk::BulkOutcome::Pending(_)
+        ))
+    );
+    for profile in ["alice", "bob"] {
+        assert_eq!(Scripts::assignment(&f.core, profile), None);
+    }
+
+    f.settle_catalog_work();
+    for profile in ["alice", "bob"] {
+        assert!(Scripts::assignment(&f.core, profile).is_some(), "{profile}");
+    }
 }
 
 /// A member removed while waiting for a marked Start is named as skipped
