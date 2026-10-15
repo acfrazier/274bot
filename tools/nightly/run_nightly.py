@@ -1131,7 +1131,8 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Branch `{meta['branch']}` at `{meta['commit_full']}`",
         f"- Platform {meta['platform']} ({meta['os']}, host {meta['host']})",
         f"- Started {meta['started']}, finished {meta['finished']}, wall {fmt_s(meta['wall_s'])}",
-        f"- Build: {'ok' if meta['build']['ok'] else 'FAILED'} ({fmt_s(meta['build']['wall_s'])})"
+        f"- Build: {'FAILED' if not meta['build']['ok'] else 'ok' if meta['build'].get('ran', True) else 'not run'}"
+        f" ({fmt_s(meta['build']['wall_s'])})"
         + (f": {meta['build']['error']}" if meta['build'].get('error') else ""),
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
@@ -1279,7 +1280,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         step["wall_s"] = round(time.monotonic() - step_start, 1)
 
     cell_steps = [name for name in STEPS if name in ("panel", "tui")]
-    if cell_steps and not unavailable and tree is not None and build_ok:
+    build_ran = bool(cell_steps and not unavailable and tree is not None and build_ok)
+    if build_ran:
         build_started = time.monotonic()
         try:
             binaries = build(tree, target, run_dir, build_log)
@@ -1287,8 +1289,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             build_ok, build_error = False, f"build deadline ({STEP_DEADLINE_S['build']} s) reached; see build.log"
         except (subprocess.CalledProcessError, OSError, RuntimeError) as error:
             build_ok, build_error = False, f"{error}"
+        log(f"{branch}: build {'ok' if build_ok else 'FAILED'}")
     build_wall = round(time.monotonic() - build_started, 1)
-    log(f"{branch}: build {'ok' if build_ok else 'FAILED'}")
 
     for frontend in cell_steps:
         step = steps[frontend]
@@ -1338,7 +1340,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
         cell_cap_s=CELL_CAP_S, profile=PROFILE, interrupted=_stop.is_set(),
         steps=steps, session=session, unavailable=unavailable,
-        build=dict(ok=build_ok, wall_s=build_wall, error=build_error,
+        build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
                    panel_play_sha256=sha256(binaries["panel-play"]) if binaries.get("panel-play", Path()).is_file() else None),
         engine=dict(status=engine_status, mode=ENGINE_MODE,
