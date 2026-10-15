@@ -134,8 +134,11 @@ pub struct StartSettled {
 /// one profile saved in one commit each settle and deliver their own
 /// setting; only a later one with the same setting replaces an earlier
 /// one's.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArmMirror {
+#[derive(Debug, PartialEq)]
+pub struct ArmMirror(ArmMirrorKind);
+
+#[derive(Debug, PartialEq)]
+enum ArmMirrorKind {
     /// Nothing live changes (assignments, tutorial flag, render prefs).
     None,
     AutoLogin(bool),
@@ -175,24 +178,75 @@ pub enum ArmMirror {
 }
 
 impl ArmMirror {
+    pub fn none() -> Self {
+        Self(ArmMirrorKind::None)
+    }
+
+    pub fn auto_login(on: bool) -> Self {
+        Self(ArmMirrorKind::AutoLogin(on))
+    }
+
+    pub fn guardian(random_events: bool, lamp_skill: String, lamp_auto: bool) -> Self {
+        Self(ArmMirrorKind::Guardian {
+            random_events,
+            lamp_skill,
+            lamp_auto,
+        })
+    }
+
+    pub fn random_event_policy(event: String, policy: RandomEventPolicy) -> Self {
+        Self(ArmMirrorKind::RandomEventPolicy { event, policy })
+    }
+
+    pub fn memory(lowmem: bool) -> Self {
+        Self(ArmMirrorKind::Memory(lowmem))
+    }
+
+    pub fn remember(live: Option<LiveSettings>) -> Self {
+        Self(ArmMirrorKind::Remember(live))
+    }
+
+    pub fn script_settings(card: String, live: Option<LiveSettings>) -> Self {
+        Self(ArmMirrorKind::ScriptSettings { card, live })
+    }
+
+    pub fn native_settings(
+        id: script::CompiledId,
+        bag: Arc<serde_json::Map<String, serde_json::Value>>,
+        live: Option<LiveSettings>,
+        assign: bool,
+    ) -> Self {
+        Self(ArmMirrorKind::NativeSettings {
+            id,
+            bag,
+            live,
+            assign,
+        })
+    }
+
+    pub(crate) fn is_native_settings(&self) -> bool {
+        matches!(&self.0, ArmMirrorKind::NativeSettings { .. })
+    }
+
     /// Whether this mirror, on a later write committed together with
     /// `earlier`'s, sets the same setting, so `earlier` need not settle or
     /// reach the slot on its own. Parameters replace the same card's, and a
     /// profile save an earlier save's handshake settings and partner: the
     /// later edit captured the current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
-        match (self, earlier) {
-            (Self::AutoLogin(_), Self::AutoLogin(_))
-            | (Self::Guardian { .. }, Self::Guardian { .. })
-            | (Self::Remember(_), Self::Remember(_))
-            | (Self::Memory(_), Self::Memory(_)) => true,
+        match (&self.0, &earlier.0) {
+            (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
+            | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
+            | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
+            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_)) => true,
             (
-                Self::RandomEventPolicy { event: later, .. },
-                Self::RandomEventPolicy { event, .. },
+                ArmMirrorKind::RandomEventPolicy { event: later, .. },
+                ArmMirrorKind::RandomEventPolicy { event, .. },
             ) => later == event,
-            (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
-                later == card
-            }
+            (
+                ArmMirrorKind::ScriptSettings { card: later, .. },
+                ArmMirrorKind::ScriptSettings { card, .. },
+            ) => later == card,
             _ => false,
         }
     }
@@ -1090,7 +1144,7 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("memory: no profile {name}"))?;
         profile.settings.lowmem = lowmem;
-        let op = self.save_profile(profile, ArmMirror::Memory(lowmem), "memory")?;
+        let op = self.save_profile(profile, ArmMirror::memory(lowmem), "memory")?;
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.set_lowmem_handshake(lowmem);
         }
@@ -1987,7 +2041,7 @@ impl<Io> OperatorSession<Io> {
         Ok(Some(self.submit_write(
             ActionKind::DeleteProfile,
             vec![VaultChange::Remove(name.to_string())],
-            ArmMirror::None,
+            ArmMirror::none(),
             "chooser",
             "profile delete",
         )))
@@ -2079,7 +2133,7 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("auto-login: no profile {name}"))?;
         profile.settings.auto_login = on;
-        self.save_profile(profile, ArmMirror::AutoLogin(on), "auto-login")
+        self.save_profile(profile, ArmMirror::auto_login(on), "auto-login")
     }
 
     /// Persist a profile's random-event guardian fields; a running slot's
@@ -2102,11 +2156,7 @@ impl<Io> OperatorSession<Io> {
         profile.settings.random_events = random_events;
         profile.settings.lamp_skill = lamp_skill.to_string();
         profile.settings.lamp_auto = lamp_auto;
-        let mirror = ArmMirror::Guardian {
-            random_events,
-            lamp_skill: lamp_skill.to_string(),
-            lamp_auto,
-        };
+        let mirror = ArmMirror::guardian(random_events, lamp_skill.to_string(), lamp_auto);
         self.save_profile(profile, mirror, "random")
     }
 
@@ -2129,7 +2179,7 @@ impl<Io> OperatorSession<Io> {
         profile.settings.set_random_event_policy(&event, policy);
         self.save_profile(
             profile,
-            ArmMirror::RandomEventPolicy { event, policy },
+            ArmMirror::random_event_policy(event, policy),
             "random",
         )
     }
@@ -2242,8 +2292,8 @@ impl<Io> OperatorSession<Io> {
         }
         let member = pending.member;
         let settings = matches!(
-            pending.mirror,
-            ArmMirror::ScriptSettings { .. } | ArmMirror::Remember(Some(_))
+            &pending.mirror.0,
+            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
         );
         // A superseded write (later writes in this commit wrote every row it
         // did) is durable only inside their rows. If the commit succeeded, it
@@ -2272,7 +2322,7 @@ impl<Io> OperatorSession<Io> {
                     };
                     self.saves.settle(written.op, saved);
                 }
-                if let ArmMirror::Remember(Some(live)) = &pending.mirror {
+                if let ArmMirrorKind::Remember(Some(live)) = &pending.mirror.0 {
                     if live.run.is_some() {
                         if let Some(play) = self.play.as_mut() {
                             if let Some(profile) = committed {
@@ -2286,7 +2336,7 @@ impl<Io> OperatorSession<Io> {
                 // Operation IDs order profile saves across commits, not just
                 // within a writer batch. A late memory completion must never
                 // re-arm a mode the operator has since cancelled.
-                let delivery = if matches!(pending.mirror, ArmMirror::Memory(_))
+                let delivery = if matches!(&pending.mirror.0, ArmMirrorKind::Memory(_))
                     && !newest.iter().any(|(name, _)| *name == member)
                 {
                     LiveDelivery::NotRunning
@@ -2299,8 +2349,8 @@ impl<Io> OperatorSession<Io> {
                 // A failed memory toggle put the arm ahead of the restored
                 // durable row: pull it back so the next handshake sends the
                 // restored value, never the refused one.
-                let reset_lowmem = match &pending.mirror {
-                    ArmMirror::Memory(_) => newest
+                let reset_lowmem = match &pending.mirror.0 {
+                    ArmMirrorKind::Memory(_) => newest
                         .iter()
                         .find(|(name, _)| *name == member)
                         .and_then(|(_, durable)| durable.as_ref())
@@ -2372,7 +2422,7 @@ impl<Io> OperatorSession<Io> {
     /// setting (a live effect or a card's parameters) that no later write
     /// of `member` in its commit (`later`) replaces.
     fn keeps_own_setting(&self, member: &str, mirror: &ArmMirror, later: &[OperationId]) -> bool {
-        !matches!(mirror, ArmMirror::None)
+        !matches!(&mirror.0, ArmMirrorKind::None)
             && !later
                 .iter()
                 .filter_map(|op| self.writes.get(op))
@@ -2390,15 +2440,15 @@ impl<Io> OperatorSession<Io> {
         let Some(play) = self.play.as_mut() else {
             return LiveDelivery::NotRunning;
         };
-        match mirror {
-            ArmMirror::None => {}
-            ArmMirror::AutoLogin(on) => {
+        match mirror.0 {
+            ArmMirrorKind::None => {}
+            ArmMirrorKind::AutoLogin(on) => {
                 if let Some(arm) = play.arm(name) {
                     arm.set_auto_login(on);
                 }
                 play.wake(name);
             }
-            ArmMirror::Guardian {
+            ArmMirrorKind::Guardian {
                 random_events,
                 lamp_skill,
                 lamp_auto,
@@ -2409,7 +2459,7 @@ impl<Io> OperatorSession<Io> {
                     *arm.lamp_skill.lock().unwrap() = lamp_skill;
                 }
             }
-            ArmMirror::RandomEventPolicy { event, policy } => {
+            ArmMirrorKind::RandomEventPolicy { event, policy } => {
                 if let Some(arm) = play.arm(name) {
                     arm.random_event_policies
                         .lock()
@@ -2417,14 +2467,14 @@ impl<Io> OperatorSession<Io> {
                         .insert(event, policy);
                 }
             }
-            ArmMirror::Memory(lowmem) => {
+            ArmMirrorKind::Memory(lowmem) => {
                 // Re-affirm the toggle the command already armed: the
                 // durable row and the handshake channel agree again.
                 if let Some(arm) = play.arm(name) {
                     arm.set_lowmem_handshake(lowmem);
                 }
             }
-            ArmMirror::Remember(live) => {
+            ArmMirrorKind::Remember(live) => {
                 // The committed row, not the staged vault (a newer edit may
                 // be queued behind this one).
                 if let Some(profile) = committed {
@@ -2432,8 +2482,8 @@ impl<Io> OperatorSession<Io> {
                 }
                 return deliver_settings(play, name, live);
             }
-            ArmMirror::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
-            ArmMirror::NativeSettings { .. } => {
+            ArmMirrorKind::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
+            ArmMirrorKind::NativeSettings { .. } => {
                 return LiveDelivery::Rejected("native settings were not prepared".into())
             }
         }

@@ -2495,7 +2495,7 @@ impl Session {
                 };
                 let _ = self
                     .core
-                    .save_profile(p, frontend_core::ArmMirror::None, "stress");
+                    .save_profile(p, frontend_core::ArmMirror::none(), "stress");
             }
         }
         // Harness setup, not a frame path: the spawns below read the durable
@@ -3546,7 +3546,7 @@ impl Session {
         profile.settings.tutorial_skipped = Some(skipped);
         if let Err(e) = self
             .core
-            .save_profile(profile, frontend_core::ArmMirror::None, "tutorial")
+            .save_profile(profile, frontend_core::ArmMirror::none(), "tutorial")
         {
             self.error = Some(e);
         }
@@ -4140,7 +4140,7 @@ impl Session {
             p.settings.raster = self.ui.raster;
             if let Err(e) =
                 self.core
-                    .save_profile(p, frontend_core::ArmMirror::None, "render prefs")
+                    .save_profile(p, frontend_core::ArmMirror::none(), "render prefs")
             {
                 self.error = Some(e);
             }

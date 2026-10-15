@@ -613,7 +613,7 @@ impl Scripts {
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
         let result = core.vault().map(|vault| {
-            if matches!(mirror, ArmMirror::NativeSettings { .. }) {
+            if mirror.is_native_settings() {
                 core.profile_for_edit(profile).cloned()
             } else {
                 vault.get(profile).cloned()
@@ -654,7 +654,7 @@ impl Scripts {
         if Self::assignment(core, profile).as_ref() == Some(&assignment) {
             return true;
         }
-        self.upsert_profile_settings(core, profile, ArmMirror::None, log_action, |settings| {
+        self.upsert_profile_settings(core, profile, ArmMirror::none(), log_action, |settings| {
             settings.script_assignment = Some(assignment);
         })
         .is_ok()
@@ -670,7 +670,7 @@ impl Scripts {
         let _ = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::None,
+            ArmMirror::none(),
             "unavailable",
             |settings| {
                 if let Some(asg) = settings.script_assignment.as_mut() {
@@ -702,7 +702,7 @@ impl Scripts {
         let _ = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::None,
+            ArmMirror::none(),
             "legacy claim",
             |settings| {
                 script::claim_legacy_overrides(settings, key, card_name, &legacy);
@@ -909,10 +909,7 @@ impl Scripts {
         let result = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::ScriptSettings {
-                card: key.clone(),
-                live,
-            },
+            ArmMirror::script_settings(key.clone(), live),
             "parameter edit",
             |settings| {
                 settings.script_settings.insert(key.clone(), bag);
@@ -1438,7 +1435,7 @@ impl Scripts {
                         let _ = self.upsert_profile_settings(
                             core,
                             &name,
-                            ArmMirror::None,
+                            ArmMirror::none(),
                             "Start",
                             |settings| {
                                 settings.script_assignment = Some(script::compiled_assignment(id));

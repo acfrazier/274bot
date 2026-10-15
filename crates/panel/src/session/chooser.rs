@@ -110,7 +110,7 @@ impl Session {
                     .profile_save_live(&self.core, &profile.username, &profile.settings)
             })
             .flatten();
-        let mirror = frontend_core::ArmMirror::Remember(live);
+        let mirror = frontend_core::ArmMirror::remember(live);
         let saved = match rename_from {
             Some(old) => {
                 let old = old.to_string();
