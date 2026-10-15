@@ -1938,6 +1938,7 @@ mod tests {
         let snapshot = api::snapshot::SnapshotView::new(host.snapshot, evidence);
         let eligible = !host.compiled.hold;
         let mut native = NativeTick {
+            state: None,
             actions: &mut actions,
             cx: crate::native::ActionContext {
                 evidence,

@@ -1116,9 +1116,7 @@ mod tests {
     #[test]
     fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("parameter-options-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
 
         let resources = source_setting("woodcuttingResources", "string[]", "gather:woodcutting");
         let mut bag = serde_json::Map::new();
@@ -1268,9 +1266,7 @@ mod tests {
     #[test]
     fn stored_unavailable_priority_outside_the_selection_keeps_its_reason() {
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-priority-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["cook"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
@@ -1285,9 +1281,7 @@ mod tests {
 
     #[test]
     fn array_toggle_adds_choices_and_only_removes_preserved_rows() {
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-toggle-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["cook"]));
         let options = resolve_parameter_options(quester_setting("quests"), &bag, &loadouts, None);
@@ -1312,9 +1306,7 @@ mod tests {
 
     #[test]
     fn preserved_only_priority_array_is_removal_only() {
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-priority-remove-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
@@ -1348,9 +1340,7 @@ mod tests {
     fn unavailable_quests_are_not_picker_choices_and_stored_picks_show_the_reason() {
         let reason = script::quester::card::unavailable_quest("hauntedmine")
             .expect("Haunted Mine is an unavailable release row");
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-unavailable-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         let card_settings = (script::quester::card::CARD.schema)();
@@ -1401,9 +1391,7 @@ mod tests {
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-options-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1463,9 +1451,7 @@ mod tests {
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-invalid-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1537,9 +1523,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!refused_site_ids.is_empty());
 
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-unselectable-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1584,9 +1568,7 @@ mod tests {
     #[test]
     fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("fishing-cycle-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let fishing = source_setting("fishingMethod", "string", "gather:fishing");
         let options = resolve_parameter_options(
             &fishing,
@@ -1711,10 +1693,7 @@ mod tests {
         .expect("spawn Path compilation")
         .join()
         .expect("Path compilation worker");
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "parameter-path-loadouts-{}.json",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::default();
 
         let mut bag = serde_json::Map::new();
         bag.insert(
@@ -1788,10 +1767,7 @@ mod tests {
     fn bundled_drafts_are_marked_in_both_quest_and_priority_pickers() {
         use script::quester::registry::PathRegistry;
 
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "parameter-draft-path-loadouts-{}",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::default();
         let registry = PathRegistry::Bundled;
         let bag = serde_json::Map::new();
         let quests = resolve_parameter_options_with_registry(
@@ -1843,9 +1819,7 @@ export const SETTINGS: SettingsSchema = {
         assert_eq!(loadout_def.options_from.as_deref(), Some("loadouts"));
         assert_eq!(loadout_def.group.as_deref(), Some("Food & healing"));
 
-        let mut loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("parameter-spread-loadouts-{}", std::process::id())),
-        );
+        let mut loadouts = LoadoutsStore::default();
         loadouts.upsert(
             api::loadout::Loadout::new("Scenario Rock Crab food")
                 .with_slot("righthand", "Adamant scimitar")
@@ -1923,7 +1897,7 @@ export const SETTINGS: SettingsSchema = {
                 .expect("catalog registers"),
             names.len()
         );
-        let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let mut loadouts = LoadoutsStore::default();
         loadouts.upsert(api::loadout::Loadout::new("First choice"));
         loadouts.upsert(api::loadout::Loadout::new("Second choice"));
 

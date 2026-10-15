@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
 use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
 use vault::ProfileSettings;
@@ -411,11 +412,13 @@ fn wilderness_persistence_errors_are_visible() {
         std::env::temp_dir().join(format!("274bot-tui-map-pref-error-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let parent = root.join("not-a-directory");
-    std::fs::write(&parent, b"file").unwrap();
+    let blocker = root.join("not-a-directory");
+    std::fs::write(&blocker, b"file").unwrap();
+    // A service rooted at a file cannot write: the failure surfaces.
+    let blocked = LocalStateService::open_process(StateRoot::new(blocker.clone())).preferences();
 
     let mut app = TuiApp::new("274bot headless");
-    app.restore_preferences(parent.join("panel-ui.json"));
+    app.restore_preferences(blocked.clone());
     app.toggle_map_wilderness();
 
     assert!(app.map.layers.wilderness);
@@ -427,8 +430,8 @@ fn wilderness_persistence_errors_are_visible() {
         app.error
     );
 
-    std::fs::remove_file(&parent).unwrap();
-    std::fs::create_dir(&parent).unwrap();
+    std::fs::remove_file(&blocker).unwrap();
+    std::fs::create_dir(&blocker).unwrap();
     app.toggle_map_wilderness();
     assert!(!app.map.layers.wilderness);
     assert!(
@@ -926,10 +929,11 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("panel-ui.json");
-    let loadouts = script::LoadoutsStore::at(root.join("loadouts.json"));
+    let preferences =
+        LocalStateService::open_process(StateRoot::new(root.join(".274bot"))).preferences();
+    let loadouts = script::LoadoutsStore::default();
     let mut app = open_map_world();
-    app.restore_preferences(path.clone());
+    app.restore_preferences(preferences.clone());
     app.script_sel = Some(ScriptSel::Loaded(
         ScriptSource::Catalog,
         "WalkPermissions".into(),
@@ -957,8 +961,8 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(crossing.contains("crossing (z)"), "{crossing}");
 
-    frontend_core::nav_preference_at(
-        &path,
+    frontend_core::nav_preference(
+        &preferences,
         frontend_core::NavPreference::AllowDangerZones,
         Some(true),
     )
@@ -984,8 +988,8 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     app.params_state.open = false;
 
-    frontend_core::nav_preference_at(
-        &path,
+    frontend_core::nav_preference(
+        &preferences,
         frontend_core::NavPreference::AllowDangerZones,
         Some(false),
     )
@@ -1011,7 +1015,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     assert!(!app.map_route_through_zones);
     assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
 
-    std::fs::write(&path, "{corrupt").unwrap();
+    std::fs::write(preferences.path(), "{corrupt").unwrap();
+    // A directly written file is seen after an explicit re-read; a corrupt
+    // one is refused from here on.
+    assert!(preferences.reload().is_err());
     let corrupt = text(&draw(&mut app, 120, 40));
     assert!(
         corrupt.contains("avoided") && !corrupt.contains("crossing (z)"),
@@ -1566,7 +1573,7 @@ fn load_browser_enter_returns_script_load() {
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let loadouts = script::LoadoutsStore::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let schema = vec![script::SettingDef {
         id: "buryBones".into(),
@@ -1644,7 +1651,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let loadouts = script::LoadoutsStore::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));

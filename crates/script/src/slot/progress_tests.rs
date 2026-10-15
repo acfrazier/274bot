@@ -14,6 +14,7 @@ fn load() -> SlotScript {
         crate::load::LoadShape::NativeTick,
         None,
         vec![],
+        &[],
         Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
         Arc::default(),
     )

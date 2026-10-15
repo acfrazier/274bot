@@ -617,6 +617,60 @@ fn preference_bounds_refuse_empty_overlong_and_hostile_keys() {
     );
 }
 
+/// F0 amendment 2: a rename is one edit naming the row it replaces; it is
+/// refused for another domain, an empty or overlong source, an empty new
+/// name, and a new name equal to the source (that is an upsert).
+#[test]
+fn a_loadout_rename_names_its_source_and_refuses_bad_names() {
+    let id = identity(LocalStateDomain::LoadoutsReferences, "alice");
+    let validation = |reason| ErrorCode::Validation {
+        domain: LocalStateDomain::LoadoutsReferences,
+        reason,
+    };
+    let renamed = crate::loadout::Loadout::new("range").with_carry("Lobster", 8);
+    let edit = LoadoutEdit::rename(
+        id.clone(),
+        Some(StoreVersion::INITIAL),
+        "melee",
+        renamed.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        edit.op(),
+        &LoadoutOp::Rename {
+            from: "melee".into(),
+            loadout: renamed.clone(),
+        }
+    );
+    assert_eq!(edit.expected(), Some(StoreVersion::INITIAL));
+    assert!(!edit.applies_to(StoreVersion::INITIAL.checked_next().unwrap()));
+    assert_eq!(
+        LoadoutEdit::rename(id.clone(), None, " ", renamed.clone()),
+        Err(validation(ValidationReason::Empty))
+    );
+    assert_eq!(
+        LoadoutEdit::rename(id.clone(), None, &"m".repeat(129), renamed.clone()),
+        Err(validation(ValidationReason::TooLong))
+    );
+    assert_eq!(
+        LoadoutEdit::rename(id.clone(), None, "melee", crate::loadout::Loadout::new(" ")),
+        Err(validation(ValidationReason::Empty))
+    );
+    assert_eq!(
+        LoadoutEdit::rename(id.clone(), None, "range", renamed.clone()),
+        Err(validation(ValidationReason::DuplicateId)),
+        "an unchanged name is not a rename"
+    );
+    let preferences_id = identity(LocalStateDomain::Preferences, "alice");
+    assert_eq!(
+        LoadoutEdit::rename(preferences_id, None, "melee", renamed),
+        Err(ErrorCode::Validation {
+            domain: LocalStateDomain::Preferences,
+            reason: ValidationReason::Identity,
+        })
+    );
+}
+
 #[test]
 fn knowledge_invalidation_supersedes_with_operator_provenance() {
     let record = knowledge_record(None);

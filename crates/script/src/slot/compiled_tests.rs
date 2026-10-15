@@ -1364,6 +1364,7 @@ mod api_gather_seat {
             crate::load::LoadShape::NativeTick,
             None,
             vec![],
+            &[],
             data.then(selected),
             Arc::default(),
         )

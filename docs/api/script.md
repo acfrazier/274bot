@@ -444,10 +444,15 @@ latches. Paths marked `owns_inventory` retain their authored inventory steps.
 Automatic coin funding is not provided.
 
 Needs are planned from the account's bank memory. The host keeps one per
-account: the rows of the bank as last seen open, saved to
-`~/.274bot/bank-hints/<profile>/<account>.json` when the bank closes and loaded
-at login as an advisory hint. After a new login the rows stay but count only as
-that hint until the bank is opened again. A bank never seen costs one scan trip,
+account: the rows of the bank as last seen open, saved through the process
+local-state service to `<state root>/bank-hints/<profile>/<account>.json`
+(the state root is `~/.274bot`, resolved once at launch) when the bank closes
+and loaded at login as an advisory hint. The file records the revision and
+content it was observed under. A hint from other content, or one the host
+can't read, is neither loaded nor overwritten: one log line names the file
+and the reason, and the memory starts unknown. A hint carrying a field this
+build doesn't know is loaded but never rewritten. After a new login the rows stay but
+count only as that hint until the bank is opened again. A bank never seen costs one scan trip,
 and a shortage that only the saved hint predicts costs one verifying trip. A
 shortage in a bank seen open this login is final: a required provisioning item
 blocks in place, and an authored `bank` `withdraw` refuses before any walk with
@@ -1469,13 +1474,25 @@ without teleports; the walk to the chosen bank may still use granted teleports.
 Compat v1 uses Proceed through derived danger zones, with assessment logged
 only and no eating/protection/net. Explicit avoids, the frozen catalog,
 automatic jail rule, other route gates and existing banking remain hard.
-All shared preference writers, including the TUI log pane, serialize through
-an in-process mutex and the `panel-ui.json.lock` advisory lock. Both frontends
-refresh a shared durable walk-permission projection for danger controls and
-inherited script rows, and refresh it again at manual admission. An absent
-file or a valid old file without the new key uses the middle-level default;
-an unreadable or malformed file clears every grant. A peer frontend's change
-therefore updates both the warning and the next walk's options.
+All shared preference reads and writes, including the TUI log pane, go
+through the process local-state service's preferences domain: one writer
+thread per process, and the `panel-ui.json.lock` advisory lock held across
+each write so another process takes its turn. Both frontends refresh a
+shared durable walk-permission projection for danger controls and inherited
+script rows (re-read from the file at most once a second), and manual
+admission reads it again. An absent file or a valid old file without the new
+key uses the middle-level default. A file that is not a JSON object clears
+every grant until the next preference save moves it aside, byte for byte,
+to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
+audit line) and starts fresh preferences. A file refused for itself (owner,
+mode, size) clears every grant and is never rewritten. Otherwise the rule
+is lossless representability, with no version check: a file holding a
+member this build cannot hold as a preference row (a name with a `.`,
+outside `[A-Za-z0-9_-]` or longer than 128 bytes, or a value too long even
+member by member) is read but never rewritten, and a save keeps every
+member it holds, a `schema_version` or any other member this build does
+not know included. A peer frontend's change therefore updates both the
+warning and the next walk's options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.

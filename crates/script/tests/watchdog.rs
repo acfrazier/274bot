@@ -430,6 +430,7 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
         LoadShape::CompatClass,
         Some(&bag),
         vec![("sib.js".into(), "export const x = 1;".into())],
+        &[],
     )
     .unwrap();
     // Start returns before V8 setup; recover from a live slot.
