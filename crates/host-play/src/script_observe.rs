@@ -17,9 +17,9 @@ use script::{ScriptCtx, SlotScript};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
-    dispatch_observed_bank_op, dispatch_script_interact_cached, fill_withdraw_action,
-    pack_cached_reach, recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect,
-    script_slot, take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
+    dispatch_observed_bank_op, dispatch_script_interact_cached, pack_cached_reach,
+    recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
+    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
     PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
@@ -1574,7 +1574,11 @@ pub(crate) fn script_observe_cached_with_channels(
                                         let bank_item_id = item.def.id;
                                         let count = item.count.min(free as i32);
                                         if let Some((op, needs_dialog)) =
-                                            fill_withdraw_action(&item.actions, count, item.count)
+                                            script::bank::ops::fill_click_in(
+                                                &item.actions,
+                                                count,
+                                                item.count,
+                                            )
                                         {
                                             let sent = matches!(
                                                 ix.interact(

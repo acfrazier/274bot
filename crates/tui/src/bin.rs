@@ -1667,7 +1667,13 @@ impl TuiSession {
     /// [`frontend_core::walk_marked`], the same command the panel's picker
     /// runs. Nothing marked keeps the map selection.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
-        if app.table.selection.is_empty() {
+        if frontend_core::marked_availability(
+            frontend_core::MarkedAction::Walk,
+            app.table.selection.len(),
+            app.script_sel.is_some(),
+            app.focused_name().is_some(),
+        ) == Err(frontend_core::MarkedBlock::NothingMarked)
+        {
             app.error = Some("no bots selected".into());
             return;
         }
@@ -2031,18 +2037,21 @@ impl TuiSession {
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
-        if !app.table.selection.is_empty() {
-            frontend_core::start_marked(
-                &app.table.selection,
-                &mut self.core,
-                &mut self.scripts,
-                app.script_sel.as_ref(),
-                root.as_deref(),
-            );
-            self.apply_script_notice(app);
-        } else {
-            self.scripts.start_all(&mut self.core, root.as_deref());
-            self.apply_script_notice(app);
+        match frontend_core::combined_bulk_scope(&app.table.selection) {
+            frontend_core::BulkScope::Marked => {
+                frontend_core::start_marked(
+                    &app.table.selection,
+                    &mut self.core,
+                    &mut self.scripts,
+                    app.script_sel.as_ref(),
+                    root.as_deref(),
+                );
+                self.apply_script_notice(app);
+            }
+            frontend_core::BulkScope::All => {
+                self.scripts.start_all(&mut self.core, root.as_deref());
+                self.apply_script_notice(app);
+            }
         }
     }
 
@@ -2050,6 +2059,7 @@ impl TuiSession {
     /// one bulk report names each bot that could not take it.
     fn script_assign_marked(&mut self, app: &mut TuiApp) {
         let Some(card) = app.script_sel.clone() else {
+            app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();
@@ -2068,6 +2078,7 @@ impl TuiSession {
     /// through the paced Start permit; the running Start report follows.
     fn script_restart_marked(&mut self, app: &mut TuiApp) {
         let Some(card) = app.script_sel.clone() else {
+            app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();
@@ -2118,16 +2129,22 @@ impl TuiSession {
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
-        if !app.table.selection.is_empty() {
-            let report =
-                frontend_core::stop_marked(&app.table.selection, &mut self.core, &mut self.scripts);
-            app.reload_confirm = self.scripts.reload_awaiting_confirm();
-            self.apply_script_notice(app);
-            app.error = Some(report.summary());
-        } else {
-            self.scripts.stop_all(&mut self.core);
-            app.reload_confirm = self.scripts.reload_awaiting_confirm();
-            self.apply_script_notice(app);
+        match frontend_core::combined_bulk_scope(&app.table.selection) {
+            frontend_core::BulkScope::Marked => {
+                let report = frontend_core::stop_marked(
+                    &app.table.selection,
+                    &mut self.core,
+                    &mut self.scripts,
+                );
+                app.reload_confirm = self.scripts.reload_awaiting_confirm();
+                self.apply_script_notice(app);
+                app.error = Some(report.summary());
+            }
+            frontend_core::BulkScope::All => {
+                self.scripts.stop_all(&mut self.core);
+                app.reload_confirm = self.scripts.reload_awaiting_confirm();
+                self.apply_script_notice(app);
+            }
         }
     }
 
@@ -2579,19 +2596,16 @@ impl TuiSession {
         }
         let ids_changed = app.profile_ids.len() != members.len()
             || members.iter().enumerate().any(|(index, name)| {
-                let identity = self
-                    .core
-                    .profile_identity(name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+                let identity = self.core.profile_identity_or_synthetic(name);
                 app.profile_ids.get(index).copied() != Some(identity)
             });
         if ids_changed {
             app.profile_ids.clear();
-            app.profile_ids.extend(members.iter().map(|name| {
-                self.core
-                    .profile_identity(name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
-            }));
+            app.profile_ids.extend(
+                members
+                    .iter()
+                    .map(|name| self.core.profile_identity_or_synthetic(name)),
+            );
             app.table.selection.retain(app.profile_ids.iter().copied());
         }
         let restart_generation = self.scripts.restart_generation();

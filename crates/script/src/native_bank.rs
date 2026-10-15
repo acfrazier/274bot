@@ -440,16 +440,6 @@ pub struct BankMachine {
 }
 
 const BANK_OBJECT_RADIUS: i32 = 4;
-fn catalog_object_matches(loc: &LocView, operation: BankOperation) -> bool {
-    loc.name
-        .as_deref()
-        .is_some_and(|name| name.eq_ignore_ascii_case(operation.name))
-        && loc
-            .actions
-            .iter()
-            .flatten()
-            .any(|action| action.eq_ignore_ascii_case(operation.op))
-}
 
 fn catalog_object_at<'a>(
     cx: &'a ActionContext<'_>,
@@ -457,11 +447,13 @@ fn catalog_object_at<'a>(
     tile: WorldTile,
     operation: BankOperation,
 ) -> Option<&'a LocView> {
-    cx.snapshot()
-        .locs()?
-        .value
-        .iter()
-        .find(|loc| loc.id == id && loc.tile == tile && catalog_object_matches(loc, operation))
+    ops::booth_exact(
+        cx.snapshot().locs()?.value,
+        tile,
+        id,
+        operation.name,
+        operation.op,
+    )
 }
 
 /// Resolve a catalog object's live row around its declared access stand.
@@ -470,29 +462,13 @@ fn catalog_object_loc<'a>(
     stand_tile: WorldTile,
     operation: BankOperation,
 ) -> Option<&'a LocView> {
-    cx.snapshot()
-        .locs()?
-        .value
-        .iter()
-        .filter(|loc| {
-            loc.tile.level == stand_tile.level
-                && loc
-                    .tile
-                    .x
-                    .abs_diff(stand_tile.x)
-                    .max(loc.tile.z.abs_diff(stand_tile.z))
-                    <= BANK_OBJECT_RADIUS as u32
-                && catalog_object_matches(loc, operation)
-        })
-        .min_by_key(|loc| {
-            (
-                loc.tile
-                    .x
-                    .abs_diff(stand_tile.x)
-                    .max(loc.tile.z.abs_diff(stand_tile.z)),
-                loc.id,
-            )
-        })
+    ops::booth_catalog(
+        cx.snapshot().locs()?.value,
+        stand_tile,
+        BANK_OBJECT_RADIUS,
+        operation.name,
+        operation.op,
+    )
 }
 
 impl NativeMachine for BankMachine {
@@ -741,27 +717,15 @@ impl NativeMachine for BankMachine {
                                 return Poll::Pending;
                             };
                             let wanted_name = access.name.as_deref();
-                            let Some(loc) = locs.value.iter().find(|loc| {
-                                loc.tile == access.stand_tile
-                                    && wanted_name.is_none_or(|wanted| {
-                                        loc.name.as_deref().is_some_and(|actual| {
-                                            actual.eq_ignore_ascii_case(wanted)
-                                        })
-                                    })
-                            }) else {
+                            let Some(loc) =
+                                ops::booth_at(locs.value, access.stand_tile, wanted_name)
+                            else {
                                 return Poll::Pending;
                             };
                             let stand_op = if access.stand_op > 0 {
                                 Some(access.stand_op)
                             } else {
-                                loc.actions
-                                    .iter()
-                                    .position(|action| {
-                                        action.as_deref().is_some_and(|action| {
-                                            action.eq_ignore_ascii_case("Use-quickly")
-                                        })
-                                    })
-                                    .and_then(|index| i32::try_from(index + 1).ok())
+                                ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Folded)
                             };
                             let Some(stand_op) = stand_op else {
                                 return Poll::Pending;
@@ -792,19 +756,11 @@ impl NativeMachine for BankMachine {
                         return Poll::Pending;
                     };
                     let wanted = bank.definition.and_then(|definition| definition.object);
-                    let booth = locs
-                        .value
-                        .iter()
-                        .filter(|loc| {
-                            loc.tile.level == bank.tile.level
-                                && loc.actions.iter().flatten().any(|action| {
-                                    wanted.map_or_else(
-                                        || action.eq_ignore_ascii_case("Use-quickly"),
-                                        |wanted| action.eq_ignore_ascii_case(wanted.op),
-                                    )
-                                })
-                        })
-                        .min_by_key(|loc| loc.distance);
+                    let booth = ops::booth_nearest_action(
+                        locs.value,
+                        bank.tile.level,
+                        wanted.map_or("Use-quickly", |wanted| wanted.op),
+                    );
                     let Some(booth) = booth else {
                         return Poll::Pending;
                     };
@@ -1641,27 +1597,7 @@ impl npc::Context for NativeNpcContext<'_, '_> {
 
     fn banker(&self, name: &str, op: npc::NpcOp<'_>) -> Option<npc::Banker> {
         let npcs = self.cx.snapshot().npcs()?;
-        let (banker, action) = npcs
-            .value
-            .iter()
-            .filter(|banker| {
-                banker
-                    .name
-                    .as_deref()
-                    .is_some_and(|actual| npc::name_matches(actual, name))
-            })
-            .filter_map(|banker| {
-                let action = banker
-                    .actions
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, action)| {
-                        let action = action.as_deref()?;
-                        npc::action_matches(action, index, op).then_some(action)
-                    })?;
-                Some((banker, action))
-            })
-            .min_by_key(|(banker, _)| banker.distance)?;
+        let (banker, action) = npc::banker_scan(npcs.value, name, op)?;
         Some(npc::Banker {
             name: banker.name.as_ref()?.clone(),
             action: action.to_owned(),

@@ -3,9 +3,8 @@
 use super::*;
 #[path = "script_bank.rs"]
 mod bank;
-pub(super) use bank::fill_withdraw_action;
+use bank::dispatch_observed_bank_op;
 pub(crate) use bank::open_bank_at_here;
-use bank::{action_slot, all_slot, dispatch_observed_bank_op};
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]

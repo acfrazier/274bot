@@ -4,6 +4,7 @@
 //! booth names, and awaits the frozen boolean. Rust owns the verbs, the
 //! observed identity and the clocks.
 
+use crate::bank::ops;
 use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Scene, SceneRow};
 use crate::shim::InteractReq;
@@ -29,6 +30,42 @@ struct Booth {
     name: Option<String>,
     action: Option<String>,
     actions: Vec<String>,
+}
+
+impl ops::OpLabels for Booth {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        usize::try_from(one_based)
+            .ok()?
+            .checked_sub(1)
+            .and_then(|index| self.actions.get(index))
+            .map(String::as_str)
+    }
+}
+
+impl ops::LocRow for Booth {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn tile(&self) -> api::snapshot::WorldTile {
+        api::snapshot::WorldTile {
+            x: self.tile.x,
+            z: self.tile.z,
+            level: self.tile.level,
+        }
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,23 +338,8 @@ impl BankOpen {
     fn select_named(&self, obs: &Observation) -> Option<Booth> {
         let name = self.wanted_name.as_deref()?;
         let action = self.wanted_action.as_deref()?;
-        let mut selected = obs
-            .locs
-            .iter()
-            .filter(|row| {
-                row.id >= 0
-                    && row
-                        .name
-                        .as_deref()
-                        .is_some_and(|got| got.eq_ignore_ascii_case(name))
-                    && row
-                        .actions
-                        .iter()
-                        .any(|got| got.eq_ignore_ascii_case(action))
-                    && obs.here.is_none_or(|here| here.level == row.tile.level)
-            })
-            .min_by_key(|row| row.distance)
-            .cloned()?;
+        let mut selected =
+            ops::booth_named(&obs.locs, name, action, obs.here.map(|here| here.level))?.clone();
         selected.name = Some(name.to_string());
         selected.action = Some(action.to_string());
         Some(selected)

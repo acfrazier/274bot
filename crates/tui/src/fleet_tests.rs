@@ -50,6 +50,17 @@ fn filter_terms_match_name_world_and_state() {
 }
 
 #[test]
+fn filter_treats_an_unprojected_member_as_offline() {
+    assert!(frontend_core::fleet_row_matches("dave", None, "offline"));
+    assert!(frontend_core::fleet_row_matches("dave", None, "dav off"));
+    assert!(!frontend_core::fleet_row_matches("dave", None, "ready"));
+    assert!(
+        !frontend_core::fleet_row_matches("dave", None, "w301"),
+        "no row, no world"
+    );
+}
+
+#[test]
 fn the_cursor_stays_on_its_member_when_the_filter_or_fleet_changes() {
     let mut members = names(&["alice", "bob", "carol"]);
     let rows = Vec::new();
