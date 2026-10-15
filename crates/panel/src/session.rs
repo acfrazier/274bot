@@ -4045,9 +4045,20 @@ impl Session {
     /// Log in every marked fleet row (loading the ones not loaded yet)
     /// through the panel's slot surface. Focus does not move.
     pub(crate) fn login_marked_rows(&mut self) -> frontend_core::BulkReport {
-        let selection = self.fleet_selection.duplicate();
-        let (core, mut surface) = self.core_and_surface();
-        frontend_core::login_marked(&selection, core, &mut surface)
+        frontend_core::login_marked(
+            &self.fleet_selection,
+            &mut self.core,
+            &mut PanelSurface {
+                focus: &self.focus,
+                audio: &self.audio,
+                memory_override: self.memory_override,
+                frontend_gens: &self.frontend_gens,
+                nav_states: &self.nav_states,
+                travellers: &self.travellers,
+                tick_latch: &self.tick_latch,
+                walk_dest: &mut self.walk_dest,
+            },
+        )
     }
 
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
@@ -5084,9 +5095,12 @@ impl Session {
         after: frontend_core::QuesterPathsView,
     ) -> Result<(), String> {
         let selected = self.selected_game_data();
-        let result =
-            self.quester_paths
-                .apply_changed_at(&self.walk_permissions_path, after, selected, true);
+        let result = self.quester_paths.apply_changed_at(
+            &self.walk_permissions_path,
+            &after,
+            selected,
+            true,
+        );
         if result.is_ok() {
             self.quester_paths_folder_edit = self
                 .quester_paths

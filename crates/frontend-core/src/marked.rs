@@ -66,6 +66,11 @@ impl MarkedCommandReport {
         &self.skipped
     }
 
+    /// Take the accepted count and skipped rows.
+    pub fn into_parts(self) -> (usize, Vec<BulkSkip>) {
+        (self.accepted, self.skipped)
+    }
+
     pub fn total(&self) -> usize {
         self.accepted + self.skipped.len()
     }

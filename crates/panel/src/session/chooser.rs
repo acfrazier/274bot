@@ -156,11 +156,12 @@ impl Session {
     /// result, and the leave it asked for is the operator's to ask again.
     pub(crate) fn settle_profile_save(&mut self) {
         for settled in self.chooser_save.settle(&mut self.core) {
-            let Some(saved) = settled.as_saved() else {
+            let Some(saved) = settled.into_saved() else {
                 continue;
             };
-            let name = saved.record().destination().to_string();
-            if saved.same_form() {
+            let same_form = saved.same_form();
+            let name = saved.into_destination();
+            if same_form {
                 self.chooser_edit = Some(name.clone());
             }
             // `select` builds the arm from the durable auto-login.

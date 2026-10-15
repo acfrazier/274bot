@@ -301,7 +301,19 @@ impl FleetRow {
 
     /// A retained copy of this row, allocating only as `copy_from` does.
     pub fn snapshot(&self) -> Self {
-        let mut row = Self::default();
+        let mut row = Self {
+            name: String::new(),
+            world: None,
+            phase: Phase::Offline,
+            queue: None,
+            retrying: false,
+            connected: false,
+            script: RunState::Idle,
+            walking: false,
+            error: None,
+            last_op: None,
+            brief: String::new(),
+        };
         row.copy_from(self);
         row
     }
@@ -317,7 +329,10 @@ impl FleetRow {
 
     /// An unprojected row for `name` (offline, no host facts yet).
     pub fn for_profile(name: impl Into<String>) -> Self {
-        Self::named(&name.into())
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
     }
 
     /// Profile / slot name.
@@ -374,28 +389,6 @@ impl FleetRow {
     /// Narrow status label (`queued 2/5`, `logging in`, `running`, `idle`, …).
     pub fn brief(&self) -> &str {
         &self.brief
-    }
-
-    /// Set this row's lifecycle phase (test and UI fixtures).
-    pub fn set_phase(&mut self, phase: Phase) {
-        self.phase = phase;
-        self.write_brief();
-    }
-
-    /// Set this row's script run state (test and UI fixtures).
-    pub fn set_script(&mut self, script: RunState) {
-        self.script = script;
-        self.write_brief();
-    }
-
-    /// Set the retained lifetime error (test fixtures).
-    pub fn set_error(&mut self, error: Option<String>) {
-        self.error = error;
-    }
-
-    /// Set the newest operation brief (test fixtures).
-    pub fn set_last_op(&mut self, last_op: Option<OpBrief>) {
-        self.last_op = last_op;
     }
 
     /// A script is running or a walk is queued.
@@ -490,6 +483,28 @@ impl FleetRow {
         row.write_brief();
         row
     }
+
+    /// Set this row's lifecycle phase (test fixtures).
+    pub fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.write_brief();
+    }
+
+    /// Set this row's script run state (test fixtures).
+    pub fn set_script(&mut self, script: RunState) {
+        self.script = script;
+        self.write_brief();
+    }
+
+    /// Set the retained lifetime error (test fixtures).
+    pub fn set_error(&mut self, error: Option<String>) {
+        self.error = error;
+    }
+
+    /// Set the newest operation brief (test fixtures).
+    pub fn set_last_op(&mut self, last_op: Option<OpBrief>) {
+        self.last_op = last_op;
+    }
 }
 
 /// Fleet totals for a header line.
@@ -572,46 +587,6 @@ impl SlotDetail {
         &self.row
     }
 
-    /// Mutable fleet row, for test and UI fixtures.
-    pub fn row_mut(&mut self) -> &mut FleetRow {
-        &mut self.row
-    }
-
-    /// Set the phase status line (test and UI fixtures).
-    pub fn set_state(&mut self, state: impl Into<String>) {
-        self.state = state.into();
-    }
-
-    /// Set the open main modal interface (test and UI fixtures).
-    pub fn set_modal(&mut self, modal: i32) {
-        self.modal = modal;
-    }
-
-    /// Replace the projected fleet row (test fixtures).
-    pub fn set_row(&mut self, row: FleetRow) {
-        self.row = row;
-    }
-
-    /// Set the published tile (test fixtures).
-    pub fn set_tile(&mut self, tile: (i32, i32, i32)) {
-        self.tile = tile;
-    }
-
-    /// Set the ready-tile (test fixtures).
-    pub fn set_ready_tile(&mut self, tile: Option<(i32, i32, i32)>) {
-        self.ready_tile = tile;
-    }
-
-    /// Set the local-player name (test fixtures).
-    pub fn set_player(&mut self, player: impl Into<String>) {
-        self.player = player.into();
-    }
-
-    /// Set the retained manual WalkTo reason (test fixtures).
-    pub fn set_manual_walk_risk(&mut self, reason: Option<Arc<str>>) {
-        self.manual_walk_risk = reason;
-    }
-
     /// One status line for the phase.
     pub fn state(&self) -> &str {
         &self.state
@@ -668,16 +643,54 @@ impl SlotDetail {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl SlotDetail {
+    /// Mutable fleet row, for test fixtures.
+    pub fn row_mut(&mut self) -> &mut FleetRow {
+        &mut self.row
+    }
+
+    /// Set the phase status line (test fixtures).
+    pub fn set_state(&mut self, state: impl Into<String>) {
+        self.state = state.into();
+    }
+
+    /// Set the open main modal interface (test fixtures).
+    pub fn set_modal(&mut self, modal: i32) {
+        self.modal = modal;
+    }
+
+    /// Replace the projected fleet row (test fixtures).
+    pub fn set_row(&mut self, row: FleetRow) {
+        self.row = row;
+    }
+
+    /// Set the published tile (test fixtures).
+    pub fn set_tile(&mut self, tile: (i32, i32, i32)) {
+        self.tile = tile;
+    }
+
+    /// Set the ready-tile (test fixtures).
+    pub fn set_ready_tile(&mut self, tile: Option<(i32, i32, i32)>) {
+        self.ready_tile = tile;
+    }
+
+    /// Set the local-player name (test fixtures).
+    pub fn set_player(&mut self, player: impl Into<String>) {
+        self.player = player.into();
+    }
+
+    /// Set the retained manual WalkTo reason (test fixtures).
+    pub fn set_manual_walk_risk(&mut self, reason: Option<Arc<str>>) {
+        self.manual_walk_risk = reason;
+    }
+}
+
 impl SlotDetail {
     /// The retained native status of the focused slot; `None` for a slot
     /// that runs no native script.
     pub fn native_status(&self) -> Option<&script::native::ScriptStatus> {
         self.native_status.as_deref()
-    }
-
-    /// Shared native status handle, when a native script is retained.
-    pub fn native_status_arc(&self) -> Option<Arc<script::native::ScriptStatus>> {
-        self.native_status.clone()
     }
 
     /// Replaces the retained native status. The poll sets it; fixtures use

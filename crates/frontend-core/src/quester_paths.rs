@@ -46,22 +46,14 @@ impl QuesterPathsView {
         &self.folder
     }
 
-    /// Edit the configured Path folder.
-    pub fn folder_mut(&mut self) -> &mut PathBuf {
-        &mut self.folder
-    }
-
     /// Replace the configured Path folder.
     pub fn set_folder(&mut self, folder: PathBuf) {
         self.folder = folder;
     }
 
-    /// A second owner of this view. Not [`Clone`].
-    pub fn duplicate(&self) -> Self {
-        Self {
-            enabled: self.enabled,
-            folder: self.folder.clone(),
-        }
+    /// A Path-folder view for a form draft or a persist.
+    pub fn new(enabled: bool, folder: PathBuf) -> Self {
+        Self { enabled, folder }
     }
 
     /// Read the host-wide settings object without touching any Path files.
@@ -218,16 +210,16 @@ impl QuesterPathsController {
     pub fn apply_changed_at(
         &mut self,
         prefs_path: &Path,
-        after: QuesterPathsView,
+        after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
     ) -> Result<(), String> {
-        if after == self.settings {
+        if after == &self.settings {
             return Ok(());
         }
         if persist {
             if let Err(error) =
-                QuesterPathsView::persist_changed_at(prefs_path, &self.settings, &after)
+                QuesterPathsView::persist_changed_at(prefs_path, &self.settings, after)
             {
                 let message = format!("Quest Paths settings were not saved: {error}");
                 self.set_notice(Err(Arc::from(message.clone())));
@@ -235,7 +227,8 @@ impl QuesterPathsController {
             }
         }
 
-        self.settings = after;
+        self.settings.enabled = after.enabled;
+        self.settings.folder.clone_from(&after.folder);
         self.settings.apply();
         self.reload_when_ready = true;
         if selected.is_none() {

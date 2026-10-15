@@ -2,7 +2,7 @@
 //! running on the panel-owned window loop in `crate::window`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
@@ -2336,14 +2336,13 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None => kv_row(ui, "status", status),
         }
     }
-    let walk_risk = session
+    if let Some(reason) = session
         .core
         .fleet_view()
         .detail()
         .and_then(|detail| detail.walk_risk())
-        .map(str::to_owned);
-    if let Some(reason) = walk_risk {
-        kv_row(ui, "Walk risk", &reason);
+    {
+        kv_row(ui, "Walk risk", reason);
     }
 }
 
@@ -3771,15 +3770,15 @@ fn restart_settings_popup(ui: &Ui, session: &mut Session) {
         ui.open_popup(RESTART_SETTINGS_POPUP);
     }
     ui.modal_popup(RESTART_SETTINGS_POPUP, || {
-        let Some(prompt) = session
+        let Some(summary) = session
             .scripts
             .pending_restart_prompt()
-            .map(|p| p.duplicate())
+            .map(|prompt| prompt.summary())
         else {
             ui.close_current_popup();
             return;
         };
-        ui.text_wrapped(prompt.summary());
+        ui.text_wrapped(&summary);
         if ui.button("Restart##script-settings") {
             session.restart_pending_settings();
             ui.close_current_popup();
@@ -3843,8 +3842,6 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     ui.separator();
     ui.text_colored(ACCENT, frontend_core::QUEST_PATHS_HEADING);
     ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-    let before_paths = session.quester_paths.settings().duplicate();
-    let mut after_paths = before_paths.duplicate();
     let mut paths_changed = false;
     let path_reload_running = session.quester_paths.is_running();
     let _path_controls_disabled = if path_reload_running {
@@ -3852,9 +3849,8 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     } else {
         None
     };
-    let mut enabled = after_paths.enabled();
+    let mut enabled = session.quester_paths.settings().enabled();
     if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
-        after_paths.set_enabled(enabled);
         paths_changed = true;
     }
     ui.text("Folder");
@@ -3865,8 +3861,8 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     )
     .build();
     if ui.is_item_deactivated_after_edit() {
-        after_paths.set_folder(PathBuf::from(session.quester_paths_folder_edit.clone()));
-        paths_changed |= after_paths.folder() != before_paths.folder();
+        paths_changed |= Path::new(&session.quester_paths_folder_edit)
+            != session.quester_paths.settings().folder();
     }
     drop(_path_controls_disabled);
 
@@ -3879,7 +3875,11 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
     }
     if paths_changed {
-        let _ = session.persist_quester_paths(after_paths);
+        let after = frontend_core::QuesterPathsView::new(
+            enabled,
+            PathBuf::from(session.quester_paths_folder_edit.as_str()),
+        );
+        let _ = session.persist_quester_paths(after);
     } else if reload_requested {
         session.start_quester_paths_reload();
     }

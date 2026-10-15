@@ -254,7 +254,9 @@ fn group_walk_reports_blocking_zone_names_for_each_failed_marked_bot() {
     let failures: Vec<_> = report
         .rows()
         .iter()
-        .filter(|row| row.outcome().reason() == Some("walk risk refused"))
+        .filter(|row| {
+            row.outcome().is_failed() && row.outcome().reason() == Some("walk risk refused")
+        })
         .collect();
     assert_eq!(failures.len(), 2);
     for row in failures {

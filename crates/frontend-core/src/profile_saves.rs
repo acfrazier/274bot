@@ -133,6 +133,11 @@ impl SaveRecord {
         &self.destination
     }
 
+    /// Take the written profile name.
+    pub fn into_destination(self) -> String {
+        self.destination
+    }
+
     /// The draft the write carries, as submitted.
     pub fn draft(&self) -> &Profile {
         &self.draft

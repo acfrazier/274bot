@@ -506,6 +506,7 @@ pub struct Scripts {
     start_failures: Vec<(String, String)>,
     /// Test-only: fail the replacement Start for this profile after it
     /// passed eligibility and was stopped.
+    #[cfg(any(test, feature = "test-support"))]
     fail_reload_start_for: Option<String>,
 }
 
@@ -532,6 +533,7 @@ impl Scripts {
             notice: None,
             shown: None,
             start_failures: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
             fail_reload_start_for: None,
         }
     }
@@ -577,22 +579,13 @@ impl Scripts {
         &mut self.legacy
     }
 
-    /// Scenario/live inject merged last on Start.
-    pub fn inject(&self) -> Option<&Map<String, Value>> {
-        self.inject.as_ref()
-    }
-
     /// Set the scenario/live inject bag.
     pub fn set_inject(&mut self, inject: Option<Map<String, Value>>) {
         self.inject = inject;
     }
 
     /// Fail the replacement Start for this profile (tests).
-    pub fn fail_reload_start_for(&self) -> Option<&str> {
-        self.fail_reload_start_for.as_deref()
-    }
-
-    /// Fail the replacement Start for this profile (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_fail_reload_start_for(&mut self, profile: Option<String>) {
         self.fail_reload_start_for = profile;
     }

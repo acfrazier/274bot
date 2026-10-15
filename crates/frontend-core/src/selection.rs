@@ -129,13 +129,6 @@ impl MarkedSelection {
     pub fn iter(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
         self.marks.iter().copied()
     }
-
-    /// A second owner of this selection. Not [`Clone`].
-    pub fn duplicate(&self) -> Self {
-        Self {
-            marks: self.marks.clone(),
-        }
-    }
 }
 
 /// One marked row that could not accept a bulk command.
@@ -161,14 +154,6 @@ impl BulkSkip {
     /// Why it was skipped.
     pub fn reason(&self) -> &str {
         &self.reason
-    }
-
-    /// A second owner of this skip. Not [`Clone`].
-    pub fn duplicate(&self) -> Self {
-        Self {
-            profile: self.profile.clone(),
-            reason: self.reason.clone(),
-        }
     }
 }
 

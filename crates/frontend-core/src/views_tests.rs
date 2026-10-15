@@ -1010,7 +1010,10 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
     );
     let mut copy = SlotDetail::default();
     copy.copy_from(detail(&session));
-    assert_eq!(copy.manual_walk_risk(), Some(assessment.reason.as_ref()));
+    assert!(Arc::ptr_eq(
+        copy.manual_walk_risk.as_ref().unwrap(),
+        &assessment.reason
+    ));
     session.select("vr-bob");
     session.poll();
     assert!(detail(&session).manual_walk_risk().is_none());

@@ -278,11 +278,6 @@ impl LogFilter {
         &self.text
     }
 
-    /// Edit the search text.
-    pub fn text_mut(&mut self) -> &mut String {
-        &mut self.text
-    }
-
     /// Replace the search text.
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
