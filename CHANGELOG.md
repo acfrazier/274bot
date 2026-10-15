@@ -42,14 +42,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - If `loadouts.json` already has loadouts that share a name, 274bot renames
   them apart when it reads the file: the second becomes "<name> (2)", the
   third "<name> (3)", and so on, skipping a name another loadout already
-  has. Every loadout keeps its gear and its place in the list. Before
-  anything changes, the file is copied exactly as it was to
-  `loadouts.json.duplicates-<time>`, and the log shows a warning and an
-  audit line naming the copy and each renamed loadout. Before, editing,
-  renaming or removing one of those loadouts could change or remove another
-  one of the same name. If the copy or the save fails, or the file also
-  holds a loadout row this version can't write back, the file is left as it
-  was and treated as one 274bot can't read until it can be renamed.
+  has (a very long name is shortened to make room). Every loadout keeps its
+  gear and its place in the list. Before anything changes, the file is
+  copied exactly as it was to `loadouts.json.duplicates-<time>`, and the log
+  shows a warning and an audit line naming the copy and each renamed
+  loadout. Before, editing, renaming or removing one of those loadouts could
+  change or remove another one of the same name. If the copy fails, the save
+  fails before the file is replaced, or the file also holds a loadout row
+  this version can't write back, the file is left as it was and treated as
+  one 274bot can't read until it can be renamed. If the file was replaced
+  but 274bot couldn't confirm it reached the disk, the log warns that the
+  renames aren't saved for certain yet, and the renamed loadouts are used.
 - Renaming a loadout saves it in one step, in its place in the list, and
   never loses it. If the save fails before the file is replaced, the
   loadout stays saved under its old name. If the file was replaced but

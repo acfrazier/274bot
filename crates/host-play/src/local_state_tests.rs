@@ -2862,6 +2862,52 @@ fn rows_sharing_a_name_get_the_next_free_suffix_in_row_order() {
     );
 }
 
+/// T5.2 r5 review (R5-F1): a renamed-apart row stays addressable. Remove and
+/// Rename refuse a trimmed name over `MAX_PREF_KEY_CHARS` bytes, so the new
+/// name is shortened (on a character boundary) to fit, for names at the
+/// bound in one-byte and multi-byte text and with leading spaces, and the
+/// shortened names still come out distinct from each other and from rows
+/// already named that way.
+#[test]
+fn names_made_apart_stay_within_the_remove_and_rename_bound() {
+    let max = api::local_state::MAX_PREF_KEY_CHARS;
+    let ascii = "a".repeat(max);
+    let accented = "é".repeat(max / 2);
+    let spaced = format!("  {}", "b".repeat(max));
+    let taken = files::new_name_apart(&ascii, 2);
+    let gear = |name: &str, coins: u32| Loadout::new(name).with_carry("Coins", coins);
+    let rows = vec![
+        gear(&ascii, 1),
+        gear(&ascii, 2),
+        gear(&ascii, 3),
+        gear(&taken, 4),
+        gear(&accented, 5),
+        gear(&accented, 6),
+        gear(&spaced, 7),
+        gear(&spaced, 8),
+    ];
+    let mut apart = rows.clone();
+    let made = files::rename_apart(&mut apart);
+    assert_eq!(made.len(), 4, "the second and third of each name: {made:?}");
+    for change in &made {
+        let trimmed = change.to.trim();
+        assert!(
+            trimmed.len() <= max,
+            "{:?} is {} bytes trimmed",
+            change.to,
+            trimmed.len()
+        );
+        assert!(!trimmed.is_empty());
+    }
+    let mut names: Vec<&str> = apart.iter().map(|row| row.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), rows.len(), "every row has its own name");
+    for (before, after) in rows.iter().zip(&apart) {
+        assert_eq!(before.carry, after.carry, "each row keeps its gear");
+    }
+}
+
 /// T5.2 r5 (F1): rows another writer leaves sharing a name while this
 /// service holds the file (an older build's form on the same home) are
 /// renamed apart by the next write's own read, under that write's lock,
