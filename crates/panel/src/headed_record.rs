@@ -705,8 +705,10 @@ mod tests {
             name: "walk".into(),
             tick: 7,
         };
+        // 32×128 carries exactly the armed 64×64 byte count: only the
+        // geometry check can refuse it.
         record.pump_frames(
-            vec![frame(64, 64, 1), frame(32, 64, 2), frame(64, 64, 3)],
+            vec![frame(64, 64, 1), frame(32, 128, 2), frame(64, 64, 3)],
             &step,
         );
         let mut short = frame(64, 64, 4);
