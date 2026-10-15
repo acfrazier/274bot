@@ -1,0 +1,1851 @@
+{
+  "schema_version": 1,
+  "source": "crates/script/src/native/abi.rs::HOOK_CHARACTERIZATIONS",
+  "rows": [
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "eatOnce",
+      "call_site": "Hunt eat decision; truthy fulfillment sets eatOk",
+      "path": "awaited",
+      "value": "used",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/combat/hunting/combat.ts:314; $S/hunt.rs:623"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "leave",
+      "call_site": "Hunt leave effect; fulfillment is compared with true",
+      "path": "awaited",
+      "value": "used",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/combat/hunting/supply.ts:542; $S/hunt.rs:700-702"
+    },
+    {
+      "families": [
+        "reach-entity-op"
+      ],
+      "member": "interact",
+      "call_site": "Reach entity operation; truthy fulfillment means dispatched",
+      "path": "awaited",
+      "value": "used",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:596-601"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "armSpecial",
+      "call_site": "Hunt arm-special effect",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/combat/hunting/combat.ts:402; $S/hunt.rs:624-629"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire",
+        "walk-resilient",
+        "reach-npc-dialog",
+        "walk-to",
+        "return-to-anchor",
+        "walk-hops"
+      ],
+      "member": "sustain",
+      "call_site": "Hunt and walk sustain pump",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Per reached call site; the Hunt fight stepper emits sustain at least once per tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/combat/hunting/combat.ts:635,675; $S/hunt.rs:627-629; $S/walk.rs:1592-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1036-1042"
+    },
+    {
+      "families": [
+        "bank_nearest",
+        "periodic_bank"
+      ],
+      "member": "afterDeposit",
+      "call_site": "BankNearest and PeriodicBank post-deposit continuation",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Banking.ts:296; $S/periodic_bank.rs:268-282,384-410,474-493"
+    },
+    {
+      "families": [
+        "death_recovery"
+      ],
+      "member": "walkBack",
+      "call_site": "DeathRecovery walk-back callback before validation",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/death_recovery.rs:200-205,244-256 (frozen result ignored at :255)"
+    },
+    {
+      "families": [
+        "bank_deposit"
+      ],
+      "member": "match",
+      "call_site": "Bank deposit matcher; `{}` is truthy, so the row is deposited",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+    },
+    {
+      "families": [
+        "bank_nearest",
+        "periodic_bank"
+      ],
+      "member": "deposit",
+      "call_site": "Bank matcher; `{}` is truthy, so the row is deposited",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+    },
+    {
+      "families": [
+        "bank_withdraw_to",
+        "bank_close_confirm"
+      ],
+      "member": "count",
+      "call_site": "Withdraw count; `{}` becomes NaN when used as a number",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/thieving/stealRules.ts:37-43; $S/bank_withdraw.rs:190-198,353-357"
+    },
+    {
+      "families": [
+        "shop"
+      ],
+      "member": "pick",
+      "call_site": "Shop matches.find(pick); `{}` is truthy, so the first row is taken",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/shop/Shop.ts:124; $S/shop.rs:217-221; crates/script/tests/shop.rs:468"
+    },
+    {
+      "families": [
+        "trade"
+      ],
+      "member": "pick",
+      "call_site": "Trade matches.find(pick); `{}` is truthy, so the first row is taken",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/Trade.ts:99,114; $S/trade.rs:407-411; crates/script/tests/trade.rs:777"
+    },
+    {
+      "families": [
+        "periodic_bank"
+      ],
+      "member": "destination",
+      "call_site": "PeriodicBank destination option; `{}` has no x and parses as absent",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524; $S/banking_open.rs:52-70"
+    },
+    {
+      "families": [
+        "periodic_bank"
+      ],
+      "member": "commonJunk",
+      "call_site": "PeriodicBank common-junk option; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/periodic_bank.rs:486-493,525-532"
+    },
+    {
+      "families": [
+        "periodic_bank"
+      ],
+      "member": "returnTo",
+      "call_site": "PeriodicBank return tile option; `{}` has no x and parses as absent",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/periodic_bank.rs:486-493,533-537"
+    },
+    {
+      "families": [
+        "reach-entity-op"
+      ],
+      "member": "expect",
+      "call_site": "Reach entity expected-state predicate; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/reach_entity.rs:478-483"
+    },
+    {
+      "families": [
+        "reach-entity-op"
+      ],
+      "member": "target",
+      "call_site": "Reach entity target closure; `{}` is not a tile",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/reach_entity.rs:478-483"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "productNamesToOffer",
+      "call_site": "Partner trade offer-name projection reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "inventoryMetric",
+      "call_site": "Partner trade inventory metric reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "myOfferReady",
+      "call_site": "Partner trade own-offer readiness predicate reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "theirProductMatch",
+      "call_site": "Partner trade incoming-product predicate reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "receiverCanAccept",
+      "call_site": "Partner trade receiver-capacity predicate reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "baseline",
+      "call_site": "Partner trade baseline projection reads `{}`",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "abort",
+      "call_site": "CakeStall abort predicate; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "shouldEat",
+      "call_site": "CakeStall eat predicate; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "lockedOutUntil",
+      "call_site": "CakeStall lockout deadline; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "periodic_bank"
+      ],
+      "member": "setStatus",
+      "call_site": "PeriodicBank status callback",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/periodic_bank.rs:474-493,512-517"
+    },
+    {
+      "families": [
+        "periodic_bank",
+        "banking_open",
+        "bank_access",
+        "bank_npc_access",
+        "bank_open_access",
+        "bank_deposit",
+        "dialog",
+        "reach-npc-dialog",
+        "reach-entity-op",
+        "walk-resilient",
+        "walk-opening",
+        "walk-to",
+        "return-to-anchor",
+        "walk-hops"
+      ],
+      "member": "log",
+      "call_site": "Synchronous family log notifications",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:352-353; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:479-483,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+    },
+    {
+      "families": [
+        "bank_nearest"
+      ],
+      "member": "log",
+      "call_site": "BankNearest synchronous log callback",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/periodic_bank.rs:380-410"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "setStatus",
+      "call_site": "Partner trade ordered notification queue",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "log",
+      "call_site": "Partner trade ordered notification queue",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "onMissingPartner",
+      "call_site": "Partner trade missing-partner notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "onComplete",
+      "call_site": "Partner trade completion notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+    },
+    {
+      "families": [
+        "partner-trade"
+      ],
+      "member": "onDecline",
+      "call_site": "Partner trade decline notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "setStatus",
+      "call_site": "CakeStall status notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "log",
+      "call_site": "CakeStall log notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "onSteal",
+      "call_site": "CakeStall steal notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "cake_stall"
+      ],
+      "member": "onReset",
+      "call_site": "CakeStall reset notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/cake_stall/runtime.rs:727-749"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "died",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "targetIdx",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "hpFraction",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "panicHp",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "retreatHp",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "hasFood",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "needEat",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "style",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "safespotIndex",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "buryBones",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "boneName",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "shieldReady",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "parked",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,152-222"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "leaveByWalk",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "foodName",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "foodWithdraw",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2163-2167"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "weaponName",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "ammoName",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "spellName",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,192-200"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "keepExtra",
+      "call_site": "Hunt state getter",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:50-88,152-222"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "inArea",
+      "call_site": "Hunt site-area predicate",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137; $S/hunt_fight.rs:2229-2243"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "cond",
+      "call_site": "Hunt wait-fed condition",
+      "path": "ask",
+      "value": "used",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/hunt/wait.rs:40-44"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "countKill",
+      "call_site": "Hunt count-kill progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$TS/api/combat/hunting/combat.ts:521-522; $S/hunt.rs:798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "countBurial",
+      "call_site": "Hunt burial progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "countBankTrip",
+      "call_site": "Hunt bank-trip progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "setSafespotIndex",
+      "call_site": "Hunt safespot progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "setTarget",
+      "call_site": "Hunt target progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "parkFor",
+      "call_site": "Hunt park progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "pickWeapon",
+      "call_site": "Hunt weapon-pick progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "setStatus",
+      "call_site": "Hunt status progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "vlog",
+      "call_site": "Hunt verbose-log progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,798-821"
+    },
+    {
+      "families": [
+        "hunt-fight",
+        "hunt-hold",
+        "hunt-retreat",
+        "hunt-walkspot",
+        "hunt-enter",
+        "hunt-leave",
+        "hunt-key",
+        "hunt-cell",
+        "hunt-bank",
+        "hunt-wait-fed",
+        "hunt-teleport-out",
+        "hunt-acquire"
+      ],
+      "member": "log",
+      "call_site": "Hunt log progress notification",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "hunt-notifications-before-decision",
+      "multiplicity": "per-queued-hunt-event",
+      "cadence": "Once per queued Hunt event; event notes are delivered in sequence before the decision.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 21,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/hunt.rs:50-88,798-821"
+    },
+    {
+      "families": [
+        "clue_duel_travel"
+      ],
+      "member": "log",
+      "call_site": "Duel travel log forwarding",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/duel.rs:174-178,1023"
+    },
+    {
+      "families": [
+        "clue_duel_handshake"
+      ],
+      "member": "log",
+      "call_site": "Duel handshake log forwarding through flush_logs",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/duel.rs:174-178,559"
+    },
+    {
+      "families": [
+        "clue_duel_helper"
+      ],
+      "member": "log",
+      "call_site": "Duel helper log forwarding through flush_logs",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$S/duel.rs:174-178,694"
+    },
+    {
+      "families": [
+        "clue"
+      ],
+      "member": "log",
+      "call_site": "Clue nested duel-travel log forwarding",
+      "path": "ask",
+      "value": "ignored",
+      "promise": "not-impl-failure",
+      "thrown": "ask-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 14,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:121,193,304"
+    },
+    {
+      "families": [
+        "clue"
+      ],
+      "member": "enabled",
+      "call_site": "Clue enabled decision callback",
+      "path": "awaited",
+      "value": "used",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 14,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:121,193,304"
+    },
+    {
+      "families": [
+        "clue"
+      ],
+      "member": "log",
+      "call_site": "Clue ordinary log callback (distinct from nested duel-travel forwarding)",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 14,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:121,193,304"
+    },
+    {
+      "families": [
+        "clue"
+      ],
+      "member": "setStatus",
+      "call_site": "Clue status callback",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site",
+      "cadence": "One callback invocation per reached call site; the same Promise is polled while pending.",
+      "frozen_path": {
+        "status": "existing-discrepancy",
+        "q5_row": 14,
+        "proposed_path": "call-sync",
+        "proposal_approved": false
+      },
+      "evidence": "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:121,193,304"
+    }
+  ]
+}

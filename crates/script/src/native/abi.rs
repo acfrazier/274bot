@@ -69,6 +69,26 @@ pub enum ThrowBehavior {
     AskFailsWithThrownValue,
 }
 
+/// Ordering of one callback relative to the row pass and sibling notifications.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HookOrder {
+    /// Poll an existing awaited Promise before stepping the row again.
+    AwaitedPollBeforeStep,
+    /// Invoke at the synchronous call site in the current row step.
+    SynchronousAtCallSite,
+    /// Deliver queued Hunt notifications in event order before the decision.
+    HuntNotificationsBeforeDecision,
+}
+
+/// Multiplicity of one callback within a row's current execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HookMultiplicity {
+    /// One invocation each time the machine reaches this call site.
+    PerReachedCallSite,
+    /// One invocation per queued notification; events are not coalesced.
+    PerQueuedHuntEvent,
+}
+
 /// Current versus frozen call form; proposals do not select a future path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrozenPathStatus {
@@ -111,6 +131,58 @@ impl HookCharacterization {
     /// Invocation axis.
     pub const fn path(&self) -> HookPath {
         self.path
+    }
+
+    /// Callback order in the current row pass.
+    pub fn order(&self) -> HookOrder {
+        if self.path == HookPath::Awaited {
+            HookOrder::AwaitedPollBeforeStep
+        } else if self.is_ordered_hunt_notification() {
+            HookOrder::HuntNotificationsBeforeDecision
+        } else {
+            HookOrder::SynchronousAtCallSite
+        }
+    }
+    /// Callback multiplicity in the current row pass.
+    pub fn multiplicity(&self) -> HookMultiplicity {
+        if self.is_ordered_hunt_notification() {
+            HookMultiplicity::PerQueuedHuntEvent
+        } else {
+            HookMultiplicity::PerReachedCallSite
+        }
+    }
+
+    /// Source-backed frequency statement for this member's current call sites.
+    pub fn cadence_note(&self) -> &'static str {
+        if self.is_ordered_hunt_notification() {
+            "Once per queued Hunt event; event notes are delivered in sequence before the decision."
+        } else if self.member == "sustain" {
+            "Per reached call site; the Hunt fight stepper emits sustain at least once per tick."
+        } else if self.path == HookPath::Awaited {
+            "One callback invocation per reached call site; the same Promise is polled while pending."
+        } else {
+            "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick."
+        }
+    }
+    fn is_ordered_hunt_notification(&self) -> bool {
+        self.path == HookPath::Ask
+            && self
+                .families
+                .iter()
+                .any(|family| family.starts_with("hunt-"))
+            && matches!(
+                self.member,
+                "countKill"
+                    | "countBurial"
+                    | "countBankTrip"
+                    | "setSafespotIndex"
+                    | "setTarget"
+                    | "parkFor"
+                    | "pickWeapon"
+                    | "setStatus"
+                    | "vlog"
+                    | "log"
+            )
     }
     /// Fulfilled-value axis.
     pub const fn value(&self) -> HookValue {
@@ -938,3 +1010,125 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:121,193,304",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FrozenPathStatus, HookCharacterization, HookMultiplicity, HookOrder, HookPath, HookValue,
+        PromiseBehavior, ThrowBehavior, HOOK_CHARACTERIZATIONS,
+    };
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
+
+    fn path_name(path: HookPath) -> &'static str {
+        match path {
+            HookPath::Awaited => "awaited",
+            HookPath::CallSync => "call-sync",
+            HookPath::Ask => "ask",
+        }
+    }
+
+    fn value_name(value: HookValue) -> &'static str {
+        match value {
+            HookValue::Used => "used",
+            HookValue::Ignored => "ignored",
+        }
+    }
+
+    fn order_name(order: HookOrder) -> &'static str {
+        match order {
+            HookOrder::AwaitedPollBeforeStep => "awaited-poll-before-step",
+            HookOrder::SynchronousAtCallSite => "synchronous-at-call-site",
+            HookOrder::HuntNotificationsBeforeDecision => "hunt-notifications-before-decision",
+        }
+    }
+
+    fn multiplicity_name(multiplicity: HookMultiplicity) -> &'static str {
+        match multiplicity {
+            HookMultiplicity::PerReachedCallSite => "per-reached-call-site",
+            HookMultiplicity::PerQueuedHuntEvent => "per-queued-hunt-event",
+        }
+    }
+
+    fn promise_name(promise: PromiseBehavior) -> &'static str {
+        match promise {
+            PromiseBehavior::PolledSamePromise => "polled-same-promise",
+            PromiseBehavior::OpaqueEmptyObject => "opaque-empty-object",
+            PromiseBehavior::NotImplementedFailure => "not-impl-failure",
+        }
+    }
+
+    fn thrown_name(thrown: ThrowBehavior) -> &'static str {
+        match thrown {
+            ThrowBehavior::FamilyFailsWithThrownValue => "family-fails-with-thrown-value",
+            ThrowBehavior::AskFailsWithThrownValue => "ask-fails-with-thrown-value",
+        }
+    }
+
+    fn frozen_path_value(row: &HookCharacterization) -> Value {
+        match row.frozen_path() {
+            FrozenPathStatus::MatchesFrozenCallForm => {
+                json!({ "status": "matches-frozen-call-form" })
+            }
+            FrozenPathStatus::ExistingDiscrepancy {
+                q5_row,
+                proposed_path,
+                proposal_approved,
+            } => json!({
+                "status": "existing-discrepancy",
+                "q5_row": q5_row,
+                "proposed_path": path_name(proposed_path),
+                "proposal_approved": proposal_approved,
+            }),
+        }
+    }
+
+    fn callback_snapshot() -> String {
+        let rows = HOOK_CHARACTERIZATIONS
+            .iter()
+            .map(|row| {
+                json!({
+                    "families": row.families(),
+                    "member": row.member(),
+                    "call_site": row.call_site(),
+                    "path": path_name(row.path()),
+                    "value": value_name(row.value()),
+                    "promise": promise_name(row.promise()),
+                    "thrown": thrown_name(row.thrown()),
+                    "order": order_name(row.order()),
+                    "multiplicity": multiplicity_name(row.multiplicity()),
+                    "cadence": row.cadence_note(),
+                    "frozen_path": frozen_path_value(row),
+                    "evidence": row.evidence(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut output = serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "source": "crates/script/src/native/abi.rs::HOOK_CHARACTERIZATIONS",
+            "rows": rows,
+        }))
+        .expect("serialize callback ABI census");
+        output.push('\n');
+        output
+    }
+
+    #[test]
+    fn callback_snapshot_matches_native_census() {
+        assert_eq!(
+            callback_snapshot(),
+            include_str!("../../compat-js/abi-callbacks.json"),
+            "Regenerate with: cargo test -p script --lib regenerate_callback_snapshot -- --ignored"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn regenerate_callback_snapshot() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("compat-js")
+            .join("abi-callbacks.json");
+        std::fs::write(&path, callback_snapshot())
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    }
+}

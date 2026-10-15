@@ -1,0 +1,1015 @@
+{
+  "schema_version": 1,
+  "endpoint": "T2.1",
+  "frozen_revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "base_predecessors": [
+    "F0",
+    "T1.3",
+    "T2.1"
+  ],
+  "families": [
+    {
+      "family_id": "acquisition",
+      "nav_consuming": false,
+      "activation_unit": "I-family(acquisition)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 69,
+        "members": 63,
+        "overloads": 0,
+        "aliases": 5,
+        "callbacks": 0,
+        "type_aliases": 5,
+        "name_aliases": 0,
+        "not_impl_debt": 33
+      }
+    },
+    {
+      "family_id": "bank",
+      "nav_consuming": false,
+      "activation_unit": "I-family(bank)",
+      "activation_endpoint": "T2.3",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.2"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T2.2"
+      ],
+      "counts": {
+        "declarations": 27,
+        "members": 49,
+        "overloads": 0,
+        "aliases": 3,
+        "callbacks": 18,
+        "type_aliases": 3,
+        "name_aliases": 0,
+        "not_impl_debt": 11
+      }
+    },
+    {
+      "family_id": "bot",
+      "nav_consuming": false,
+      "activation_unit": "I-family(bot)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 17,
+        "members": 57,
+        "overloads": 0,
+        "aliases": 4,
+        "callbacks": 0,
+        "type_aliases": 4,
+        "name_aliases": 0,
+        "not_impl_debt": 10
+      }
+    },
+    {
+      "family_id": "chatbox",
+      "nav_consuming": false,
+      "activation_unit": "I-family(chatbox)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 4
+      }
+    },
+    {
+      "family_id": "client-adapter",
+      "nav_consuming": false,
+      "activation_unit": "I-family(client-adapter)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 15
+      }
+    },
+    {
+      "family_id": "clues",
+      "nav_consuming": true,
+      "activation_unit": "I-family(clues)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 7,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 4
+      }
+    },
+    {
+      "family_id": "combat",
+      "nav_consuming": true,
+      "activation_unit": "I-family(combat)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 7,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "compat-runtime",
+      "nav_consuming": false,
+      "activation_unit": "I-family(compat-runtime)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "cooking",
+      "nav_consuming": false,
+      "activation_unit": "I-family(cooking)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "cow",
+      "nav_consuming": false,
+      "activation_unit": "I-family(cow)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 10,
+        "members": 3,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "dialogue",
+      "nav_consuming": false,
+      "activation_unit": "I-family(dialogue)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 15,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 1,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "duel",
+      "nav_consuming": true,
+      "activation_unit": "I-family(duel)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "entities",
+      "nav_consuming": false,
+      "activation_unit": "I-family(entities)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 11,
+        "members": 58,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 1,
+        "not_impl_debt": 2
+      }
+    },
+    {
+      "family_id": "events",
+      "nav_consuming": false,
+      "activation_unit": "I-family(events)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 3,
+        "members": 12,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 2
+      }
+    },
+    {
+      "family_id": "execution",
+      "nav_consuming": false,
+      "activation_unit": "I-family(execution)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 5,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "firemaking",
+      "nav_consuming": false,
+      "activation_unit": "I-family(firemaking)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "fishing",
+      "nav_consuming": false,
+      "activation_unit": "I-family(fishing)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 31,
+        "members": 13,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 1,
+        "name_aliases": 0,
+        "not_impl_debt": 25
+      }
+    },
+    {
+      "family_id": "game-state",
+      "nav_consuming": false,
+      "activation_unit": "I-family(game-state)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 4,
+        "members": 34,
+        "overloads": 1,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 1,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "gathering",
+      "nav_consuming": false,
+      "activation_unit": "I-family(gathering)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 8,
+        "members": 9,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 7
+      }
+    },
+    {
+      "family_id": "hunt",
+      "nav_consuming": true,
+      "activation_unit": "I-family(hunt)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 432,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 3
+      }
+    },
+    {
+      "family_id": "input",
+      "nav_consuming": false,
+      "activation_unit": "I-family(input)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 8
+      }
+    },
+    {
+      "family_id": "inventory",
+      "nav_consuming": false,
+      "activation_unit": "I-family(inventory)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 5,
+        "members": 29,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 2
+      }
+    },
+    {
+      "family_id": "loadouts",
+      "nav_consuming": false,
+      "activation_unit": "I-family(loadouts)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "market",
+      "nav_consuming": false,
+      "activation_unit": "I-family(market)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 4
+      }
+    },
+    {
+      "family_id": "mining",
+      "nav_consuming": false,
+      "activation_unit": "I-family(mining)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 11,
+        "members": 1,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 1,
+        "name_aliases": 0,
+        "not_impl_debt": 5
+      }
+    },
+    {
+      "family_id": "paint",
+      "nav_consuming": false,
+      "activation_unit": "I-family(paint)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 31
+      }
+    },
+    {
+      "family_id": "questlog",
+      "nav_consuming": false,
+      "activation_unit": "I-family(questlog)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 4,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "quests",
+      "nav_consuming": true,
+      "activation_unit": "I-family(quests)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 3
+      }
+    },
+    {
+      "family_id": "runecrafting",
+      "nav_consuming": false,
+      "activation_unit": "I-family(runecrafting)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 5,
+        "members": 5,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 1,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "runtime",
+      "nav_consuming": false,
+      "activation_unit": "I-family(runtime)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 5
+      }
+    },
+    {
+      "family_id": "shop",
+      "nav_consuming": false,
+      "activation_unit": "I-family(shop)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 8,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 1,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "skills",
+      "nav_consuming": false,
+      "activation_unit": "I-family(skills)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 5,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "tasks",
+      "nav_consuming": true,
+      "activation_unit": "I-family(tasks)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 1,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 2
+      }
+    },
+    {
+      "family_id": "thieving",
+      "nav_consuming": false,
+      "activation_unit": "I-family(thieving)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 4,
+        "members": 2,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 7,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
+      "family_id": "trade",
+      "nav_consuming": false,
+      "activation_unit": "I-family(trade)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 1,
+        "members": 12,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 12,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 1
+      }
+    },
+    {
+      "family_id": "walking",
+      "nav_consuming": true,
+      "activation_unit": "I-family(walking)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1",
+        "T5.1"
+      ],
+      "counts": {
+        "declarations": 10,
+        "members": 34,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 15,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 5
+      }
+    },
+    {
+      "family_id": "woodcutting",
+      "nav_consuming": false,
+      "activation_unit": "I-family(woodcutting)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 8,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 1,
+        "name_aliases": 0,
+        "not_impl_debt": 4
+      }
+    },
+    {
+      "family_id": "world-primitives",
+      "nav_consuming": false,
+      "activation_unit": "I-family(world-primitives)",
+      "activation_endpoint": "T2.rest",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 3,
+        "members": 16,
+        "overloads": 0,
+        "aliases": 1,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 1,
+        "not_impl_debt": 0
+      }
+    }
+  ]
+}
