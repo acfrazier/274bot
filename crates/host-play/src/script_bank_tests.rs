@@ -1909,3 +1909,123 @@ fn bank_open_only_withdraw_x_reads_the_resolved_label() {
     assert!(!open_only_withdraw_x(&actions, 4));
     assert!(!open_only_withdraw_x(&actions, -1));
 }
+
+fn teller(
+    index: usize,
+    name: &str,
+    x: i32,
+    z: i32,
+    level: i32,
+    distance: i32,
+) -> api::snapshot::NpcView {
+    let tile = WorldTile { x, z, level };
+    api::snapshot::NpcView {
+        index,
+        r#type: Some(1),
+        name: Some(name.into()),
+        actions: vec![Some("Bank".into())],
+        tile,
+        distance,
+        animation: 0,
+        animation_frame: 0,
+        pose_animation: 0,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x,
+        z,
+        yaw: 0,
+    }
+}
+
+/// Characterization (T2.2 r2): the host teller pick keys on
+/// `(d_stand, d_here, distance, index)` in that order, after the
+/// trimmed-name filter and the SAME_BANK-of-stand / 10-of-here gate
+/// (Chebyshev, +10_000 per plane mismatch).
+#[test]
+fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
+    let stand = WorldTile {
+        x: 100,
+        z: 100,
+        level: 0,
+    };
+    let here = Some((90, 100, 0));
+    let pick = |rows: &[api::snapshot::NpcView]| {
+        teller_pick(rows, here, stand, "Banker").map(|npc| npc.index)
+    };
+    // d_stand dominates the posted distance.
+    assert_eq!(
+        pick(&[
+            teller(11, "Banker", 103, 100, 0, 1),
+            teller(10, "Banker", 102, 100, 0, 7),
+        ]),
+        Some(10)
+    );
+    // A d_stand tie is decided by d_here, not the posted distance.
+    assert_eq!(
+        pick(&[
+            teller(10, "Banker", 102, 100, 0, 1),
+            teller(11, "Banker", 98, 100, 0, 9),
+        ]),
+        Some(11)
+    );
+    // A (d_stand, d_here) tie is decided by distance, then index.
+    // (102, 95) and (102, 105) are both Chebyshev 5 from the stand and
+    // 12 from here.
+    assert_eq!(
+        pick(&[
+            teller(10, "Banker", 102, 95, 0, 8),
+            teller(11, "Banker", 102, 105, 0, 3),
+        ]),
+        Some(11)
+    );
+    assert_eq!(
+        pick(&[
+            teller(12, "Banker", 102, 95, 0, 3),
+            teller(10, "Banker", 102, 105, 0, 3),
+        ]),
+        Some(10)
+    );
+    // Name filter: trimmed and case-folded; a wrong name at the stand
+    // loses to the named teller farther away.
+    assert_eq!(
+        pick(&[
+            teller(10, "Trader", 100, 100, 0, 0),
+            teller(11, " banker ", 104, 100, 0, 5),
+        ]),
+        Some(11)
+    );
+    // Gate: beyond SAME_BANK of the stand and beyond 10 of here — and a
+    // plane mismatch prices a teller out entirely. Within 10 of here
+    // alone is enough.
+    assert_eq!(pick(&[teller(10, "Banker", 120, 100, 0, 1)]), None);
+    assert_eq!(pick(&[teller(10, "Banker", 100, 100, 1, 0)]), None);
+    assert_eq!(pick(&[teller(10, "Banker", 85, 100, 0, 4)]), Some(10));
+    // With no `here`, d_here is i32::MAX for every row and the stand
+    // distance alone decides among the gated rows.
+    assert_eq!(
+        teller_pick(
+            &[
+                teller(10, "Banker", 104, 100, 0, 1),
+                teller(11, "Banker", 101, 100, 0, 9),
+            ],
+            None,
+            stand,
+            "Banker",
+        )
+        .map(|npc| npc.index),
+        Some(11)
+    );
+}
