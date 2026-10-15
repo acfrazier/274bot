@@ -4,9 +4,11 @@
 //! card's error. A failed replacement keeps the working registration.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, Instant};
 
-use script::load::{JsLibrary, LoadStage};
-use script::{ApiFamily, ScriptSource};
+use script::load::{JsLibrary, LoadStage, PreparedCard};
+use script::{ApiFamily, LoadIsolate, ScriptSource};
 
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const GOOD_V2: &str = "export const apiVersion = 2;\nexport function tick(api) { api._n = 1; }\n";
@@ -73,6 +75,23 @@ fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
         ));
     }
     std::fs::write(scripts.join("index.ts"), index).unwrap();
+}
+
+/// Drive the same cancellable validation transaction that product reload
+/// uses, rather than bypassing its bounded admission with a synchronous card.
+fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), String>)> {
+    let batch = LoadIsolate::validate_prepared_batch(cards).unwrap();
+    let until = Instant::now() + Duration::from_secs(45);
+    loop {
+        match batch.try_recv() {
+            Ok(rows) => return rows,
+            Err(TryRecvError::Empty) => {
+                assert!(Instant::now() < until, "validation batch did not settle");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(TryRecvError::Disconnected) => panic!("validation coordinator disconnected"),
+        }
+    }
 }
 
 #[test]
@@ -166,7 +185,8 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
     let prepared = js
         .prepare_card_unvalidated(ScriptSource::File, &path.to_string_lossy())
         .unwrap();
-    let err = prepared.validate().unwrap_err();
+    let (prepared, result) = validate_cards(vec![prepared]).into_iter().next().unwrap();
+    let err = result.unwrap_err();
     js.record_prepared_failure(&prepared, &err);
     assert!(err.contains("runtime boom"), "{err}");
 
@@ -222,14 +242,20 @@ fn catalog_mixed_batch_retains_named_failures() {
 
     let diff = js.diff_catalog(&root).unwrap();
     assert!(diff.changed.iter().any(|n| n == "GoodBot"));
+    let candidates = diff
+        .changed
+        .iter()
+        .filter_map(|name| {
+            js.prepare_card_unvalidated(ScriptSource::Catalog, name)
+                .ok()
+        })
+        .collect();
     let mut prepared_ok = Vec::new();
-    for name in &diff.changed.clone() {
-        if let Ok(prepared) = js.prepare_card_unvalidated(ScriptSource::Catalog, name) {
-            if let Err(error) = prepared.validate() {
-                js.record_prepared_failure(&prepared, &error);
-            } else {
-                prepared_ok.push(prepared);
-            }
+    for (prepared, outcome) in validate_cards(candidates) {
+        if let Err(error) = outcome {
+            js.record_prepared_failure(&prepared, &error);
+        } else {
+            prepared_ok.push(prepared);
         }
     }
     assert_eq!(prepared_ok.len(), 1);

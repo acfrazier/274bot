@@ -25,7 +25,7 @@ use crate::ctx::ScriptCtx;
 #[cfg(feature = "load")]
 use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 #[cfg(feature = "load")]
-use crate::load::{LoadIsolate, LoadShape, Ready};
+use crate::load::{GameplayFactory, LoadIsolate, LoadShape, Ready};
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
@@ -557,7 +557,7 @@ impl SlotScript {
         if std::mem::take(&mut self.fail_spawn_for_test) {
             return Err("isolate thread: test-injected spawn failure".to_string());
         }
-        let isolate = LoadIsolate::spawn_with_content(
+        let isolate = GameplayFactory::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
             identity.siblings.iter().cloned().collect(),

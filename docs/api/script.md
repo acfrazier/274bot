@@ -160,12 +160,48 @@ value applies; omission is not proof of no requirement.
 
 | | Compiled (Browse our cards) | Load / catalog (operator file or `$RS2B0T`) |
 | --- | --- | --- |
-| When V8 exists | Never | Start of a **JS/TS** picker card only |
+| When V8 exists | Never | JS/TS Start or isolated catalog validation only |
 | Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
 | House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
+
+The process root calls `script::bootstrap_v8_platform()` on its main thread
+before creating any V8-using worker. A worker cannot bootstrap the protected
+platform after that point. One Tokio runtime bridges the per-bot isolate
+threads; one supervisor owns execution/hook deadlines and physical retirement.
+Dropping a Load handle does not release its process isolate reservation until
+the V8 thread exits. A bounded quarantine retains over-deadline threads; when
+all four credits are occupied, new JS is refused instead of silently detaching
+another worker. `script::load::isolate_capacity_status()` reports active
+isolate reservations, unjoined retiring gameplay and validation rows, credited
+quarantine (including validators), and uncredited raw-drop rows. Retiring rows
+remain charged to their original admission until joined or credited transfer;
+a quarantined validator retains its validation seat until actual join. The
+retirement log line `JS isolate quarantined after join deadline` means physical
+join did not occur by the setup (10 s when still starting) plus join (2 s)
+allowance, not that the isolate or permit has been freed. It is not a process
+shutdown; at saturation the JS Start/restart/validation refusal remains visible.
+The supervisor processes retirement outside its process registry lock and
+recovers poisoned isolate-local locks during cleanup: a failed isolate cannot
+poison the process registry or stop admissions for unrelated accounts.
+If the independent execution deadline supervisor is stopped or at capacity,
+the current execution is cut immediately and its tick error names the actual
+cause rather than labelling healthy work runaway. Pause normally allows
+already-entered healthy work to finish, except when no independent deadline
+could be registered; an unbounded execution is never allowed to continue.
+Catalog refresh validation uses one serialized process seat with a bounded
+16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
+is `LoadIsolate::validate_prepared_batch`, which returns an owning
+`ValidationBatch` receipt. When that queue is full, the refresh owner retains
+its one pending batch on the receipt and retries non-blockingly on later
+polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
+receipt cancels a held pending batch or skips an already-queued one. The
+current generation alone can apply the returned prepared cards.
+The former synchronous `validate_source`/`PreparedCard::validate` one-off
+helpers and their `Single` queue job are removed; tests and product use the
+same bounded batch/receipt path, so no one-off queue-full refusal remains.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and

@@ -778,8 +778,9 @@ impl JsLibrary {
     }
 
     /// Build a candidate without creating a V8 runtime. UI callers use this
-    /// finite disk/transpile phase, then move [`PreparedCard::validate`] to a
-    /// worker so hostile module evaluation never owns the UI thread.
+    /// finite disk/transpile phase, then submit the candidate through the
+    /// cancellable validation batch so hostile module evaluation never owns
+    /// the UI thread.
     pub fn prepare_card_unvalidated(
         &mut self,
         source: ScriptSource,
@@ -813,8 +814,8 @@ impl JsLibrary {
             Some(&prepared.card.origin),
             Some(prepared.card.api_family),
         );
-        // PreparedCard::validate is the typed runtime boundary; diagnostic
-        // wording does not decide whether this was a transpile failure.
+        // The validation batch result is the typed runtime boundary;
+        // diagnostic wording does not decide whether this was a transpile failure.
         failure.stage = LoadStage::RuntimeLoad;
         self.record_failure(failure);
     }
@@ -921,16 +922,6 @@ pub struct PreparedCard {
     pub card: JsCard,
     pub siblings: Vec<(String, String)>,
     pub fingerprint: String,
-}
-
-#[cfg(feature = "load")]
-impl PreparedCard {
-    /// Evaluate this candidate in a bounded throwaway isolate. Callers that
-    /// serve UI actions must run this method on a worker thread.
-    pub fn validate(&self) -> Result<(), String> {
-        crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
-            .map_err(|error| format!("prepare {}: {error}", self.card.name))
-    }
 }
 
 #[cfg(feature = "load")]

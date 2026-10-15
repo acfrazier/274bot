@@ -124,7 +124,10 @@ pub use watchdog::{
 };
 
 #[cfg(feature = "load")]
-pub use load::{bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready};
+pub use load::{
+    bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready, ValidationBatch,
+    ValidationError,
+};
 
 #[cfg(feature = "load")]
 mod anchor_return;
