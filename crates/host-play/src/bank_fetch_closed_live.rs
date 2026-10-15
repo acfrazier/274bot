@@ -378,9 +378,11 @@ fn unix_now() -> u64 {
 }
 
 fn hint_path(account: &str) -> PathBuf {
-    script::bot_file("bank-hints")
-        .join(PROFILE)
-        .join(format!("{account}.json"))
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is the test's throwaway home"));
+    let identity = api::local_state::AccountKey::try_new(PROFILE, account)
+        .expect("the selected live account is a login identity");
+    crate::local_state::StateRoot::new(home.join(".274bot"))
+        .bank_hint_file(PROFILE, identity.account())
 }
 
 fn hint_rows(path: &Path) -> Result<(String, Vec<(i32, i32)>), String> {
