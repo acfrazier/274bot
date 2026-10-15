@@ -14,7 +14,7 @@ use nav::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
 use nav::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
 use script::combat::request::{ActorKind, ActorRef};
-use script::combat::risk::LiveRow;
+use script::combat::risk::{KindRisk, LiveRow, UnknownKind};
 use std::num::NonZeroU16;
 use std::sync::{Arc, LazyLock};
 
@@ -91,9 +91,19 @@ fn fixture_world(
         .expect("valid synthetic zone table"),
     );
     let world = NavWorld::from_parts(collision, graph, Vec::new());
-    let risks = risk_tables(world.graph.zones.as_ref().unwrap(), &combat);
+    let risks = RiskTables::build(&combat);
     world.risk_facts(|| Some(Tables { combat, risks }));
     world
+}
+
+/// Script's facts for packed kind row `kind`, read as the host's witness
+/// check reads them.
+fn kind_facts(world: &NavWorld, kind: usize) -> KindRisk {
+    let kind = &world.graph.zones.as_ref().unwrap().kinds()[kind];
+    tables(world).unwrap().risks.facts(KindSource {
+        npc_id: (kind.npc_id != -1).then_some(kind.npc_id),
+        hazard_damage: nav::zones::curated::hazard_damage(kind.id.as_ref()),
+    })
 }
 
 fn zone(spawn_x: i32, kind: u16, group: Option<u16>) -> Zone {
@@ -483,12 +493,7 @@ fn u6_unknown_member_in_group_blocks_the_first_witness() {
 fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
     let unknown_world = unknown_corridor(5);
     let lethal_world = known_corridor(&[5]);
-    let lethal_hp = tables(&lethal_world)
-        .unwrap()
-        .risks
-        .kind(0)
-        .unwrap()
-        .max_hit;
+    let lethal_hp = kind_facts(&lethal_world, 0).max_hit;
     for (world, hp, expected_unknown) in [
         (unknown_world, 99, Some(UnknownWhy::MissingFacts)),
         (lethal_world, lethal_hp, None),
@@ -502,11 +507,11 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
         assert_eq!(keys, [ZoneKey::Zone(0)]);
         assert!(!witness_admissible(&world, &input, &keys));
         if let Some(why) = expected_unknown {
-            let kind = tables(&world).unwrap().risks.kind(0).unwrap();
+            let kind = kind_facts(&world, 0);
             assert!(kind.unknown_for(input.map_members).is_some());
             assert_eq!(why, UnknownWhy::MissingFacts);
         } else {
-            let max_hit = tables(&world).unwrap().risks.kind(0).unwrap().max_hit;
+            let max_hit = kind_facts(&world, 0).max_hit;
             assert_eq!(
                 hp, max_hit,
                 "the first witness is lethal at the HP boundary"
@@ -1005,8 +1010,8 @@ fn u7_refusal_mapping_preserves_typed_risk_refusals() {
         WalkRefusal::Unsurvivable
     );
     assert_eq!(
-        verdict_refusal(Verdict::Unknown(UnknownWhy::Kind(4))),
-        WalkRefusal::Unknown(UnknownWhy::Kind(4))
+        verdict_refusal(Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Magic))),
+        WalkRefusal::Unknown(UnknownWhy::Kind(UnknownKind::Magic))
     );
 }
 
@@ -1824,7 +1829,7 @@ fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
         Vec::new(),
         TransportGraph::default(),
     );
-    let r = i32::from(tables(&world).unwrap().risks.kind(0).unwrap().r);
+    let r = i32::from(kind_facts(&world, 0).r);
     let from = tile(spawn - r, 1);
     let to = tile(69, 1);
     let state = WorldState::default();

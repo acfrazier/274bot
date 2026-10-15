@@ -10,7 +10,7 @@ use nav::transport::TransportGraph;
 use nav::world::NavWorld;
 use nav::zones::{Zone, ZoneClass, ZoneExempt, ZoneKind, ZoneTable, NO_GROUP};
 use nav::WorldState;
-use script::combat::risk::{UnknownWhy, Verdict};
+use script::combat::risk::{RiskTables, UnknownWhy, Verdict};
 use script::combat::CombatTables;
 use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions, WalkRefusal};
 
@@ -423,8 +423,8 @@ fn find_through(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
 fn ice_r(world: &NavWorld) -> i32 {
     let combat =
         CombatTables::build(api::game_data::for_revision(ClientRevision::R289).unwrap()).unwrap();
-    let risks = admission::risk_tables(world.graph.zones.as_ref().unwrap(), &combat);
-    i32::from(risks.kind(0).unwrap().r)
+    let ice = world.graph.zones.as_ref().unwrap().kinds()[0].npc_id;
+    i32::from(RiskTables::build(&combat).npc(ice).unwrap().r)
 }
 
 /// R3 M-A (reviewer probe `fringe_origin_walk_into_acquisition_set_is_unjudged`):

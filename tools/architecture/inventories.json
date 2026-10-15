@@ -3806,24 +3806,13 @@
   ],
   "test_exceptions": [
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::producer::lease|exact_test_fixture_oracle_import",
-      "category": "test_import_exception",
-      "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::producer::lease",
-      "cfg_or_target": "cfg(test)::module:tests",
-      "owner": "T5",
-      "reason": "T5.1 risk fixture: the owner-boundary lease and borrowed route view over the synthetic test world (\u00a721 \u00a75.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",
-      "removal_endpoint": "T5.1",
-      "classification": "exact_test_fixture_oracle_import"
-    },
-    {
       "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::producer::route_view|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
       "symbol": "nav::producer::route_view",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
-      "reason": "T5.1 risk fixture: the owner-boundary lease and borrowed route view over the synthetic test world (\u00a721 \u00a75.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",
+      "reason": "T5.1 risk fixture: the frozen facade has no public constructor for a borrowed route view over a synthetic backend route, so the fixture serves its retained raw routes through the owner-boundary producer under its facade lease (\u00a721 \u00a75.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
