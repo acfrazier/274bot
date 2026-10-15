@@ -39,8 +39,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Gatherer and banking
+
+- A Gatherer that stalls on its return from the bank now replans once from
+  its current position before stopping. It still requires arrival at the
+  gathering site and reports routes that remain blocked.
+- Gatherer and Quester banking now check the current inventory and retry once
+  after a refused or ineffective deposit. Items already deposited are not
+  counted twice, and protected items remain protected. Both scripts report a
+  full bank, full item stack or unbankable item instead of a generic timeout.
+
 ### Saved state
 
+- A vault file that ends right after its header is now reported as a corrupt
+  vault file, not a wrong passphrase. A file damaged further in still reports
+  a wrong passphrase, because the encryption can't tell the two apart.
+- Vault error messages in the panel and the log no longer quote values from
+  the decrypted vault.
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
   read (a bank hint from another version or for another account, a file
   larger than its limit or writable by other users, or a damaged bank hint
@@ -144,6 +159,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the bots whose running script
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
+
+### Profiles
+
+- On Windows, giving the rs2b0t import a folder instead of the exported
+  file now says it is not a regular file, as on Linux and macOS, instead of
+  "cannot read …: Access is denied".
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
