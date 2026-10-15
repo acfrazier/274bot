@@ -541,8 +541,9 @@ pub(super) struct RenamedApart {
 /// the second row of a name becomes `<name> (2)`, the third `<name> (3)`,
 /// and so on, skipping a suffix another row (or an earlier rename) already
 /// has. The first row of each name keeps it; every row keeps its content
-/// and its place. The same rows always get the same names. The renames
-/// made, in row order.
+/// and its place. The same rows always get the same names. A new name stays
+/// within the bound Remove and Rename accept ([`new_name_apart`]), so every
+/// renamed row can still be edited. The renames made, in row order.
 pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
     let mut taken: HashSet<String> = rows.iter().map(|row| row.name.clone()).collect();
     let mut kept = HashSet::with_capacity(rows.len());
@@ -556,7 +557,7 @@ pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
         }
         let suffix = next.entry(loadout.name.clone()).or_insert(2);
         let name = loop {
-            let candidate = format!("{} ({suffix})", loadout.name);
+            let candidate = new_name_apart(&loadout.name, *suffix);
             *suffix += 1;
             if taken.insert(candidate.clone()) {
                 break candidate;
@@ -569,6 +570,21 @@ pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
         });
     }
     renamed
+}
+
+/// `<name> (<n>)`, with the name's text shortened (on a character boundary)
+/// when needed so the result, trimmed as Remove and Rename trim it, fits
+/// [`api::local_state::MAX_PREF_KEY_CHARS`] bytes.
+pub(super) fn new_name_apart(name: &str, n: u64) -> String {
+    let suffix = format!(" ({n})");
+    let body = name.trim_start();
+    let lead = &name[..name.len() - body.len()];
+    let room = api::local_state::MAX_PREF_KEY_CHARS.saturating_sub(suffix.len());
+    let mut end = body.len().min(room);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{lead}{}{suffix}", &body[..end])
 }
 
 /// The bytes of the preferences file at `path` when its content is
