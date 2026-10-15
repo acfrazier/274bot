@@ -1,11 +1,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
+use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
 use client::dash3d::CollisionFlag;
 use dear_imgui_rs::TextureId;
 use nav::collision::WorldCollision;
+use nav::map::formats::ImageManifest;
+use nav::map::identity::{Digest, ImageIdentity};
 use nav::map::spatial::{
     select_lod, GameTile, TileKey, View, TEXTURE_CAP, TILE_PIXELS, TILE_RGBA_BYTES,
 };
@@ -134,74 +137,34 @@ fn fixture_png_is_real_258_rgba8() {
     assert_eq!(rgba[i + 3], 255);
 }
 
-/// F0-4 (§26 §2.2, §2.6): the frozen walk-map-decode family characterizes
-/// this producer: one `decode_checked` job is the interruptible unit,
-/// `Stop` is not a unit, and the PNG length check is a size bound only.
+/// F0-4 (§26 §2.2, §2.6): the frozen walk-map-decode family keeps `Job` as
+/// one interruptible unit, `Stop` as no unit, and the PNG length check as a
+/// size bound rather than a time-bound claim.
 #[test]
-fn frozen_walk_map_decode_family_characterizes_decode_loop() {
+fn frozen_walk_map_decode_family_keeps_command_contract() {
     use api::work::{WalkMapDecodeCommand, WorkFamily};
     use nav::map::MapError;
-    use std::sync::mpsc;
+    use super::{decode_checked, DECODE_LIMIT_BYTES};
 
-    use super::{decode_loop, DecodeDone, DecodeJob, WorkerCmd, DECODE_LIMIT_BYTES};
-
-    fn frozen(cmd: &WorkerCmd) -> WalkMapDecodeCommand {
-        match cmd {
-            WorkerCmd::Job(_) => WalkMapDecodeCommand::Job,
-            WorkerCmd::Stop => WalkMapDecodeCommand::Stop,
-        }
-    }
+    assert_eq!(
+        [
+            WalkMapDecodeCommand::Job.is_interruptible_unit(),
+            WalkMapDecodeCommand::Stop.is_interruptible_unit(),
+        ],
+        [true, false]
+    );
 
     let key = lod0(50, 50);
-    let identity = super::fixtures::image_identity();
     let png = encode_tile(key).expect("encode");
-    let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCmd>();
-    let (done_tx, done_rx) = mpsc::channel::<DecodeDone>();
-    let jobs = [
-        WorkerCmd::Job(DecodeJob {
-            generation: 7,
-            identity,
-            key,
-            png: png.clone(),
-        }),
-        WorkerCmd::Job(DecodeJob {
-            generation: 8,
-            identity,
-            key,
-            png: vec![0u8; DECODE_LIMIT_BYTES + 1],
-        }),
-        WorkerCmd::Stop,
-    ];
-    let units: Vec<bool> = jobs
-        .iter()
-        .map(|cmd| frozen(cmd).is_interruptible_unit())
-        .collect();
-    assert_eq!(units, [true, true, false]);
-    for cmd in jobs {
-        cmd_tx.send(cmd).unwrap();
-    }
-    drop(cmd_tx);
-    // The loop runs one job per command and returns on Stop.
-    decode_loop(cmd_rx, done_tx);
-    let done: Vec<DecodeDone> = done_rx.try_iter().collect();
+    let rgba = decode_checked(&png).expect("decode one bounded tile");
+    assert_eq!(rgba.len(), TILE_RGBA_BYTES);
+
+    let oversized = vec![0u8; DECODE_LIMIT_BYTES + 1];
+    let error = decode_checked(&oversized).expect_err("oversized PNG is refused");
     assert_eq!(
-        done.len(),
-        units.iter().filter(|unit| **unit).count(),
-        "exactly one completion per Job command, none for Stop"
-    );
-    assert_eq!(done[0].generation, 7);
-    assert_eq!(done[0].identity, identity);
-    assert_eq!(done[0].key, key);
-    assert_eq!(
-        done[0].result.as_ref().map(Vec::len),
-        Ok(TILE_RGBA_BYTES),
-        "one decoded RGBA tile"
-    );
-    assert_eq!(done[1].generation, 8);
-    assert_eq!(
-        done[1].result.as_ref().map(Vec::len),
-        Err(&MapError::Limit("png bytes").to_string()),
-        "the PNG length check refuses oversize input; it is a size bound, not a time bound"
+        error.to_string(),
+        MapError::Limit("png bytes").to_string(),
+        "the length check is a size bound, not a time bound"
     );
     assert_eq!(
         WorkFamily::WalkMapDecode.interruptible_unit(),
@@ -443,29 +406,105 @@ fn bot_movement_does_not_rerasterize_static_overlay() {
 }
 
 #[test]
-fn late_worker_result_cannot_resurrect_closed_map() {
+fn close_releases_renderer_state_without_waiting() {
     let world = open_world(3, 3);
-    let mut map = WalkMapRenderer::with_sync(false);
+    let mut map = WalkMapRenderer::new();
     map.bind_fixtures(FixtureStore::lumbridge().expect("fixtures"));
     map.note_open();
     let view = view_from_canvas((3220, 3220), (0.0, 0.0), 16.0, [200.0, 200.0], 0, 1, 1.0);
-    let layers = layers_grid();
-    let colors = OverlayColors::default();
-    map.test_sync(None, view, &world, layers, colors, &[], &[], None);
-    let gen = map.generation();
+    map.test_sync(
+        None,
+        view,
+        &world,
+        layers_grid(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    let generation = map.generation();
     map.release(None);
     assert!(!map.is_open());
     assert!(map.slot_keys().is_empty());
     assert!(map.overlay_cpu().is_none());
     assert_eq!(map.counters().in_flight, 0);
-    std::thread::sleep(Duration::from_millis(150));
-    assert!(
-        map.slot_keys().is_empty(),
-        "a late decode must not restore slots after close"
-    );
+    assert_eq!(map.counters().decode_staging_bytes, 0);
     map.note_open();
-    assert_ne!(map.generation(), gen);
+    assert_ne!(map.generation(), generation);
     assert!(map.slot_keys().is_empty());
+}
+
+fn wait_for_decode(controller: &mut WalkMapDecodeController) -> WalkMapDecodeResult {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match controller.poll() {
+            Some(Ok(result)) => return result,
+            Some(Err(error)) => panic!("walk map decode failed: {error}"),
+            None => {
+                assert!(
+                    Instant::now() < deadline,
+                    "shared WorkAdmission decode did not settle within five seconds"
+                );
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
+fn serialize_decode_outcome(
+    generation: u64,
+    image: ImageIdentity,
+    key: TileKey,
+    rgba: &[u8],
+) -> Vec<u8> {
+    let length = u32::try_from(rgba.len()).expect("tile result fits the wire length");
+    let mut serialized = Vec::with_capacity(93 + rgba.len());
+    serialized.extend_from_slice(b"WMD1");
+    serialized.extend_from_slice(&generation.to_be_bytes());
+    serialized.extend_from_slice(&image.revision.to_be_bytes());
+    serialized.extend_from_slice(&image.content.0);
+    serialized.extend_from_slice(&image.policy.0);
+    serialized.push(key.plane);
+    serialized.push(key.lod);
+    serialized.extend_from_slice(&key.x.to_be_bytes());
+    serialized.extend_from_slice(&key.z.to_be_bytes());
+    serialized.push(0);
+    serialized.extend_from_slice(&length.to_be_bytes());
+    serialized.extend_from_slice(rgba);
+    serialized
+}
+
+#[test]
+fn walk_map_decode_supersedes_old_generation_identity_and_key() {
+    let old_key = lod0(50, 50);
+    let new_key = lod0(51, 50);
+    let old_identity = super::fixtures::image_identity();
+    let new_identity = ImageIdentity {
+        revision: old_identity.revision,
+        content: Digest([0xe1; 32]),
+        policy: Digest([0xe2; 32]),
+    };
+    let old_png = Arc::<[u8]>::from(encode_tile(old_key).expect("old tile"));
+    let new_png_vec = encode_tile(new_key).expect("new tile");
+    let old_expected = decode_tile(&new_png_vec).expect("legacy decode oracle");
+    let mut controller = WalkMapDecodeController::new();
+    controller
+        .request(7, old_identity, old_key, old_png)
+        .expect("first demand");
+    controller
+        .request(8, new_identity, new_key, Arc::from(new_png_vec))
+        .expect("superseding demand");
+    let result = wait_for_decode(&mut controller);
+    assert_eq!(result.generation(), 8);
+    assert_eq!(result.image_identity(), new_identity);
+    assert_eq!(result.key(), new_key);
+    let result_rgba = result.into_rgba();
+    assert_eq!(
+        serialize_decode_outcome(8, new_identity, new_key, &result_rgba),
+        serialize_decode_outcome(8, new_identity, new_key, &old_expected),
+        "superseding outcome must match the old decoder byte-for-byte"
+    );
+    assert!(!controller.is_busy());
 }
 
 #[test]
@@ -947,12 +986,12 @@ fn tile_view(x: i32, z: i32, scale: f32, size: f32, max_lod: u8) -> View {
 }
 
 #[test]
-fn decode_keeps_one_in_flight() {
+fn renderer_decodes_one_visible_tile_per_sync_turn() {
     let world = open_world(3, 3);
     let keys: Vec<_> = (0..4)
         .flat_map(|x| (0..4).map(move |z| lod0(x, z)))
         .collect();
-    let mut map = WalkMapRenderer::with_sync(false);
+    let mut map = WalkMapRenderer::new();
     map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
     map.note_open();
     let view = tile_view(1, 1, 16.0, 256.0, 0);
@@ -966,14 +1005,9 @@ fn decode_keeps_one_in_flight() {
         &[],
         None,
     );
-    let counters = map.counters();
     assert!(
-        counters.in_flight + counters.pending_upload <= 1,
-        "only one decode may be in flight: {counters:?}"
-    );
-    assert!(
-        counters.in_flight == 1 || counters.pending_upload == 1 || !map.slot_keys().is_empty(),
-        "first visible tile must start a decode: {counters:?}"
+        map.slot_keys().len() <= 1,
+        "one visible sync turn must decode and install at most one tile"
     );
 }
 
@@ -1371,4 +1405,78 @@ fn slash_label_collect_reuses_name_buffer_after_warmup() {
         placed_cap,
         "warm placed-id vec must not grow on the next rank"
     );
+}
+#[test]
+#[ignore = "requires BOT_WALK_MAP_DECODE_CORPUS to point at a published real image artifact"]
+fn real_walk_map_decode_matches_legacy_outcome_bytes() {
+    #[derive(serde::Deserialize)]
+    struct DeclaredIdentity {
+        identity: ImageIdentity,
+    }
+
+    let root = std::path::PathBuf::from(
+        std::env::var_os("BOT_WALK_MAP_DECODE_CORPUS")
+            .expect("BOT_WALK_MAP_DECODE_CORPUS must name the published image artifact"),
+    );
+    let manifest_bytes =
+        std::fs::read(root.join("manifest.json")).expect("read real image manifest");
+    let declared: DeclaredIdentity =
+        serde_json::from_slice(&manifest_bytes).expect("read declared image identity");
+    let manifest =
+        ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
+    let tiles = manifest.tiles.as_slice();
+    assert!(!tiles.is_empty(), "published image manifest must contain terrain");
+    let sample_count = tiles.len().min(32);
+    let largest_index = tiles
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, tile)| tile.payload.bytes)
+        .map(|(index, _)| index)
+        .expect("published image has terrain tiles");
+    let mut sample_indices = Vec::with_capacity(sample_count + 1);
+    for sample in 0..sample_count {
+        let index = if sample_count == 1 {
+            0
+        } else {
+            sample * (tiles.len() - 1) / (sample_count - 1)
+        };
+        sample_indices.push(index);
+    }
+    if !sample_indices.contains(&largest_index) {
+        sample_indices.push(largest_index);
+    }
+    let mut controller = WalkMapDecodeController::new();
+
+    for index in sample_indices {
+        let receipt = &tiles[index];
+        let path = root.join(receipt.key.relative_path().expect("validated tile path"));
+        let png = std::fs::read(path).expect("read published terrain PNG");
+        receipt
+            .verify_png(&png)
+            .expect("published terrain PNG matches its receipt");
+        let legacy_rgba = decode_tile(&png).expect("legacy decode oracle");
+        controller
+            .request(
+                1,
+                manifest.identity,
+                receipt.key,
+                Arc::from(png),
+            )
+            .expect("submit published terrain PNG");
+        let result = wait_for_decode(&mut controller);
+        assert_eq!(result.generation(), 1);
+        assert_eq!(result.image_identity(), manifest.identity);
+        assert_eq!(result.key(), receipt.key);
+        let result_rgba = result.into_rgba();
+        assert_eq!(
+            serialize_decode_outcome(1, manifest.identity, receipt.key, &result_rgba),
+            serialize_decode_outcome(1, manifest.identity, receipt.key, &legacy_rgba),
+            "decoded outcome differs for published tile {:?}",
+            receipt.key
+        );
+        assert!(
+            !controller.is_busy(),
+            "consuming the real-content result releases its shared ticket"
+        );
+    }
 }

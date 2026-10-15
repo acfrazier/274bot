@@ -2,6 +2,9 @@
 //!
 //! The [`MapDemandManager`] is created on first map open, never at boot.
 
+use api::work::{
+    Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,
+};
 use crate::map_cache::{
     MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
     MapProfileDescriptor, PreparedMapInput, ReadyCatalogue, ReadyImages, ReadyMap,
@@ -14,6 +17,7 @@ use crate::ServerProfile;
 use nav::map::formats::{ServicePois, ShippedImages, NAVPOIS_HEADER_BYTES};
 use nav::map::identity::Digest;
 use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -199,6 +203,222 @@ pub fn map_ready_images(
     handle: &MapDemandHandle,
 ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
     Ok(handle.ready()?.images)
+}
+
+/// Maximum compressed terrain bytes admitted to the shared walk-map decoder.
+pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
+/// WorkAdmission scratch reservation for png 0.18.1: its 512 KiB `Limits`
+/// budget plus bounded row/inflate buffers and fixed decoder state.
+pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 5 * 256 * 1024;
+const PNG_DECODER_LIMIT_BYTES: usize = 512 * 1024;
+
+/// Stable, allocation-free failures from the bounded walk-map PNG decoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkMapDecodeFailure {
+    Truncated,
+    PngHeader,
+    DimensionsOrFormat,
+    PngBytesLimit,
+    PngChunkLayout,
+    PngInfo,
+    PngOutputLimit,
+    PngOutputSize,
+    PngFrame,
+    PngFrameSize,
+    PngTrailing,
+    AlreadyRun,
+}
+
+impl std::fmt::Display for WalkMapDecodeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Truncated => "truncated map data",
+            Self::PngHeader => "invalid map PNG header",
+            Self::DimensionsOrFormat => "invalid map PNG dimensions/format",
+            Self::PngBytesLimit => "map limit exceeded: png bytes",
+            Self::PngChunkLayout => "map PNG is not in producer format",
+            Self::PngInfo => "invalid map png decode info",
+            Self::PngOutputLimit => "map limit exceeded: png output",
+            Self::PngOutputSize => "invalid map png output size",
+            Self::PngFrame => "invalid map png frame",
+            Self::PngFrameSize => "invalid map png frame size",
+            Self::PngTrailing => "invalid map PNG trailing chunks",
+            Self::AlreadyRun => "walk map decode job was already run",
+        })
+    }
+}
+
+impl std::error::Error for WalkMapDecodeFailure {}
+
+/// One bounded PNG decode on the process-wide WorkAdmission worker.
+pub struct WalkMapDecodeJob {
+    png: Option<Arc<[u8]>>,
+    decoded: Option<Result<Vec<u8>, WalkMapDecodeFailure>>,
+}
+
+impl WalkMapDecodeJob {
+    /// Transfer immutable cache bytes into the cooperative decode job.
+    pub fn new(png: Arc<[u8]>) -> Self {
+        Self {
+            png: Some(png),
+            decoded: None,
+        }
+    }
+
+    fn publish_decoded(
+        &mut self,
+        ctx: &mut StepContext<'_, WalkMapDecodePhase>,
+    ) -> StepOutcome<Vec<u8>, WalkMapDecodeFailure> {
+        let Some(decoded) = self.decoded.take() else {
+            return StepOutcome::Failed(WalkMapDecodeFailure::AlreadyRun);
+        };
+        ctx.publish_progress(WalkMapDecodePhase::Publish, 1, Some(1));
+        match ctx.checkpoint() {
+            Checkpoint::Continue => match decoded {
+                Ok(rgba) => StepOutcome::Completed(rgba),
+                Err(error) => StepOutcome::Failed(error),
+            },
+            Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                self.decoded = Some(decoded);
+                StepOutcome::Yielded
+            }
+        }
+    }
+}
+
+impl CooperativeJob for WalkMapDecodeJob {
+    type Output = Vec<u8>;
+    type Error = WalkMapDecodeFailure;
+    type Phase = WalkMapDecodePhase;
+
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, WalkMapDecodePhase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        match ctx.checkpoint() {
+            Checkpoint::Continue => {}
+            Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+        }
+        if self.decoded.is_some() {
+            return self.publish_decoded(ctx);
+        }
+        ctx.publish_progress(WalkMapDecodePhase::Receive, 0, Some(1));
+        match ctx.consume_unit() {
+            Checkpoint::Continue => {}
+            Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+        }
+        let Some(png) = self.png.take() else {
+            return StepOutcome::Failed(WalkMapDecodeFailure::AlreadyRun);
+        };
+        ctx.publish_progress(WalkMapDecodePhase::Decode, 0, Some(1));
+        self.decoded = Some(decode_walk_map_png(&png));
+        drop(png);
+        match ctx.checkpoint() {
+            Checkpoint::Continue => self.publish_decoded(ctx),
+            Checkpoint::Yield | Checkpoint::Cancel(_) => StepOutcome::Yielded,
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        let input_bytes = self.png.as_ref().map_or(0, |png| png.len());
+        let result_bytes = self
+            .decoded
+            .as_ref()
+            .and_then(|decoded| decoded.as_ref().ok())
+            .map_or(0, Vec::len);
+        RetainedState::clean(input_bytes + result_bytes + std::mem::size_of::<Self>())
+    }
+}
+
+fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
+    use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+
+    if bytes.len() < 33 {
+        return Err(WalkMapDecodeFailure::Truncated);
+    }
+    if &bytes[..8] != b"\x89PNG\r\n\x1a\n"
+        || bytes[8..12] != 13u32.to_be_bytes()
+        || &bytes[12..16] != b"IHDR"
+    {
+        return Err(WalkMapDecodeFailure::PngHeader);
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    if width != TILE_PIXELS || height != TILE_PIXELS || bytes[24..29] != [8, 6, 0, 0, 0] {
+        return Err(WalkMapDecodeFailure::DimensionsOrFormat);
+    }
+    if bytes.len() > WALK_MAP_DECODE_PNG_LIMIT {
+        return Err(WalkMapDecodeFailure::PngBytesLimit);
+    }
+    validate_producer_png_chunks(bytes)?;
+
+    // nav::map::raster::encode_png emits only an 8-bit RGBA IHDR, IDAT data,
+    // and IEND. Reject all ancillary chunks before png parses them: text may
+    // expand from Latin-1 and ICC is separately inflated, outside dimension
+    // bounds. No format conversion or metadata is silently accepted.
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_limits(png::Limits {
+        bytes: PNG_DECODER_LIMIT_BYTES,
+    });
+    let mut reader = decoder
+        .read_info()
+        .map_err(|_| WalkMapDecodeFailure::PngInfo)?;
+    let size = reader
+        .output_buffer_size()
+        .ok_or(WalkMapDecodeFailure::PngOutputLimit)?;
+    if size != TILE_RGBA_BYTES {
+        return Err(WalkMapDecodeFailure::PngOutputSize);
+    }
+    let mut rgba = vec![0u8; TILE_RGBA_BYTES];
+    let info = reader
+        .next_frame(&mut rgba)
+        .map_err(|_| WalkMapDecodeFailure::PngFrame)?;
+    if info.width != TILE_PIXELS
+        || info.height != TILE_PIXELS
+        || info.buffer_size() != TILE_RGBA_BYTES
+    {
+        return Err(WalkMapDecodeFailure::PngFrameSize);
+    }
+    reader
+        .finish()
+        .map_err(|_| WalkMapDecodeFailure::PngTrailing)?;
+    Ok(rgba)
+}
+
+/// Require the exact chunk grammar emitted by the native raster producer.
+/// The PNG library validates signatures, CRCs, and the compressed image stream.
+fn validate_producer_png_chunks(bytes: &[u8]) -> Result<(), WalkMapDecodeFailure> {
+    let mut offset = 8usize;
+    let mut saw_header = false;
+    let mut saw_data = false;
+    loop {
+        if bytes.len().saturating_sub(offset) < 8 {
+            return Err(WalkMapDecodeFailure::Truncated);
+        }
+        let length = u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]);
+        let payload_len =
+            usize::try_from(length).map_err(|_| WalkMapDecodeFailure::PngChunkLayout)?;
+        let chunk_end = offset
+            .checked_add(payload_len)
+            .and_then(|end| end.checked_add(12))
+            .ok_or(WalkMapDecodeFailure::PngChunkLayout)?;
+        if chunk_end > bytes.len() {
+            return Err(WalkMapDecodeFailure::Truncated);
+        }
+        let kind = &bytes[offset + 4..offset + 8];
+        match kind {
+            b"IHDR" if offset == 8 && !saw_header && length == 13 => saw_header = true,
+            b"IDAT" if saw_header => saw_data = true,
+            b"IEND" if saw_data && length == 0 && chunk_end == bytes.len() => return Ok(()),
+            _ => return Err(WalkMapDecodeFailure::PngChunkLayout),
+        }
+        offset = chunk_end;
+    }
 }
 
 /// Authenticated navpois next to the bound pack. Missing/stale/wrong-identity
