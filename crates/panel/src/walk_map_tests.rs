@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
-use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
 use client::dash3d::CollisionFlag;
 use dear_imgui_rs::TextureId;
+use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
 use nav::collision::WorldCollision;
 use nav::map::formats::ImageManifest;
 use nav::map::identity::{Digest, ImageIdentity};
@@ -142,9 +142,9 @@ fn fixture_png_is_real_258_rgba8() {
 /// size bound rather than a time-bound claim.
 #[test]
 fn frozen_walk_map_decode_family_keeps_command_contract() {
+    use super::{decode_checked, DECODE_LIMIT_BYTES};
     use api::work::{WalkMapDecodeCommand, WorkFamily};
     use nav::map::MapError;
-    use super::{decode_checked, DECODE_LIMIT_BYTES};
 
     assert_eq!(
         [
@@ -1425,7 +1425,10 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     let manifest =
         ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
     let tiles = manifest.tiles.as_slice();
-    assert!(!tiles.is_empty(), "published image manifest must contain terrain");
+    assert!(
+        !tiles.is_empty(),
+        "published image manifest must contain terrain"
+    );
     let sample_count = tiles.len().min(32);
     let largest_index = tiles
         .iter()
@@ -1456,12 +1459,7 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
             .expect("published terrain PNG matches its receipt");
         let legacy_rgba = decode_tile(&png).expect("legacy decode oracle");
         controller
-            .request(
-                1,
-                manifest.identity,
-                receipt.key,
-                Arc::from(png),
-            )
+            .request(1, manifest.identity, receipt.key, Arc::from(png))
             .expect("submit published terrain PNG");
         let result = wait_for_decode(&mut controller);
         assert_eq!(result.generation(), 1);

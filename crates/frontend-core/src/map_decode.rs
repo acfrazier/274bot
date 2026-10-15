@@ -269,8 +269,7 @@ impl WalkMapDecodeController {
         self.full_capacity = None;
         let current = !active.stale
             && self.context == Some((active.generation, active.image))
-            && self.latest
-                == Some((active.generation, active.revision, active.image, active.key));
+            && self.latest == Some((active.generation, active.revision, active.image, active.key));
         if !current {
             drop(settlement);
             return self.retry_after_stale_terminal();
@@ -282,9 +281,7 @@ impl WalkMapDecodeController {
                 key: active.key,
                 rgba,
             }),
-            Settlement::Failed(JobError::Family(error)) => {
-                Err(WalkMapDecodeError::Decode(error))
-            }
+            Settlement::Failed(JobError::Family(error)) => Err(WalkMapDecodeError::Decode(error)),
             Settlement::Failed(JobError::FailedInternally) => {
                 Err(WalkMapDecodeError::FailedInternally)
             }
@@ -395,7 +392,10 @@ impl WalkMapDecodeController {
     }
 
     fn set_context(&mut self, generation: u64, image: ImageIdentity) {
-        if self.context.is_some_and(|context| context != (generation, image)) {
+        if self
+            .context
+            .is_some_and(|context| context != (generation, image))
+        {
             self.invalidate();
         }
         self.context = Some((generation, image));
