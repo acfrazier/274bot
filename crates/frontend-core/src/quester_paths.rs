@@ -97,8 +97,11 @@ impl QuesterPathsView {
 
 enum ReloadValue {
     Prepared(script::quester::registry::PreparedRegistry),
-    #[cfg(test)]
-    Summary(Arc<str>),
+}
+
+struct PendingReload {
+    selected: Arc<api::game_data::SelectedGameData>,
+    source: script::quester::registry::FolderSource,
 }
 
 /// Non-blocking owner for one Path-registry reload. Only a consumed
@@ -106,43 +109,65 @@ enum ReloadValue {
 #[derive(Default)]
 struct ReloadPaths {
     worker: Option<script::preparation::PreparedTask<Result<ReloadValue, String>>>,
+    pending: Option<PendingReload>,
     current: Option<WorkIdentity>,
     revision: u64,
 }
-
 impl ReloadPaths {
-    fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
-        self.start_with(selected, None, ReloadValue::Prepared)
-    }
-
-    fn start_with(
+    fn start(
         &mut self,
         selected: Arc<api::game_data::SelectedGameData>,
-        mut source: Option<script::quester::registry::FolderSource>,
-        finish: impl FnOnce(script::quester::registry::PreparedRegistry) -> ReloadValue + Send + 'static,
+        source: script::quester::registry::FolderSource,
     ) -> Result<(), String> {
-        use script::preparation::CooperativePreparationStep as Step;
-        use script::quester::registry::RegistryPreparation;
-
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
+        let pending = PendingReload { selected, source };
+        match self.submit(&pending) {
+            Ok(()) => Ok(()),
+            Err(SubmissionError::Full) => {
+                self.pending = Some(pending);
+                Ok(())
+            }
+            Err(SubmissionError::Failed(error)) => Err(error),
+        }
+    }
+
+    fn retry_pending(&mut self) -> Result<(), String> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        match self.submit(&pending) {
+            Ok(()) => Ok(()),
+            Err(SubmissionError::Full) => {
+                self.pending = Some(pending);
+                Ok(())
+            }
+            Err(SubmissionError::Failed(error)) => Err(error),
+        }
+    }
+
+    fn submit(&mut self, pending: &PendingReload) -> Result<(), SubmissionError> {
+        use script::preparation::CooperativePreparationStep as Step;
+        use script::quester::registry::RegistryPreparation;
+
         let revision = self
             .revision
             .checked_add(1)
-            .ok_or("Path reload revision exhausted")?;
-        // Folder files and compiled rows are retained across yields. Reserve
-        // the complete bounded registry rather than one document's bytes.
-        let input = script::preparation::PreparationInput::new(
+            .ok_or_else(|| SubmissionError::Failed("Path reload revision exhausted".into()))?;
+        let settings =
+            script::preparation::PreparationInput::new(revision, 0, 0, 0).map_err(|error| {
+                SubmissionError::Failed(format!("could not admit Path reload settings: {error}"))
+            })?;
+        let input = script::preparation::PreparationInput::for_quester_folder(
             revision,
-            64 * 1024 * 1024,
-            32 * 1024 * 1024,
-            32 * 1024 * 1024,
+            settings,
+            &pending.source,
         )
-        .map_err(|error| format!("could not admit Path reload: {error}"))?
-        .with_quester_registry_actions();
+        .map_err(|error| SubmissionError::Failed(format!("could not admit Path reload: {error}")))?;
+        let selected = Arc::clone(&pending.selected);
+        let mut source = Some(pending.source.clone());
         let mut preparation = None;
-        let mut finish = Some(finish);
         let mut actions = 0_u32;
         let worker = script::preparation::submit_cooperative(
             script::preparation::PreparationKind::Catalogue,
@@ -151,14 +176,10 @@ impl ReloadPaths {
             move |context| {
                 actions = actions.checked_add(1).expect("bounded folder action count");
                 if preparation.is_none() {
-                    let candidate = match source.take() {
-                        Some(source) => RegistryPreparation::from_source_without_catalog(
-                            source,
-                            Arc::clone(&selected),
-                        ),
-                        None => RegistryPreparation::from_current(Arc::clone(&selected)),
-                    };
-                    match candidate {
+                    match RegistryPreparation::from_source_without_catalog(
+                        source.take().expect("first registry initialization"),
+                        Arc::clone(&selected),
+                    ) {
                         Ok(candidate) => preparation = Some(candidate),
                         Err(error) => {
                             return Step::Complete {
@@ -171,11 +192,7 @@ impl ReloadPaths {
                 }
                 let candidate = preparation.as_mut().expect("registry initialized");
                 let result = match candidate.step(context) {
-                    Ok(Some(candidate)) => {
-                        Some(Ok(finish.take().expect("first registry completion")(
-                            candidate,
-                        )))
-                    }
+                    Ok(Some(candidate)) => Some(Ok(ReloadValue::Prepared(candidate))),
                     Ok(None) => None,
                     Err(error) => Some(Err(compile_error_message(&error))),
                 };
@@ -192,7 +209,12 @@ impl ReloadPaths {
                 }
             },
         )
-        .map_err(|error| format!("could not start Path reload: {error}"))?;
+        .map_err(|error| match error {
+            script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            ) => SubmissionError::Full,
+            error => SubmissionError::Failed(format!("could not start Path reload: {error}")),
+        })?;
         self.current = Some(worker.identity());
         self.worker = Some(worker);
         self.revision = revision;
@@ -223,8 +245,6 @@ impl ReloadPaths {
                         ))
                     }))
                 }
-                #[cfg(test)]
-                ReloadValue::Summary(summary) => Ok(summary),
             });
         Some(result)
     }
@@ -232,6 +252,11 @@ impl ReloadPaths {
     fn is_running(&self) -> bool {
         self.worker.is_some()
     }
+}
+
+enum SubmissionError {
+    Full,
+    Failed(String),
 }
 
 /// Owns the shared settings, reload lifecycle, notice state and user-facing
@@ -318,6 +343,17 @@ impl QuesterPathsController {
             if let Some(selected) = selected {
                 self.reload_when_ready = false;
                 self.start_reload(selected);
+                return;
+            }
+        }
+        if !self.reload.is_running() {
+            let was_pending = self.reload.pending.is_some();
+            match self.reload.retry_pending() {
+                Ok(()) if was_pending && self.reload.pending.is_none() => {
+                    self.set_notice(Ok(Arc::from("Reloading quest Paths…")));
+                }
+                Ok(()) => {}
+                Err(error) => self.set_notice(Err(reload_error(error))),
             }
         }
     }
@@ -345,7 +381,11 @@ impl QuesterPathsController {
     }
 
     fn start_reload(&mut self, selected: Arc<api::game_data::SelectedGameData>) {
-        match self.reload.start(selected) {
+        let source = script::quester::registry::source_for_preparation();
+        match self.reload.start(selected, source) {
+            Ok(()) if self.reload.pending.is_some() => self.set_notice(Ok(Arc::from(
+                "Reload Paths queued until background capacity is available.",
+            ))),
             Ok(()) => self.set_notice(Ok(Arc::from("Reloading quest Paths…"))),
             Err(error) => self.set_notice(Err(reload_error(error))),
         }
@@ -380,11 +420,11 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{QuesterPathsView, ReloadPaths, ReloadValue};
+    use super::{QuesterPathsView, ReloadPaths};
     use api::selected::{ClientRevision, FamilyPreparation};
-    use script::quester::registry::{FolderSource, PathRegistry};
+    use script::quester::registry::FolderSource;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -444,29 +484,10 @@ mod tests {
         .unwrap();
     }
 
-    fn registry_summary(registry: &PathRegistry) -> Arc<str> {
-        let mut summary = registry
-            .report()
-            .map_or_else(|| "bundled Paths".to_owned(), ToString::to_string);
-        for row in registry
-            .rows()
-            .iter()
-            .filter(|row| matches!(row.id.as_str(), "cook" | "fresh-draft" | "broken-draft"))
-        {
-            summary.push_str(&format!(
-                "\n{} source={} label={} unavailable={}",
-                row.id,
-                row.source.label(),
-                row.label,
-                row.unavailable.as_deref().unwrap_or("-")
-            ));
-        }
-        summary.into()
-    }
-
     fn finish_reload(reload: &mut ReloadPaths) -> Result<Arc<str>, String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            reload.retry_pending().expect("retry pending Path reload");
             if let Some(result) = reload.poll() {
                 return result;
             }
@@ -514,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn async_reload_uses_edited_folder_files_and_keeps_draft_diagnostics() {
+    fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
         let store = TempStore::new();
         let folder = store.dir().join("paths");
         std::fs::create_dir_all(&folder).unwrap();
@@ -546,37 +567,112 @@ mod tests {
             folder: folder.clone(),
         };
 
+        let started = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        let worker_started = Arc::clone(&started);
+        let worker_released = Arc::clone(&released);
+        let held = script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            script::preparation::PreparationInput::new(
+                777_001,
+                80 * 1024 * 1024,
+                0,
+                0,
+            )
+            .expect("bounded temporary admission load"),
+            move |_| {
+                worker_started.store(true, Ordering::Release);
+                if worker_released.load(Ordering::Acquire) {
+                    script::preparation::CooperativePreparationStep::Complete {
+                        output: (),
+                        completed: 1,
+                        total: Some(1),
+                    }
+                } else {
+                    script::preparation::CooperativePreparationStep::Continue {
+                        completed: 0,
+                        total: Some(1),
+                    }
+                }
+            },
+        )
+        .expect("reserve temporary WorkAdmission capacity");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !started.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "capacity fixture did not start");
+            std::thread::yield_now();
+        }
+        script::quester::registry::set_source(source.clone());
         let mut reload = ReloadPaths::default();
+        let queued = reload.start(Arc::clone(&selected), source.clone());
+        released.store(true, Ordering::Release);
+        held.join()
+            .expect("temporary capacity worker joins")
+            .expect("temporary capacity worker completes");
+        queued.expect("Full Path reload remains pending");
+        assert!(reload.pending.is_some());
         reload
-            .start_with(Arc::clone(&selected), Some(source.clone()), |candidate| {
-                ReloadValue::Summary(registry_summary(candidate.registry()))
-            })
-            .expect("start asynchronous reload");
+            .retry_pending()
+            .expect("retry Path reload after temporary Full");
+        assert!(reload.pending.is_none());
+        assert!(reload.is_running());
         let summary = finish_reload(&mut reload).expect("folder reload report");
-        assert!(summary.contains("Folder Cook [folder]"), "{summary}");
-        assert!(summary.contains("Fresh Draft [draft]"), "{summary}");
+        assert!(summary.contains("Reload Paths:"), "{summary}");
+        let published = script::quester::registry::snapshot();
+        for (id, label) in [
+            ("cook", "Folder Cook [folder]"),
+            ("fresh-draft", "Fresh Draft [draft]"),
+            ("broken-draft", "Broken Draft [draft] — Authoring in progress"),
+        ] {
+            assert!(
+                published
+                    .rows()
+                    .iter()
+                    .any(|row| row.id == id && row.label == label),
+                "published registry missing {id} [{label}]: {published:?}"
+            );
+        }
+        let diagnostics = published
+            .diagnostics()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
         for expected in [
             "broken-draft.json",
-            "Broken Draft [draft]",
+            "Broken Draft",
             "step=start",
             "code=invalid-args",
             "not_a_real_argument",
         ] {
             assert!(
-                summary.contains(expected),
-                "missing {expected} in {summary}"
+                diagnostics.contains(expected),
+                "missing {expected} in {diagnostics}"
             );
         }
 
         write_cook(&folder, "cook", "Edited Again", false);
         reload
-            .start_with(selected, Some(source), |candidate| {
-                ReloadValue::Summary(registry_summary(candidate.registry()))
-            })
+            .start(Arc::clone(&selected), source.clone())
             .expect("restart asynchronous reload");
-        let edited = finish_reload(&mut reload).expect("second folder reload report");
-        assert!(edited.contains("Edited Again [folder]"), "{edited}");
-        assert!(!edited.contains("Folder Cook [folder]"), "{edited}");
-        assert!(edited.contains("code=invalid-args"), "{edited}");
+        finish_reload(&mut reload).expect("second folder reload report");
+        let edited = script::quester::registry::snapshot();
+        assert!(edited
+            .rows()
+            .iter()
+            .any(|row| row.id == "cook" && row.label == "Edited Again [folder]"));
+        assert!(!edited
+            .rows()
+            .iter()
+            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder]"));
+        assert!(edited
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.to_string().contains("invalid-args")));
+        script::quester::registry::set_source(FolderSource {
+            enabled: false,
+            folder: script::bot_file("quester/paths/289"),
+        });
     }
 }
