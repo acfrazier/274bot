@@ -164,7 +164,9 @@ impl ReloadPaths {
             settings,
             &pending.source,
         )
-        .map_err(|error| SubmissionError::Failed(format!("could not admit Path reload: {error}")))?;
+        .map_err(|error| {
+            SubmissionError::Failed(format!("could not admit Path reload: {error}"))
+        })?;
         let selected = Arc::clone(&pending.selected);
         let mut source = Some(pending.source.clone());
         let mut preparation = None;
@@ -210,9 +212,9 @@ impl ReloadPaths {
             },
         )
         .map_err(|error| match error {
-            script::preparation::PreparationError::Refused(
-                api::work::SubmissionRefusal::Full,
-            ) => SubmissionError::Full,
+            script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+                SubmissionError::Full
+            }
             error => SubmissionError::Failed(format!("could not start Path reload: {error}")),
         })?;
         self.current = Some(worker.identity());
@@ -574,13 +576,8 @@ mod tests {
         let held = script::preparation::submit_cooperative(
             script::preparation::PreparationKind::Catalogue,
             api::identity::Scope::Process,
-            script::preparation::PreparationInput::new(
-                777_001,
-                80 * 1024 * 1024,
-                0,
-                0,
-            )
-            .expect("bounded temporary admission load"),
+            script::preparation::PreparationInput::new(777_001, 80 * 1024 * 1024, 0, 0)
+                .expect("bounded temporary admission load"),
             move |_| {
                 worker_started.store(true, Ordering::Release);
                 if worker_released.load(Ordering::Acquire) {
@@ -607,9 +604,7 @@ mod tests {
         let mut reload = ReloadPaths::default();
         let queued = reload.start(Arc::clone(&selected), source.clone());
         released.store(true, Ordering::Release);
-        held.join()
-            .expect("temporary capacity worker joins")
-            .expect("temporary capacity worker completes");
+        held.join().expect("temporary capacity worker completes");
         queued.expect("Full Path reload remains pending");
         assert!(reload.pending.is_some());
         reload
@@ -623,7 +618,10 @@ mod tests {
         for (id, label) in [
             ("cook", "Folder Cook [folder]"),
             ("fresh-draft", "Fresh Draft [draft]"),
-            ("broken-draft", "Broken Draft [draft] — Authoring in progress"),
+            (
+                "broken-draft",
+                "Broken Draft [draft] — Authoring in progress",
+            ),
         ] {
             assert!(
                 published

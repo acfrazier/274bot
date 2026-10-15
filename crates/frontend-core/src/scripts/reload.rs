@@ -195,9 +195,9 @@ enum StartStage {
         snapshot: Arc<script::load::CardPreparationSnapshot>,
     },
     Running {
-        task: script::preparation::PreparedTask<
-            Result<script::load::CardPreparationOutcome, String>,
-        >,
+        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        task:
+            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
     },
     Ready {
         card: script::JsCard,
@@ -226,9 +226,9 @@ enum TranspileJob {
         client: TranspileClient,
         source: script::ScriptSource,
         lookup: String,
-        task: script::preparation::PreparedTask<
-            Result<script::load::CardPreparationOutcome, String>,
-        >,
+        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        task:
+            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
     },
 }
 
@@ -345,9 +345,7 @@ impl Scripts {
         self.submit_catalog_job()
     }
 
-    pub fn take_catalog_import_result(
-        &mut self,
-    ) -> Option<(PathBuf, Result<usize, String>)> {
+    pub fn take_catalog_import_result(&mut self) -> Option<(PathBuf, Result<usize, String>)> {
         self.async_work.catalog_import_result.take()
     }
 
@@ -406,10 +404,14 @@ impl Scripts {
                     ..
                 } => (*client, *source, lookup.as_str()),
             };
-            return Ok(active_client == client && active_source == source && active_lookup == lookup);
+            return Ok(active_client == client
+                && active_source == source
+                && active_lookup == lookup);
         }
         if let Some(result) = self.async_work.transpile_result.as_ref() {
-            return Ok(result.client == client && result.source == source && result.lookup == lookup);
+            return Ok(result.client == client
+                && result.source == source
+                && result.lookup == lookup);
         }
         if self.js.js_is_ready(source, lookup) {
             let generation = self.async_work.next_generation();
@@ -426,7 +428,8 @@ impl Scripts {
         let snapshot = Arc::new(
             self.js
                 .card_preparation_snapshot(source, lookup, None)?
-                .force_prepare(),
+                .force_prepare()
+                .cache_even_if_unloadable(),
         );
         let generation = self.async_work.next_generation();
         self.async_work.transpile_generation = generation;
@@ -449,14 +452,13 @@ impl Scripts {
     }
 
     fn transpile_pending_for(&self, client: TranspileClient) -> bool {
-        self.async_work.transpile.as_ref().is_some_and(|job| match job {
-            TranspileJob::Pending {
-                client: active, ..
-            }
-            | TranspileJob::Running {
-                client: active, ..
-            } => *active == client,
-        })
+        self.async_work
+            .transpile
+            .as_ref()
+            .is_some_and(|job| match job {
+                TranspileJob::Pending { client: active, .. }
+                | TranspileJob::Running { client: active, .. } => *active == client,
+            })
     }
 
     pub fn take_transpile_result(
@@ -478,23 +480,23 @@ impl Scripts {
         source: script::ScriptSource,
         lookup: &str,
     ) -> Option<Result<(), String>> {
-        let matches = self.async_work.transpile_result.as_ref().is_some_and(|result| {
-            result.generation == self.async_work.transpile_generation
-                && result.client == client
-                && result.source == source
-                && result.lookup == lookup
-        });
+        let matches = self
+            .async_work
+            .transpile_result
+            .as_ref()
+            .is_some_and(|result| {
+                result.generation == self.async_work.transpile_generation
+                    && result.client == client
+                    && result.source == source
+                    && result.lookup == lookup
+            });
         matches.then(|| self.async_work.transpile_result.take().unwrap().result)
     }
 
     /// Synchronous receipt for non-interactive live setup before its session
     /// begins pumping. Interactive callers use `request_catalog_fill` and
     /// advance it from `Scripts::poll`.
-    pub fn fill_catalog_blocking(
-        &mut self,
-        root: &Path,
-        path_file: &Path,
-    ) -> Result<(), String> {
+    pub fn fill_catalog_blocking(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
         self.request_catalog_fill(root, path_file)?;
         while self.catalog_work_pending() {
             self.poll_catalog_job();
@@ -502,10 +504,7 @@ impl Scripts {
                 std::thread::yield_now();
             }
         }
-        self.async_work
-            .catalog_fill_result
-            .take()
-            .unwrap_or(Ok(()))
+        self.async_work.catalog_fill_result.take().unwrap_or(Ok(()))
     }
 
     /// Synchronous receipt for non-interactive live setup before its session
@@ -529,11 +528,9 @@ impl Scripts {
         }
         loop {
             self.poll_transpile_job();
-            if let Some(result) = self.take_transpile_result_for(
-                TranspileClient::LiveSetup,
-                source,
-                lookup,
-            ) {
+            if let Some(result) =
+                self.take_transpile_result_for(TranspileClient::LiveSetup, source, lookup)
+            {
                 return result;
             }
             if !self.transpile_pending_for(TranspileClient::LiveSetup) {
@@ -618,8 +615,7 @@ impl Scripts {
                     Ok(input) => input,
                     Err(error) => {
                         let error = error.to_string();
-                        self.async_work.catalog_import_result =
-                            Some((root, Err(error.clone())));
+                        self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
                         return Err(error);
                     }
@@ -653,8 +649,7 @@ impl Scripts {
                     }
                     Err(error) => {
                         let error = error.to_string();
-                        self.async_work.catalog_import_result =
-                            Some((root, Err(error.clone())));
+                        self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
                         Err(error)
                     }
@@ -695,6 +690,7 @@ impl Scripts {
         let finished = match self.async_work.catalog.as_ref() {
             Some(CatalogJob::FillRunning { task, .. }) => task.is_finished(),
             Some(CatalogJob::ImportRunning { task, .. }) => task.is_finished(),
+            Some(CatalogJob::FillPending { .. } | CatalogJob::ImportPending { .. }) => false,
             None => return,
         };
         if !finished {
@@ -733,26 +729,26 @@ impl Scripts {
                 path_file,
                 task,
             } if generation == self.async_work.catalog_generation => match task.join() {
-                Ok(Ok(result)) => match self.apply_catalog_import(root.clone(), path_file, result) {
-                    Ok(count) => {
-                        self.async_work.catalog_import_result = Some((root, Ok(count)));
-                        self.show(format!("Catalog imported: {count} cards"));
+                Ok(Ok(result)) => {
+                    match self.apply_catalog_import(root.clone(), path_file, result) {
+                        Ok(count) => {
+                            self.async_work.catalog_import_result = Some((root, Ok(count)));
+                            self.show(format!("Catalog imported: {count} cards"));
+                        }
+                        Err(error) => {
+                            self.async_work.catalog_import_result =
+                                Some((root, Err(error.clone())));
+                            self.show(format!("Import catalog: {error}"));
+                        }
                     }
-                    Err(error) => {
-                        self.async_work.catalog_import_result =
-                            Some((root, Err(error.clone())));
-                        self.show(format!("Import catalog: {error}"));
-                    }
-                },
+                }
                 Ok(Err(error)) => {
-                    self.async_work.catalog_import_result =
-                        Some((root, Err(error.clone())));
+                    self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                     self.show(format!("Import catalog: {error}"));
                 }
                 Err(error) => {
                     let error = error.to_string();
-                    self.async_work.catalog_import_result =
-                        Some((root, Err(error.clone())));
+                    self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                     self.show(format!("Import catalog: {error}"));
                 }
             },
@@ -845,6 +841,7 @@ impl Scripts {
                     client,
                     source,
                     lookup,
+                    snapshot,
                     task,
                 });
                 Ok(())
@@ -902,6 +899,7 @@ impl Scripts {
             client,
             source,
             lookup,
+            snapshot,
             task,
         } = job
         else {
@@ -913,15 +911,16 @@ impl Scripts {
         }
         let result = match task.join() {
             Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
-                let current = self.js.get(source, &lookup);
-                if !current.is_some_and(|card| card.origin == prepared.card.origin) {
+                if !self.card_snapshot_current(source, &lookup, &snapshot) {
                     Err("card changed while it was being prepared".into())
                 } else {
                     self.js.commit_prepared(prepared).map(|_| ())
                 }
             }
             Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
-                if self.js.js_is_ready(source, &lookup) {
+                if self.card_snapshot_current(source, &lookup, &snapshot)
+                    && self.js.js_is_ready(source, &lookup)
+                {
                     Ok(())
                 } else {
                     Err("card preparation produced no JavaScript".into())
@@ -1029,6 +1028,18 @@ impl Scripts {
         ))
     }
 
+    fn card_snapshot_current(
+        &self,
+        source: script::ScriptSource,
+        lookup: &str,
+        snapshot: &script::load::CardPreparationSnapshot,
+    ) -> bool {
+        self.js.get(source, lookup).is_some_and(|card| {
+            snapshot.matches_card(card)
+                && self.js.stored_fingerprint(&card.identity_key()) == snapshot.stored_fingerprint()
+        })
+    }
+
     fn submit_start_preparation(&mut self, profile: &str) -> Result<(), String> {
         let Some(preparation) = self.async_work.starts.get(profile) else {
             return Ok(());
@@ -1055,7 +1066,7 @@ impl Scripts {
             Ok(task) => {
                 if let Some(preparation) = self.async_work.starts.get_mut(profile) {
                     if preparation.generation == generation {
-                        preparation.stage = StartStage::Running { task };
+                        preparation.stage = StartStage::Running { snapshot, task };
                     }
                 }
                 Ok(())
@@ -1083,7 +1094,7 @@ impl Scripts {
                 let ready = match &preparation.stage {
                     StartStage::WaitingCatalog => self.async_work.catalog.is_none(),
                     StartStage::Pending { .. } | StartStage::Ready { .. } => true,
-                    StartStage::Running { task } => task.is_finished(),
+                    StartStage::Running { task, .. } => task.is_finished(),
                 };
                 ready.then(|| profile.clone())
             });
@@ -1161,7 +1172,7 @@ impl Scripts {
                 }
                 return;
             }
-            StartStage::Running { task } => {
+            StartStage::Running { snapshot, task } => {
                 let script::ScriptSel::Loaded(source, lookup) =
                     preparation.demand.selection.clone()
                 else {
@@ -1169,11 +1180,10 @@ impl Scripts {
                 };
                 let result = match task.join() {
                     Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
-                        let current = self.js.get(source, &lookup);
-                        if !current.is_some_and(|card| card.origin == prepared.card.origin) {
+                        if !self.card_snapshot_current(source, &lookup, &snapshot) {
                             Err("card changed while it was being prepared".into())
                         } else {
-                            self.js.commit_prepared(prepared).map_err(|error| error)
+                            self.js.commit_prepared_for_start(prepared)
                         }
                     }
                     Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => self
@@ -1278,7 +1288,7 @@ impl Scripts {
                     siblings: siblings.clone(),
                 };
                 match core.start_script(&profile, start, Some(card.identity_key())) {
-                    Ok(()) => {
+                    Ok(_) => {
                         self.starts.insert(
                             profile,
                             PendingStart {
@@ -1348,10 +1358,7 @@ impl Scripts {
                 .is_some_and(|action| action.restart)
     }
 
-    pub(super) fn cancel_start_preparation(
-        &mut self,
-        profile: &str,
-    ) -> Option<(StartKind, bool)> {
+    pub(super) fn cancel_start_preparation(&mut self, profile: &str) -> Option<(StartKind, bool)> {
         self.async_work
             .starts
             .remove(profile)
@@ -1363,11 +1370,7 @@ impl Scripts {
             .starts
             .drain()
             .map(|(profile, preparation)| {
-                (
-                    profile,
-                    preparation.demand.kind,
-                    preparation.demand.tallied,
-                )
+                (profile, preparation.demand.kind, preparation.demand.tallied)
             })
             .collect()
     }
@@ -1410,7 +1413,6 @@ impl Scripts {
         }
         Some(cancelled)
     }
-
 
     pub(crate) fn catalog_scan_root(&self) -> Option<&Path> {
         self.catalog_root.as_deref()

@@ -29,10 +29,7 @@ impl Scripts {
                     if !self.catalog_filled() || self.catalog_scan_root().is_none() {
                         let root = catalog_root
                             .ok_or_else(|| "catalog root is not available".to_string())?;
-                        self.request_catalog_fill(
-                            root,
-                            &script::default_rs2b0t_path_file(),
-                        )?;
+                        self.request_catalog_fill(root, &script::default_rs2b0t_path_file())?;
                         if self.catalog_work_pending() {
                             return Ok(None);
                         }

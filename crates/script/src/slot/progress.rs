@@ -316,7 +316,8 @@ impl SlotScript {
                         job,
                     };
                 }
-                Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {}
+                Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                }
                 Err(error) => {
                     seat.progress_page = Some(ProgressPage::Refused {
                         token: *token,

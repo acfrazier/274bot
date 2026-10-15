@@ -65,7 +65,7 @@ fn gather_methods_op<'s>(
         return Err("missing-selected-data".into());
     }
     let catalog = supply_v2::gathering()?;
-    match api::gather_methods::gather_methods(Some(catalog.as_ref()), skill.as_deref()) {
+    match api::gather_methods::gather_methods(catalog.as_deref(), skill.as_deref()) {
         Ok(value) => {
             let value = materialize(scope, &value)?;
             helper_ok(scope, value)
@@ -83,7 +83,7 @@ fn gather_resource_op<'s>(
         return Err("missing-selected-data".into());
     }
     let catalog = supply_v2::gathering()?;
-    match api::gather_methods::gather_resource(Some(catalog.as_ref()), &name) {
+    match api::gather_methods::gather_resource(catalog.as_deref(), &name) {
         Ok(value) => {
             let value = materialize(scope, &value)?;
             helper_ok(scope, value)
@@ -105,7 +105,7 @@ fn gather_placements_op<'s>(
     }
     let catalog = supply_v2::gathering()?;
     match api::gather_methods::gather_placements(
-        Some(catalog.as_ref()),
+        catalog.as_deref(),
         &request.resource,
         &request.region,
         request.after.as_deref(),

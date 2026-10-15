@@ -540,9 +540,7 @@ impl Scripts {
         if self.catalog_filled && self.catalog_root.as_deref() == Some(root) {
             return;
         }
-        if let Err(error) =
-            self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
-        {
+        if let Err(error) = self.request_catalog_fill(root, &script::default_rs2b0t_path_file()) {
             self.show(format!("$RS2B0T registry: {error}"));
         }
     }
@@ -952,9 +950,7 @@ impl Scripts {
     /// Whether any Load Start has not settled, including paced Starts still
     /// waiting for a permit.
     pub fn starts_pending(&self) -> bool {
-        !self.starts.is_empty()
-            || !self.admit.is_empty()
-            || self.start_preparation_pending()
+        !self.starts.is_empty() || !self.admit.is_empty() || self.start_preparation_pending()
     }
 
     /// k-of-n place while `profile` waits for a Start-all (or marked) permit.
@@ -1024,7 +1020,6 @@ impl Scripts {
             LogTo::Slot,
         );
     }
-
 
     /// Record `profile`'s outcome in the running tally. A new skip or
     /// failure also goes to the log (`log`), so it survives a later banner.
@@ -1187,9 +1182,14 @@ impl Scripts {
                 Ok(())
             }
             script::ScriptSel::Loaded(source, lookup) => {
+                if !wall_member(core, profile) {
+                    return Err(script::StartLoadError::Refused(format!(
+                        "no slot: {profile}"
+                    )));
+                }
                 self.queue_loaded_start(profile, *source, lookup, catalog_root, kind, tallied)
             }
-    }
+        }
     }
 
     /// Start every wall member idle on its last successful assignment.
@@ -1290,22 +1290,14 @@ impl Scripts {
         let preparing = self.cancel_all_start_preparations();
         for (profile, _, tallied) in &preparing {
             if *tallied {
-                self.tally_record(
-                    profile,
-                    Outcome::Skipped("cancelled".into()),
-                    LogTo::Slot,
-                );
+                self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
             }
         }
         let pending_marked = self
             .cancel_pending_catalog_assignment(None)
             .unwrap_or_default();
         for profile in &pending_marked {
-            self.tally_record(
-                profile,
-                Outcome::Skipped("cancelled".into()),
-                LogTo::Slot,
-            );
+            self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
         }
         let cancelled_any =
             !cancelled.is_empty() || !preparing.is_empty() || !pending_marked.is_empty();

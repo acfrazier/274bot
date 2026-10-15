@@ -347,11 +347,11 @@ pub(crate) fn poll_pending_catalog_assignment<Io>(
     let Some(action) = scripts.take_pending_catalog_assignment() else {
         return;
     };
-    let published_root = scripts.catalog_scan_root();
+    let published_root = scripts.catalog_scan_root().map(Path::to_path_buf);
     if action
         .root
         .as_deref()
-        .is_some_and(|root| published_root != Some(root))
+        .is_some_and(|root| published_root.as_deref() != Some(root))
     {
         fail_pending_catalog_assignment(
             &action,
@@ -361,13 +361,8 @@ pub(crate) fn poll_pending_catalog_assignment<Io>(
         );
         return;
     }
-    let Some(root) = action.root.as_deref().or(published_root) else {
-        fail_pending_catalog_assignment(
-            &action,
-            core,
-            scripts,
-            "catalog root is not available",
-        );
+    let Some(root) = action.root.as_deref().or(published_root.as_deref()) else {
+        fail_pending_catalog_assignment(&action, core, scripts, "catalog root is not available");
         return;
     };
     match scripts.assignment_for(&action.card, Some(root)) {

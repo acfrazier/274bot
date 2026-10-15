@@ -519,7 +519,10 @@ fn small_catalogue_refresh_reserves_a_measured_charge() {
         .and_then(|bytes| bytes.checked_add(charge.result_bytes()))
         .expect("catalogue charge sum is representable");
     assert_eq!(total, accounted);
-    assert!(total < 64 * 1024 * 1024, "small catalogue charged {total} bytes");
+    assert!(
+        total < 64 * 1024 * 1024,
+        "small catalogue charged {total} bytes"
+    );
 }
 
 #[test]
@@ -608,13 +611,12 @@ fn release_probe_bounded_card_transpile_8mib() {
         .card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
         .expect("capture probe card");
     let source_limit = snapshot.source_limit().expect("bounded source limit");
-    let mut prefix = String::from(GOOD);
-    prefix.push_str("\n/*");
-    let suffix = "*/\n";
+    // Whitespace exercises the full source-read/parse limit without making the
+    // emitted JavaScript alone exceed the separate 16 MiB result budget.
     let filler_bytes = source_limit
-        .checked_sub(prefix.len() + suffix.len())
-        .expect("source limit fits probe wrapper");
-    let source = format!("{prefix}{}{suffix}", "x".repeat(filler_bytes));
+        .checked_sub(GOOD.len())
+        .expect("source limit fits card");
+    let source = format!("{GOOD}{}", " ".repeat(filler_bytes));
     assert_eq!(source.len(), source_limit);
     let source_bytes = source.len();
     std::fs::write(&path, source).unwrap();
@@ -628,7 +630,7 @@ fn release_probe_bounded_card_transpile_8mib() {
             .unwrap();
     let timing = std::sync::Arc::new(std::sync::Mutex::new((0_usize, Duration::ZERO)));
     let worker_timing = std::sync::Arc::clone(&timing);
-    let work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
+    let mut work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
     let started = Instant::now();
     let outcome = script::preparation::submit_cooperative(
         script::preparation::PreparationKind::Card,
@@ -651,7 +653,12 @@ fn release_probe_bounded_card_transpile_8mib() {
     let wall_time = started.elapsed();
     let (actions, max_action) = *timing.lock().expect("probe timing lock");
     let CardPreparationOutcome::Prepared(prepared) = outcome else {
-        panic!("near-limit card should be prepared");
+        match outcome {
+            CardPreparationOutcome::Failed { error, .. } => {
+                panic!("near-limit card failed to prepare: {error}")
+            }
+            other => panic!("near-limit card was not prepared: {other:?}"),
+        }
     };
     assert!(!prepared.card.js.is_empty());
     eprintln!(
@@ -688,7 +695,7 @@ fn release_probe_catalogue_cooperative_action_max() {
             .unwrap();
     let timing = std::sync::Arc::new(std::sync::Mutex::new((0_usize, Duration::ZERO)));
     let worker_timing = std::sync::Arc::clone(&timing);
-    let work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
+    let mut work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
     let started = Instant::now();
     let result = script::preparation::submit_cooperative(
         script::preparation::PreparationKind::Catalogue,

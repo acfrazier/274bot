@@ -195,7 +195,9 @@ impl<Io> OperatorSession<Io> {
                         worker: Some(worker),
                         admission: None,
                     }),
-                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
                         self.deliveries.push(PendingDelivery {
                             op,
                             name,
@@ -226,7 +228,9 @@ impl<Io> OperatorSession<Io> {
                 let result = self
                     .play
                     .as_ref()
-                    .ok_or_else(|| script::preparation::PreparationError::Unavailable("no play".into()))
+                    .ok_or_else(|| {
+                        script::preparation::PreparationError::Unavailable("no play".into())
+                    })
                     .and_then(|play| {
                         play.script_prepare_config(
                             id,
@@ -239,7 +243,9 @@ impl<Io> OperatorSession<Io> {
                         self.deliveries[index].worker = Some(worker);
                         self.deliveries[index].admission = None;
                     }
-                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
                         if wait {
                             std::thread::park_timeout(Duration::from_millis(5));
                         } else {
@@ -252,18 +258,28 @@ impl<Io> OperatorSession<Io> {
                         self.settings_writes.push(SettingsWrite {
                             op: pending.op,
                             profile: pending.name,
-                            result: SettingsResult::Saved(LiveDelivery::Rejected(error.to_string())),
+                            result: SettingsResult::Saved(LiveDelivery::Rejected(
+                                error.to_string(),
+                            )),
                         });
                         continue;
                     }
                 }
             }
-            if !wait && !self.deliveries[index].worker.as_ref().is_some_and(PreparedTask::is_finished) {
+            if !wait
+                && !self.deliveries[index]
+                    .worker
+                    .as_ref()
+                    .is_some_and(PreparedTask::is_finished)
+            {
                 index += 1;
                 continue;
             }
             let mut pending = self.deliveries.remove(index);
-            let worker = pending.worker.take().expect("admitted delivery has a worker");
+            let worker = pending
+                .worker
+                .take()
+                .expect("admitted delivery has a worker");
             let identity = worker.identity();
             let prepared = worker
                 .join()
@@ -395,9 +411,9 @@ impl<Io> OperatorSession<Io> {
                 .ok_or("settings revision exhausted")?;
         let (worker, waiting) = match play.script_prepare_config(id, revision, Arc::clone(&bag)) {
             Ok(worker) => (Some(worker), None),
-            Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
-                (None, Some((id, revision, bag)))
-            }
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => (None, Some((id, revision, bag))),
             Err(error) => {
                 let error = error.to_string();
                 self.operations
@@ -471,176 +487,180 @@ impl<Io> OperatorSession<Io> {
                         pending.worker = Some(worker);
                         pending.waiting = None;
                     }
-                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {}
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {}
                     Err(error) => {
                         pending.failure = Some(error.to_string());
                         pending.waiting = None;
                     }
                 }
             }
-        let now = Instant::now();
-        let mut ready: Vec<_> = self
-            .preparations
-            .iter()
-            .filter(|(_, pending)| {
-                #[cfg(test)]
-                let gated = pending
-                    .publication_gate
-                    .as_ref()
-                    .is_some_and(|gate| !gate.load(Ordering::Acquire));
-                #[cfg(not(test))]
-                let gated = false;
-                if !gated && (pending.is_finished() || (wait && pending.worker.is_some())) {
-                    return true;
-                }
-                pending.copy_start_hold.as_ref().is_some_and(|hold| {
-                    now >= hold.deadline
-                        || hold.cancellation.is_cancelled()
-                        || self.play.is_none()
-                        || self.vault.is_none()
-                        || !self.members().contains(&pending.profile.username)
+            let now = Instant::now();
+            let mut ready: Vec<_> = self
+                .preparations
+                .iter()
+                .filter(|(_, pending)| {
+                    #[cfg(test)]
+                    let gated = pending
+                        .publication_gate
+                        .as_ref()
+                        .is_some_and(|gate| !gate.load(Ordering::Acquire));
+                    #[cfg(not(test))]
+                    let gated = false;
+                    if !gated && (pending.is_finished() || (wait && pending.worker.is_some())) {
+                        return true;
+                    }
+                    pending.copy_start_hold.as_ref().is_some_and(|hold| {
+                        now >= hold.deadline
+                            || hold.cancellation.is_cancelled()
+                            || self.play.is_none()
+                            || self.vault.is_none()
+                            || !self.members().contains(&pending.profile.username)
+                    })
                 })
-            })
-            .map(|(op, _)| *op)
-            .collect();
-        ready.sort_unstable();
-        let nothing_ready = ready.is_empty();
-        for op in ready {
-            let mut pending = self.preparations.remove(&op).expect("ready preparation");
-            let name = pending.profile.username.clone();
-            let worker = pending.worker.take();
-            let identity = worker.as_ref().map(PreparedTask::identity);
-            let source = pending.renamed_from.as_deref().unwrap_or(&name);
-            let result = if pending
-                .copy_start_hold
-                .as_ref()
-                .is_some_and(|hold| now >= hold.deadline)
-                && !worker.as_ref().is_some_and(PreparedTask::is_finished)
-            {
-                // Abandon the exact job; its worker and charge remain in
-                // custody until the shared WorkAdmission worker returns.
-                // Its late result cannot be persisted after this failed copy.
-                Err("settings copy timed out during native preparation".to_string())
-            } else if pending
-                .copy_start_hold
-                .as_ref()
-                .is_some_and(|hold| hold.cancellation.is_cancelled())
-            {
-                Err("settings copy cancelled".to_string())
-            } else if pending.copy_start_hold.is_some()
-                && (self.play.is_none() || self.vault.is_none() || !self.members().contains(&name))
-            {
-                Err("settings copy cancelled: bot or vault unavailable".to_string())
-            } else if let Some(error) = pending.failure.take() {
-                Err(error)
-            } else {
-                worker
-                    .expect("ready native preparation has a worker")
-                    .join()
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| result.map_err(|error| error.to_string()))
-            };
-            let card = pending
-                .mirror
-                .native_identity()
-                .expect("native draft identity");
-            let current = self.native_edit_current(&name, &card, op)
-                && self.native_edit_current(source, &card, op)
-                && self.vault.as_ref().is_some_and(|vault| {
-                    vault.get(source).is_some()
-                        && (pending.renamed_from.is_none() || vault.get(&name).is_none())
-                });
-            // Invalid drafts remain failed even if an unrelated durable write
-            // overtook them. They were never eligible for persistence.
-            if !current && result.is_ok() {
-                self.operations.set(op, &name, Outcome::Cancelled);
-                if pending.mirror.is_native_settings() {
-                    self.settings_writes.push(SettingsWrite {
-                        op,
-                        profile: name.clone(),
-                        result: SettingsResult::Superseded,
+                .map(|(op, _)| *op)
+                .collect();
+            ready.sort_unstable();
+            let nothing_ready = ready.is_empty();
+            for op in ready {
+                let mut pending = self.preparations.remove(&op).expect("ready preparation");
+                let name = pending.profile.username.clone();
+                let worker = pending.worker.take();
+                let identity = worker.as_ref().map(PreparedTask::identity);
+                let source = pending.renamed_from.as_deref().unwrap_or(&name);
+                let result = if pending
+                    .copy_start_hold
+                    .as_ref()
+                    .is_some_and(|hold| now >= hold.deadline)
+                    && !worker.as_ref().is_some_and(PreparedTask::is_finished)
+                {
+                    // Abandon the exact job; its worker and charge remain in
+                    // custody until the shared WorkAdmission worker returns.
+                    // Its late result cannot be persisted after this failed copy.
+                    Err("settings copy timed out during native preparation".to_string())
+                } else if pending
+                    .copy_start_hold
+                    .as_ref()
+                    .is_some_and(|hold| hold.cancellation.is_cancelled())
+                {
+                    Err("settings copy cancelled".to_string())
+                } else if pending.copy_start_hold.is_some()
+                    && (self.play.is_none()
+                        || self.vault.is_none()
+                        || !self.members().contains(&name))
+                {
+                    Err("settings copy cancelled: bot or vault unavailable".to_string())
+                } else if let Some(error) = pending.failure.take() {
+                    Err(error)
+                } else {
+                    worker
+                        .expect("ready native preparation has a worker")
+                        .join()
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result.map_err(|error| error.to_string()))
+                };
+                let card = pending
+                    .mirror
+                    .native_identity()
+                    .expect("native draft identity");
+                let current = self.native_edit_current(&name, &card, op)
+                    && self.native_edit_current(source, &card, op)
+                    && self.vault.as_ref().is_some_and(|vault| {
+                        vault.get(source).is_some()
+                            && (pending.renamed_from.is_none() || vault.get(&name).is_none())
                     });
-                }
-                continue;
-            }
-            let config = match result.and_then(|config| {
-                config
-                    .commit(identity.expect("successful native preparation had an identity"))
-                    .map_err(|error| error.to_string())
-            }) {
-                Ok(config) => config,
-                Err(error) => {
-                    self.operations
-                        .set(op, &name, Outcome::Failed(error.clone()));
-                    self.write_failures
-                        .push(crate::profile_saves::WriteFailure {
-                            op,
-                            target: name.clone(),
-                            label: pending.label,
-                            error: error.clone(),
-                        });
+                // Invalid drafts remain failed even if an unrelated durable write
+                // overtook them. They were never eligible for persistence.
+                if !current && result.is_ok() {
+                    self.operations.set(op, &name, Outcome::Cancelled);
                     if pending.mirror.is_native_settings() {
                         self.settings_writes.push(SettingsWrite {
                             op,
                             profile: name.clone(),
-                            result: SettingsResult::Failed(error),
+                            result: SettingsResult::Superseded,
                         });
                     }
                     continue;
                 }
-            };
-            let assignment_action = if pending.assignment_intent.is_some() {
-                "native sync assignment"
-            } else {
-                "native parameters"
-            };
-            // Preparation owns this card's entry, not a snapshot of the whole
-            // profile. Preserve unrelated writes that landed while it ran.
-            if let Some(mut latest) = self
-                .vault
-                .as_ref()
-                .and_then(|vault| vault.get(source))
-                .cloned()
-            {
-                if let Some(entry) = pending.profile.settings.script_settings.remove(&card) {
-                    latest.settings.script_settings.insert(card, entry);
-                } else {
-                    latest.settings.script_settings.remove(&card);
-                }
-                if let Some(assignment) = pending.assignment_intent {
-                    if latest.settings.script_assignment == assignment.previous {
-                        latest.settings.script_assignment = assignment.next;
+                let config = match result.and_then(|config| {
+                    config
+                        .commit(identity.expect("successful native preparation had an identity"))
+                        .map_err(|error| error.to_string())
+                }) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        self.operations
+                            .set(op, &name, Outcome::Failed(error.clone()));
+                        self.write_failures
+                            .push(crate::profile_saves::WriteFailure {
+                                op,
+                                target: name.clone(),
+                                label: pending.label,
+                                error: error.clone(),
+                            });
+                        if pending.mirror.is_native_settings() {
+                            self.settings_writes.push(SettingsWrite {
+                                op,
+                                profile: name.clone(),
+                                result: SettingsResult::Failed(error),
+                            });
+                        }
+                        continue;
                     }
+                };
+                let assignment_action = if pending.assignment_intent.is_some() {
+                    "native sync assignment"
+                } else {
+                    "native parameters"
+                };
+                // Preparation owns this card's entry, not a snapshot of the whole
+                // profile. Preserve unrelated writes that landed while it ran.
+                if let Some(mut latest) = self
+                    .vault
+                    .as_ref()
+                    .and_then(|vault| vault.get(source))
+                    .cloned()
+                {
+                    if let Some(entry) = pending.profile.settings.script_settings.remove(&card) {
+                        latest.settings.script_settings.insert(card, entry);
+                    } else {
+                        latest.settings.script_settings.remove(&card);
+                    }
+                    if let Some(assignment) = pending.assignment_intent {
+                        if latest.settings.script_assignment == assignment.previous {
+                            latest.settings.script_assignment = assignment.next;
+                        }
+                    }
+                    latest.username.clone_from(&name);
+                    pending.profile = latest;
                 }
-                latest.username.clone_from(&name);
-                pending.profile = latest;
-            }
-            self.ensure_writer();
-            self.hold_durable(&name);
-            api::hostlog::register_secret(&pending.profile.password);
-            let mut changes = vec![VaultChange::Upsert(pending.profile.clone())];
-            if let Some(old) = pending.renamed_from {
-                self.hold_durable(&old);
-                self.cancel_profile_start(&old);
+                self.ensure_writer();
+                self.hold_durable(&name);
+                api::hostlog::register_secret(&pending.profile.password);
+                let mut changes = vec![VaultChange::Upsert(pending.profile.clone())];
+                if let Some(old) = pending.renamed_from {
+                    self.hold_durable(&old);
+                    self.cancel_profile_start(&old);
+                    if let Some(vault) = self.vault.as_mut() {
+                        vault.stage_remove(&old);
+                    }
+                    changes.push(VaultChange::Remove(old));
+                }
                 if let Some(vault) = self.vault.as_mut() {
-                    vault.stage_remove(&old);
+                    vault.stage_upsert(pending.profile);
                 }
-                changes.push(VaultChange::Remove(old));
+                self.submit_write_at(
+                    op,
+                    changes,
+                    pending.mirror.prepared(config),
+                    pending.label,
+                    assignment_action,
+                );
+                if let Some(write) = self.writes.get_mut(&op) {
+                    write.copy_start_hold = pending.copy_start_hold;
+                }
             }
-            if let Some(vault) = self.vault.as_mut() {
-                vault.stage_upsert(pending.profile);
-            }
-            self.submit_write_at(
-                op,
-                changes,
-                pending.mirror.prepared(config),
-                pending.label,
-                assignment_action,
-            );
-            if let Some(write) = self.writes.get_mut(&op) {
-                write.copy_start_hold = pending.copy_start_hold;
-            }
-        }
             if !wait {
                 return;
             }
@@ -649,7 +669,7 @@ impl<Io> OperatorSession<Io> {
             if nothing_ready {
                 std::thread::park_timeout(Duration::from_millis(5));
             }
-    }
+        }
     }
 
     /// A disk write already submitted cannot be recalled. On a bounded-wait

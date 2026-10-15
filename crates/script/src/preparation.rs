@@ -132,8 +132,7 @@ impl PreparationInput {
             return Ok(settings.with_quester_registry_actions());
         }
         use crate::quester::registry::{
-            PathRow, MAX_REGISTRY_FILE_BYTES, MAX_REGISTRY_ROWS,
-            MAX_RETAINED_FOLDER_DOCUMENT_BYTES,
+            PathRow, MAX_REGISTRY_FILE_BYTES, MAX_REGISTRY_ROWS, MAX_RETAINED_FOLDER_DOCUMENT_BYTES,
         };
         let path_bytes = source.folder.as_os_str().len();
         if path_bytes > MAX_REGISTRY_FILE_BYTES {
@@ -157,8 +156,7 @@ impl PreparationInput {
             .checked_add(2 * MAX_RETAINED_FOLDER_DOCUMENT_BYTES)
             .and_then(|bytes| bytes.checked_add(MAX_REGISTRY_ROWS * std::mem::size_of::<PathRow>()))
             .ok_or(SubmissionRefusal::InvalidArgument)?;
-        Self::new(revision, input, scratch, result)
-            .map(Self::with_quester_registry_actions)
+        Self::new(revision, input, scratch, result).map(Self::with_quester_registry_actions)
     }
 }
 

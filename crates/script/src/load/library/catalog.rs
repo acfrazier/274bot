@@ -35,7 +35,6 @@ pub struct CatalogPreparationSnapshot {
     cache_root: PathBuf,
     existing: HashMap<String, CardPreparationTemplate>,
     fingerprints: HashMap<String, String>,
-    snapshot_bytes: usize,
     source_limit_bytes: usize,
     input_bytes: usize,
     scratch_bytes: usize,
@@ -90,11 +89,9 @@ impl JsLibrary {
             .ok_or_else(|| "catalog snapshot is too large".to_string())?;
         let index = crate::rs2b0t_registry::registry_index_path(root);
         let mut measured_source_bytes = match std::fs::metadata(&index) {
-            Ok(metadata) if metadata.is_file() => {
-                usize::try_from(metadata.len())
-                    .map_err(|_| "catalog registry index size overflow".to_string())?
-                    .min(MAX_CATALOG_INDEX_BYTES)
-            }
+            Ok(metadata) if metadata.is_file() => usize::try_from(metadata.len())
+                .map_err(|_| "catalog registry index size overflow".to_string())?
+                .min(MAX_CATALOG_INDEX_BYTES),
             _ => 0,
         };
         for card in self
@@ -160,7 +157,6 @@ impl JsLibrary {
             cache_root: self.cache.root().to_path_buf(),
             existing,
             fingerprints,
-            snapshot_bytes,
             source_limit_bytes,
             input_bytes,
             scratch_bytes,

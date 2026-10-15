@@ -304,6 +304,27 @@ fn fifo_round_robin_runs_short_jobs_before_a_long_jobs_next_slice() {
     wait_for_jobs(&shared, 0);
 }
 
+/// A short, ordinary Start with no qualified decode allowance.
+#[derive(Debug)]
+struct ShortProfileJob;
+
+impl CooperativeJob for ShortProfileJob {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        match context.checkpoint() {
+            Checkpoint::Cancel(_) | Checkpoint::Yield => StepOutcome::Yielded,
+            Checkpoint::Continue => StepOutcome::Completed(5),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
 #[test]
 fn maximal_catalogue_and_native_sized_start_both_complete() {
     let clock = Arc::new(ManualClock::new());
@@ -332,11 +353,7 @@ fn maximal_catalogue_and_native_sized_start_both_complete() {
                 &TestInput {
                     charge: WorkCharge::new(4096, 2 << 20, 2 << 20, 0),
                 },
-                QualifiedProfileJob {
-                    clock,
-                    stage: 0,
-                    last_duration: Duration::ZERO,
-                },
+                ShortProfileJob,
                 &conditions,
             )
             .expect("normal Start remains admissible beside maximal catalogue")
@@ -345,8 +362,14 @@ fn maximal_catalogue_and_native_sized_start_both_complete() {
     WorkService::wait_terminal(&shared, &catalogue).expect("catalogue settles");
     WorkService::wait_terminal(&shared, &start).expect("Start settles");
     let mut service = shared.lock();
-    assert!(matches!(service.consume(&catalogue), Ok(Settlement::Completed(1))));
-    assert!(matches!(service.consume(&start), Ok(Settlement::Completed(5))));
+    assert!(matches!(
+        service.consume(&catalogue),
+        Ok(Settlement::Completed(1))
+    ));
+    assert!(matches!(
+        service.consume(&start),
+        Ok(Settlement::Completed(5))
+    ));
 }
 
 #[test]
@@ -369,7 +392,10 @@ fn progress_remains_latest_after_sixty_four_updates() {
         assert_eq!(latest.identity(), ticket.identity());
         assert_eq!(latest.sequence(), 81);
     });
-    assert!(matches!(service.consume(&ticket), Ok(Settlement::Completed(8))));
+    assert!(matches!(
+        service.consume(&ticket),
+        Ok(Settlement::Completed(8))
+    ));
 }
 
 #[test]
@@ -691,7 +717,9 @@ fn panicking_job_fails_only_itself_and_worker_accepts_following_job() {
     WorkService::wait_terminal(&shared, &panicking).expect("panic is terminal");
     assert!(matches!(
         shared.lock().consume(&panicking),
-        Ok(Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice)))
+        Ok(Settlement::Failed(JobError::Cooperation(
+            CooperativeViolation::UnboundedSlice
+        )))
     ));
     assert!(shared.lock().worker_available());
     assert_eq!(shared.lock().health(), None);
