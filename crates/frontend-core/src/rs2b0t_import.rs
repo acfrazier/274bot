@@ -43,7 +43,7 @@
 //! preview, confirm, report, and the optional deletion of the export file.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Read;
@@ -140,15 +140,19 @@ impl JsonType {
     }
 }
 
-/// Why a profile file was refused. No variant carries a password or any
-/// text of the file: accounts and storage boxes are named by number.
+/// Why a profile file was refused. Details remain private, and the original
+/// I/O cause is available through [`std::error::Error::source`].
 #[derive(Debug, thiserror::Error)]
-pub enum ImportError {
+#[error(transparent)]
+pub struct ImportError(#[from] ImportFailure);
+
+#[derive(Debug, thiserror::Error)]
+enum ImportFailure {
     #[error("cannot read {}: {source}", path.display())]
     Read {
         path: PathBuf,
         #[source]
-        source: std::io::Error,
+        source: Box<std::io::Error>,
     },
     #[error("{} is not a regular file, so it is not an rs2b0t profile export", path.display())]
     NotAFile { path: PathBuf },
@@ -186,7 +190,7 @@ pub enum ImportError {
     Delete {
         path: PathBuf,
         #[source]
-        source: std::io::Error,
+        source: Box<std::io::Error>,
     },
 }
 
@@ -345,20 +349,24 @@ fn read_bounded(
 /// bounded on the opened handle (whatever its metadata said). The file
 /// text is wiped once parsed.
 pub fn read_profile_file(path: &Path) -> Result<ExportFile, ImportError> {
-    let read_error = |source| ImportError::Read {
+    read_profile_file_inner(path).map_err(ImportError::from)
+}
+
+fn read_profile_file_inner(path: &Path) -> Result<ExportFile, ImportFailure> {
+    let read_error = |source| ImportFailure::Read {
         path: path.to_path_buf(),
-        source,
+        source: Box::new(source),
     };
     let file = open_for_reading(path).map_err(read_error)?;
     let metadata = file.metadata().map_err(read_error)?;
     if !metadata.is_file() {
-        return Err(ImportError::NotAFile {
+        return Err(ImportFailure::NotAFile {
             path: path.to_path_buf(),
         });
     }
     let Some(mut bytes) = read_bounded(file, MAX_FILE_BYTES, metadata.len()).map_err(read_error)?
     else {
-        return Err(ImportError::TooLarge {
+        return Err(ImportFailure::TooLarge {
             path: path.to_path_buf(),
         });
     };
@@ -366,10 +374,10 @@ pub fn read_profile_file(path: &Path) -> Result<ExportFile, ImportError> {
         Ok(text) => Secret::from(text),
         Err(error) => {
             error.into_bytes().zeroize();
-            return Err(ImportError::NotJson);
+            return Err(ImportFailure::NotJson);
         }
     };
-    parse_profile_file(&text)
+    parse_profile_file_inner(&text)
 }
 
 /// Parse an rs2b0t profile export, with the checks of rs2b0t's
@@ -379,20 +387,24 @@ pub fn read_profile_file(path: &Path) -> Result<ExportFile, ImportError> {
 /// text built from it later (preview, report, log line) can show one,
 /// whichever account it came from and whichever field repeats it.
 pub fn parse_profile_file(text: &str) -> Result<ExportFile, ImportError> {
+    parse_profile_file_inner(text).map_err(ImportError::from)
+}
+
+fn parse_profile_file_inner(text: &str) -> Result<ExportFile, ImportFailure> {
     // Check the syntax first without building values, so a malformed file
     // never leaves a partly built tree (and its strings) unwiped.
-    serde_json::from_str::<serde::de::IgnoredAny>(text).map_err(|_| ImportError::NotJson)?;
-    let parsed = WipeOnDrop(serde_json::from_str(text).map_err(|_| ImportError::NotJson)?);
-    let obj = parsed.0.as_object().ok_or(ImportError::Shape)?;
+    serde_json::from_str::<serde::de::IgnoredAny>(text).map_err(|_| ImportFailure::NotJson)?;
+    let parsed = WipeOnDrop(serde_json::from_str(text).map_err(|_| ImportFailure::NotJson)?);
+    let obj = parsed.0.as_object().ok_or(ImportFailure::Shape)?;
     let kind = obj.get("kind");
     if kind.and_then(Value::as_str) != Some(PROFILE_FILE_KIND) {
-        return Err(ImportError::Kind {
+        return Err(ImportFailure::Kind {
             found: JsonType::of(kind),
         });
     }
     let version = obj.get("v");
     if version.and_then(Value::as_f64) != Some(PROFILE_FILE_VERSION as f64) {
-        return Err(ImportError::Version {
+        return Err(ImportFailure::Version {
             found: JsonType::of(version),
         });
     }
@@ -401,13 +413,13 @@ pub fn parse_profile_file(text: &str) -> Result<ExportFile, ImportError> {
         obj.get("tabs").and_then(Value::as_array),
         obj.get("activeTab").and_then(Value::as_str),
     ) else {
-        return Err(ImportError::MissingLists);
+        return Err(ImportFailure::MissingLists);
     };
     let tabs = tabs
         .iter()
         .map(|tab| tab.as_str().map(str::to_owned))
         .collect::<Option<Vec<_>>>()
-        .ok_or(ImportError::TabsNotStrings)?;
+        .ok_or(ImportFailure::TabsNotStrings)?;
     let accounts = profiles
         .iter()
         .enumerate()
@@ -425,8 +437,8 @@ pub fn parse_profile_file(text: &str) -> Result<ExportFile, ImportError> {
     })
 }
 
-fn parse_account(index: usize, raw: &Value) -> Result<ExportAccount, ImportError> {
-    let entry = |reason| ImportError::Entry { index, reason };
+fn parse_account(index: usize, raw: &Value) -> Result<ExportAccount, ImportFailure> {
+    let entry = |reason| ImportFailure::Entry { index, reason };
     let p = raw.as_object().ok_or(entry("not an object"))?;
     let username = p
         .get("username")
@@ -441,14 +453,14 @@ fn parse_account(index: usize, raw: &Value) -> Result<ExportAccount, ImportError
         None => None,
         Some(world) => match world.as_f64() {
             Some(n) if n == 1.0 || n == 2.0 || n == 3.0 => Some(n as u8),
-            _ => return Err(ImportError::World { index }),
+            _ => return Err(ImportFailure::World { index }),
         },
     };
     let tab = match p.get("tab") {
         None => None,
         Some(Value::String(tab)) if tab == MAIN_TAB => None,
         Some(Value::String(tab)) => Some(tab.clone()),
-        Some(_) => return Err(ImportError::Tab { index }),
+        Some(_) => return Err(ImportFailure::Tab { index }),
     };
     Ok(ExportAccount {
         username: username.to_owned(),
@@ -461,11 +473,11 @@ fn parse_account(index: usize, raw: &Value) -> Result<ExportAccount, ImportError
 fn parse_storage(
     raw: Option<&Value>,
     accounts: &[ExportAccount],
-) -> Result<BTreeMap<String, BoxStorage>, ImportError> {
+) -> Result<BTreeMap<String, BoxStorage>, ImportFailure> {
     let Some(raw) = raw else {
         return Ok(BTreeMap::new());
     };
-    let users = raw.as_object().ok_or(ImportError::Storage)?;
+    let users = raw.as_object().ok_or(ImportFailure::Storage)?;
     let owner = |user: &str| match accounts.iter().position(|a| a.username == user) {
         Some(index) => StorageOwner::Listed(index + 1),
         None => StorageOwner::Unlisted,
@@ -473,16 +485,16 @@ fn parse_storage(
     let mut out = BTreeMap::new();
     for (user, entries) in users {
         if user.is_empty() {
-            return Err(ImportError::StorageUser);
+            return Err(ImportFailure::StorageUser);
         }
         let entries = entries
             .as_object()
-            .ok_or_else(|| ImportError::StorageBox { owner: owner(user) })?;
+            .ok_or_else(|| ImportFailure::StorageBox { owner: owner(user) })?;
         let mut storage = BoxStorage::new();
         for (key, value) in entries {
             let value = value
                 .as_str()
-                .ok_or_else(|| ImportError::StorageValue { owner: owner(user) })?;
+                .ok_or_else(|| ImportFailure::StorageValue { owner: owner(user) })?;
             let kept = if key == CREDS_KEY {
                 String::new()
             } else {
@@ -586,10 +598,36 @@ fn credential_problem(username: &str, password: &str) -> Option<CredentialProble
 
 /// A catalog card the import can assign and fill.
 pub struct CatalogCard<'a> {
-    pub schema: &'a [script::SettingDef],
+    schema: &'a [script::SettingDef],
+    unloadable: Option<&'a str>,
+    assignment: ScriptAssignment,
+}
+
+impl<'a> CatalogCard<'a> {
+    pub fn new(
+        schema: &'a [script::SettingDef],
+        unloadable: Option<&'a str>,
+        assignment: ScriptAssignment,
+    ) -> Self {
+        Self {
+            schema,
+            unloadable,
+            assignment,
+        }
+    }
+
+    pub fn schema(&self) -> &'a [script::SettingDef] {
+        self.schema
+    }
+
     /// Why the card cannot run in 274bot (it is dimmed in Browse).
-    pub unloadable: Option<&'a str>,
-    pub assignment: ScriptAssignment,
+    pub fn unloadable(&self) -> Option<&'a str> {
+        self.unloadable
+    }
+
+    pub fn assignment(&self) -> &ScriptAssignment {
+        &self.assignment
+    }
 }
 
 /// The script catalog as the import sees it: rs2b0t script names are
@@ -608,12 +646,13 @@ impl ImportCatalog for script::JsLibrary {
     }
 
     fn card(&self, name: &str) -> Option<CatalogCard<'_>> {
-        self.get(script::ScriptSource::Catalog, name)
-            .map(|card| CatalogCard {
-                schema: &card.settings_schema,
-                unloadable: card.unloadable.as_deref(),
-                assignment: card.assignment(),
-            })
+        self.get(script::ScriptSource::Catalog, name).map(|card| {
+            CatalogCard::new(
+                &card.settings_schema,
+                card.unloadable.as_deref(),
+                card.assignment(),
+            )
+        })
     }
 }
 
@@ -633,10 +672,20 @@ fn shown(text: String) -> String {
 /// One rs2b0t item the import does not carry over, and why. Both strings
 /// are redacted when they are built: an item or reason can quote file
 /// text, and a password can sit in any field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Skipped {
-    pub item: String,
-    pub reason: String,
+    item: String,
+    reason: String,
+}
+
+impl Skipped {
+    pub fn item(&self) -> &str {
+        &self.item
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 fn skipped(item: impl Into<String>, reason: impl Into<String>) -> Skipped {
@@ -1653,19 +1702,19 @@ pub struct ImportRun {
     entries: Vec<RunEntry>,
     skipped: Vec<(String, Skipped)>,
     /// Per entry, its settled result once seen.
-    seen: RefCell<Vec<Option<AccountResult>>>,
+    seen: Vec<OnceCell<StoredAccountResult>>,
 }
 
-/// One account's result.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AccountResult {
+/// One account's result, borrowing any failure text from its import run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountResult<'a> {
     /// The import's own write of a new profile is durable.
     Created,
     /// The import's own write into an existing profile is durable.
     Overwritten,
     /// Nothing written: unchanged, kept, duplicate, blank or unusable.
     NotWritten(AccountStatus),
-    Failed(String),
+    Failed(&'a str),
     /// A later save of the same profile was written in place of this
     /// import's write, so the import's own data is not confirmed durable.
     Superseded,
@@ -1676,10 +1725,33 @@ pub enum AccountResult {
     Saving,
 }
 
-impl AccountResult {
+impl AccountResult<'_> {
     /// The import's own data for this account is confirmed durable.
     pub fn is_durable(&self) -> bool {
         matches!(self, Self::Created | Self::Overwritten)
+    }
+}
+
+/// Only terminal results enter the cache; their owning payload never leaves it.
+enum StoredAccountResult {
+    Created,
+    Overwritten,
+    NotWritten(AccountStatus),
+    Failed(String),
+    Superseded,
+    Unknown,
+}
+
+impl StoredAccountResult {
+    fn view(&self) -> AccountResult<'_> {
+        match self {
+            Self::Created => AccountResult::Created,
+            Self::Overwritten => AccountResult::Overwritten,
+            Self::NotWritten(status) => AccountResult::NotWritten(*status),
+            Self::Failed(error) => AccountResult::Failed(error),
+            Self::Superseded => AccountResult::Superseded,
+            Self::Unknown => AccountResult::Unknown,
+        }
     }
 }
 
@@ -1692,7 +1764,7 @@ pub fn apply_import<Io>(
     plan: ImportPlan,
 ) -> Result<ImportRun, ImportError> {
     if core.vault().is_none() {
-        return Err(ImportError::VaultLocked);
+        return Err(ImportFailure::VaultLocked.into());
     }
     let mut entries = Vec::with_capacity(plan.accounts.len());
     let mut skips = Vec::new();
@@ -1715,14 +1787,14 @@ pub fn apply_import<Io>(
                     "create",
                     core.create_profile_with_log_action(
                         row,
-                        ArmMirror::Remember(None),
+                        ArmMirror::remember(None),
                         LABEL,
                         LABEL,
                     ),
                 ),
                 _ => (
                     "overwrite",
-                    core.save_profile_with_log_action(row, ArmMirror::Remember(None), LABEL, LABEL),
+                    core.save_profile_with_log_action(row, ArmMirror::remember(None), LABEL, LABEL),
                 ),
             };
             match result {
@@ -1750,7 +1822,7 @@ pub fn apply_import<Io>(
                 .map(|s| ("file".to_owned(), s)),
         )
         .collect();
-    let seen = RefCell::new(vec![None; entries.len()]);
+    let seen = (0..entries.len()).map(|_| OnceCell::new()).collect();
     Ok(ImportRun {
         entries,
         skipped,
@@ -1807,39 +1879,38 @@ fn change_summary(old: Option<&Profile>, new: &Profile) -> String {
 impl ImportRun {
     /// One entry's result: kept once settled; otherwise read from the
     /// session's record of its own write.
-    fn result<Io>(&self, index: usize, core: &OperatorSession<Io>) -> AccountResult {
-        if let Some(result) = &self.seen.borrow()[index] {
-            return result.clone();
+    fn result<Io>(&self, index: usize, core: &OperatorSession<Io>) -> AccountResult<'_> {
+        if let Some(result) = self.seen[index].get() {
+            return result.view();
         }
         let entry = &self.entries[index];
         let result = if let Some(error) = &entry.refused {
-            AccountResult::Failed(error.clone())
+            StoredAccountResult::Failed(error.clone())
         } else if let Some(op) = entry.op {
             match core.operation(op).and_then(|r| r.outcome(&entry.username)) {
                 Some(Outcome::Pending) => return AccountResult::Saving,
                 Some(Outcome::Completed) if entry.status == AccountStatus::New => {
-                    AccountResult::Created
+                    StoredAccountResult::Created
                 }
-                Some(Outcome::Completed) => AccountResult::Overwritten,
+                Some(Outcome::Completed) => StoredAccountResult::Overwritten,
                 Some(Outcome::Failed(error) | Outcome::Skipped(error)) => {
-                    AccountResult::Failed(shown(error.clone()))
+                    StoredAccountResult::Failed(shown(error.clone()))
                 }
                 // A later write of the same profile in the same commit:
                 // whether that commit held this import's data is not known.
-                Some(Outcome::Cancelled) => AccountResult::Superseded,
+                Some(Outcome::Cancelled) => StoredAccountResult::Superseded,
                 // The record was dropped before it was seen settled.
-                None => AccountResult::Unknown,
+                None => StoredAccountResult::Unknown,
             }
         } else {
-            AccountResult::NotWritten(entry.status)
+            StoredAccountResult::NotWritten(entry.status)
         };
-        self.seen.borrow_mut()[index] = Some(result.clone());
-        result
+        self.seen[index].get_or_init(|| result).view()
     }
 
-    /// Every account's result now. A settled result is kept from the
-    /// first time it is seen.
-    pub fn results<Io>(&self, core: &OperatorSession<Io>) -> Vec<(&str, AccountResult)> {
+    /// Every account's result now, borrowing failure text from this run.
+    /// A settled result is kept from the first time it is seen.
+    pub fn results<Io>(&self, core: &OperatorSession<Io>) -> Vec<(&str, AccountResult<'_>)> {
         self.entries
             .iter()
             .enumerate()
@@ -1916,9 +1987,9 @@ impl ImportRun {
 /// Delete the export file once the import succeeded (explicit confirmation
 /// in the front end). Logs one line.
 pub fn delete_export_file(path: &Path) -> Result<(), ImportError> {
-    std::fs::remove_file(path).map_err(|source| ImportError::Delete {
+    std::fs::remove_file(path).map_err(|source| ImportFailure::Delete {
         path: path.to_path_buf(),
-        source,
+        source: Box::new(source),
     })?;
     host_log!(
         Category::Lifecycle,
@@ -2031,7 +2102,7 @@ impl ProfileImport {
             return;
         }
         let Some(vault) = core.vault() else {
-            self.refuse(ImportError::VaultLocked.to_string());
+            self.refuse(ImportFailure::VaultLocked.to_string());
             return;
         };
         match read_profile_file(&path) {
@@ -2089,7 +2160,7 @@ impl ProfileImport {
         };
         self.plan = None;
         let Some(vault) = core.vault() else {
-            self.refuse(ImportError::VaultLocked.to_string());
+            self.refuse(ImportFailure::VaultLocked.to_string());
             return;
         };
         let plan = plan_import(&file, vault, &scripts.js, self.choices);
