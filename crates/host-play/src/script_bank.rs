@@ -1125,7 +1125,7 @@ pub(super) fn dispatch_observed_withdraw_x(
     );
     Some(
         if matches!(*count, 1 | 5 | 10)
-            && ops::action_op_in(&item.actions, &format!("Withdraw {count}")) == Some(op)
+            && ops::withdraw_count_op_in(&item.actions, *count) == Some(op)
         {
             pending.waiting_settlement()
         } else {
@@ -1275,42 +1275,7 @@ fn open_npc_bank_at_here<D: Driver>(
             return matches!(ix.continue_dialog(None), SendResult::Sent { .. });
         }
     }
-    let wanted = name.trim();
-    let Some(npc) = snapshot
-        .npcs()
-        .iter()
-        .filter(|npc| {
-            npc.name
-                .as_deref()
-                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
-        })
-        .filter(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            d_stand <= SAME_BANK || d_here <= 10
-        })
-        .min_by_key(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            (d_stand, d_here, npc.distance, npc.index)
-        })
-    else {
+    let Some(npc) = teller_pick(snapshot.npcs(), here, stand, name) else {
         return false;
     };
     let slot =
@@ -1322,6 +1287,42 @@ fn open_npc_bank_at_here<D: Driver>(
         ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(slot)),
         SendResult::Sent { .. }
     )
+}
+
+/// The host teller pick for an already nav-chosen `stand`: named `name`
+/// (trimmed, ASCII-folded), within [`SAME_BANK`] of the stand or 10 of
+/// `here` (Chebyshev, +10_000 per plane mismatch); the smallest
+/// `(d_stand, d_here, distance, index)` key wins. This is BankBudget's
+/// stand policy, not `bank::npc::banker_scan`'s scene-order policy.
+fn teller_pick<'a>(
+    npcs: &'a [api::snapshot::NpcView],
+    here: Option<(i32, i32, i32)>,
+    stand: WorldTile,
+    name: &str,
+) -> Option<&'a api::snapshot::NpcView> {
+    let wanted = name.trim();
+    let chebyshev = |npc: &api::snapshot::NpcView, x: i32, z: i32, level: i32| {
+        (npc.tile.x - x).abs().max((npc.tile.z - z).abs())
+            + i32::from(npc.tile.level != level) * 10_000
+    };
+    let key = |npc: &api::snapshot::NpcView| {
+        let d_stand = chebyshev(npc, stand.x, stand.z, stand.level);
+        let d_here = here
+            .map(|(hx, hz, hl)| chebyshev(npc, hx, hz, hl))
+            .unwrap_or(i32::MAX);
+        (d_stand, d_here, npc.distance, npc.index)
+    };
+    npcs.iter()
+        .filter(|npc| {
+            npc.name
+                .as_deref()
+                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
+        })
+        .filter(|npc| {
+            let (d_stand, d_here, ..) = key(npc);
+            d_stand <= SAME_BANK || d_here <= 10
+        })
+        .min_by_key(|npc| key(npc))
 }
 
 #[cfg(test)]

@@ -214,17 +214,105 @@ pub fn pack_full<R: BankRow>(inv: &[R], inv_size: i32) -> bool {
     inv_size > 0 && occupied(inv) >= inv_size
 }
 
-/// Label bytes with whitespace, `-` and `_` gone, ASCII-folded.
-pub fn normalized_action_bytes(value: &str) -> impl Iterator<Item = u8> + '_ {
-    value
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b'-' | b'_'))
-        .map(|byte| byte.to_ascii_lowercase())
+/// Label chars as the deleted host `norm_action` folded them: the full
+/// Unicode lowercase of `value` (the same mapping `str::to_lowercase`
+/// applies, final sigma included), with every Unicode whitespace char
+/// (VT and NBSP included), `-` and `_` gone. Lazy and allocation-free.
+pub fn normalized_action_chars(value: &str) -> impl Iterator<Item = char> + '_ {
+    NormalizedActionChars {
+        src: value,
+        chars: value.char_indices(),
+        pending: None,
+    }
+}
+
+struct NormalizedActionChars<'a> {
+    src: &'a str,
+    chars: std::str::CharIndices<'a>,
+    /// The lowercase expansion of the current source char (full Unicode
+    /// lowercase can expand one char into several, e.g. `İ` → `i̇`).
+    pending: Option<std::char::ToLowercase>,
+}
+
+impl Iterator for NormalizedActionChars<'_> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<char> {
+        loop {
+            if let Some(pending) = &mut self.pending {
+                match pending.next() {
+                    Some(c) if kept(c) => return Some(c),
+                    Some(_) => continue,
+                    None => self.pending = None,
+                }
+            }
+            let (at, c) = self.chars.next()?;
+            // `str::to_lowercase`'s one context rule: a capital sigma in
+            // final position (preceded by a cased char, not followed by
+            // one, skipping case-ignorable chars) lowers to `ς`, not `σ`.
+            if c == '\u{3a3}' {
+                return Some(if final_sigma(self.src, at) {
+                    '\u{3c2}'
+                } else {
+                    '\u{3c3}'
+                });
+            }
+            self.pending = Some(c.to_lowercase());
+        }
+    }
+}
+
+/// The fold keeps a lowered char unless it is Unicode whitespace (per
+/// `char::is_whitespace`, so VT counts), `-` or `_`.
+fn kept(c: char) -> bool {
+    !c.is_whitespace() && c != '-' && c != '_'
+}
+
+fn final_sigma(src: &str, at: usize) -> bool {
+    let preceded = src[..at]
+        .chars()
+        .rev()
+        .find(|&c| !is_case_ignorable(c))
+        .is_some_and(is_cased);
+    let followed = src[at + '\u{3a3}'.len_utf8()..]
+        .chars()
+        .find(|&c| !is_case_ignorable(c))
+        .is_some_and(is_cased);
+    preceded && !followed
+}
+
+/// Unicode `Cased`: the Lowercase/Uppercase properties, plus titlecase
+/// letters, whose lowercase mapping differs from themselves while they
+/// carry neither property (e.g. `ǅ`).
+fn is_cased(c: char) -> bool {
+    c.is_lowercase() || c.is_uppercase() || c.to_lowercase().next() != Some(c)
+}
+
+/// Unicode `Case_Ignorable`, as far as `char`'s property surface exposes
+/// it: the Word_Break mid-letter punctuation, the modifier-letter blocks,
+/// the format chars, and the combining marks — the non-alphanumeric,
+/// non-whitespace chars outside the punctuation/symbol blocks.
+fn is_case_ignorable(c: char) -> bool {
+    matches!(c,
+        '.' | ':' | '\'' | '`' | '^' | '\u{ad}' | '\u{b7}' | '\u{387}' | '\u{61c}'
+        | '\u{180e}' | '\u{1fbf}' | '\u{1ffe}' | '\u{2018}' | '\u{2019}'
+        | '\u{2024}' | '\u{2027}' | '\u{2d7}' | '\u{fe52}' | '\u{feff}'
+        | '\u{ff07}' | '\u{ff0e}'
+        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
+        | '\u{20d0}'..='\u{20f0}' | '\u{fff9}'..='\u{fffb}'
+        | '\u{2b0}'..='\u{2ff}' | '\u{a700}'..='\u{a71f}')
+        || (!c.is_ascii()
+            && !c.is_alphanumeric()
+            && !c.is_whitespace()
+            && !c.is_control()
+            && !matches!(c, '\u{2000}'..='\u{2fff}' | '\u{3000}'..='\u{30ff}'
+                | '\u{ff01}'..='\u{ff5e}'))
 }
 
 /// `Withdraw-1`, `withdraw 1` and `Withdraw_1` are one label.
 pub fn normalized_action_eq(actual: &str, expected: &str) -> bool {
-    normalized_action_bytes(actual).eq(normalized_action_bytes(expected))
+    normalized_action_chars(actual).eq(normalized_action_chars(expected))
 }
 
 /// The 1-based op slot whose normalized label equals `wanted`.
@@ -272,10 +360,10 @@ pub fn dash_space_eq(actual: &str, expected: &str) -> bool {
 }
 
 fn contains_all(label: &str) -> bool {
-    let mut window = [0u8; 3];
-    normalized_action_bytes(label).any(|byte| {
-        window = [window[1], window[2], byte];
-        &window == b"all"
+    let mut window = ['\0'; 3];
+    normalized_action_chars(label).any(|c| {
+        window = [window[1], window[2], c];
+        window == ['a', 'l', 'l']
     })
 }
 
@@ -894,13 +982,13 @@ pub fn all_op_in(actions: &[Option<String>]) -> Option<i32> {
 /// The slot of the label for exactly `count` (`Withdraw {count}`, any
 /// separator spelling). The `-` of a negative count normalizes away, as
 /// it does for a `Withdraw-10` label.
-fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i32> {
-    let mut digits = [0u8; 10];
+pub fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i32> {
+    let mut digits = ['\0'; 10];
     let mut at = digits.len();
     let mut n = i64::from(count).unsigned_abs();
     loop {
         at -= 1;
-        digits[at] = b'0' + (n % 10) as u8;
+        digits[at] = char::from_digit(u32::try_from(n % 10).unwrap_or(0), 10).unwrap_or('0');
         n /= 10;
         if n == 0 {
             break;
@@ -911,8 +999,7 @@ fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i32> {
         .iter()
         .position(|label| {
             label.as_deref().is_some_and(|label| {
-                normalized_action_bytes(label)
-                    .eq(b"withdraw".iter().copied().chain(digits.iter().copied()))
+                normalized_action_chars(label).eq("withdraw".chars().chain(digits.iter().copied()))
             })
         })
         .map(|index| index as i32 + 1)
