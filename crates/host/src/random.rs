@@ -4,6 +4,7 @@
 //! caller-owned [`CooldownMap`]; act / hold / dialog, the wrong-talk
 //! 45 s cooldown writes, the trapped-kind hold and the rising-edge
 //! `on_random` knock live in [`Guardian`].
+mod ent;
 mod guardian;
 pub use guardian::{Guardian, GuardianLiveContext, RandomStatus};
 
@@ -40,17 +41,13 @@ const DIALOG_NAMES: &[&str] = &[
     "frog",
 ];
 
-/// Hostile event NPC names. The angry `strange plant` overlaps `PICK_NAME`
-/// and enters Evade only when its actual NPC ops include `Attack`.
-const EVADE_NAMES: &[&str] = &[
-    "river troll",
-    "swarm",
-    "rock golem",
-    "zombie",
-    "shade",
-    "watchman",
-    "tree spirit",
-];
+/// Hostile macro-event types from `content/pack/npc.pack:392-444`:
+/// troll 391..396, angry triffid 408, swarm 411, golem/zombie/shade/watchman
+/// 413..436, dryad 438..443. World namesakes (notably zombie_unarmed 73)
+/// have no macro-event lifetime or cleanup contract.
+fn is_evade_type(type_id: Option<usize>) -> bool {
+    matches!(type_id, Some(391..=396 | 408 | 411 | 413..=436 | 438..=443))
+}
 
 /// The growing plant (pick kind): acted on only with current ownership
 /// evidence — see [`owned_pickable_plant`].
@@ -262,7 +259,7 @@ fn detect_scene(
         // content resolves both its ordinary and angry phases with Talk-to.
         if snap.ingame()
             && snap.local_player().is_some()
-            && is_evade_npc(npc, &name)
+            && is_evade_npc(npc)
             && event_npc_targets_player(npc, self_slot)
         {
             return Some(DetectedRandom {
@@ -412,8 +409,8 @@ fn plant_offers_attack(npc: &NpcView) -> bool {
     }) && !plant_offers_pick(npc)
 }
 
-fn is_evade_npc(npc: &NpcView, name: &str) -> bool {
-    EVADE_NAMES.contains(&name) || (name == PICK_NAME && plant_offers_attack(npc))
+fn is_evade_npc(npc: &NpcView) -> bool {
+    is_evade_type(npc.r#type) && (npc.r#type != Some(408) || plant_offers_attack(npc))
 }
 /// Last-priority ownership probe candidate. A server-authenticated probe is
 /// safe only for a passive, featureless plant already within interaction
