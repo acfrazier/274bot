@@ -148,9 +148,10 @@ Get-Content (Get-ChildItem C:\274bot-nightly\logs\*-night.log | Sort-Object Last
 
 Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
 ([`windows/nightly.env`](windows/nightly.env) is the deployed copy); the step list
-(`NIGHTLY_STEPS`, default `lanes,panel,tui`) and each step's deadline
+(`NIGHTLY_STEPS`, default `lanes,panel,tui`), each step's deadline
 (`NIGHTLY_LANES_DEADLINE_S`, `NIGHTLY_BUILD_DEADLINE_S`, `NIGHTLY_PANEL_DEADLINE_S`,
-`NIGHTLY_TUI_DEADLINE_S`) can be set there too.
+`NIGHTLY_TUI_DEADLINE_S`) and the whole night's (`NIGHTLY_RUN_DEADLINE_S`) can be set
+there too.
 
 Pull at once instead of waiting for the hour:
 `systemctl start 274bot-nightly-pull.service` (Windows runs:
@@ -356,22 +357,25 @@ start`.
    (`NIGHTLY_PANEL_PARALLEL`), windows on the console desktop, prefix `np`. Paired
    proofs are `UNAVAILABLE` here (panel-play has no `--pair-core`); the `tui` step runs
    them under the gate.
-5. `tui` (3.5 h): every cell as on the Linux VM, with the same engine flags, on ConPTY
+5. `tui` (6 h): every cell as on the Linux VM, with the same engine flags, on ConPTY
    (pywinpty; a `cmd /c … 2>stderr.log` shim inside the console keeps stderr apart), 4 at
    a time, prefix `nw`.
 
 In both cell steps every cell gets a throwaway `HOME`/`USERPROFILE`/`APPDATA`/
 `LOCALAPPDATA`/`TEMP`, and `BOT_CPU=1` unless its name matches `NIGHTLY_GPU_CELLS`
 (`^render_`: those draw with the GPU). The outer cap is 1200 s on this host
-(`NIGHTLY_CELL_CAP_S`); a cell still running when its step's deadline passes is
-stopped as `TIMEOUT`, and cells not started by then are `NOT_RUN`.
+(`NIGHTLY_CELL_CAP_S`). No step runs past the night's deadline either (8.5 h, so a
+23:00 start ends by 07:30, before Engine B's busy morning and well inside the task's
+11 h limit). A cell still running when its deadline passes is stopped as `TIMEOUT`,
+and cells not started by then are `NOT_RUN`.
 
 **Engine B.** The cells use Engine B, the shared engine other agents' live cells use,
 through the review machine's `274bot-nightly-win-engine` reverse forward on host
 loopback 47594 (game) and 3080 (web). The runner never starts, stops or reconfigures
 it; before each cell step it checks the 40-byte `/crc` identity and the game port, and
 if either fails, that step's cells are `UNAVAILABLE: Engine B not reachable`. Accounts
-are minted under the nightly prefixes, and cells change only their own accounts.
+are minted fresh under the nightly prefixes (`nw…` for tui-play, `np…` for panel-play),
+apart from other agents' accounts; the runner itself sends no cheats or world commands.
 
 **What persists between nights:** BotTest's `CARGO_HOME` and `RUSTUP_HOME`, the build
 caches `target\<branch>` and `target\<branch>-ci` (compiled artefacts only), the bare
