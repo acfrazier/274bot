@@ -10,18 +10,20 @@
   "families": [
     {
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(acquisition)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 69,
@@ -36,27 +38,29 @@
     },
     {
       "family_id": "bank",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(bank)",
       "activation_endpoint": "T2.3",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.2"
+        "T2.2",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
         "T2.1",
-        "T2.2"
+        "T2.2",
+        "T5.1"
       ],
       "counts": {
         "declarations": 27,
-        "members": 49,
+        "members": 55,
         "overloads": 0,
-        "aliases": 3,
-        "callbacks": 18,
-        "type_aliases": 3,
+        "aliases": 2,
+        "callbacks": 9,
+        "type_aliases": 2,
         "name_aliases": 0,
         "not_impl_debt": 11
       }
@@ -84,7 +88,7 @@
         "callbacks": 0,
         "type_aliases": 4,
         "name_aliases": 0,
-        "not_impl_debt": 10
+        "not_impl_debt": 6
       }
     },
     {
@@ -136,7 +140,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 15
+        "not_impl_debt": 16
       }
     },
     {
@@ -161,28 +165,26 @@
         "members": 0,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 7,
+        "callbacks": 4,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 4
+        "not_impl_debt": 9
       }
     },
     {
       "family_id": "combat",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "activation_unit": "I-family(combat)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "counts": {
         "declarations": 1,
@@ -223,18 +225,20 @@
     },
     {
       "family_id": "cooking",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(cooking)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 0,
@@ -275,25 +279,27 @@
     },
     {
       "family_id": "dialogue",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(dialogue)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 1,
         "members": 15,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 1,
+        "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 1
@@ -321,7 +327,7 @@
         "members": 0,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 0,
+        "callbacks": 3,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 1
@@ -579,8 +585,8 @@
         "T2.1"
       ],
       "counts": {
-        "declarations": 5,
-        "members": 29,
+        "declarations": 3,
+        "members": 20,
         "overloads": 0,
         "aliases": 0,
         "callbacks": 0,
@@ -690,7 +696,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 31
+        "not_impl_debt": 33
       }
     },
     {
@@ -709,12 +715,12 @@
         "T2.1"
       ],
       "counts": {
-        "declarations": 1,
+        "declarations": 2,
         "members": 4,
         "overloads": 0,
-        "aliases": 0,
+        "aliases": 1,
         "callbacks": 0,
-        "type_aliases": 0,
+        "type_aliases": 1,
         "name_aliases": 0,
         "not_impl_debt": 1
       }
@@ -741,10 +747,10 @@
         "members": 0,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 0,
+        "callbacks": 3,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 3
+        "not_impl_debt": 12
       }
     },
     {
@@ -775,18 +781,20 @@
     },
     {
       "family_id": "runtime",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(runtime)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 0,
@@ -796,23 +804,25 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 5
+        "not_impl_debt": 14
       }
     },
     {
       "family_id": "shop",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(shop)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 1,
@@ -873,7 +883,7 @@
         "members": 0,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 1,
+        "callbacks": 10,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 2
@@ -881,25 +891,27 @@
     },
     {
       "family_id": "thieving",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(thieving)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 4,
         "members": 2,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 7,
+        "callbacks": 9,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 0
@@ -907,22 +919,24 @@
     },
     {
       "family_id": "trade",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(trade)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
-        "declarations": 1,
-        "members": 12,
+        "declarations": 2,
+        "members": 15,
         "overloads": 0,
         "aliases": 0,
         "callbacks": 12,
@@ -953,7 +967,7 @@
         "members": 34,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 15,
+        "callbacks": 11,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 5
@@ -982,7 +996,7 @@
         "callbacks": 0,
         "type_aliases": 1,
         "name_aliases": 0,
-        "not_impl_debt": 4
+        "not_impl_debt": 3
       }
     },
     {
