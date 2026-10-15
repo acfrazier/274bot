@@ -1429,29 +1429,9 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
         !tiles.is_empty(),
         "published image manifest must contain terrain"
     );
-    let sample_count = tiles.len().min(32);
-    let largest_index = tiles
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, tile)| tile.payload.bytes)
-        .map(|(index, _)| index)
-        .expect("published image has terrain tiles");
-    let mut sample_indices = Vec::with_capacity(sample_count + 1);
-    for sample in 0..sample_count {
-        let index = if sample_count == 1 {
-            0
-        } else {
-            sample * (tiles.len() - 1) / (sample_count - 1)
-        };
-        sample_indices.push(index);
-    }
-    if !sample_indices.contains(&largest_index) {
-        sample_indices.push(largest_index);
-    }
     let mut controller = WalkMapDecodeController::new();
 
-    for index in sample_indices {
-        let receipt = &tiles[index];
+    for receipt in tiles {
         let path = root.join(receipt.key.relative_path().expect("validated tile path"));
         let png = std::fs::read(path).expect("read published terrain PNG");
         receipt

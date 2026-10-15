@@ -205,9 +205,9 @@
       "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeError",
       "path": "crates/frontend-core/src/map_decode.rs",
       "symbol": "WalkMapDecodeError",
-      "classification": "owning",
+      "classification": "scalar",
       "owner": "T3",
-      "reason": "T5.W(walk-map-decode) exposes typed decode and admission failures without heap-owned sources."
+      "reason": "T5.W(walk-map-decode) exposes typed Copy/scalar decode and admission failures without heap-owned sources."
     },
     {
       "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeResult",
