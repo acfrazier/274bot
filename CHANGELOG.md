@@ -145,6 +145,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   file now says it is not a regular file, as on Linux and macOS, instead of
   "cannot read …: Access is denied".
 
+### Internal
+
+- Lint suppressions are now ratcheted: the workspace lint table denies
+  `allow_attributes` (so suppressions are `#[expect]`), denies
+  `allow_attributes_without_reason`, and denies six approved clippy lints,
+  starting with `vault`. `tools/lint-ratchet/` fails when any per-crate
+  suppression count rises above its committed baseline.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles
