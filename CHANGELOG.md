@@ -52,10 +52,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   was and treated as one 274bot can't read until it can be renamed.
 - Renaming a loadout saves it in one step, in its place in the list, and
   never loses it. If the save fails before the file is replaced, the
-  loadout keeps its old name. If the file was replaced but 274bot couldn't
-  confirm it reached the disk (an error flushing its folder), the save is
-  reported as an error, and the loadout may already be saved under its new
-  name.
+  loadout stays saved under its old name. If the file was replaced but
+  274bot couldn't confirm it reached the disk (an error flushing its
+  folder), the save is reported as an error, and the loadout may already be
+  saved under its new name.
 - Two 274bot processes on the same home folder take turns writing each
   saved file, and a save is reported done only when the file still holds it
   after it reached the disk: a change by another program in the meantime is
