@@ -573,6 +573,7 @@ async function main() {
             frozenSourceRoot: path.join(frozen, 'src'),
             nativeSourceRoot: path.join(crate, 'src'),
             nativeFamilyFamilies,
+            registry,
         });
         const abiArtifacts = buildArtifacts({
             frozenRevision,

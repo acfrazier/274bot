@@ -534,7 +534,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+      "evidence": "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
     },
     {
       "families": [
@@ -1043,51 +1043,51 @@
         },
         {
           "family": "dialog",
-          "order": "synchronous-at-call-site",
-          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+          "order": "queued-notifications-before-next-decision",
+          "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "reach-npc-dialog",
-          "order": "synchronous-at-call-site",
-          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+          "order": "queued-notifications-before-next-decision",
+          "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "reach-entity-op",
-          "order": "synchronous-at-call-site",
-          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+          "order": "queued-notifications-before-next-decision",
+          "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "walk-resilient",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "walk-opening",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "walk-to",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "return-to-anchor",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
           "family": "walk-hops",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         }
       ],
       "member": "log",
@@ -1099,7 +1099,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "families": [
@@ -1133,7 +1133,7 @@
           "family": "partner-trade",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         }
       ],
       "member": "setStatus",
@@ -1156,7 +1156,7 @@
           "family": "partner-trade",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         }
       ],
       "member": "log",
@@ -1202,7 +1202,7 @@
           "family": "partner-trade",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         }
       ],
       "member": "onComplete",
@@ -1225,7 +1225,7 @@
           "family": "partner-trade",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-          "cadence": "Once per queued notification; FIFO delivery precedes the next decision."
+          "cadence": "Once per queued notification; delivery precedes the next decision."
         }
       ],
       "member": "onDecline",
@@ -4270,79 +4270,79 @@
       "family_semantics": [
         {
           "family": "hunt-fight",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-hold",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-retreat",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-walkspot",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-enter",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-leave",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-key",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-cell",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-bank",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-wait-fed",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-teleport-out",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-acquire",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         }
       ],
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
@@ -4353,7 +4353,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "families": [
@@ -4373,79 +4373,79 @@
       "family_semantics": [
         {
           "family": "hunt-fight",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-hold",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-retreat",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-walkspot",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-enter",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-leave",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-key",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-cell",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-bank",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-wait-fed",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-teleport-out",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-acquire",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         }
       ],
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
@@ -4456,7 +4456,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "families": [
@@ -4476,79 +4476,79 @@
       "family_semantics": [
         {
           "family": "hunt-fight",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-hold",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-retreat",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-walkspot",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-enter",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-leave",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-key",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-cell",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-bank",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-wait-fed",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-teleport-out",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         },
         {
           "family": "hunt-acquire",
-          "order": "hunt-notifications-before-decision",
-          "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-          "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision."
+          "order": "hunt-notifications-before-decision-and-effects-after-notes",
+          "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+          "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
         }
       ],
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
@@ -4559,7 +4559,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "families": [
