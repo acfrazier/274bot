@@ -82,9 +82,10 @@ fn acquire_gathering() -> Option<Arc<GatherCatalog>> {
             2 * 1024 * 1024,
             2 * 1024 * 1024,
         )
-        .ok()?;
+        .ok()?
+        .with_gathering_family_decode();
         crate::preparation::submit(
-            crate::preparation::PreparationKind::Catalogue,
+            crate::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
             move |worker| data.prepare_gathering(worker),
