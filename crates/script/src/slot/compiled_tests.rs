@@ -46,6 +46,78 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn large_catalogue_job_and_operator_start_both_complete() {
+    use api::identity::Scope;
+    use crate::preparation::{self, PreparationInput, PreparationKind};
+
+    const SOURCE_BYTES: usize = 64 * 1024 * 1024;
+    let source = vec![0_u8; SOURCE_BYTES];
+    let (entered, started) = std::sync::mpsc::sync_channel(0);
+    let (release, released) = std::sync::mpsc::sync_channel(0);
+    let large = preparation::submit(
+        PreparationKind::Catalogue,
+        Scope::Process,
+        PreparationInput::new(1, source.len(), 32 * 1024 * 1024, 32 * 1024 * 1024).unwrap(),
+        move |_| {
+            entered.send(()).unwrap();
+            released.recv().unwrap();
+            source.len()
+        },
+    )
+    .unwrap();
+    started
+        .recv_timeout(Duration::from_secs(5))
+        .expect("large catalogue entered the worker");
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_409);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(slot.state(), RunState::Starting);
+    release.send(()).unwrap();
+    assert_eq!(large.join().unwrap(), SOURCE_BYTES);
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+}
+
+#[test]
+fn oversized_native_settings_have_a_typed_visible_refusal() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_411);
+    let bag = SettingsBag::from_iter([(
+        "oversized".into(),
+        serde_json::Value::String("x".repeat(8 * 1024 * 1024)),
+    )]);
+    let error = slot
+        .start_compiled(
+            "account",
+            crate::CompiledId("Sherlock"),
+            Arc::new(bag),
+            selected(),
+            Arc::default(),
+        )
+        .expect_err("oversized settings must not enter the work ledger");
+    assert_eq!(
+        error,
+        StartError::WorkRefused(api::work::SubmissionRefusal::InvalidArgument),
+    );
+    assert!(error.to_string().contains("preparation refused"));
+    assert_eq!(slot.state(), RunState::Idle);
+}
+
+#[test]
+fn native_card_policy_timing() {
+    let _selected = selected();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_410);
+    let start_at = Instant::now();
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    eprintln!("NATIVE_START_POLICY elapsed={:?}", start_at.elapsed());
+    let restart_at = Instant::now();
+    restart_and_settle(&mut slot, restart_at);
+    eprintln!("NATIVE_RESTART_POLICY elapsed={:?}", restart_at.elapsed());
+}
+
+#[test]
 fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
     let mut output = Output::default();
     output.settings_applied(0);

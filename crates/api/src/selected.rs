@@ -345,13 +345,13 @@ impl FamilyPreparation {
             })
     }
 
-    /// Run preparation inline on the current WorkAdmission worker, inside a
-    /// [`crate::work::PreparationPhase`] step. The capability exists only for
-    /// the duration of `work` and is dropped before this returns, so it is
-    /// never retained across a yield (`work.rs` `PreparationPhase::Seal`).
-    /// No thread is spawned: the single WorkAdmission worker runs it (§24
-    /// G2b). The step context is the evidence that the caller is that
-    /// worker's step, not a pump or tick.
+    /// Run preparation inline on the calling thread with a
+    /// [`crate::work::PreparationPhase`] context. Production callers supply
+    /// this context inside a WorkAdmission Prepare step; the public context
+    /// type does not itself attest to the caller's thread or worker identity.
+    /// The capability exists only for the duration of `work` and is dropped
+    /// before this returns, so it cannot be retained across a yield. No
+    /// thread is spawned by this method.
     pub fn within<R>(
         _step: &mut crate::work::StepContext<'_, crate::work::PreparationPhase>,
         work: impl FnOnce(&mut Self) -> R,

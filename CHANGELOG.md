@@ -20,6 +20,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   off the UI and game threads. Superseded preparations do not replace the
   active Path registry.
 
+- Card preparation now admits bounded background jobs for Starts, restarts,
+  settings saves, gathering facts, catalogue refreshes and Path reloads. When
+  the worker is temporarily full, these actions wait for a receipt instead of
+  failing. Invalid or oversized inputs still produce a visible refusal.
+  The settings editor retains at most 64 pending native saves or deliveries.
+  Further requests report a queue-limit refusal until earlier receipts settle.
+- A card's source and sibling graph is limited to 8 MiB. The rs2b0t catalog
+  accepts at most 4,096 registrations and 8,192 source files. Exceeding
+  either limit reports a catalogue error rather than consuming unbounded resources.
+- A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
+  16 MiB of retained documents. Larger folders or documents report a typed
+  validation error and leave the last successful registry available.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles

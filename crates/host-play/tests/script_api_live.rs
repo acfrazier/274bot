@@ -784,6 +784,118 @@ fn runtime_restart_cell() {
     runtime_cell(true);
 }
 
+fn start_during_catalogue_refresh_cell() {
+    use api::identity::Scope;
+    use script::preparation::{self, PreparationInput, PreparationKind};
+
+    let (play, account, fixture) = start_fixture(false);
+    let root = evidence().join(format!(
+        "start-during-catalogue-refresh-{}",
+        std::process::id()
+    ));
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Witness")).expect("create isolated catalogue");
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Witness from './Witness/Witness.js';\nScriptRegistry.register({ name: 'Witness', create: () => new Witness() });\n",
+    )
+    .expect("write registry");
+    std::fs::write(
+        scripts.join("Witness/Witness.ts"),
+        "export default class Witness extends LoopingBot { loop() {} }\n",
+    )
+    .expect("write catalogue card");
+    let mut library = script::JsLibrary::with_cache(root.join("scripts.json"), root.join("cache"));
+    library
+        .register_rs2b0t(&root, &root.join("catalog-path"))
+        .expect("register initial fixture");
+    std::fs::write(
+        scripts.join("Witness/Witness.ts"),
+        "export default class Witness extends LoopingBot { loop() { this.revision = 2; } }\n",
+    )
+    .expect("change catalogued source before refresh");
+    let snapshot = Arc::new(
+        library
+            .catalog_preparation_snapshot(&root)
+            .expect("derive bounded catalogue charge"),
+    );
+    let charge = PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .expect("catalogue charge");
+    let mut prepare = Arc::clone(&snapshot).cooperative_prepare();
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+    let mut first = true;
+    let refresh = preparation::submit_cooperative(
+        PreparationKind::Catalogue,
+        Scope::Process,
+        charge,
+        move |worker| {
+            if std::mem::take(&mut first) {
+                entered_tx.send(()).expect("announce catalogue refresh");
+                release_rx.recv().expect("release catalogue refresh");
+            }
+            prepare(worker)
+        },
+    )
+    .expect("admit bounded catalogue refresh");
+    entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("catalogue refresh entered work service");
+    play.script_start(&account, script::CompiledId("Sherlock"), serde_json::Map::new())
+        .expect("accept operator Start during catalogue refresh");
+    wait_for(&play, &account, &fixture, Duration::from_secs(10), |play| {
+        play.script_state(&account) == script::RunState::Starting
+    });
+    release_tx.send(()).expect("release catalogue job");
+    let mut result = refresh
+        .join()
+        .expect("catalogue job completed")
+        .expect("catalogue preparation");
+    assert_eq!(result.diff.changed.len(), 1, "real catalogue refresh completed");
+    assert!(result.prepare_failed.is_empty(), "catalogue card prepared");
+    assert_eq!(result.prepared.len(), 1, "changed card prepared");
+    for prepared in std::mem::take(&mut result.prepared) {
+        library
+            .commit_prepared(prepared)
+            .expect("publish prepared catalogue card");
+    }
+    result.diff.changed.clear();
+    library.apply_catalog_diff(result.diff);
+    assert!(
+        library
+            .get(script::ScriptSource::Catalog, "Witness")
+            .is_some_and(|card| card.origin.contains("revision = 2")),
+        "the refreshed card was published",
+    );
+    let mut settled = None;
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        if let script::StartPoll::Settled(outcome) = play.script_poll_start(&account) {
+            settled = Some(outcome);
+            true
+        } else {
+            false
+        }
+    });
+    assert_eq!(settled, Some(script::StartOutcome::Ready));
+    assert_eq!(play.script_state(&account), script::RunState::Running);
+    play.script_stop(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        play.script_state(&account) == script::RunState::Idle
+    });
+    no_drops(&account);
+    save(
+        "script-api-start-during-catalogue-refresh-receipt.json",
+        &json!({"cell":"script_api_start_during_catalogue_refresh", "account":account,
+               "catalogue_changed":1, "start_outcome":"Ready"}),
+    );
+    std::fs::remove_dir_all(&root).expect("remove isolated catalogue fixture");
+}
+
 fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
@@ -873,7 +985,10 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         receipt["driver"] = json!({"trace":trace,"accepted_requests":requests,"drop_packets":drops,"drop_batches":drop_batches,"max_packets_on_drop_tick":packets.values().filter(|rows| rows.contains(&drop_opcode)).map(Vec::len).max()});
     } else if matches!(
         cell,
-        "script_api_gather_walk_options" | "script_runtime_load" | "script_runtime_restart"
+        "script_api_gather_walk_options"
+            | "script_runtime_load"
+            | "script_runtime_restart"
+            | "script_api_start_during_catalogue_refresh"
     ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
@@ -933,6 +1048,16 @@ fn script_runtime_restart() {
         "script_runtime_restart",
         "script-runtime-restart-receipt.json",
         runtime_restart_cell,
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
+fn script_api_start_during_catalogue_refresh() {
+    run_captured(
+        "script_api_start_during_catalogue_refresh",
+        "script-api-start-during-catalogue-refresh-receipt.json",
+        start_during_catalogue_refresh_cell,
     );
 }
 

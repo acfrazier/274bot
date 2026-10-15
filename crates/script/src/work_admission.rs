@@ -1,9 +1,11 @@
 //! Process-wide cooperative work admission and its single FIFO worker.
 //!
-//! Ordinary G2b slices use 64 work units or 10 ms, whichever comes first.
-//! One explicitly qualified immutable gathering-family decode may use its
-//! finite 100 ms allowance; it does not change other jobs' quanta.
-//! Admission reserves job, byte, operation-handle, and terminal custody.
+//! Ordinary G2b dispatches request a yield after 64 work units or 10 ms.
+//! Returning late is reported, not treated as a failed operator action:
+//! scheduler delay is not evidence that a job ignored a checkpoint. A
+//! non-returning worker is detected separately; explicit unit/checkpoint
+//! violations still fail only their job. Admission reserves job, byte,
+//! operation-handle, and terminal custody.
 
 use std::any::{Any, TypeId};
 use std::cell::UnsafeCell;
@@ -16,8 +18,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use api::identity::{
-    Cancellation, Deadline, IdentityError, Notifier, ProcessIncarnation, ProcessOrigin, RequestId,
-    RequestIdMinter, Scope, Settlement, WorkIdentity,
+    Cancellation, Deadline, IdentityError, Notifier, ProcessIncarnation, ProcessOrigin,
+    PublishSequence, RequestId, RequestIdMinter, Scope, Settlement, WorkIdentity,
 };
 use api::process_condition::{
     AdmissionRefusal, ConditionCause, ConditionId, ProcessCapability, ProcessConditions,
@@ -35,7 +37,8 @@ use rand::RngCore;
 
 /// Work units allowed in one dispatch.
 pub const WORK_UNITS_PER_SLICE: u32 = 64;
-/// Maximum elapsed time allowed in one dispatch.
+/// Soft elapsed-time checkpoint for ordinary dispatches. Returning after
+/// this bound is reported as an overrun, not a cooperation failure.
 pub const WORK_SLICE: Duration = Duration::from_millis(10);
 /// One verify-and-decode of the pinned 274/289 gathering family (at most
 /// 1,411,973 embedded input bytes). Only the first Profile Prepare step may
@@ -61,15 +64,22 @@ pub(crate) enum QualifiedUnit {
 pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(5);
 /// Maximum simultaneously accepted jobs, including unconsumed terminals.
 const MAX_WORK_JOBS: usize = 64;
-/// 128 MiB of admission budget plus custody for all 64 bounded progress
-/// histories. A full-bound catalogue must still fit its own progress.
-const MAX_WORK_BYTES: usize = 128 * 1024 * 1024 + MAX_WORK_JOBS * PROGRESS_BYTES_PER_JOB;
+/// Two independently maximal 128 MiB preparations may coexist. Ordinary
+/// catalogue and folder work charges their smaller measured footprint; the
+/// second reservation is headroom, not permission for unbounded input.
+const MAX_WORK_BYTES: usize = 256 * 1024 * 1024 + MAX_WORK_JOBS * PROGRESS_BYTES_PER_JOB;
 /// WorkAdmission operation handles across all accepted jobs.
 const MAX_OPERATION_HANDLES: u32 = 8;
-/// Per-job progress snapshot retention bound.
-const MAX_PROGRESS_SNAPSHOTS_PER_JOB: usize = 64;
-
-const PROGRESS_BYTES_PER_JOB: usize = std::mem::size_of::<ProgressHistory>();
+/// The admitted catalogue has at most 4,096 cards and 8,192 source files;
+/// 32,768 snapshots cover its bounded scan/analysis/prepare stages. Allocate
+/// history in 64-snapshot chunks, but reserve the full cap for borrowed
+/// immutable references returned by WorkAdmission::progress.
+const MAX_PROGRESS_SNAPSHOTS_PER_JOB: usize = 32_768;
+const PROGRESS_CHUNK: usize = 64;
+const PROGRESS_BYTES_PER_JOB: usize = std::mem::size_of::<ProgressHistory>()
+    + (MAX_PROGRESS_SNAPSHOTS_PER_JOB - PROGRESS_CHUNK)
+        * std::mem::size_of::<OnceLock<WorkProgress>>()
+    + (MAX_PROGRESS_SNAPSHOTS_PER_JOB / PROGRESS_CHUNK) * std::mem::size_of::<Box<ProgressBlock>>();
 const TERMINAL_PENDING: u8 = 0;
 const TERMINAL_PUBLISHED: u8 = 1;
 const TERMINAL_CONSUMED: u8 = 2;
@@ -176,6 +186,7 @@ impl WorkService {
             registry: Mutex::new(HashMap::with_capacity(MAX_WORK_JOBS)),
             publications,
             notifier,
+            slice_overruns: AtomicU64::new(0),
             shutdown_requested: AtomicBool::new(false),
             unavailable: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -277,6 +288,12 @@ impl WorkService {
     pub fn publications(&self) -> &WorkPublications {
         self.observe_health();
         &self.shared.publications
+    }
+
+    /// Number of dispatches that returned after their soft wall-time
+    /// checkpoint. Such delay never changes an accepted job's terminal.
+    pub fn slice_overruns(&self) -> u64 {
+        self.shared.slice_overruns.load(Ordering::Acquire)
     }
 
     /// Current internal notification epoch. Publication and shutdown state
@@ -429,7 +446,6 @@ impl WorkService {
         shared: &Arc<parking_lot::Mutex<Self>>,
         ticket: &WorkTicket<F>,
     ) -> Result<(), LedgerError> {
-        let deadline = Instant::now() + WORKER_STALL_LIMIT;
         loop {
             let (notifier, epoch) = {
                 let service = shared.lock();
@@ -448,11 +464,30 @@ impl WorkService {
                 }
                 (Arc::clone(&service.shared.notifier), epoch)
             };
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(LedgerError::WorkerNotReturned);
-            }
-            notifier.wait_for_change(epoch, remaining);
+            // Recheck health periodically, but never confuse a healthy busy
+            // queue with a worker that failed to return from its active step.
+            notifier.wait_for_change(epoch, WORKER_STALL_LIMIT);
+        }
+    }
+
+    /// Park only a non-pump caller until the bounded ledger changes. A Full
+    /// refusal retains the producer's input; retry mints a fresh identity.
+    pub fn wait_for_capacity_change(
+        shared: &Arc<parking_lot::Mutex<Self>>,
+        observed: PublishSequence,
+    ) {
+        loop {
+            let (notifier, epoch) = {
+                let service = shared.lock();
+                if service.stopping
+                    || !service.worker_available()
+                    || service.shared.publications.capacity().sequence() != observed
+                {
+                    return;
+                }
+                (Arc::clone(&service.shared.notifier), service.publication_epoch())
+            };
+            notifier.wait_for_change(epoch, WORKER_STALL_LIMIT);
         }
     }
 
@@ -529,6 +564,12 @@ impl CapacityLedger {
             .total_bytes()
             .and_then(|total| total.checked_add(PROGRESS_BYTES_PER_JOB))
             .ok_or(SubmissionRefusal::InvalidArgument)?;
+        if bytes > bounds.max_bytes().get()
+            || charge.operation_handles() > bounds.max_handles().get()
+        {
+            // An impossible single-job charge is permanent, not Full.
+            return Err(SubmissionRefusal::InvalidArgument);
+        }
         if self.jobs >= bounds.max_jobs().get() {
             return Err(SubmissionRefusal::Full);
         }
@@ -591,6 +632,7 @@ struct WorkerShared {
     registry: Mutex<HashMap<RequestId, Weak<JobEntry>>>,
     publications: Arc<WorkPublications>,
     notifier: Arc<ServiceNotifier>,
+    slice_overruns: AtomicU64,
     shutdown_requested: AtomicBool,
     unavailable: AtomicBool,
     exited: AtomicBool,
@@ -809,8 +851,11 @@ impl TerminalCell {
 // exclusive consumer operation documented above. The contained type is Send.
 unsafe impl Sync for TerminalCell {}
 
+type ProgressBlock = [OnceLock<WorkProgress>; PROGRESS_CHUNK];
+
 struct ProgressHistory {
-    values: [OnceLock<WorkProgress>; MAX_PROGRESS_SNAPSHOTS_PER_JOB],
+    first: ProgressBlock,
+    overflow: Mutex<Vec<Box<ProgressBlock>>>,
     len: AtomicUsize,
     writer: Mutex<()>,
 }
@@ -818,7 +863,8 @@ struct ProgressHistory {
 impl ProgressHistory {
     fn new() -> Self {
         Self {
-            values: std::array::from_fn(|_| OnceLock::new()),
+            first: std::array::from_fn(|_| OnceLock::new()),
+            overflow: Mutex::new(Vec::new()),
             len: AtomicUsize::new(0),
             writer: Mutex::new(()),
         }
@@ -830,18 +876,36 @@ impl ProgressHistory {
         if len >= MAX_PROGRESS_SNAPSHOTS_PER_JOB {
             return false;
         }
-        if self.values[len].set(progress).is_err() {
-            return false;
+        if len < PROGRESS_CHUNK {
+            self.first[len].set(progress).expect("one progress writer");
+        } else {
+            let index = len - PROGRESS_CHUNK;
+            let mut overflow = self.overflow.lock();
+            if index / PROGRESS_CHUNK == overflow.len() {
+                overflow.push(Box::new(std::array::from_fn(|_| OnceLock::new())));
+            }
+            overflow[index / PROGRESS_CHUNK][index % PROGRESS_CHUNK]
+                .set(progress)
+                .expect("one progress writer");
         }
         self.len.store(len + 1, Ordering::Release);
         true
     }
 
     fn latest(&self) -> Option<&WorkProgress> {
-        self.len
-            .load(Ordering::Acquire)
-            .checked_sub(1)
-            .and_then(|index| self.values[index].get())
+        let len = self.len.load(Ordering::Acquire).checked_sub(1)?;
+        if len < PROGRESS_CHUNK {
+            return self.first[len].get();
+        }
+        let index = len - PROGRESS_CHUNK;
+        let overflow = self.overflow.lock();
+        let value = overflow[index / PROGRESS_CHUNK][index % PROGRESS_CHUNK]
+            .get()
+            .expect("published length follows immutable slot");
+        // SAFETY: the OnceLock lives in a heap block that never moves or
+        // leaves this ProgressHistory. Its value never changes once set.
+        // The WorkAdmission borrow cannot outlive its owning service/job.
+        Some(unsafe { &*(value as *const WorkProgress) })
     }
 }
 
@@ -1035,9 +1099,22 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
     let returned_at = shared.clock.now();
     match step {
         Err(_) => {
+            // A returned job panic is a failed job, not a lost worker.
+            // Drop of its captured state is also inside the job boundary.
+            let _ = catch_unwind(AssertUnwindSafe(|| drop(job)));
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Error,
+                "background work job {:?} panicked; only this job failed",
+                entry.identity.job(),
+            );
+            let published = entry.publish_service_terminal(ServiceTerminal::Cooperation(
+                CooperativeViolation::UnboundedSlice,
+            ));
+            if published {
+                shared.publish_terminal(&entry);
+            }
             *shared.active.lock() = None;
-            drop(job);
-            latch_outage(shared, ConditionCause::Panicked, returned_at);
             mark_returned(shared, &entry);
         }
         Ok((outcome, report)) => {
@@ -1074,11 +1151,23 @@ fn process_step(
     report: SliceReport,
     timing: StepTiming,
 ) {
-    let over_time =
-        timing.returned_at.saturating_duration_since(timing.started) >= timing.allowance;
-    let violation = if report.continued {
+    let elapsed = timing.returned_at.saturating_duration_since(timing.started);
+    if elapsed >= timing.allowance {
+        let count = shared.slice_overruns.fetch_add(1, Ordering::AcqRel) + 1;
+        // Exponential reporting bounds log work if a busy host has many
+        // delayed steps, while the exact count remains observable.
+        if count.is_power_of_two() {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                "background work slice overrun count={count} elapsed={elapsed:?} allowance={:?}",
+                timing.allowance,
+            );
+        }
+    }
+    let mut violation = if report.continued {
         Some(CooperativeViolation::IgnoredYield)
-    } else if report.exceeded || over_time {
+    } else if report.exceeded {
         Some(CooperativeViolation::UnboundedSlice)
     } else {
         None
@@ -1120,6 +1209,10 @@ fn process_step(
                     if entry.progress.append(progress.clone()) {
                         control.progress_sequence = sequence;
                         shared.publish_progress(progress);
+                    } else {
+                        // A pathological job exhausted even its declared
+                        // progress custody; it cannot silently lose updates.
+                        violation = Some(CooperativeViolation::ChargeExceeded);
                     }
                 }
             }

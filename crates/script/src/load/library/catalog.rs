@@ -2132,8 +2132,8 @@ impl JsLibrary {
             if shape == LoadShape::Reject {
                 continue;
             }
-            // Origin/classify only — no transpile, no V8. Warmth is
-            // [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
+            // Origin/classify only — no transpile or V8. Frontends warm
+            // selected cards on WorkAdmission before Start or Transpile all.
             let sha256 = JsCache::origin_sha(origin.as_bytes());
             let unloadable = catalog_unloadable(
                 &card.name,

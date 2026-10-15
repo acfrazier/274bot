@@ -49,9 +49,8 @@ impl PreparationInput {
         charge
             .total_bytes()
             .ok_or(SubmissionRefusal::InvalidArgument)?;
-        // Worker job state keeps each checked bound in 32 bits. Admission's
-        // 128 MiB process ceiling is smaller, but this also rejects a single
-        // unrepresentable bound before constructing a job.
+        // Worker job state stores each checked bound in 32 bits; reject a
+        // bound that cannot be represented before constructing that state.
         for bytes in [input_bytes, scratch_bytes, result_bytes] {
             u32::try_from(bytes).map_err(|_| SubmissionRefusal::InvalidArgument)?;
         }
@@ -118,6 +117,48 @@ impl PreparationInput {
             .filter(|bytes| *bytes <= MAX_SETTINGS_BYTES)
             .ok_or(SubmissionRefusal::InvalidArgument)?;
         Self::new(revision, bytes, SCRATCH_BYTES, RESULT_BYTES)
+    }
+
+    /// Reserve the bounded Quester folder's retained documents, current
+    /// file, compiled rows and terminal in addition to the actual settings
+    /// tree. This is a source-size-derived bound, not the old fixed 128 MiB
+    /// reservation. Scanning and parsing stay on the worker.
+    pub fn for_quester_folder(
+        revision: u64,
+        settings: Self,
+        source: &crate::quester::registry::FolderSource,
+    ) -> Result<Self, SubmissionRefusal> {
+        if !source.enabled {
+            return Ok(settings.with_quester_registry_actions());
+        }
+        use crate::quester::registry::{
+            PathRow, MAX_REGISTRY_FILE_BYTES, MAX_REGISTRY_ROWS,
+            MAX_RETAINED_FOLDER_DOCUMENT_BYTES,
+        };
+        let path_bytes = source.folder.as_os_str().len();
+        if path_bytes > MAX_REGISTRY_FILE_BYTES {
+            return Err(SubmissionRefusal::InvalidArgument);
+        }
+        let input = settings
+            .charge
+            .input_bytes()
+            .checked_add(MAX_RETAINED_FOLDER_DOCUMENT_BYTES)
+            .and_then(|bytes| bytes.checked_add(MAX_REGISTRY_FILE_BYTES))
+            .and_then(|bytes| bytes.checked_add(path_bytes))
+            .ok_or(SubmissionRefusal::InvalidArgument)?;
+        let scratch = settings
+            .charge
+            .scratch_bytes()
+            .checked_add(4 * MAX_REGISTRY_FILE_BYTES)
+            .ok_or(SubmissionRefusal::InvalidArgument)?;
+        let result = settings
+            .charge
+            .result_bytes()
+            .checked_add(2 * MAX_RETAINED_FOLDER_DOCUMENT_BYTES)
+            .and_then(|bytes| bytes.checked_add(MAX_REGISTRY_ROWS * std::mem::size_of::<PathRow>()))
+            .ok_or(SubmissionRefusal::InvalidArgument)?;
+        Self::new(revision, input, scratch, result)
+            .map(Self::with_quester_registry_actions)
     }
 }
 
@@ -357,6 +398,8 @@ pub enum PreparationError {
     Identity(#[from] IdentityError),
     #[error("preparation refused: {0}")]
     Refused(#[from] SubmissionRefusal),
+    #[error("{0}")]
+    Unavailable(String),
     #[error("preparation ledger: {0}")]
     Ledger(#[from] LedgerError),
     #[error("preparation job: {0}")]
