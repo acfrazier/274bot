@@ -216,6 +216,9 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
             panic!("FlourCollector remained unchanged after its source edit")
         }
     };
+    assert_eq!(prepared.card.name, "FlourCollector");
+    assert!(prepared.card.origin.ends_with('\n'));
+    assert!(prepared.card.unloadable.is_none());
 
     let ess = library
         .get(ScriptSource::Catalog, "EssMiner")

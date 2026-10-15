@@ -1332,6 +1332,39 @@ impl CardPreparationSnapshot {
         })
     }
 
+    /// Submit this captured card through one bounded preparation stage per
+    /// worker dispatch, without cloning its retained source or card metadata.
+    pub fn cooperative_prepare(
+        self: std::sync::Arc<Self>,
+    ) -> impl FnMut(
+        &mut api::selected::FamilyPreparation,
+    ) -> crate::preparation::CooperativePreparationStep<
+        Result<CardPreparationOutcome, String>,
+    > + Send
+           + 'static {
+        let mut work = CardPreparationTask::new_shared(self);
+        let mut completed = 0_u32;
+        move |_| {
+            completed = completed.saturating_add(1);
+            match work.step() {
+                Ok(None) => crate::preparation::CooperativePreparationStep::Continue {
+                    completed,
+                    total: None,
+                },
+                Ok(Some(outcome)) => crate::preparation::CooperativePreparationStep::Complete {
+                    output: Ok(outcome),
+                    completed,
+                    total: Some(completed),
+                },
+                Err(error) => crate::preparation::CooperativePreparationStep::Complete {
+                    output: Err(error),
+                    completed,
+                    total: Some(completed),
+                },
+            }
+        }
+    }
+
     /// Begin incremental preparation; each call advances one bounded stage.
     pub(crate) fn start_cooperative(self) -> CardPreparationTask {
         CardPreparationTask::new(self)
@@ -1361,8 +1394,43 @@ enum CardPreparationPhase {
 
 #[cfg(feature = "load")]
 #[derive(Debug)]
+enum CardTaskSnapshot {
+    Owned(CardPreparationSnapshot),
+    Shared(std::sync::Arc<CardPreparationSnapshot>),
+}
+
+#[cfg(feature = "load")]
+impl std::ops::Deref for CardTaskSnapshot {
+    type Target = CardPreparationSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(snapshot) => snapshot,
+            Self::Shared(snapshot) => snapshot,
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+impl CardTaskSnapshot {
+    fn take_catalog_settings_schema(&mut self) -> Option<Vec<SettingDef>> {
+        match self {
+            Self::Owned(snapshot) => snapshot.catalog_settings_schema.take(),
+            Self::Shared(snapshot) => {
+                if let Some(unique) = std::sync::Arc::get_mut(snapshot) {
+                    unique.catalog_settings_schema.take()
+                } else {
+                    snapshot.catalog_settings_schema.clone()
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+#[derive(Debug)]
 pub(crate) struct CardPreparationTask {
-    snapshot: CardPreparationSnapshot,
+    snapshot: CardTaskSnapshot,
     phase: CardPreparationPhase,
     source_limit: usize,
     origin: Option<String>,
@@ -1386,6 +1454,14 @@ pub(crate) struct CardPreparationTask {
 #[cfg(feature = "load")]
 impl CardPreparationTask {
     fn new(snapshot: CardPreparationSnapshot) -> Self {
+        Self::with_snapshot(CardTaskSnapshot::Owned(snapshot))
+    }
+
+    fn new_shared(snapshot: std::sync::Arc<CardPreparationSnapshot>) -> Self {
+        Self::with_snapshot(CardTaskSnapshot::Shared(snapshot))
+    }
+
+    fn with_snapshot(snapshot: CardTaskSnapshot) -> Self {
         let has_catalog_settings_schema = snapshot.catalog_settings_schema.is_some();
         Self {
             snapshot,
@@ -1464,8 +1540,7 @@ impl CardPreparationTask {
                             self.phase = CardPreparationPhase::Complete;
                             return Ok(Some(CardPreparationOutcome::Confirmed));
                         }
-                        if self.snapshot.stored_fingerprint.as_deref()
-                            == Some(fingerprint.as_str())
+                        if self.snapshot.stored_fingerprint.as_deref() == Some(fingerprint.as_str())
                         {
                             self.phase = CardPreparationPhase::Complete;
                             return Ok(Some(CardPreparationOutcome::Unchanged));
@@ -1476,7 +1551,7 @@ impl CardPreparationTask {
             }
             CardPreparationPhase::Settings => {
                 self.settings_schema = if let Some(schema) =
-                    self.snapshot.catalog_settings_schema.take()
+                    self.snapshot.take_catalog_settings_schema()
                 {
                     Some(schema)
                 } else {
@@ -1490,10 +1565,9 @@ impl CardPreparationTask {
                             self.source_limit,
                         ),
                         ScriptSource::File | ScriptSource::Builtin => {
-                            crate::rs2b0t_registry::try_settings_schema_from_source(origin)
-                                .map_err(|error| {
-                                    format!("{}: {error}", self.snapshot.template.name)
-                                })
+                            crate::rs2b0t_registry::try_settings_schema_from_source(origin).map_err(
+                                |error| format!("{}: {error}", self.snapshot.template.name),
+                            )
                         }
                     };
                     match result {

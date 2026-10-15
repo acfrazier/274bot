@@ -1,8 +1,9 @@
 //! Process-wide cooperative work admission and its single FIFO worker.
 //!
-//! The worker's G2b slice policy is fixed at 64 work units or 10 ms, whichever
-//! comes first. Admission reserves job, byte, operation-handle, and terminal
-//! custody before transferring a job to the worker.
+//! Ordinary G2b slices use 64 work units or 10 ms, whichever comes first.
+//! One explicitly qualified immutable gathering-family decode may use its
+//! finite 100 ms allowance; it does not change other jobs' quanta.
+//! Admission reserves job, byte, operation-handle, and terminal custody.
 
 use std::any::{Any, TypeId};
 use std::cell::UnsafeCell;
@@ -24,9 +25,10 @@ use api::process_condition::{
 };
 use api::work::{
     AdmissionBounds, CancelOutcome, CooperativeJob, CooperativeViolation, JobError, JobSettlement,
-    JobState, LedgerError, MonotonicClock, ProgressReport, RetainedState, SharedCancellation,
-    SliceBudget, StepContext, StepOutcome, SubmissionRefusal, WorkAdmission, WorkCapacity,
-    WorkCharge, WorkFamilySpec, WorkProgress, WorkPublications, WorkTicket, WorkerWake,
+    JobState, LedgerError, MonotonicClock, PreparationPhase, ProgressReport, RetainedState,
+    SharedCancellation, SliceBudget, StepContext, StepOutcome, SubmissionRefusal, WorkAdmission,
+    WorkCapacity, WorkCharge, WorkFamily, WorkFamilySpec, WorkPhase, WorkProgress,
+    WorkPublications, WorkTicket, WorkerWake,
 };
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use rand::RngCore;
@@ -35,12 +37,25 @@ use rand::RngCore;
 pub const WORK_UNITS_PER_SLICE: u32 = 64;
 /// Maximum elapsed time allowed in one dispatch.
 pub const WORK_SLICE: Duration = Duration::from_millis(10);
+/// One verify-and-decode of the pinned 274/289 gathering family (at most
+/// 1,411,973 embedded input bytes). Only the first Profile Prepare step may
+/// use this qualified allowance; later steps return to the ordinary quantum.
+pub(crate) const GATHERING_DECODE_SLICE: Duration = Duration::from_millis(100);
+
+/// Closed, T1-internal declaration of the only longer unit admitted in this
+/// endpoint. Callers cannot supply a duration or widen an arbitrary unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QualifiedUnit {
+    GatheringFamilyDecode,
+}
+
 /// A worker that remains inside a step this long makes the service unavailable.
 pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(5);
 /// Maximum simultaneously accepted jobs, including unconsumed terminals.
 const MAX_WORK_JOBS: usize = 64;
-/// Maximum reserved input, scratch, result and bounded progress bytes.
-const MAX_WORK_BYTES: usize = 128 * 1024 * 1024;
+/// 128 MiB of admission budget plus custody for all 64 bounded progress
+/// histories. A full-bound catalogue must still fit its own progress.
+const MAX_WORK_BYTES: usize = 128 * 1024 * 1024 + MAX_WORK_JOBS * PROGRESS_BYTES_PER_JOB;
 /// WorkAdmission operation handles across all accepted jobs.
 const MAX_OPERATION_HANDLES: u32 = 8;
 /// Per-job progress snapshot retention bound.
@@ -646,6 +661,7 @@ struct EntryControl {
     stranded: api::process_condition::StrandedCustody,
     abandoned: bool,
     progress_sequence: u64,
+    qualified_unit: Option<QualifiedUnit>,
 }
 
 struct JobEntry {
@@ -669,6 +685,19 @@ impl JobEntry {
         self.identity == ticket.identity()
             && self.spec == TypeId::of::<F>()
             && self.revision == ticket.revision()
+    }
+
+    fn slice_allowance(&self) -> (Duration, bool) {
+        let mut control = self.control.lock();
+        let ready = self
+            .progress
+            .latest()
+            .is_some_and(|progress| progress.phase() == PreparationPhase::Load.index());
+        if ready && control.qualified_unit.take().is_some() {
+            (GATHERING_DECODE_SLICE, true)
+        } else {
+            (WORK_SLICE, false)
+        }
     }
 
     fn terminal(&self) -> Option<&Erased> {
@@ -966,9 +995,10 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
         started,
         returned: false,
     });
+    let (allowance, qualified) = entry.slice_allowance();
     let budget = SliceBudget::new(
         NonZeroU32::new(WORK_UNITS_PER_SLICE).expect("nonzero fixed quantum"),
-        Deadline::after(started, WORK_SLICE),
+        Deadline::after(started, allowance),
     );
     let step = catch_unwind(AssertUnwindSafe(|| {
         job.step(&*shared.clock, budget, &*entry.cancellation)
@@ -987,7 +1017,17 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
             mark_returned(shared, &entry);
         }
         Ok((outcome, report)) => {
-            process_step(shared, &entry, job, outcome, report, started, returned_at);
+            process_step(
+                shared,
+                &entry,
+                job,
+                outcome,
+                report,
+                started,
+                returned_at,
+                allowance,
+                qualified,
+            );
             *shared.active.lock() = None;
         }
     }
@@ -1000,8 +1040,10 @@ fn process_step(
     report: SliceReport,
     started: Instant,
     returned_at: Instant,
+    allowance: Duration,
+    qualified: bool,
 ) {
-    let over_time = returned_at.saturating_duration_since(started) >= WORK_SLICE;
+    let over_time = returned_at.saturating_duration_since(started) >= allowance;
     let violation = if report.continued {
         Some(CooperativeViolation::IgnoredYield)
     } else if report.exceeded || over_time {
@@ -1009,10 +1051,18 @@ fn process_step(
     } else {
         None
     };
+    let restore_qualification = qualified
+        && matches!(&outcome, ErasedStep::Yielded)
+        && report.progress.is_none()
+        && !report.exceeded;
     let mut published = false;
     let mut yielded = false;
     {
         let mut control = entry.control.lock();
+        if restore_qualification {
+            // A pre-work checkpoint yielded without using its declared unit.
+            control.qualified_unit = Some(QualifiedUnit::GatheringFamilyDecode);
+        }
         if shared.shutdown_requested.load(Ordering::Acquire) {
             let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
         }
@@ -1269,18 +1319,42 @@ fn latch_outage(shared: &Arc<WorkerShared>, cause: ConditionCause, now: Instant)
     shared.wake.notify_all();
 }
 
-impl WorkAdmission for WorkService {
-    fn try_submit<F, J>(
+impl WorkService {
+    /// Admit a declared family unit without changing the F0 WorkAdmission API
+    /// or the ordinary quantum of unrelated jobs.
+    pub(crate) fn try_submit_qualified<F, J>(
         &mut self,
         identity: WorkIdentity,
         input: &F::Input,
         job: J,
         conditions: &ProcessConditions,
+        unit: QualifiedUnit,
     ) -> Result<WorkTicket<F>, api::work::Refused<J>>
     where
         F: WorkFamilySpec,
         J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
     {
+        self.try_submit_inner(identity, input, job, conditions, Some(unit))
+    }
+
+    fn try_submit_inner<F, J>(
+        &mut self,
+        identity: WorkIdentity,
+        input: &F::Input,
+        job: J,
+        conditions: &ProcessConditions,
+        qualified_unit: Option<QualifiedUnit>,
+    ) -> Result<WorkTicket<F>, api::work::Refused<J>>
+    where
+        F: WorkFamilySpec,
+        J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
+    {
+        if qualified_unit.is_some() && F::FAMILY != WorkFamily::ProfilePreparation {
+            return Err(api::work::Refused::new(
+                SubmissionRefusal::InvalidArgument,
+                job,
+            ));
+        }
         self.observe_health();
         self.cleanup_released();
         let refusal = if identity.incarnation() != self.incarnation
@@ -1337,6 +1411,7 @@ impl WorkAdmission for WorkService {
                 ),
                 abandoned: false,
                 progress_sequence: 0,
+                qualified_unit,
             }),
             cancellation: Arc::new(SharedCancellation::new()),
             terminal: TerminalCell::new(),
@@ -1357,6 +1432,22 @@ impl WorkAdmission for WorkService {
         drop(queue);
         self.shared.wake_worker();
         Ok(WorkTicket::new(identity, revision))
+    }
+}
+
+impl WorkAdmission for WorkService {
+    fn try_submit<F, J>(
+        &mut self,
+        identity: WorkIdentity,
+        input: &F::Input,
+        job: J,
+        conditions: &ProcessConditions,
+    ) -> Result<WorkTicket<F>, api::work::Refused<J>>
+    where
+        F: WorkFamilySpec,
+        J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
+    {
+        self.try_submit_inner(identity, input, job, conditions, None)
     }
 
     fn cancel<F: WorkFamilySpec>(

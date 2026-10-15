@@ -333,7 +333,7 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{QuesterPathsView, ReloadPaths};
+    use super::{QuesterPathsView, ReloadPaths, ReloadValue};
     use api::selected::{ClientRevision, FamilyPreparation};
     use script::quester::registry::{FolderSource, PathRegistry};
     use std::path::{Path, PathBuf};

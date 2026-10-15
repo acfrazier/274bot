@@ -572,7 +572,164 @@ fn cooperation_violations_and_family_errors_are_typed_terminals() {
             Settlement::Failed(JobError::Family(TestError))
         ));
     }
+    assert!(
+        shared.lock().worker_available(),
+        "a returned violation cannot poison the process worker"
+    );
+    assert_eq!(shared.lock().health(), None);
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let healthy = submit(
+        &shared,
+        &input,
+        QueueJob::new(9, trace.clone(), 0, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &healthy).expect("next admitted job settles");
+    assert!(matches!(
+        shared
+            .lock()
+            .consume(&healthy)
+            .expect("consume healthy job"),
+        Settlement::Completed(9)
+    ));
+    assert_eq!(*trace.lock(), [9]);
     wait_for_jobs(&shared, 0);
+}
+
+#[derive(Clone, Copy)]
+struct ProfileSpec;
+
+impl WorkFamilySpec for ProfileSpec {
+    const FAMILY: WorkFamily = WorkFamily::ProfilePreparation;
+    type Input = TestInput;
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn revision(_input: &Self::Input) -> InputRevision {
+        InputRevision::FIRST
+    }
+
+    fn charge(input: &Self::Input) -> WorkCharge {
+        input.charge
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+
+struct QualifiedProfileJob {
+    clock: Arc<ManualClock>,
+    stage: u8,
+}
+
+impl CooperativeJob for QualifiedProfileJob {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        assert!(matches!(context.checkpoint(), Checkpoint::Continue));
+        match self.stage {
+            0 => {
+                context.publish_progress(PreparationPhase::Load, 1, Some(1));
+                assert!(matches!(context.consume_unit(), Checkpoint::Continue));
+                self.stage = 1;
+                StepOutcome::Yielded
+            }
+            1 => {
+                self.clock.advance(Duration::from_millis(20));
+                context.publish_progress(PreparationPhase::Prepare, 1, Some(2));
+                assert!(matches!(context.consume_unit(), Checkpoint::Continue));
+                self.stage = 2;
+                StepOutcome::Yielded
+            }
+            2 => {
+                self.clock.advance(Duration::from_millis(20));
+                StepOutcome::Completed(5)
+            }
+            _ => unreachable!("three bounded profile steps"),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn a_declared_gather_decode_gets_only_its_first_prepare_allowance() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let ticket = {
+        let mut service = shared.lock();
+        let slot = api::identity::SlotKey::from_incarnation(1).unwrap();
+        let identity = service.mint_identity(Scope::Slot(slot), None).unwrap();
+        service
+            .try_submit_qualified::<ProfileSpec, _>(
+                identity,
+                &input,
+                QualifiedProfileJob { clock, stage: 0 },
+                &conditions,
+                QualifiedUnit::GatheringFamilyDecode,
+            )
+            .unwrap_or_else(|refused| panic!("qualified profile refused: {:?}", refused.refusal()))
+    };
+    WorkService::wait_terminal(&shared, &ticket).expect("qualified job settles");
+    assert!(matches!(
+        shared.lock().consume(&ticket).expect("consume profile"),
+        Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+    ));
+    assert!(shared.lock().worker_available());
+    assert_eq!(shared.lock().health(), None);
+}
+
+#[test]
+fn a_qualified_family_unit_cannot_be_attached_to_an_unrelated_job() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let mut service = shared.lock();
+    let process = service.mint_identity(Scope::Process, None).unwrap();
+    let process_ticket = service
+        .try_submit_qualified::<ProfileSpec, _>(
+            process,
+            &input,
+            QualifiedProfileJob {
+                clock: Arc::clone(&clock),
+                stage: 0,
+            },
+            &conditions,
+            QualifiedUnit::GatheringFamilyDecode,
+        )
+        .expect("process-scoped profile save prepares the same pinned gathering family");
+    let slot = api::identity::SlotKey::from_incarnation(2).unwrap();
+    let other_family = service.mint_identity(Scope::Slot(slot), None).unwrap();
+    assert!(matches!(
+        service.try_submit_qualified::<TestSpec, _>(
+            other_family,
+            &input,
+            QueueJob::new(1, Arc::new(Mutex::new(Vec::new())), 0, None),
+            &conditions,
+            QualifiedUnit::GatheringFamilyDecode,
+        ),
+        Err(refused) if refused.refusal() == SubmissionRefusal::InvalidArgument
+    ));
+    assert_eq!(service.capacity().jobs(), 1);
+    drop(service);
+    WorkService::wait_terminal(&shared, &process_ticket).expect("process profile settles");
+    assert!(matches!(
+        shared.lock().consume(&process_ticket).expect("consume profile"),
+        Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+    ));
 }
 
 struct StrandedJob {

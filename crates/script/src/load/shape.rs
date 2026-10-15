@@ -612,11 +612,7 @@ pub(crate) struct PreparationSiblingWork {
 
 #[cfg(feature = "load")]
 impl PreparationSiblingWork {
-    pub(crate) fn new(
-        card_path: &Path,
-        origin: &str,
-        source_limit: usize,
-    ) -> Result<Self, String> {
+    pub(crate) fn new(card_path: &Path, origin: &str, source_limit: usize) -> Result<Self, String> {
         let source_limit = source_limit.min(MAX_PREPARATION_SOURCE_BYTES);
         if origin.len() > source_limit {
             return Err("script and sibling sources exceed the 8 MiB preparation limit".into());
@@ -698,7 +694,6 @@ impl PreparationSiblingWork {
     }
 }
 
-
 #[cfg(feature = "load")]
 #[derive(Debug)]
 pub(crate) struct PreparationFingerprintWork {
@@ -712,11 +707,7 @@ pub(crate) struct PreparationFingerprintWork {
 
 #[cfg(feature = "load")]
 impl PreparationFingerprintWork {
-    pub(crate) fn new(
-        card_path: &Path,
-        origin: &str,
-        source_limit: usize,
-    ) -> Result<Self, String> {
+    pub(crate) fn new(card_path: &Path, origin: &str, source_limit: usize) -> Result<Self, String> {
         Ok(Self {
             graph: Some(PreparationSiblingWork::new(
                 card_path,
@@ -747,10 +738,8 @@ impl PreparationFingerprintWork {
         }
         let nodes = self.nodes.as_ref().expect("fingerprint nodes exist");
         if let Some((relative, _, _, text)) = nodes.get(self.sibling_index) {
-            self.sibling_hashes.push((
-                relative.clone(),
-                crate::identity::raw_sha(text.as_bytes()),
-            ));
+            self.sibling_hashes
+                .push((relative.clone(), crate::identity::raw_sha(text.as_bytes())));
             self.sibling_index += 1;
             return Ok(None);
         }
@@ -778,11 +767,7 @@ pub(crate) struct FirstUnloadableWork {
 
 #[cfg(feature = "load")]
 impl FirstUnloadableWork {
-    pub(crate) fn new(
-        origin: &str,
-        card_path: &Path,
-        source_limit: usize,
-    ) -> Result<Self, String> {
+    pub(crate) fn new(origin: &str, card_path: &Path, source_limit: usize) -> Result<Self, String> {
         if let Some(specifier) = first_unloadable_specifier(origin) {
             return Ok(Self {
                 result: Some(Some(specifier)),

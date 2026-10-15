@@ -543,14 +543,13 @@ impl CatalogPreparationSnapshot {
         })
     }
 
-
     /// Build a catalogue diff incrementally on the shared WorkAdmission
     /// worker. The returned closure owns only bounded preparation state.
     pub fn cooperative_diff(
         self: std::sync::Arc<Self>,
     ) -> impl FnMut(
-               &mut api::selected::FamilyPreparation,
-           ) -> crate::preparation::CooperativePreparationStep<Result<CatalogDiff, String>>
+        &mut api::selected::FamilyPreparation,
+    ) -> crate::preparation::CooperativePreparationStep<Result<CatalogDiff, String>>
            + Send
            + 'static {
         let mut work = CatalogDiffWork::default();
@@ -576,10 +575,10 @@ impl CatalogPreparationSnapshot {
     pub fn cooperative_prepare(
         self: std::sync::Arc<Self>,
     ) -> impl FnMut(
-               &mut api::selected::FamilyPreparation,
-           ) -> crate::preparation::CooperativePreparationStep<
-               Result<CatalogPreparationResult, String>,
-           > + Send
+        &mut api::selected::FamilyPreparation,
+    ) -> crate::preparation::CooperativePreparationStep<
+        Result<CatalogPreparationResult, String>,
+    > + Send
            + 'static {
         let mut work = CatalogPreparationWork::default();
         move |_| match work.step(&self) {
@@ -675,10 +674,10 @@ impl CatalogDiffUsage {
 
     fn sync_vec_capacity(
         &mut self,
-        previous: &mut usize,
+        previous: usize,
         current: usize,
         item_bytes: usize,
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
         let old_bytes = previous
             .checked_mul(item_bytes)
             .ok_or_else(|| "catalog diff size overflow".to_string())?;
@@ -686,56 +685,55 @@ impl CatalogDiffUsage {
             .checked_mul(item_bytes)
             .ok_or_else(|| "catalog diff size overflow".to_string())?;
         self.replace(old_bytes, new_bytes)?;
-        *previous = current;
-        Ok(())
+        Ok(current)
     }
 
     fn sync_map_capacity(
         &mut self,
-        previous: &mut usize,
+        previous: usize,
         current: usize,
         item_bytes: usize,
-    ) -> Result<(), String> {
-        let old_bytes = catalog_map_storage_bytes(*previous, item_bytes)
+    ) -> Result<usize, String> {
+        let old_bytes = catalog_map_storage_bytes(previous, item_bytes)
             .ok_or_else(|| "catalog diff size overflow".to_string())?;
         let new_bytes = catalog_map_storage_bytes(current, item_bytes)
             .ok_or_else(|| "catalog diff size overflow".to_string())?;
         self.replace(old_bytes, new_bytes)?;
-        *previous = current;
-        Ok(())
+        Ok(current)
     }
 
     fn sync_capacities(&mut self, diff: &CatalogDiff) -> Result<(), String> {
-        self.sync_vec_capacity(
-            &mut self.added_capacity,
+        self.added_capacity = self.sync_vec_capacity(
+            self.added_capacity,
             diff.added.capacity(),
             std::mem::size_of::<String>(),
         )?;
-        self.sync_vec_capacity(
-            &mut self.changed_capacity,
+        self.changed_capacity = self.sync_vec_capacity(
+            self.changed_capacity,
             diff.changed.capacity(),
             std::mem::size_of::<String>(),
         )?;
-        self.sync_vec_capacity(
-            &mut self.removed_capacity,
+        self.removed_capacity = self.sync_vec_capacity(
+            self.removed_capacity,
             diff.removed.capacity(),
             std::mem::size_of::<String>(),
         )?;
-        self.sync_vec_capacity(
-            &mut self.failed_capacity,
+        self.failed_capacity = self.sync_vec_capacity(
+            self.failed_capacity,
             diff.failed.capacity(),
             std::mem::size_of::<LoadFailure>(),
         )?;
-        self.sync_map_capacity(
-            &mut self.fingerprints_capacity,
+        self.fingerprints_capacity = self.sync_map_capacity(
+            self.fingerprints_capacity,
             diff.current_fingerprints.capacity(),
             std::mem::size_of::<(String, String)>(),
         )?;
-        self.sync_map_capacity(
-            &mut self.incoming_capacity,
+        self.incoming_capacity = self.sync_map_capacity(
+            self.incoming_capacity,
             diff.incoming.capacity(),
             std::mem::size_of::<(String, CatalogIncoming)>(),
-        )
+        )?;
+        Ok(())
     }
 
     fn ensure_bound(&self) -> Result<(), String> {
@@ -858,8 +856,11 @@ impl CatalogDiffUsage {
         self.ensure_bound()
     }
 
-
-    fn remove_changed_names(&mut self, diff: &mut CatalogDiff, unchanged: &[usize]) -> Result<(), String> {
+    fn remove_changed_names(
+        &mut self,
+        diff: &mut CatalogDiff,
+        unchanged: &[usize],
+    ) -> Result<(), String> {
         let mut removed = 0usize;
         for index in unchanged {
             if let Some(name) = diff.changed.get(*index) {
@@ -871,8 +872,7 @@ impl CatalogDiffUsage {
         let mut unchanged_pos = 0;
         let mut changed_pos = 0;
         diff.changed.retain(|_| {
-            let is_unchanged =
-                unchanged.get(unchanged_pos).copied() == Some(changed_pos);
+            let is_unchanged = unchanged.get(unchanged_pos).copied() == Some(changed_pos);
             if is_unchanged {
                 unchanged_pos += 1;
             }
@@ -1074,10 +1074,7 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn read_root_source(
-        &mut self,
-        snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<(), String> {
+    fn read_root_source(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
         if self.registration_index >= self.registrations.len() {
             self.phase = CatalogDiffPhase::SiblingScan;
             self.source_iter = Some(std::mem::take(&mut self.sources).into_iter());
@@ -1149,11 +1146,9 @@ impl CatalogDiffWork {
             add_catalog_bytes(&mut self.sibling_values_bytes, capacity)
                 .map_err(|_| "catalog sibling index size overflow")?;
             self.sibling_set_capacity = self.sibling_rels.capacity();
-            let set_bytes = catalog_map_storage_bytes(
-                self.sibling_set_capacity,
-                std::mem::size_of::<String>(),
-            )
-            .ok_or("catalog sibling index size overflow")?;
+            let set_bytes =
+                catalog_map_storage_bytes(self.sibling_set_capacity, std::mem::size_of::<String>())
+                    .ok_or("catalog sibling index size overflow")?;
             let used_scratch = self
                 .usage
                 .as_ref()
@@ -1173,10 +1168,7 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn read_sibling_source(
-        &mut self,
-        snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<(), String> {
+    fn read_sibling_source(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
         let Some(sibling) = self.sibling_iter.as_mut().and_then(|iter| iter.next()) else {
             self.sibling_iter = None;
             self.sibling_values_bytes = 0;
@@ -1210,10 +1202,7 @@ impl CatalogDiffWork {
         }
     }
 
-    fn read_shop_db(
-        &mut self,
-        snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<(), String> {
+    fn read_shop_db(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
         if self.sources.contains_key("./src/bot/data/shopdb.ts")
             || self.sources.contains_key("./src/bot/data/shopdb.js")
         {
@@ -1352,7 +1341,10 @@ impl CatalogDiffWork {
                 self.analyze_phase = CatalogAnalyzePhase::Fingerprint;
             }
             CatalogAnalyzePhase::Fingerprint => {
-                let analysis = self.analysis.as_ref().expect("registration analysis exists");
+                let analysis = self
+                    .analysis
+                    .as_ref()
+                    .expect("registration analysis exists");
                 let registration = &self.registrations[analysis.registration_index];
                 let origin = self
                     .sources
@@ -1391,8 +1383,7 @@ impl CatalogDiffWork {
                     && snapshot.fingerprints.get(&identity_key).map(String::as_str)
                         != Some(fingerprint.as_str());
                 {
-                    let (diff, usage) =
-                        catalog_diff_and_usage(&mut self.diff, &mut self.usage)?;
+                    let (diff, usage) = catalog_diff_and_usage(&mut self.diff, &mut self.usage)?;
                     usage.set_fingerprint(diff, &registration.name, fingerprint)?;
                 }
                 self.fingerprint_work = None;
@@ -1406,7 +1397,10 @@ impl CatalogDiffWork {
                 }
             }
             CatalogAnalyzePhase::AddedHash => {
-                let analysis = self.analysis.as_mut().expect("registration analysis exists");
+                let analysis = self
+                    .analysis
+                    .as_mut()
+                    .expect("registration analysis exists");
                 let registration = &self.registrations[analysis.registration_index];
                 let origin = self
                     .sources
@@ -1438,7 +1432,10 @@ impl CatalogDiffWork {
                 self.analyze_phase = CatalogAnalyzePhase::Unloadable;
             }
             CatalogAnalyzePhase::Unloadable => {
-                let analysis = self.analysis.as_ref().expect("registration analysis exists");
+                let analysis = self
+                    .analysis
+                    .as_ref()
+                    .expect("registration analysis exists");
                 let registration = &self.registrations[analysis.registration_index];
                 let origin = self
                     .sources
@@ -1468,7 +1465,10 @@ impl CatalogDiffWork {
                         return record_catalog_failure(&mut self.diff, &mut self.usage, failure);
                     }
                 };
-                let analysis = self.analysis.as_mut().expect("registration analysis exists");
+                let analysis = self
+                    .analysis
+                    .as_mut()
+                    .expect("registration analysis exists");
                 let registration = &self.registrations[analysis.registration_index];
                 let sha256 = analysis.sha256.take().expect("added-card hash exists");
                 let unloadable = catalog_unloadable(
@@ -1515,8 +1515,7 @@ impl CatalogDiffWork {
                 } else {
                     CatalogNameList::Changed
                 };
-                let (diff, usage) =
-                    catalog_diff_and_usage(&mut self.diff, &mut self.usage)?;
+                let (diff, usage) = catalog_diff_and_usage(&mut self.diff, &mut self.usage)?;
                 usage.push_name(diff, list, registration.name.clone())?;
                 usage.set_incoming(diff, &registration.name, incoming)?;
                 self.analyze_phase = CatalogAnalyzePhase::Start;
@@ -1573,9 +1572,7 @@ impl CatalogDiffWork {
                     .any(|failure| failure.name.as_str() == name.as_str())
             } else {
                 self.failed_indexes
-                    .binary_search_by(|index| {
-                        diff.failed[*index].name.as_str().cmp(name.as_str())
-                    })
+                    .binary_search_by(|index| diff.failed[*index].name.as_str().cmp(name.as_str()))
                     .is_err()
             };
             !diff.current_fingerprints.contains_key(name) && not_failed
@@ -1702,7 +1699,6 @@ struct CatalogCandidateWork {
     result_bytes: usize,
 }
 
-
 #[cfg(feature = "load")]
 impl CatalogCandidateWork {
     fn new(diff: CatalogDiff, usage: CatalogDiffUsage) -> Result<Self, String> {
@@ -1811,8 +1807,7 @@ impl CatalogCandidateWork {
                 .cloned()
                 .ok_or_else(|| format!("catalog {name}: existing card snapshot is missing"))?
         };
-        let identity_key =
-            crate::identity::card_identity_key(ScriptSource::Catalog, &path, &name);
+        let identity_key = crate::identity::card_identity_key(ScriptSource::Catalog, &path, &name);
         let card_snapshot = CardPreparationSnapshot {
             template,
             cache_root: snapshot.cache_root.clone(),
@@ -1897,11 +1892,8 @@ impl CatalogCandidateWork {
             .cloned()
             .ok_or_else(|| "catalog unchanged candidate index is invalid".to_string())?;
         let stored = self.diff.incoming.get(&name).map(|incoming| {
-            let identity_key = crate::identity::card_identity_key(
-                ScriptSource::Catalog,
-                &incoming.path,
-                &name,
-            );
+            let identity_key =
+                crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, &name);
             snapshot.fingerprints.get(&identity_key).cloned()
         });
         let before = self.usage.bytes;
