@@ -905,7 +905,7 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("one"));
     let first = s
-        .save_profile_with_log_action(profile, ArmMirror::None, "script", "assignment")
+        .save_profile_with_log_action(profile, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -925,12 +925,12 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
         .settings
         .script_settings
         .insert("compiled:one".into(), serde_json::Map::new());
-    s.save_profile_with_log_action(parameters, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
     s.flush_writes();
 
     let unchanged = s.vault().unwrap().get(name).unwrap().clone();
-    s.save_profile_with_log_action(unchanged, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(unchanged, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     assert_eq!(slot_log(name).len(), 1);
@@ -940,7 +940,7 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
     saved_assignment.unavailable = Some("missing".into());
     unavailable.settings.script_assignment = Some(saved_assignment);
     let second = s
-        .save_profile_with_log_action(unavailable, ArmMirror::None, "script", "unavailable")
+        .save_profile_with_log_action(unavailable, ArmMirror::none(), "script", "unavailable")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -969,21 +969,21 @@ fn assignment_logs_only_the_final_value_and_owner_of_a_coalesced_commit() {
 
     let mut transient = s.vault().unwrap().get(cancelled_profile).unwrap().clone();
     transient.settings.script_assignment = Some(assignment("never-durable"));
-    s.save_profile_with_log_action(transient, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(transient, ArmMirror::none(), "script", "assignment")
         .unwrap();
     let mut restored = s.vault().unwrap().get(cancelled_profile).unwrap().clone();
     restored.settings.script_assignment = None;
-    s.save_profile_with_log_action(restored, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(restored, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 
     let mut intermediate = s.vault().unwrap().get(final_profile).unwrap().clone();
     intermediate.settings.script_assignment = Some(assignment("intermediate"));
-    s.save_profile_with_log_action(intermediate, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(intermediate, ArmMirror::none(), "script", "assignment")
         .unwrap();
     let mut final_value = s.vault().unwrap().get(final_profile).unwrap().clone();
     final_value.settings.script_assignment = Some(assignment("final"));
     let final_op = s
-        .save_profile_with_log_action(final_value, ArmMirror::None, "script", "Start")
+        .save_profile_with_log_action(final_value, ArmMirror::none(), "script", "Start")
         .unwrap();
 
     drop(held);
@@ -1016,7 +1016,7 @@ fn assignment_logs_ignore_rename_without_assignment_change() {
     s.start(vault, empty_play());
     let mut renamed = s.vault().unwrap().get(old_name).unwrap().clone();
     renamed.username = new_name.into();
-    s.rename_profile(old_name, renamed, ArmMirror::None, "profile")
+    s.rename_profile(old_name, renamed, ArmMirror::none(), "profile")
         .unwrap();
     s.flush_writes();
 
@@ -1039,14 +1039,14 @@ fn coalesced_assignment_log_uses_last_assignment_change_not_parameter_edit() {
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("assigned"));
     let assign_op = s
-        .save_profile_with_log_action(profile, ArmMirror::None, "script", "Assign")
+        .save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
         .unwrap();
     let mut parameters = s.vault().unwrap().get(name).unwrap().clone();
     parameters
         .settings
         .script_settings
         .insert("compiled:assigned".into(), serde_json::Map::new());
-    s.save_profile_with_log_action(parameters, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 
     drop(held);
@@ -1078,7 +1078,7 @@ fn dropping_session_logs_a_durable_assignment_without_polling() {
         let mut s = session("assignment-log-drop", &[(name, 1, false)]);
         let mut profile = s.vault().unwrap().get(name).unwrap().clone();
         profile.settings.script_assignment = Some(assignment("final"));
-        s.save_profile_with_log_action(profile, ArmMirror::None, "script", "Assign")
+        s.save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
             .unwrap()
     };
     assert_eq!(
@@ -1101,7 +1101,7 @@ fn failed_assignment_save_does_not_log_a_mutation() {
     let blocked = block_writes(&vault_path("assignment-log-failed"));
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("failed"));
-    s.save_profile_with_log_action(profile, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(profile, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     unblock_writes(blocked);
@@ -1523,7 +1523,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     let blocked = block_writes(&vault_path("rename-fail"));
 
     let op = s
-        .rename_profile("alice", renamed.clone(), ArmMirror::None, "credentials")
+        .rename_profile(old_name, renamed.clone(), ArmMirror::none(), "credentials")
         .unwrap();
     assert!(s.vault().unwrap().get("alice").is_none(), "staged at once");
     s.flush_writes();
@@ -1545,7 +1545,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     assert!(disk.get("alice").is_some() && disk.get("alicia").is_none());
 
     let op = s
-        .rename_profile("alice", renamed, ArmMirror::None, "credentials")
+        .rename_profile(old_name, renamed, ArmMirror::none(), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -1570,7 +1570,7 @@ fn a_rename_onto_an_existing_username_is_refused_and_writes_nothing() {
     onto.password = "typed".into();
 
     let error = s
-        .rename_profile("aindniK", onto, ArmMirror::None, "credentials")
+        .rename_profile("aindniK", onto, ArmMirror::none(), "credentials")
         .unwrap_err();
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
@@ -1601,7 +1601,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     };
 
     let error = s
-        .create_profile(fresh.clone(), ArmMirror::None, "credentials")
+        .create_profile(fresh.clone(), ArmMirror::none(), "credentials")
         .unwrap_err();
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
@@ -1616,7 +1616,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
         username: "bob".into(),
         ..fresh
     };
-    s.create_profile(bob, ArmMirror::None, "credentials")
+    s.create_profile(bob, ArmMirror::none(), "credentials")
         .unwrap();
     s.flush_writes();
     let disk = Vault::unlock(&vault_path("create-collide"), "test-passphrase-01").unwrap();
@@ -1801,7 +1801,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
 
     // Slow write: Log in before it settles uses the durable row.
     let held = gate.lock().unwrap();
-    s.save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
+    s.save_profile(edited.clone(), ArmMirror::remember(None), "credentials")
         .unwrap();
     assert!(
         !s.profile_saving("alice"),
@@ -1836,7 +1836,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
     assert!(Arc::ptr_eq(&arm(&s, "alice"), &alice));
 
     // The write succeeds: the post-write mirror hands Play the new row.
-    s.save_profile(edited, ArmMirror::Remember(None), "credentials")
+    s.save_profile(edited, ArmMirror::remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(s.durable_profile("alice").unwrap().password, "new-pass");
@@ -1944,7 +1944,7 @@ fn form_saves_alice(
 ) -> OperationId {
     let draft = alice_with(s, password);
     let op = s
-        .save_profile(draft, ArmMirror::None, "credentials")
+        .save_profile(draft, ArmMirror::none(), "credentials")
         .unwrap();
     form.submitted(s, op, Some("alice"), "alice");
     op

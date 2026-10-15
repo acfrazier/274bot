@@ -1039,10 +1039,7 @@ impl Scripts {
                         });
                     core.save_profile_with_log_action(
                         row,
-                        ArmMirror::ScriptSettings {
-                            card: card.clone(),
-                            live,
-                        },
+                        ArmMirror::script_settings(card.clone(), live),
                         "apply to all",
                         "settings sync",
                     )

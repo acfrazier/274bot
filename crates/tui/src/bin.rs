@@ -3333,7 +3333,7 @@ impl TuiSession {
         // here keeps a failed first-run profile a startup error.
         let op = self
             .core
-            .create_profile(profile, frontend_core::ArmMirror::None, "profile")?;
+            .create_profile(profile, frontend_core::ArmMirror::none(), "profile")?;
         self.core.flush_writes();
         match self.core.failure(op) {
             Some(error) => Err(format!("profile: {error}")),

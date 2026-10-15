@@ -85,31 +85,35 @@ pub(super) struct PendingDelivery {
 
 impl ArmMirror {
     pub(super) fn native_identity(&self) -> Option<String> {
-        match self {
-            Self::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
-            Self::ScriptSettings { card, .. } => Some(card.clone()),
-            Self::Remember(Some(live)) if live.run.is_some() => Some(live.identity.clone()),
+        match &self.0 {
+            ArmMirrorKind::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
+            ArmMirrorKind::ScriptSettings { card, .. } => Some(card.clone()),
+            ArmMirrorKind::Remember(Some(live)) if live.run.is_some() => {
+                Some(live.identity.clone())
+            }
             _ => None,
         }
     }
 
     pub(super) fn native_draft(&self) -> Option<(script::CompiledId, Arc<SettingsBag>)> {
-        match self {
-            Self::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
+        match &self.0 {
+            ArmMirrorKind::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
             _ => None,
         }
     }
 
     fn prepared(self, config: Arc<PreparedConfig>) -> Self {
-        match self {
-            Self::NativeSettings { id, live, .. } => Self::ScriptSettings {
-                card: script::compiled_identity_key(id),
-                live: live.map(|mut live| {
-                    live.prepared = Some(config);
-                    live
-                }),
-            },
-            other => other,
+        match self.0 {
+            ArmMirrorKind::NativeSettings { id, live, .. } => {
+                Self(ArmMirrorKind::ScriptSettings {
+                    card: script::compiled_identity_key(id),
+                    live: live.map(|mut live| {
+                        live.prepared = Some(config);
+                        live
+                    }),
+                })
+            }
+            other => Self(other),
         }
     }
 }
@@ -262,7 +266,7 @@ impl<Io> OperatorSession<Io> {
             return Err(format!("{label}: profile unavailable: {source}"));
         }
         let card = script::compiled_identity_key(id);
-        let assign = matches!(mirror, ArmMirror::NativeSettings { assign: true, .. });
+        let assign = matches!(&mirror.0, ArmMirrorKind::NativeSettings { assign: true, .. });
         let assignment_intent = if assign {
             self.vault
                 .as_ref()
@@ -414,7 +418,7 @@ impl<Io> OperatorSession<Io> {
                             label: pending.label,
                             error: error.clone(),
                         });
-                    if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
+                    if pending.mirror.is_native_settings() {
                         self.settings_writes.push(SettingsWrite {
                             op,
                             profile: name.clone(),
@@ -426,7 +430,7 @@ impl<Io> OperatorSession<Io> {
             };
             if !current {
                 self.operations.set(op, &name, Outcome::Cancelled);
-                if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
+                if pending.mirror.is_native_settings() {
                     self.settings_writes.push(SettingsWrite {
                         op,
                         profile: name.clone(),
@@ -948,7 +952,7 @@ mod tests {
         let mut unrelated = f.core.vault().unwrap().get("bob").unwrap().clone();
         unrelated.settings.random_events = false;
         f.core
-            .save_profile(unrelated, crate::ArmMirror::None, "unrelated")
+            .save_profile(unrelated, crate::ArmMirror::none(), "unrelated")
             .unwrap();
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);

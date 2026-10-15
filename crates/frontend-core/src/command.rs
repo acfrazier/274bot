@@ -96,7 +96,7 @@ pub enum OperatorCommand {
     SetAutoLogin(bool),
     /// Persist the world preference for the next handshake (the profile
     /// form's world field through `save_profile`, mirrored by
-    /// `ArmMirror::Remember`, `session.rs:152-155`).
+    /// `ArmMirror::remember`).
     SetWorld(WorldChoice),
     /// Persist the memory mode for the next fresh handshake
     /// (`OperatorSession::set_memory_mode`, `session.rs:1075-1095`).

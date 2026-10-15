@@ -581,7 +581,7 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
     profile.settings.clue_duel_partner = "Helper".into();
     f.core
-        .save_profile(profile, crate::ArmMirror::Remember(None), "clue-global")
+        .save_profile(profile, crate::ArmMirror::remember(None), "clue-global")
         .unwrap();
     f.core.flush_writes();
     let card = f.card("clue.ts", LOOPING);
@@ -974,7 +974,7 @@ fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
         let mut profile = f.core.vault().unwrap().get(name).unwrap().clone();
         profile.settings.clue_duel_partner = partner.into();
         f.core
-            .save_profile(profile, crate::ArmMirror::Remember(None), "partner")
+            .save_profile(profile, crate::ArmMirror::remember(None), "partner")
             .unwrap();
     }
     f.core.flush_writes();
@@ -1021,7 +1021,7 @@ fn a_saved_partner_reaches_the_running_script() {
         .scripts
         .profile_save_live(&f.core, "alice", &profile.settings);
     f.core
-        .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+        .save_profile(profile, crate::ArmMirror::remember(live), "credentials")
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -1046,7 +1046,7 @@ fn coalesced_partner_saves_settle_on_the_newest_partner() {
             .scripts
             .profile_save_live(&f.core, "alice", &profile.settings);
         f.core
-            .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+            .save_profile(profile, crate::ArmMirror::remember(live), "credentials")
             .unwrap()
     });
     drop(held);
@@ -1752,7 +1752,7 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
         .profile_save_live(&f.core, name, &row.settings)
         .unwrap();
     f.core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "partner")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "partner")
         .unwrap();
 }
 
@@ -1774,7 +1774,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
                 .insert(key.clone(), entry.as_object().unwrap().clone());
         }
         f.core
-            .save_profile(row, crate::ArmMirror::None, "restore")
+            .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
         let super::SchemaView::Ready { version, fields } =
@@ -1798,7 +1798,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .script_settings
             .insert(key.clone(), entry.as_object().unwrap().clone());
         f.core
-            .save_profile(row, crate::ArmMirror::None, "restore")
+            .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
         assert!(matches!(
@@ -1918,7 +1918,7 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
             .into_entry(),
         );
         f.core
-            .save_profile(row, crate::ArmMirror::None, "legacy-radius")
+            .save_profile(row, crate::ArmMirror::none(), "legacy-radius")
             .unwrap();
         f.core.flush_writes();
 
@@ -2024,7 +2024,7 @@ fn native_settings_reply_loses_to_profile_recreation() {
         .unwrap();
     f.core.vault_remove("alice").unwrap();
     f.core
-        .create_profile(replacement, crate::ArmMirror::None, "recreate")
+        .create_profile(replacement, crate::ArmMirror::none(), "recreate")
         .unwrap();
     f.core.flush_writes();
     assert!(matches!(
@@ -2054,7 +2054,7 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
             .unwrap();
         let op = f
             .core
-            .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+            .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
             .unwrap();
         f.core.stop_script("alice");
         if restart {
@@ -2226,7 +2226,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .unwrap();
     let op = f
         .core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
     f.core.set_auto_login("alice", true).unwrap();
     f.core.flush_writes();
@@ -2255,7 +2255,7 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
         .unwrap();
     live.bag = std::sync::Arc::new(bag(&[("unknown", json!(1))]));
     f.core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
     f.core.flush_writes();
     let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
@@ -2415,7 +2415,7 @@ fn failed_native_copy_does_not_assign_an_unassigned_bot() {
             .clone(),
     );
     f.core
-        .save_profile(row, crate::ArmMirror::None, "plant")
+        .save_profile(row, crate::ArmMirror::none(), "plant")
         .unwrap();
     f.core.flush_writes();
     assert!(Scripts::assignment(&f.core, "bob").is_none());
