@@ -22,8 +22,6 @@ thiserror = "=2.0.20"
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
-# Integration fixtures may create dedicated preparation threads; products cannot.
-api = { path = ".", features = ["test-hooks"] }
 
 [build-dependencies]
 flate2 = "=1.1.9"

@@ -2,15 +2,22 @@
 //! process with other users of the same revision.
 use api::game_data::{for_revision, SelectedGameData};
 use api::gather_methods::GatherCatalog;
+use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
+use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn prepare(data: &Arc<SelectedGameData>) -> Arc<GatherCatalog> {
-    let data = Arc::clone(data);
-    FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-        .expect("worker")
-        .join()
-        .expect("worker panicked")
+    let clock = SystemClock;
+    let cancel = SharedCancellation::new();
+    let budget = SliceBudget::new(
+        NonZeroU32::MIN,
+        Deadline::at(Instant::now() + Duration::from_secs(60)),
+    );
+    let mut step = StepContext::<PreparationPhase>::new(&clock, budget, &cancel);
+    FamilyPreparation::within(&mut step, |worker| data.prepare_gathering(worker))
         .expect("gathering family prepares")
 }
 
