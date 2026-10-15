@@ -1227,14 +1227,10 @@ pub fn reload_quester_path_source(
         let data = std::sync::Arc::clone(&selected);
         use script::preparation::CooperativePreparationStep as Step;
         use script::quester::registry::RegistryPreparation;
-        let input = PreparationInput::new(
-            290,
-            64 * 1024 * 1024,
-            32 * 1024 * 1024,
-            32 * 1024 * 1024,
-        )
-        .map_err(|error| format!("Path registry charge: {error}"))?
-        .with_quester_registry_actions();
+        let input =
+            PreparationInput::new(290, 64 * 1024 * 1024, 32 * 1024 * 1024, 32 * 1024 * 1024)
+                .map_err(|error| format!("Path registry charge: {error}"))?
+                .with_quester_registry_actions();
         let preparation_source = source.clone();
         let mut preparation = None;
         let mut actions = 0_u32;
@@ -1243,7 +1239,9 @@ pub fn reload_quester_path_source(
             api::identity::Scope::Process,
             input,
             move |worker| {
-                actions = actions.checked_add(1).expect("bounded registry action count");
+                actions = actions
+                    .checked_add(1)
+                    .expect("bounded registry action count");
                 if preparation.is_none() {
                     match RegistryPreparation::from_source_without_catalog(
                         preparation_source.clone(),

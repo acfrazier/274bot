@@ -394,6 +394,7 @@ fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
             Arc::new(SettingsBag::new()),
             selected(),
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -418,6 +419,7 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
             ),
             selected(),
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -1797,6 +1799,7 @@ mod api_gather_seat {
                     bag,
                     Arc::clone(&cx.selected),
                     Arc::clone(&cx.banks),
+                    None,
                 )
                 .unwrap();
                 instance = Some(
@@ -2100,7 +2103,7 @@ fn native_status_logs_each_phase_or_failure_change_once() {
     const SLOT: &str = "status-change-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
 
@@ -2174,7 +2177,7 @@ fn native_status_logs_present_fields_as_plain_text() {
     const SLOT: &str = "status-format-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut working = status_line_test_status(NativePhase::Working, None);
@@ -2228,7 +2231,7 @@ fn native_status_logs_gatherer_method_area_target_and_reason() {
     const SLOT: &str = "status-diagnose-test";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut blocked = status_line_test_status(
@@ -2278,7 +2281,7 @@ fn native_status_logs_gatherer_last_event_at_info() {
     const SLOT: &str = "status-last-event-info";
     install_status_line_sink();
     let mut output = Output {
-        account: SLOT.to_owned(),
+        account: Some(SLOT.into()),
         ..Output::default()
     };
     let mut first = status_line_test_status(NativePhase::Working, None);
@@ -2345,7 +2348,7 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
             Some(selected()),
         )
         .unwrap();
-        slot.compiled.as_mut().unwrap().output.account = slot_name.to_owned();
+        slot.compiled.as_mut().unwrap().output.account = Some(slot_name.into());
         tick(&mut slot);
 
         assert_eq!(slot.state(), RunState::Idle);

@@ -119,9 +119,7 @@ impl ReloadPaths {
         &mut self,
         selected: Arc<api::game_data::SelectedGameData>,
         mut source: Option<script::quester::registry::FolderSource>,
-        finish: impl FnOnce(script::quester::registry::PreparedRegistry) -> ReloadValue
-            + Send
-            + 'static,
+        finish: impl FnOnce(script::quester::registry::PreparedRegistry) -> ReloadValue + Send + 'static,
     ) -> Result<(), String> {
         use script::preparation::CooperativePreparationStep as Step;
         use script::quester::registry::RegistryPreparation;
@@ -173,9 +171,11 @@ impl ReloadPaths {
                 }
                 let candidate = preparation.as_mut().expect("registry initialized");
                 let result = match candidate.step(context) {
-                    Ok(Some(candidate)) => Some(Ok(
-                        finish.take().expect("first registry completion")(candidate),
-                    )),
+                    Ok(Some(candidate)) => {
+                        Some(Ok(finish.take().expect("first registry completion")(
+                            candidate,
+                        )))
+                    }
                     Ok(None) => None,
                     Err(error) => Some(Err(compile_error_message(&error))),
                 };

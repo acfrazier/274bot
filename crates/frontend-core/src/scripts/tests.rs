@@ -177,11 +177,15 @@ impl Fixture {
         if let Some(run) = play.script_native_run(name) {
             let id = script::compiled_id(identity.strip_prefix("compiled:").unwrap()).unwrap();
             let revision = play.script_native_settings_revision(name).unwrap() + 1;
-            let config = play
+            let worker = play
                 .script_prepare_config(id, revision, std::sync::Arc::new(bag.clone()))
-                .unwrap()
+                .unwrap();
+            let work_identity = worker.identity();
+            let config = worker
                 .join()
                 .unwrap()
+                .unwrap()
+                .commit(work_identity)
                 .unwrap();
             return play.script_configure_compiled(name, config, run)
                 == script::CompiledDelivery::Unchanged;

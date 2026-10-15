@@ -364,21 +364,29 @@ fn credited_transfer_refusal_and_actual_join_reopen_admission() {
         status.retiring_gameplay, 1,
         "no credit retains J: {status:?}"
     );
+    // Registry publication precedes receipt delivery: seeing four credits
+    // does not imply the supervisor has sent their receipts yet.
+    let mut received = [false; 5];
     let mut credited = 0;
-    for rx in &receivers {
-        if let Ok(lines) = rx.try_recv() {
-            assert!(
-                lines
-                    .iter()
-                    .any(|line| line.contains("quarantined after join deadline")),
-                "{lines:?}"
-            );
-            credited += 1;
-        }
-    }
-    assert_eq!(
-        credited, 4,
-        "only credited transfer releases a slot receipt"
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            for (index, rx) in receivers.iter().enumerate() {
+                if !received[index] {
+                    if let Ok(lines) = rx.try_recv() {
+                        assert!(
+                            lines
+                                .iter()
+                                .any(|line| line.contains("quarantined after join deadline")),
+                            "{lines:?}"
+                        );
+                        received[index] = true;
+                        credited += 1;
+                    }
+                }
+            }
+            credited == 4
+        }),
+        "only credited transfer releases a slot receipt; received={credited}"
     );
     assert!(matches!(
         LoadIsolate::spawn(

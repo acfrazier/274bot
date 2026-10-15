@@ -3751,13 +3751,25 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     );
 
     dispatch(&mut session, &mut app, AppAction::ScriptReload);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let outcome = loop {
+        session.pump(&mut app);
+        if let Some(outcome) = session.scripts.take_reload_outcome() {
+            break outcome;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "confirmed reload preparation did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
     assert!(matches!(
-        session.scripts.take_reload_outcome(),
-        Some(frontend_core::scripts::ReloadOutcome::Applied {
+        outcome,
+        frontend_core::scripts::ReloadOutcome::Applied {
             restarted: 2,
             failed: 0,
             ..
-        })
+        }
     ));
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {

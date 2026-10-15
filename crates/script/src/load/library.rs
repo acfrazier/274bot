@@ -1049,8 +1049,7 @@ impl CardPreparationTemplate {
     fn build(
         &self,
         origin: String,
-        js: String,
-        sha256: String,
+        cached: CachedJs,
         shape: LoadShape,
         api_family: ApiFamily,
         settings_schema: Vec<SettingDef>,
@@ -1061,10 +1060,10 @@ impl CardPreparationTemplate {
             path: self.path.clone(),
             shape,
             origin,
-            js,
+            js: cached.js,
             kind: shape_to_kind(shape),
             source: self.source,
-            sha256,
+            sha256: cached.sha256,
             description: self.description.clone(),
             category: self.category.clone(),
             tags: self.tags.clone(),
@@ -1318,8 +1317,7 @@ impl CardPreparationSnapshot {
         }
         let card = self.template.build(
             origin.to_string(),
-            cached.js,
-            cached.sha256,
+            cached,
             shape,
             api_family,
             settings_schema,
@@ -1392,6 +1390,9 @@ enum CardPreparationPhase {
     Complete,
 }
 
+// Keep the owned snapshot inline: boxing each card would add an allocation
+// solely to shrink the already boxed preparation job's enum footprint.
+#[allow(clippy::large_enum_variant)]
 #[cfg(feature = "load")]
 #[derive(Debug)]
 enum CardTaskSnapshot {
@@ -1818,11 +1819,10 @@ impl CardPreparationTask {
                 }
             }
             CardPreparationPhase::Finish => {
-                let CachedJs { sha256, js } = self.cached.take().expect("cached card exists");
+                let cached = self.cached.take().expect("cached card exists");
                 let card = self.snapshot.template.build(
                     self.origin.take().expect("origin was read"),
-                    js,
-                    sha256,
+                    cached,
                     self.shape.expect("shape was resolved"),
                     self.api_family.expect("API family was resolved"),
                     self.settings_schema

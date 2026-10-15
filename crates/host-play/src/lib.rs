@@ -102,7 +102,7 @@ pub use walk_arm::{
 };
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
-pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
+pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};

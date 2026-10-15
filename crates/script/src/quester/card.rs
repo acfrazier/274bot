@@ -291,10 +291,58 @@ struct Prepared {
     choices: super::choices::QuestChoices,
 }
 
+/// A fully prepared Quester registry and its matching selected quest catalog.
+/// The profile worker consumes both before creating a card-owned queue.
+pub struct QuesterRegistryReady {
+    registry: registry::PathRegistry,
+    quests: Arc<QuestCatalog>,
+}
+
+impl QuesterRegistryReady {
+    /// Pair a bounded registry snapshot with the facts used to compile it.
+    pub fn new(registry: registry::PathRegistry, quests: Arc<QuestCatalog>) -> Self {
+        Self { registry, quests }
+    }
+}
+
 fn prepare(
     cx: &mut PrepareContext<'_>,
     revision: u64,
     bag: Arc<SettingsBag>,
+) -> Result<Arc<PreparedConfig>, StartError> {
+    prepare_from(cx, revision, bag, |cx| {
+        let quests = Arc::new(
+            QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?,
+        );
+        let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
+            .map_err(|error| {
+                StartError::Unavailable(
+                    format!(
+                        "{}: {}",
+                        error.code,
+                        error.detail.as_deref().unwrap_or("Path reload failed")
+                    )
+                    .into(),
+                )
+            })?;
+        Ok(QuesterRegistryReady { registry, quests })
+    })
+}
+
+pub(crate) fn prepare_with_registry(
+    cx: &mut PrepareContext<'_>,
+    revision: u64,
+    bag: Arc<SettingsBag>,
+    ready: QuesterRegistryReady,
+) -> Result<Arc<PreparedConfig>, StartError> {
+    prepare_from(cx, revision, bag, |_| Ok(ready))
+}
+
+fn prepare_from(
+    cx: &mut PrepareContext<'_>,
+    revision: u64,
+    bag: Arc<SettingsBag>,
+    source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
     if cx
         .selected
@@ -348,19 +396,7 @@ fn prepare(
             ))));
         }
     }
-    let quests =
-        QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
-    let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
-        .map_err(|error| {
-            StartError::Unavailable(
-                format!(
-                    "{}: {}",
-                    error.code,
-                    error.detail.as_deref().unwrap_or("Path reload failed")
-                )
-                .into(),
-            )
-        })?;
+    let QuesterRegistryReady { registry, quests } = source(cx)?;
     let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
         StartError::Config(ConfigError::new(
             error.field,
@@ -370,7 +406,7 @@ fn prepare(
     })?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
-        quests: Arc::new(quests),
+        quests,
         banks: Arc::clone(&cx.banks),
         queue,
         max_deaths: settings.max_deaths,

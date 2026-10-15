@@ -146,11 +146,7 @@ impl CatalogPreparationSnapshot {
     }
 
     fn source_limit(&self) -> usize {
-        MAX_CATALOG_SOURCE_BYTES.min(
-            MAX_CATALOG_INPUT_BYTES
-                .checked_sub(self.snapshot_bytes)
-                .unwrap_or(0),
-        )
+        MAX_CATALOG_SOURCE_BYTES.min(MAX_CATALOG_INPUT_BYTES.saturating_sub(self.snapshot_bytes))
     }
 
     pub fn diff(&self) -> Result<CatalogDiff, String> {
