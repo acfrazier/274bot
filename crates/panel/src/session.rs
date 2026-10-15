@@ -82,8 +82,8 @@ enum ExternalReloadPending {
     },
 }
 
-/// Owned inputs captured on the UI thread and consumed by the sequential
-/// profile/template preparation worker.
+/// Owned inputs captured on the UI thread and retained by the sequential
+/// profile/template preparation demand until the worker consumes them.
 pub(crate) struct ProfilePreparation {
     options: ProfileOptions,
     environment: ProfileEnvironment,
@@ -97,7 +97,7 @@ impl ProfilePreparation {
     }
 
     pub(crate) fn run_with_progress(
-        self,
+        &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<SharedClientTemplate>, String> {
         observer.report(ProfileProgress::steps(

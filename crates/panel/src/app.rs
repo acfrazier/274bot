@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
@@ -48,7 +47,8 @@ use host_play::progress::{
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparationCompletion, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
+    ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -223,16 +223,38 @@ enum Boot {
 
 struct ProfilePrepareJob {
     generation: u64,
-    receiver: Receiver<Result<Arc<host_play::SharedClientTemplate>, String>>,
+    task: script::preparation::PreparedTask<
+        Result<Arc<host_play::SharedClientTemplate>, String>,
+    >,
     progress: LatestProgress,
 }
 
 struct ProfileValidateJob {
     generation: u64,
     boot: Boot,
-    receiver: Receiver<Result<host_play::ValidatedTemplate, String>>,
+    task: script::preparation::PreparedTask<Result<host_play::ValidatedTemplate, String>>,
     progress: LatestProgress,
 }
+struct ProfilePreparePending {
+    generation: u64,
+    preparation: Arc<ProfilePreparation>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+struct ProfileValidatePending {
+    generation: u64,
+    boot: Boot,
+    template: Arc<host_play::SharedClientTemplate>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+/// One capped process-profile reservation for captured inputs, decode scratch,
+/// and the prepared shared-client template.
+const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
+const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
 
@@ -261,7 +283,9 @@ fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, Lates
 
 struct StartupPreparation {
     prepare: Option<ProfilePrepareJob>,
+    prepare_pending: Option<ProfilePreparePending>,
     validate: Option<ProfileValidateJob>,
+    validate_pending: Option<ProfileValidatePending>,
     pending_boot: Option<Boot>,
     failed_generation: Option<u64>,
 }
@@ -270,14 +294,19 @@ impl StartupPreparation {
     fn new(pending_boot: Option<Boot>) -> Self {
         Self {
             prepare: None,
+            prepare_pending: None,
             validate: None,
+            validate_pending: None,
             pending_boot,
             failed_generation: None,
         }
     }
 
     fn in_flight(&self) -> bool {
-        self.prepare.is_some() || self.validate.is_some()
+        self.prepare.is_some()
+            || self.prepare_pending.is_some()
+            || self.validate.is_some()
+            || self.validate_pending.is_some()
     }
 }
 
@@ -288,12 +317,24 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
         .filter(|job| job.generation == generation)
     {
         (ProgressPhase::FinalChecks, &job.progress)
-    } else {
-        let job = startup
-            .prepare
-            .as_ref()
-            .filter(|job| job.generation == generation)?;
+    } else if let Some(pending) = startup
+        .validate_pending
+        .as_ref()
+        .filter(|pending| pending.generation == generation)
+    {
+        (ProgressPhase::FinalChecks, &pending.progress)
+    } else if let Some(job) = startup
+        .prepare
+        .as_ref()
+        .filter(|job| job.generation == generation)
+    {
         (ProgressPhase::Preparing, &job.progress)
+    } else {
+        let pending = startup
+            .prepare_pending
+            .as_ref()
+            .filter(|pending| pending.generation == generation)?;
+        (ProgressPhase::Preparing, &pending.progress)
     };
     let progress = latest.lock().ok()?.as_ref().copied()?;
     Some(StartupProgressView { phase, progress })
@@ -379,8 +420,8 @@ fn fail_startup(session: &mut Session, fatal: bool, error: String) {
     }
 }
 
-/// Poll the two sequential startup workers. Both resource-heavy phases run
-/// away from the event loop; profile/template installation and all vault,
+/// Poll the two sequential WorkAdmission preparations. Resource-heavy phases
+/// run away from the event loop; profile/template installation and all vault,
 /// Play, GPU, JS-store and slot ownership remain on this UI thread.
 fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     if let Some(pass) = state.session.take_requested_unlock() {
@@ -390,6 +431,12 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
             .filter(|job| matches!(&job.boot, Boot::Unlock { .. }))
         {
             job.boot = Boot::Unlock { pass };
+        } else if let Some(pending) = startup
+            .validate_pending
+            .as_mut()
+            .filter(|pending| matches!(&pending.boot, Boot::Unlock { .. }))
+        {
+            pending.boot = Boot::Unlock { pass };
         } else if startup
             .pending_boot
             .as_ref()
@@ -405,8 +452,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         .prepare
         .as_ref()
         .is_some_and(|job| job.generation != generation)
+        || startup
+            .prepare_pending
+            .as_ref()
+            .is_some_and(|pending| pending.generation != generation)
     {
         startup.prepare = None;
+        startup.prepare_pending = None;
         startup.failed_generation = None;
         state.session.set_profile_preparing(false);
     }
@@ -414,15 +466,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let prepared = startup
         .prepare
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile preparation worker stopped".into()))
-            }
-        });
-    if let Some(result) = prepared {
+        .is_some_and(|job| job.task.is_finished());
+    if prepared {
         let job = startup.prepare.take().expect("polled preparation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         match state
             .session
             .finish_profile_preparation(job.generation, result)
@@ -448,15 +499,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let validated = startup
         .validate
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile validation worker stopped".into()))
-            }
-        });
-    if let Some(result) = validated {
+        .is_some_and(|job| job.task.is_finished());
+    if validated {
         let job = startup.validate.take().expect("polled validation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         state.session.set_profile_preparing(false);
         if job.generation != state.session.profile_generation() {
             return;
@@ -476,43 +526,95 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         && startup.prepare.is_none()
         && startup.failed_generation != Some(generation)
     {
-        match state.session.profile_preparation() {
-            Ok((generation, preparation)) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
-                let (observer, progress) = progress_channel(ProfileProgress::steps(
-                    ProfileProgressStage::SelectingServerProfile,
-                    0,
-                    1,
-                ));
-                state.session.error = None;
-                state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(preparation.run_with_progress(&observer));
-                });
-                startup.prepare = Some(ProfilePrepareJob {
-                    generation,
-                    receiver,
-                    progress,
-                });
+        if startup.prepare_pending.is_none() {
+            match state.session.profile_preparation() {
+                Ok((generation, preparation)) => {
+                    let (observer, progress) = progress_channel(ProfileProgress::steps(
+                        ProfileProgressStage::SelectingServerProfile,
+                        0,
+                        1,
+                    ));
+                    state.session.error = None;
+                    state.session.set_profile_preparing(true);
+                    startup.prepare_pending = Some(ProfilePreparePending {
+                        generation,
+                        preparation: Arc::new(preparation),
+                        observer,
+                        progress,
+                    });
+                }
+                Err(error) => {
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error);
+                }
             }
-            Err(error) => {
-                startup.failed_generation = Some(generation);
-                let fatal = startup
-                    .pending_boot
-                    .as_ref()
-                    .is_some_and(boot_failure_is_fatal);
-                fail_startup(&mut state.session, fatal, error);
+        }
+
+        if let Some(pending) = startup.prepare_pending.as_ref() {
+            let generation = pending.generation;
+            let preparation = Arc::clone(&pending.preparation);
+            let observer = pending.observer.clone();
+            let progress = Arc::clone(&pending.progress);
+            let input = script::preparation::PreparationInput::new(
+                generation,
+                PROFILE_PREPARATION_INPUT_BYTES,
+                PROFILE_PREPARATION_SCRATCH_BYTES,
+                PROFILE_PREPARATION_RESULT_BYTES,
+            );
+            match input {
+                Ok(input) => match script::preparation::submit(
+                    script::preparation::PreparationKind::Profile,
+                    api::identity::Scope::Process,
+                    input,
+                    move |_| preparation.run_with_progress(&observer),
+                ) {
+                    Ok(task) => {
+                        startup.prepare_pending = None;
+                        startup.prepare = Some(ProfilePrepareJob {
+                            generation,
+                            task,
+                            progress,
+                        });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {}
+                    Err(error) => {
+                        startup.prepare_pending = None;
+                        startup.failed_generation = Some(generation);
+                        let fatal = startup
+                            .pending_boot
+                            .as_ref()
+                            .is_some_and(boot_failure_is_fatal);
+                        fail_startup(&mut state.session, fatal, error.to_string());
+                    }
+                },
+                Err(error) => {
+                    startup.prepare_pending = None;
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
             }
         }
     }
 
-    if state.session.profile_bound() && startup.validate.is_none() && startup.pending_boot.is_some()
+    if state.session.profile_bound()
+        && startup.validate.is_none()
+        && startup.validate_pending.is_none()
+        && startup.pending_boot.is_some()
     {
         let boot = startup.pending_boot.take().expect("pending boot");
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
                 let (observer, progress) = progress_channel(ProfileProgress::steps(
                     ProfileProgressStage::FinalChecks,
                     0,
@@ -520,17 +622,69 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                 ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(template.validate_for_play_with_progress(&observer));
-                });
-                startup.validate = Some(ProfileValidateJob {
+                startup.validate_pending = Some(ProfileValidatePending {
                     generation,
                     boot,
-                    receiver,
+                    template,
+                    observer,
                     progress,
                 });
             }
             Err(error) => fail_startup(&mut state.session, fatal, error),
+        }
+    }
+
+    if let Some(pending) = startup.validate_pending.as_ref() {
+        let generation = pending.generation;
+        let fatal = boot_failure_is_fatal(&pending.boot);
+        let template = Arc::clone(&pending.template);
+        let observer = pending.observer.clone();
+        let progress = Arc::clone(&pending.progress);
+        let input = script::preparation::PreparationInput::new(
+            generation,
+            std::mem::size_of::<Arc<host_play::SharedClientTemplate>>(),
+            0,
+            std::mem::size_of::<host_play::ValidatedTemplate>(),
+        );
+        match input {
+            Ok(input) => match script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                api::identity::Scope::Process,
+                input,
+                move |_| template.validate_for_play_with_progress(&observer),
+            ) {
+                Ok(task) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    startup.validate = Some(ProfileValidateJob {
+                        generation,
+                        boot: pending.boot,
+                        task,
+                        progress,
+                    });
+                }
+                Err(script::preparation::PreparationError::Refused(
+                    api::work::SubmissionRefusal::Full,
+                )) => {}
+                Err(error) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    let fatal = boot_failure_is_fatal(&pending.boot);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
+            },
+            Err(error) => {
+                let pending = startup
+                    .validate_pending
+                    .take()
+                    .expect("validation demand retained");
+                let fatal = boot_failure_is_fatal(&pending.boot);
+                fail_startup(&mut state.session, fatal, error.to_string());
+            }
         }
     }
 }
