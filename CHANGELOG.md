@@ -109,6 +109,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   cannot become an active session. An expired handshake keeps its place until
   it actually returns, so another bot cannot overlap it. The queue cancels
   its socket and then admits the next bot in normal order.
+- A login refused before it starts no longer uses the next bot's login
+  spacing or device/address allowance. Refused and cancelled sockets close
+  before the next queued login is admitted.
+- Relog now keeps the login request after logging out and clears its pending
+  notice when the replacement session starts. Queue cards distinguish a
+  server-imposed login hold from spacing and label a retiring handshake
+  **previous login is finishing**.
 
 ### Panel
 

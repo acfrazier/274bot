@@ -2407,6 +2407,23 @@ fn client_after_server_logout() -> Client {
     client
 }
 
+fn client_after_connection_loss() -> Client {
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_external_reconnect_owner(true);
+    client.ingame = true;
+    client.lost_con();
+    client
+}
+
 #[test]
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
@@ -2779,11 +2796,45 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
 }
 
 #[test]
+fn session_exit_snapshot_is_consistent_with_logout_order() {
+    for logout_before_exit in [false, true] {
+        let arm = SlotArm::new(7, true);
+        arm.set_script_active(true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        if logout_before_exit {
+            arm.request_logout();
+        }
+        let mut client = client_after_server_logout();
+        observe_client_session_exit(&mut client, &arm);
+        if !logout_before_exit {
+            arm.request_logout();
+        }
+        assert_eq!(
+            arm.take_session_boundary(),
+            !logout_before_exit,
+            "boundary work policy must use the same intent snapshot as the exit"
+        );
+        assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
+    }
+}
+
+#[test]
+fn clean_server_logout_does_not_count_toward_repeat_guard() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let mut client = client_after_server_logout();
+    observe_client_session_exit(&mut client, &arm);
+    assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+#[test]
 fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
     for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
-        let mut client = client_after_server_logout();
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        let mut client = client_after_connection_loss();
         assert!(!tick_flags(&mut client, &[], &arm));
         assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
     }
@@ -3058,7 +3109,7 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.withdraw_login();
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3079,7 +3130,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3098,7 +3149,8 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-    let login: Option<Result<(), &str>> = permit.attempt(|_, _| Err("connect failed"), |_| None);
+    let login: Option<Result<(), &str>> =
+        permit.attempt(|_| true, |_, _| Err("connect failed"), |_| None);
     assert_eq!(login, Some(Err("connect failed")));
     drop(permit);
     assert!(
@@ -3124,8 +3176,11 @@ fn panic_in_login_attempt_resolves_the_reservation() {
 
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-        let _: Option<Result<(), ()>> =
-            permit.attempt(|_, _| panic!("synthetic client.login unwind"), |_| None);
+        let _: Option<Result<(), ()>> = permit.attempt(
+            |_| true,
+            |_, _| panic!("synthetic client.login unwind"),
+            |_| None,
+        );
     }));
     assert!(unwind.is_err());
     assert!(
@@ -3149,7 +3204,7 @@ fn granted(wait: PermitWait) -> GrantedReservation {
 /// Run a granted login that returns at once with `Ok`.
 fn complete(mut permit: GrantedReservation) {
     assert_eq!(
-        permit.attempt(|_, _| Ok::<(), ()>(()), |_| None),
+        permit.attempt(|_| true, |_, _| Ok::<(), ()>(()), |_| None),
         Some(Ok(()))
     );
 }
@@ -3272,6 +3327,7 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     let (return_tx, return_rx) = mpsc::channel();
     let stuck = thread::spawn(move || {
         permit.attempt(
+            |_| true,
             |deadline, cancel| {
                 deadline_tx.send(deadline).unwrap();
                 // A client that ignores the queue's deadline: its own is a
@@ -3447,6 +3503,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     thread::sleep(spacing + Duration::from_millis(200));
     let mut alice_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             alice_start = Some(Instant::now());
             Err::<(), _>("refused at once")
@@ -3457,6 +3514,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let mut bob_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             bob_start = Some(Instant::now());
             Ok::<(), ()>(())
@@ -3497,6 +3555,7 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
         .is_some()));
     let backoff = LoginBackoff::new();
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             Err::<(), _>(LoginError::response(
                 16,
