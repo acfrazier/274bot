@@ -2271,11 +2271,14 @@ pub struct FleetRow {
             + "pub struct UsesToken { id: client::session::Token }\n"
         )
         depth = 100_000
-        cases: dict[str, tuple[str | None, str]] = {
+        cases: dict[str, tuple[str | None, str | tuple[str, ...]]] = {
             "invalid json": ("{", "foreign types: cannot load"),
             "deep nesting": (
                 '{"schema_version": 1, "foreign_types": ' + "[" * depth + "]" * depth + "}",
-                "foreign types: cannot load",
+                (
+                    "foreign types: cannot load",
+                    "foreign types: foreign_types[0] has unknown or missing fields",
+                ),
             ),
             "duplicate json key": (
                 '{"schema_version": 1, "schema_version": 1, "foreign_types": []}',
@@ -2354,7 +2357,15 @@ pub struct FleetRow {
                     (root / inventories.FOREIGN_TYPES_RELATIVE).mkdir(parents=True)
                 errors = inventories.check_tree(root)
                 print(f"BAD foreign type data ({label}): {[error[:200] for error in errors]}")
-                self.assertTrue(any(expected in error for error in errors), errors)
+                expected_errors = (expected,) if isinstance(expected, str) else expected
+                self.assertTrue(
+                    any(
+                        expected_error in error
+                        for error in errors
+                        for expected_error in expected_errors
+                    ),
+                    errors,
+                )
                 self.assertIn(unresolved, errors)
         symlinks = {
             "symlinked file": inventories.FOREIGN_TYPES_RELATIVE,
@@ -2394,6 +2405,11 @@ pub struct FleetRow {
         self.assertTrue(
             any(
                 error.startswith("inventory: cannot load tools/architecture/inventories.json")
+                or error
+                == (
+                    "inventory schema: top-level fields must be exactly "
+                    "schema_version, seam_types, violations, test_exceptions"
+                )
                 for error in errors
             ),
             errors,

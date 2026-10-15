@@ -1716,6 +1716,261 @@ else:
                         self.assertEqual((result.returncode, result.stdout.strip()), (159, ""), result.stdout)
         print("GOOD §26 syscall attacks are killed in both modes; prepare keeps only local sockets")
 
+    @contextlib.contextmanager
+    def _mock_python_runtime(self, runtime: Path) -> Iterator[list[list[str]]]:
+        stdlib = runtime / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        config = {
+            "DESTSHARED": str(stdlib / "lib-dynload"),
+            "Py_ENABLE_SHARED": 1,
+            "LIBDIR": str(runtime / "lib"),
+            "LDLIBRARY": "libpython-fixture.so",
+            "INSTSONAME": "libpython-fixture.so.1.0",
+        }
+        real_prefix = Path(sys.base_prefix).resolve(strict=True)
+        run = subprocess.run
+        launches = []
+
+        def run_with_bootstrap_runtime(arguments, **kwargs):
+            launches.append(arguments)
+            # Supply the actual host runtime only to bootstrap the fixture.
+            # Assertions inspect the gate's arguments before this injection.
+            if real_prefix != Path("/usr"):
+                position = arguments.index("--remount-ro")
+                arguments = [
+                    *arguments[:position],
+                    "--ro-bind", str(real_prefix), str(real_prefix),
+                    *arguments[position:],
+                ]
+            return run(arguments, **kwargs)
+
+        with (
+            mock.patch.object(gate.sys, "base_prefix", str(runtime)),
+            mock.patch("sysconfig.get_path", return_value=str(stdlib)),
+            mock.patch("sysconfig.get_config_var", side_effect=config.get),
+            mock.patch.object(gate.subprocess, "run", side_effect=run_with_bootstrap_runtime),
+        ):
+            yield launches
+
+    def _make_python_runtime(self, runtime: Path) -> Path:
+        (runtime / "bin").mkdir(parents=True)
+        stdlib = runtime / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        (stdlib / "lib-dynload").mkdir(parents=True)
+        for directory in ("include", "share"):
+            (runtime / directory).mkdir()
+        (runtime / "lib64").symlink_to("lib", target_is_directory=True)
+        (runtime / "bin/python3.14").write_text("launcher fixture", encoding="utf-8")
+        (runtime / "python").symlink_to("./bin/python3.14")
+        for filename in ("build_output.txt", "tools_structure.txt"):
+            (runtime / filename).write_text("setup-python build metadata", encoding="utf-8")
+        (runtime / "lib/libpython-fixture.so.1.0").write_text("shared runtime", encoding="utf-8")
+        (runtime / "lib/libpython-fixture.so").symlink_to("libpython-fixture.so.1.0")
+        return stdlib
+
+    def test_python_runtime_prefix_is_resolved_read_only_and_exact(self) -> None:
+        runtime = self.root / "hostedtoolcache" / "Python" / "3.14.8" / "x64"
+        stdlib = self._make_python_runtime(runtime)
+        (stdlib / "runtime-marker").write_text("pinned runtime", encoding="utf-8")
+        sibling = self.root / "outside-runtime"
+        sibling.write_text("host-only", encoding="utf-8")
+        alias = self.root / "runtime-alias"
+        alias.symlink_to(runtime, target_is_directory=True)
+        work, payload = self._write_probe_script(
+            "runtime-prefix-probe",
+            f"""import errno
+from pathlib import Path
+runtime = Path({str(runtime)!r})
+assert Path({str(stdlib / "runtime-marker")!r}).read_text() == "pinned runtime"
+assert (runtime / "lib/libpython-fixture.so").read_text() == "shared runtime"
+assert (runtime / "lib/libpython-fixture.so.1.0").read_text() == "shared runtime"
+assert not Path({str(sibling)!r}).exists()
+try:
+    Path({str(stdlib / "runtime-marker")!r}).write_text("changed")
+except OSError as error:
+    assert error.errno == errno.EROFS, error
+else:
+    raise AssertionError("host runtime was writable")
+print("EXACT READ-ONLY RUNTIME")
+""",
+        )
+
+        for deny_sockets in (True, False):
+            with (
+                self.subTest(deny_sockets=deny_sockets),
+                self._mock_python_runtime(alias) as launches,
+            ):
+                result = gate._isolated_probe(
+                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                )
+                self.assertEqual(
+                    (result.returncode, result.stdout.strip()), (0, "EXACT READ-ONLY RUNTIME"), result.stdout
+                )
+                binds = [
+                    launches[-1][index + 1:index + 3]
+                    for index, argument in enumerate(launches[-1]) if argument == "--ro-bind"
+                ]
+                self.assertNotIn([str(runtime), str(runtime)], binds)
+                self.assertNotIn([str(alias), str(alias)], binds)
+                self.assertIn([str(stdlib), str(stdlib)], binds)
+                target = str(runtime / "lib/libpython-fixture.so.1.0")
+                self.assertIn([target, str(alias / "lib/libpython-fixture.so")], binds)
+                self.assertIn([target, target], binds)
+        self.assertEqual((stdlib / "runtime-marker").read_text(), "pinned runtime")
+
+    def test_python_runtime_prefix_refuses_broad_home_like_tree(self) -> None:
+        runtime = self.root / "home-like"
+        (runtime / "bin").mkdir(parents=True)
+        (runtime / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}").mkdir(parents=True)
+        (runtime / ".ssh").mkdir()
+        (runtime / ".ssh/id_rsa").write_text("FAKE-PRIVATE-KEY", encoding="utf-8")
+        work, payload = self._write_probe_script(
+            "broad-prefix-probe",
+            f"from pathlib import Path\nprint(Path({str(runtime / '.ssh/id_rsa')!r}).read_text())\n",
+        )
+        for deny_sockets in (True, False):
+            with (
+                self.subTest(deny_sockets=deny_sockets),
+                mock.patch.object(gate.sys, "base_prefix", str(runtime)),
+                self.assertRaisesRegex(gate.GateError, "Python runtime prefix must be a dedicated CPython install tree"),
+            ):
+                gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=deny_sockets)
+
+    def _assert_python_runtime_file_is_hidden(self, relative: str) -> None:
+        runtime = self.root / "nested-runtime"
+        self._make_python_runtime(runtime)
+        secret = runtime / relative
+        secret.parent.mkdir(parents=True, exist_ok=True)
+        secret.write_text("HOST-ONLY-FILE", encoding="utf-8")
+        work, payload = self._write_probe_script(
+            "nested-runtime-probe",
+            f"from pathlib import Path\nassert not Path({str(secret)!r}).exists(), {relative!r}\n"
+            "print('NON-RUNTIME FILE ABSENT')\n",
+        )
+        for deny_sockets in (True, False):
+            with self.subTest(deny_sockets=deny_sockets), self._mock_python_runtime(runtime):
+                result = gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=deny_sockets)
+                self.assertEqual(
+                    (result.returncode, result.stdout.strip()), (0, "NON-RUNTIME FILE ABSENT"), result.stdout
+                )
+
+    def test_python_runtime_hides_nested_share_ssh_secret(self) -> None:
+        self._assert_python_runtime_file_is_hidden("share/.ssh/id_rsa")
+
+    def test_python_runtime_hides_nested_lib_secret_outside_stdlib(self) -> None:
+        self._assert_python_runtime_file_is_hidden("lib/keyrings/private-key")
+
+    def test_python_runtime_hides_non_stdlib_lib_file(self) -> None:
+        self._assert_python_runtime_file_is_hidden("lib/non-stdlib-data.txt")
+
+    def test_python_runtime_binds_separate_dynload_without_static_libpython(self) -> None:
+        runtime = self.root / "static-runtime"
+        self._make_python_runtime(runtime)
+        extensions = runtime / "lib/extensions"
+        extensions.mkdir()
+        marker = extensions / "extension-marker"
+        marker.write_text("extension runtime", encoding="utf-8")
+        work, payload = self._write_probe_script(
+            "external-dynload-probe",
+            "import errno\nfrom pathlib import Path\n"
+            f"marker = Path({str(marker)!r})\nassert marker.read_text() == 'extension runtime'\n"
+            f"assert not Path({str(runtime / 'lib/libpython-fixture.so')!r}).exists()\n"
+            "try:\n marker.write_text('changed')\n"
+            "except OSError as error:\n assert error.errno == errno.EROFS, error\n"
+            "else:\n raise AssertionError('extension runtime was writable')\n"
+            "print('SEPARATE READ-ONLY DYNLOAD; STATIC LIBPYTHON ABSENT')\n",
+        )
+        config = {"DESTSHARED": str(extensions), "Py_ENABLE_SHARED": 0}
+        for deny_sockets in (True, False):
+            with (
+                self.subTest(deny_sockets=deny_sockets),
+                self._mock_python_runtime(runtime),
+                mock.patch("sysconfig.get_config_var", side_effect=config.get),
+            ):
+                result = gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=deny_sockets)
+                self.assertEqual(
+                    (result.returncode, result.stdout.strip()),
+                    (0, "SEPARATE READ-ONLY DYNLOAD; STATIC LIBPYTHON ABSENT"), result.stdout,
+                )
+
+    def test_usr_python_runtime_keeps_existing_component_binds(self) -> None:
+        work, payload = self._write_probe_script(
+            "usr-prefix-probe",
+            "from pathlib import Path\n"
+            "assert Path('/usr/lib').is_dir()\n"
+            "assert Path('/lib64/ld-linux-x86-64.so.2').exists()\n"
+            "assert not Path('/usr/include').exists()\n"
+            "print('DISTRO RUNTIME ONLY')\n",
+        )
+        real_prefix = Path(sys.base_prefix).resolve(strict=True)
+        run = subprocess.run
+        launches = []
+
+        def run_with_bootstrap_runtime(arguments, **kwargs):
+            launches.append(arguments)
+            if real_prefix != Path("/usr"):
+                position = arguments.index("--remount-ro")
+                arguments = [
+                    *arguments[:position],
+                    "--ro-bind", str(real_prefix), str(real_prefix),
+                    *arguments[position:],
+                ]
+            return run(arguments, **kwargs)
+
+        for deny_sockets in (True, False):
+            with (
+                self.subTest(deny_sockets=deny_sockets),
+                mock.patch.object(gate.sys, "base_prefix", "/usr"),
+                mock.patch.object(gate.subprocess, "run", side_effect=run_with_bootstrap_runtime),
+            ):
+                result = gate._isolated_probe([sys.executable, str(payload)], work, deny_sockets=deny_sockets)
+                self.assertEqual((result.returncode, result.stdout.strip()), (0, "DISTRO RUNTIME ONLY"), result.stdout)
+                binds = [
+                    launches[-1][index + 1:index + 3]
+                    for index, argument in enumerate(launches[-1]) if argument == "--ro-bind"
+                ]
+                self.assertNotIn(["/usr", "/usr"], binds)
+                self.assertIn(["/usr/lib", "/usr/lib"], binds)
+                self.assertIn([str(Path("/lib64").resolve(strict=True)), "/lib64"], binds)
+
+    def test_lib64_uses_the_resolved_host_loader_directory_read_only(self) -> None:
+        lib64 = self.root / "loader-directory"
+        lib64.mkdir()
+        loader = Path("/lib64/ld-linux-x86-64.so.2").resolve(strict=True)
+        (lib64 / "ld-linux-x86-64.so.2").symlink_to(loader)
+        (lib64 / "loader-marker").write_text("host loader directory", encoding="utf-8")
+        work, payload = self._write_probe_script(
+            "loader-directory-probe",
+            """import errno
+from pathlib import Path
+marker = Path("/lib64/loader-marker")
+assert marker.read_text() == "host loader directory"
+try:
+    marker.write_text("changed")
+except OSError as error:
+    assert error.errno == errno.EROFS, error
+else:
+    raise AssertionError("host loader directory was writable")
+print("RESOLVED READ-ONLY LOADER DIRECTORY")
+""",
+        )
+        original_resolve = Path.resolve
+
+        def resolve(path, *args, **kwargs):
+            if path == Path("/lib64"):
+                return lib64
+            return original_resolve(path, *args, **kwargs)
+
+        for deny_sockets in (True, False):
+            with self.subTest(deny_sockets=deny_sockets), mock.patch.object(Path, "resolve", resolve):
+                result = gate._isolated_probe(
+                    [sys.executable, str(payload)], work, deny_sockets=deny_sockets
+                )
+                self.assertEqual(
+                    (result.returncode, result.stdout.strip()),
+                    (0, "RESOLVED READ-ONLY LOADER DIRECTORY"),
+                    result.stdout,
+                )
+        self.assertEqual((lib64 / "loader-marker").read_text(), "host loader directory")
+
     def test_seccomp_killed_probe_inherits_parent_core_limit(self) -> None:
         work, payload = self._write_probe_script(
             "no-core-dump",

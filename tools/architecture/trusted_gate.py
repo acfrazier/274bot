@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import tomllib
 import secrets
@@ -1518,15 +1519,62 @@ def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True
         "--new-session", "--die-with-parent", "--clearenv",
         "--tmpfs", "/", "--dir", "/usr", "--dir", "/usr/bin",
         "--ro-bind", "/usr/lib", "/usr/lib",
-        "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64",
+        "--symlink", "usr/lib", "/lib",
+        # Ubuntu's loader alias directory differs from Arch's /usr/lib.
+        "--ro-bind", str(Path("/lib64").resolve(strict=True)), "/lib64",
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
     ]
     runtime_dirs = [Path("/usr/share/git-core")]
+    python_binds: dict[Path, Path] = {}
+    # Derive runtime inputs only from this trusted interpreter. A dedicated
+    # install's shape does not make its share/, bin/ or other lib/ files safe.
+    # /usr already has the original distro component binds: add nothing there.
+    python_prefix = Path(sys.base_prefix).resolve(strict=True)
+    if python_prefix != Path("/usr"):
+        install_dirs = {"bin", "include", "lib", "lib64", "share"}
+        # setup-python retains these build records and an in-prefix launcher.
+        install_files = {"build_output.txt", "tools_structure.txt"}
+        stdlib = python_prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        if (
+            not (python_prefix / "bin").is_dir()
+            or not stdlib.is_dir()
+            or any(
+                not entry.resolve(strict=True).is_relative_to(python_prefix)
+                or not (
+                    (entry.name in install_dirs and entry.is_dir())
+                    or (entry.name in install_files and entry.is_file())
+                    or (
+                        entry.name == "python" and entry.is_symlink() and entry.is_file()
+                        and entry.resolve(strict=True).parent == python_prefix / "bin"
+                    )
+                )
+                for entry in python_prefix.iterdir()
+            )
+        ):
+            _fail(f"Python runtime prefix must be a dedicated CPython install tree: {python_prefix}")
+        stdlib = Path(sysconfig.get_path("stdlib"))
+        python_runtime = [Path(sys.executable), stdlib]
+        dynload = sysconfig.get_config_var("DESTSHARED")
+        if dynload and not Path(dynload).resolve(strict=True).is_relative_to(stdlib.resolve(strict=True)):
+            python_runtime.append(Path(dynload))
+        if sysconfig.get_config_var("Py_ENABLE_SHARED"):
+            library = Path(sysconfig.get_config_var("LIBDIR"))
+            python_runtime.append(library / sysconfig.get_config_var("LDLIBRARY"))
+            soname = sysconfig.get_config_var("INSTSONAME")
+            if soname:
+                python_runtime.append(library / soname)
+        for path in python_runtime:
+            resolved = path.resolve(strict=True)
+            # Keep installed aliases usable without binding their parent.
+            python_binds[path] = resolved
+            python_binds[path.parent.resolve(strict=True) / path.name] = resolved
+            python_binds[resolved] = resolved
     library_dir = Path(bwrap).resolve().parent.parent / "lib/x86_64-linux-gnu"
     if library_dir.is_dir():
         runtime_dirs.append(library_dir)
     mounted_dirs = {Path("/"), Path("/usr"), Path("/usr/bin"), Path("/usr/lib")}
-    for path in [work, *runtime_dirs, *(item.parent for item in executable_paths)]:
+    for path in [work, *runtime_dirs, *(item.parent for item in executable_paths),
+                 *(item.parent for item in python_binds)]:
         for parent in reversed((path, *path.parents)):
             if parent not in mounted_dirs:
                 sandbox.extend(("--dir", str(parent)))
@@ -1536,6 +1584,8 @@ def _isolated_probe(command: list[str], work: Path, *, deny_sockets: bool = True
             sandbox.extend(("--ro-bind", str(directory), str(directory)))
     for path in executable_paths:
         sandbox.extend(("--ro-bind", str(path.resolve(strict=True)), str(path)))
+    for destination, source in python_binds.items():
+        sandbox.extend(("--ro-bind", str(source), str(destination)))
     sandbox.extend(("--ro-bind", str(work), "/probe-source", "--tmpfs", str(work)))
     records_clone = None
     if records is not None:
