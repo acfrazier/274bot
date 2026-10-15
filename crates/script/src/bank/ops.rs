@@ -221,8 +221,9 @@ pub fn pack_full<R: BankRow>(inv: &[R], inv_size: i32) -> bool {
 /// Lazy and allocation-free for every label without a capital sigma: the
 /// standard lowercase mapping is per-char except for `Σ`, whose final-sigma
 /// rule depends on the Unicode `Cased`/`Case_Ignorable` tables that `char`
-/// does not expose. A label containing `Σ` is folded once through
-/// `str::to_lowercase` itself (one allocation), so it matches exactly.
+/// does not expose. A label containing `Σ` is folded through
+/// `str::to_lowercase` itself (allocating; such labels are rare and come
+/// only from scripts), so it matches exactly.
 pub fn normalized_action_chars(value: &str) -> impl Iterator<Item = char> + '_ {
     let chars = if value.contains('\u{3a3}') {
         FoldSource::Lowered(value.to_lowercase().chars().collect::<Vec<_>>().into_iter())
