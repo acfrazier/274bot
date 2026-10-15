@@ -323,13 +323,17 @@ fn encode_exif_png(exif: &[u8]) -> Vec<u8> {
     png
 }
 
-fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
-    assert!(png.len() <= WALK_MAP_DECODE_PNG_LIMIT);
+fn expect_bounded_decode(label: &str, png: Vec<u8>, expected_pixels: &[u8]) {
+    assert!(
+        png.len() <= WALK_MAP_DECODE_PNG_LIMIT,
+        "{label} PNG exceeds input bound"
+    );
     let input: Arc<[u8]> = Arc::from(png);
     let keep_input_alive = Arc::clone(&input);
     let actual_charge = declared_charge(input.len());
     assert!(
-        actual_charge.total_bytes().unwrap() <= maximum_declared_charge().total_bytes().unwrap()
+        actual_charge.total_bytes().unwrap() <= maximum_declared_charge().total_bytes().unwrap(),
+        "{label} decode exceeds maximum WorkAdmission charge"
     );
     let mut job = WalkMapDecodeJob::new(input);
     let start = Instant::now();
@@ -339,9 +343,11 @@ fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
         StepContext::<WalkMapDecodePhase>::new(&clock, slice_budget(start), &cancellation);
     let allocations = allocation_counter::measure(|| {
         match job.step(&mut context) {
-            StepOutcome::Completed(rgba) => assert_eq!(rgba.as_slice(), expected_pixels),
-            StepOutcome::Failed(error) => panic!("bounded metadata PNG failed: {error}"),
-            StepOutcome::Yielded => panic!("bounded metadata PNG should finish in one slice"),
+            StepOutcome::Completed(rgba) => {
+                assert_eq!(rgba.as_slice(), expected_pixels, "{label} pixels differ");
+            }
+            StepOutcome::Failed(error) => panic!("bounded {label} PNG failed: {error}"),
+            StepOutcome::Yielded => panic!("{label} PNG should finish in one slice"),
         }
         drop(job);
     });
@@ -349,15 +355,15 @@ fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
 
     assert_eq!(
         allocations.bytes_current, 0,
-        "result and parser allocations are released"
+        "result and parser allocations are released for {label}"
     );
-    assert_eq!(allocations.count_current, 0);
+    assert_eq!(allocations.count_current, 0, "allocation leak for {label}");
     let charged_live_peak =
         u64::try_from(actual_charge.scratch_bytes() + actual_charge.result_bytes())
             .expect("metadata decode charge fits u64");
     assert!(
         allocations.bytes_max <= charged_live_peak,
-        "metadata PNG peak {}B exceeds charged scratch + result {}B",
+        "{label} PNG peak {}B exceeds charged scratch + result {}B",
         allocations.bytes_max,
         charged_live_peak
     );
@@ -412,7 +418,7 @@ fn ancillary_metadata_preserves_pixels_with_bounded_allocations() {
     let iccp = encode_iccp_bomb(&ztxt);
     let exif = encode_exif_png(&exif_description(500 * 1024));
 
-    for png in [ztxt, iccp, exif] {
-        expect_bounded_decode(png, &expected_pixels);
+    for (label, png) in [("zTXt", ztxt), ("iCCP", iccp), ("eXIf", exif)] {
+        expect_bounded_decode(label, png, &expected_pixels);
     }
 }
