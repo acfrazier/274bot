@@ -16,7 +16,7 @@ use api::work::{
 };
 use parking_lot::Mutex;
 
-use crate::work_admission::{WorkService, WorkStartError};
+use crate::work_admission::{QualifiedUnit, WorkService, WorkStartError};
 
 /// The three complete preparation families admitted by I-work-prep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +43,7 @@ impl PreparationKind {
 pub struct PreparationInput {
     revision: InputRevision,
     charge: WorkCharge,
+    qualified_unit: Option<QualifiedUnit>,
 }
 
 impl PreparationInput {
@@ -61,9 +62,10 @@ impl PreparationInput {
         Ok(Self {
             revision: InputRevision::new(revision),
             charge,
+            qualified_unit: None,
         })
-    }
 
+    }
     /// The source revision fenced by the consuming owner.
     pub const fn revision(self) -> InputRevision {
         self.revision
@@ -72,6 +74,14 @@ impl PreparationInput {
     /// The admission charge, including scratch and terminal custody.
     pub const fn charge(self) -> WorkCharge {
         self.charge
+    }
+
+    /// Qualify the first Prepare dispatch for the measured, immutable
+    /// Gathering-family config decode. All later dispatches keep the normal
+    /// WorkAdmission slice budget.
+    pub fn with_gathering_family_decode(mut self) -> Self {
+        self.qualified_unit = Some(QualifiedUnit::GatheringFamilyDecode);
+        self
     }
 
     /// Count the actual retained settings tree before a native profile
@@ -96,6 +106,110 @@ impl PreparationInput {
             .filter(|bytes| *bytes <= MAX_SETTINGS_BYTES)
             .ok_or(SubmissionRefusal::InvalidArgument)?;
         Self::new(revision, bytes, SCRATCH_BYTES, RESULT_BYTES)
+    }
+}
+
+/// One owner-controlled unit of preparation on the shared worker.
+///
+/// A `Continue` retains the closure's bounded owned state and yields to the
+/// WorkAdmission scheduler. `Complete` transfers the result and drops that
+/// state before the separate seal step.
+pub enum CooperativePreparationStep<R> {
+    Continue {
+        completed: u32,
+        total: Option<u32>,
+    },
+    Complete {
+        output: R,
+        completed: u32,
+        total: Option<u32>,
+    },
+}
+
+impl<R> CooperativePreparationStep<R> {
+    fn progress(&self) -> (u32, Option<u32>) {
+        match self {
+            Self::Continue { completed, total }
+            | Self::Complete {
+                completed, total, ..
+            } => (*completed, *total),
+        }
+    }
+}
+
+struct CooperativePreparationJob<R, W> {
+    phase: PreparationPhase,
+    work: Option<W>,
+    output: Option<R>,
+    retained_input: usize,
+    retained_scratch: usize,
+    retained_output: usize,
+}
+
+impl<R, W> CooperativeJob for CooperativePreparationJob<R, W>
+where
+    R: Send + 'static,
+    W: FnMut(&mut FamilyPreparation) -> CooperativePreparationStep<R> + Send + 'static,
+{
+    type Output = R;
+    type Error = Infallible;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, step: &mut StepContext<'_, PreparationPhase>) -> StepOutcome<R, Infallible> {
+        match step.checkpoint() {
+            Checkpoint::Cancel(_) | Checkpoint::Yield => return StepOutcome::Yielded,
+            Checkpoint::Continue => {}
+        }
+        match self.phase {
+            PreparationPhase::Load => {
+                self.phase = PreparationPhase::Prepare;
+                step.publish_progress(PreparationPhase::Load, 1, Some(1));
+                let _ = step.consume_unit();
+                StepOutcome::Yielded
+            }
+            PreparationPhase::Prepare => {
+                let work = self.work.as_mut().expect("prepare phase has work");
+                let result = FamilyPreparation::within(step, work);
+                let (completed, total) = result.progress();
+                step.publish_progress(PreparationPhase::Prepare, completed, total);
+                let _ = step.consume_unit();
+                match result {
+                    CooperativePreparationStep::Continue { .. } => StepOutcome::Yielded,
+                    CooperativePreparationStep::Complete { output, .. } => {
+                        self.work.take();
+                        self.output = Some(output);
+                        self.phase = PreparationPhase::Seal;
+                        StepOutcome::Yielded
+                    }
+                }
+            }
+            PreparationPhase::Seal => {
+                step.publish_progress(PreparationPhase::Seal, 1, Some(1));
+                let _ = step.consume_unit();
+                match step.checkpoint() {
+                    Checkpoint::Continue => {
+                        StepOutcome::Completed(self.output.take().expect("prepared result"))
+                    }
+                    Checkpoint::Cancel(_) | Checkpoint::Yield => StepOutcome::Yielded,
+                }
+            }
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(
+            self.retained_input
+                + if self.work.is_some() {
+                    self.retained_scratch
+                } else {
+                    0
+                }
+                + if self.output.is_some() {
+                    self.retained_output
+                } else {
+                    0
+                },
+        )
     }
 }
 
@@ -355,9 +469,8 @@ impl<R: Send + 'static> Drop for PreparedTask<R> {
     }
 }
 
-/// Admit one real cooperative preparation job. The closure is the single
-/// declared Prepare phase; the capability is dropped before Yielded. The
-/// closure must have a bounded input and bounded output matching `charge`.
+/// Admit one opaque preparation callback. The capability is dropped before
+/// the callback's result crosses the yield boundary.
 pub fn submit<R, W>(
     kind: PreparationKind,
     scope: Scope,
@@ -368,7 +481,6 @@ where
     R: Send + 'static,
     W: FnOnce(&mut FamilyPreparation) -> R + Send + 'static,
 {
-    let service = WorkService::shared()?;
     let job = PreparationJob {
         phase: PreparationPhase::Load,
         work: Some(work),
@@ -376,24 +488,83 @@ where
         retained_input: input.charge.input_bytes(),
         retained_output: input.charge.result_bytes(),
     };
+    submit_job(kind, scope, input, job)
+}
+
+/// Admit a stateful preparation on the sole WorkAdmission worker. One
+/// callback invocation is one bounded Prepare dispatch; `Continue` retains
+/// the owner's bounded state across a scheduler yield.
+pub fn submit_cooperative<R, W>(
+    kind: PreparationKind,
+    scope: Scope,
+    input: PreparationInput,
+    work: W,
+) -> Result<PreparedTask<R>, PreparationError>
+where
+    R: Send + 'static,
+    W: FnMut(&mut FamilyPreparation) -> CooperativePreparationStep<R> + Send + 'static,
+{
+    let job = CooperativePreparationJob {
+        phase: PreparationPhase::Load,
+        work: Some(work),
+        output: None,
+        retained_input: input.charge.input_bytes(),
+        retained_scratch: input.charge.scratch_bytes(),
+        retained_output: input.charge.result_bytes(),
+    };
+    submit_job(kind, scope, input, job)
+}
+
+fn submit_job<R, J>(
+    kind: PreparationKind,
+    scope: Scope,
+    input: PreparationInput,
+    job: J,
+) -> Result<PreparedTask<R>, PreparationError>
+where
+    R: Send + 'static,
+    J: CooperativeJob<Output = R, Error = Infallible, Phase = PreparationPhase>,
+{
+    let service = WorkService::shared()?;
     let ticket = {
         let mut admitted = service.lock();
         let identity: WorkIdentity = admitted.mint_identity(scope, None)?;
         let conditions = ProcessConditions::new(admitted.incarnation());
-        match kind.index() {
-            0 => PreparationTicket::Card(
+        match (kind.index(), input.qualified_unit) {
+            (0, None) => PreparationTicket::Card(
                 admitted
                     .try_submit::<PreparationSpec<R, 0>, _>(identity, &input, job, &conditions)
                     .map_err(|refused| refused.refusal())?,
             ),
-            1 => PreparationTicket::Catalogue(
+            (0, Some(unit)) => PreparationTicket::Card(
+                admitted
+                    .try_submit_qualified::<PreparationSpec<R, 0>, _>(
+                        identity, &input, job, &conditions, unit,
+                    )
+                    .map_err(|refused| refused.refusal())?,
+            ),
+            (1, None) => PreparationTicket::Catalogue(
                 admitted
                     .try_submit::<PreparationSpec<R, 1>, _>(identity, &input, job, &conditions)
                     .map_err(|refused| refused.refusal())?,
             ),
-            _ => PreparationTicket::Profile(
+            (1, Some(unit)) => PreparationTicket::Catalogue(
+                admitted
+                    .try_submit_qualified::<PreparationSpec<R, 1>, _>(
+                        identity, &input, job, &conditions, unit,
+                    )
+                    .map_err(|refused| refused.refusal())?,
+            ),
+            (_, None) => PreparationTicket::Profile(
                 admitted
                     .try_submit::<PreparationSpec<R, 2>, _>(identity, &input, job, &conditions)
+                    .map_err(|refused| refused.refusal())?,
+            ),
+            (_, Some(unit)) => PreparationTicket::Profile(
+                admitted
+                    .try_submit_qualified::<PreparationSpec<R, 2>, _>(
+                        identity, &input, job, &conditions, unit,
+                    )
                     .map_err(|refused| refused.refusal())?,
             ),
         }
