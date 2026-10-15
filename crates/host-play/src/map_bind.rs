@@ -213,40 +213,31 @@ pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
 const PNG_DECODER_LIMIT_BYTES: usize = 512 * 1024;
 
 /// Stable, allocation-free failures from the bounded walk-map PNG decoder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WalkMapDecodeFailure {
+    #[error("truncated map data")]
     Truncated,
+    #[error("invalid map PNG header")]
     PngHeader,
+    #[error("invalid map PNG dimensions/format")]
     DimensionsOrFormat,
+    #[error("map limit exceeded: png bytes")]
     PngBytesLimit,
+    #[error("invalid map png decode info")]
     PngInfo,
+    #[error("map limit exceeded: png output")]
     PngOutputLimit,
+    #[error("invalid map png output size")]
     PngOutputSize,
+    #[error("invalid map png frame")]
     PngFrame,
+    #[error("invalid map png frame size")]
     PngFrameSize,
+    #[error("invalid map PNG trailing chunks")]
     PngTrailing,
+    #[error("walk map decode job was already run")]
     AlreadyRun,
 }
-
-impl std::fmt::Display for WalkMapDecodeFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Truncated => "truncated map data",
-            Self::PngHeader => "invalid map PNG header",
-            Self::DimensionsOrFormat => "invalid map PNG dimensions/format",
-            Self::PngBytesLimit => "map limit exceeded: png bytes",
-            Self::PngInfo => "invalid map png decode info",
-            Self::PngOutputLimit => "map limit exceeded: png output",
-            Self::PngOutputSize => "invalid map png output size",
-            Self::PngFrame => "invalid map png frame",
-            Self::PngFrameSize => "invalid map png frame size",
-            Self::PngTrailing => "invalid map PNG trailing chunks",
-            Self::AlreadyRun => "walk map decode job was already run",
-        })
-    }
-}
-
-impl std::error::Error for WalkMapDecodeFailure {}
 
 /// One bounded PNG decode on the process-wide WorkAdmission worker.
 pub struct WalkMapDecodeJob {

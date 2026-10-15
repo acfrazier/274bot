@@ -43,8 +43,7 @@ impl WorkFamilySpec for DecodeSpec {
         let input_bytes = input
             .png
             .len()
-            .checked_add(size_of::<WalkMapDecodeJob>())
-            .unwrap_or(usize::MAX);
+            .saturating_add(size_of::<WalkMapDecodeJob>());
         WorkCharge::new(
             input_bytes,
             WALK_MAP_DECODE_SCRATCH_LIMIT,
@@ -70,38 +69,29 @@ struct ActiveDecode {
 
 /// Typed decode refusal. Every variant carries only a Copy protocol value or
 /// scalar code, so callers can match it without retaining an error source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WalkMapDecodeError {
+    #[error("{0}")]
     ServiceStart(WorkStartError),
+    #[error("{0}")]
     Identity(IdentityError),
+    #[error("{0}")]
     Admission(SubmissionRefusal),
+    #[error("{0}")]
     Ledger(LedgerError),
+    #[error("{}", .0.operator_text())]
     Unavailable(UnavailableTerminal),
+    #[error("walk map decode cancelled: {0:?}")]
     Cancelled(Cancellation),
+    #[error("{0}")]
     Cooperation(CooperativeViolation),
+    #[error("{0}")]
     Decode(WalkMapDecodeFailure),
+    #[error("background work job failed internally")]
     FailedInternally,
+    #[error("walk map decode revision exhausted")]
     RevisionExhausted,
 }
-
-impl fmt::Display for WalkMapDecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ServiceStart(error) => fmt::Display::fmt(error, f),
-            Self::Identity(error) => fmt::Display::fmt(error, f),
-            Self::Admission(error) => fmt::Display::fmt(error, f),
-            Self::Ledger(error) => fmt::Display::fmt(error, f),
-            Self::Unavailable(error) => f.write_str(error.operator_text()),
-            Self::Cancelled(reason) => write!(f, "walk map decode cancelled: {reason:?}"),
-            Self::Cooperation(error) => fmt::Display::fmt(error, f),
-            Self::Decode(error) => fmt::Display::fmt(error, f),
-            Self::FailedInternally => f.write_str("background work job failed internally"),
-            Self::RevisionExhausted => f.write_str("walk map decode revision exhausted"),
-        }
-    }
-}
-
-impl std::error::Error for WalkMapDecodeError {}
 
 /// One successfully consumed decode result. The pixel buffer is transferred
 /// to its upload owner and is never cloned.
@@ -263,9 +253,7 @@ impl WalkMapDecodeController {
             Ok(None) => return None,
             Err(error) => return self.finish_ledger_error(error),
         };
-        let Some(active) = self.active.take() else {
-            return None;
-        };
+        let active = self.active.take()?;
         self.full_capacity = None;
         let current = !active.stale
             && self.context == Some((active.generation, active.image))
