@@ -340,19 +340,26 @@ impl SlotBankMemory {
         let Some(hint) = &self.hint else {
             return;
         };
-        let mut pending = hint.pending.lock();
-        if pending.is_empty() {
-            return;
-        }
-        let mut index = 0;
-        while index < pending.len() {
-            match hint.port.service.observe(pending[index].request) {
-                Some(settlement) => {
-                    let done = pending.swap_remove(index);
-                    self.apply(hint, done, settlement);
-                }
-                None => index += 1,
+        // The settled requests are taken out under the pending lock and
+        // applied after it is released: the memory's write guard is never
+        // taken under it.
+        let settled = {
+            let mut pending = hint.pending.lock();
+            if pending.is_empty() {
+                return;
             }
+            let mut settled = Vec::new();
+            let mut index = 0;
+            while index < pending.len() {
+                match hint.port.service.observe(pending[index].request) {
+                    Some(settlement) => settled.push((pending.swap_remove(index), settlement)),
+                    None => index += 1,
+                }
+            }
+            settled
+        };
+        for (done, settlement) in settled {
+            self.apply(hint, done, settlement);
         }
     }
 

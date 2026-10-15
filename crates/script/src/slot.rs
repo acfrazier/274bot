@@ -1370,6 +1370,7 @@ impl SlotScript {
     /// Start with settings, the operator's loadout rows and the immutable
     /// facts selected by the owning Play.
     #[cfg(feature = "load")]
+    #[allow(clippy::too_many_arguments)] // the composition's start inputs, each owned by a different seam
     pub fn start_load_with_settings_and_game_data(
         &mut self,
         source: String,
@@ -1397,6 +1398,7 @@ impl SlotScript {
     /// from the local-state service: a `loadout` setting in `bag` must
     /// name one of them, or the start is refused before anything spawns.
     #[cfg(feature = "load")]
+    #[allow(clippy::too_many_arguments)] // the composition's start inputs, each owned by a different seam
     pub fn start_load_with_settings_and_game_data_typed(
         &mut self,
         source: String,

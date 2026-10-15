@@ -891,6 +891,18 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/local_state.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/local_state/files.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/local_state_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/host-play/src/live_start_tests.rs",
       "owner": "T1"
     },
@@ -3449,6 +3461,10 @@
     {
       "path": "crates/script/src/loadout_plan.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/local_state.rs",
+      "owner": "T5"
     },
     {
       "path": "crates/script/src/loadouts_store.rs",

@@ -234,6 +234,9 @@ struct Queued {
     edit: DomainEdit,
 }
 
+/// One unit of writer-thread work, taken one at a time: never stored, so
+/// its size is the edit's.
+#[allow(clippy::large_enum_variant)]
 enum Job {
     Readback(StoreKey),
     Write(StoreKey, Queued),
@@ -601,9 +604,27 @@ impl Shared {
                 }
             }
             Ok(None) => {
-                if store.cache.is_none() {
+                let removed = store
+                    .cache
+                    .as_ref()
+                    .is_some_and(|cached| cached.digest.is_some());
+                let version = match &store.cache {
+                    Some(cached) if removed => cached.version.checked_next().unwrap_or(cached.version),
+                    Some(cached) => cached.version,
+                    None => StoreVersion::INITIAL,
+                };
+                if removed {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Info,
+                        "local state: {} removed outside this process, now {version} path={}",
+                        key.domain(),
+                        path.display()
+                    );
+                }
+                if store.cache.is_none() || removed {
                     store.cache = Some(Cached {
-                        version: StoreVersion::INITIAL,
+                        version,
                         at: read_at,
                         snapshot: empty_snapshot(&key),
                         digest: None,
