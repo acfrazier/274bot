@@ -616,3 +616,154 @@ fn declared_surface_matches_generator() {
         path.display()
     );
 }
+
+#[test]
+fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../compat-js/abi-contract.json"))
+            .expect("generated ABI contract");
+    let graph: serde_json::Value =
+        serde_json::from_str(include_str!("../compat-js/family-predecessors.json"))
+            .expect("generated family predecessors");
+    assert_eq!(contract["endpoint"], "T2.1");
+    assert_eq!(contract["activation_state"], "not-activated");
+    assert_eq!(contract["active_families"], serde_json::json!([]));
+
+    let family_rows = graph["families"].as_array().expect("family rows");
+    let family_ids: std::collections::HashSet<&str> = family_rows
+        .iter()
+        .map(|row| row["family_id"].as_str().expect("family id"))
+        .collect();
+    let mut export_names = std::collections::HashSet::new();
+    for row in contract["compatibility_name_maps"]
+        .as_array()
+        .expect("compatibility name maps")
+    {
+        let name = row["public_name"].as_str().expect("public name");
+        assert!(
+            export_names.insert(name),
+            "duplicate compatibility export {name}"
+        );
+        assert!(
+            family_ids.contains(row["family_id"].as_str().expect("family id")),
+            "unclassified compatibility export {name}"
+        );
+    }
+    let fixture = load_fixture().expect("declared ABI fixture");
+    assert_eq!(
+        export_names.len(),
+        fixture.len(),
+        "compatibility map/export coverage"
+    );
+    for export in fixture {
+        assert!(
+            export_names.contains(export.name.as_str()),
+            "missing compatibility name map for {}",
+            export.name
+        );
+    }
+
+    for declaration in contract["declarations"].as_array().expect("declarations") {
+        let name = declaration["name"].as_str().expect("declaration name");
+        assert!(
+            family_ids.contains(declaration["family_id"].as_str().expect("family id")),
+            "unclassified declaration {name}"
+        );
+        for member in declaration["members"].as_array().expect("members") {
+            let member_name = member["name"].as_str().expect("member name");
+            assert!(
+                family_ids.contains(member["family_id"].as_str().expect("family id")),
+                "unclassified member {name}.{member_name}"
+            );
+            for signature in member["signatures"].as_array().expect("member overloads") {
+                assert!(
+                    family_ids.contains(signature["family_id"].as_str().expect("family id")),
+                    "unclassified overload {name}.{member_name}"
+                );
+            }
+        }
+        for signature in declaration["signatures"].as_array().expect("overloads") {
+            assert!(
+                family_ids.contains(signature["family_id"].as_str().expect("family id")),
+                "unclassified overload of {name}"
+            );
+        }
+    }
+    for debt in contract["not_impl_debt"].as_array().expect("not-impl debt") {
+        assert_eq!(debt["state"], "not-impl");
+        assert!(
+            debt["member"]
+                .as_str()
+                .is_some_and(|member| !member.is_empty()),
+            "not-impl debt must name its member: {debt}"
+        );
+        assert!(
+            family_ids.contains(debt["family_id"].as_str().expect("family id")),
+            "unclassified not-impl debt: {debt}"
+        );
+    }
+    for callback in contract["callbacks"].as_array().expect("callback rows") {
+        let member = callback["member"].as_str().expect("callback member");
+        assert!(!member.is_empty(), "unnamed callback member");
+        assert!(
+            ["awaited", "call-sync", "ask"]
+                .iter()
+                .any(|path| callback["path"] == *path),
+            "unknown callback path for {member}"
+        );
+        assert!(
+            ["used", "ignored"]
+                .iter()
+                .any(|value| callback["value"] == *value),
+            "unknown callback value use for {member}"
+        );
+        assert!(
+            family_ids.contains(callback["family_id"].as_str().expect("family id")),
+            "unclassified callback member {member}"
+        );
+    }
+    for family in family_rows {
+        let id = family["family_id"].as_str().expect("family id");
+        let predecessors = family["predecessors"]
+            .as_array()
+            .expect("family predecessors");
+        for required in ["F0", "T1.3", "T2.1"] {
+            assert!(
+                predecessors.iter().any(|row| row == required),
+                "family {id} is missing predecessor {required}"
+            );
+        }
+        if family["nav_consuming"]
+            .as_bool()
+            .expect("nav classification")
+        {
+            assert!(
+                predecessors.iter().any(|row| row == "T5.1"),
+                "nav-consuming family {id} is missing T5.1"
+            );
+        }
+        let canonical = family["canonical_endpoint_predecessors"]
+            .as_array()
+            .expect("canonical endpoint predecessors");
+        let canonical_names: Vec<_> = canonical
+            .iter()
+            .map(|row| row.as_str().expect("canonical predecessor"))
+            .collect();
+        let expected_canonical: Vec<_> = if id == "bank" {
+            vec!["F0", "T1.3", "T2.2", "T5.1"]
+        } else {
+            predecessors
+                .iter()
+                .map(|row| row.as_str().expect("predecessor"))
+                .collect()
+        };
+        assert_eq!(
+            canonical_names, expected_canonical,
+            "family {id} canonical edge"
+        );
+        assert!(
+            !predecessors.iter().any(|row| row == "consolidated backend"),
+            "family {id} has a vague predecessor"
+        );
+    }
+}

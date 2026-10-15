@@ -8,6 +8,12 @@ const { execFileSync } = require('node:child_process');
 const ts = require('typescript');
 const { rollup } = require('rollup');
 const { dts } = require('rollup-plugin-dts');
+const {
+    assertGenerated,
+    buildArtifacts,
+    deriveNativeFamilyFamilies,
+    deriveNavFamilies,
+} = require('./abi-contract.cjs');
 const here = __dirname;
 const crate = path.resolve(here, '..');
 const frozen = process.env.RS2B0T;
@@ -499,7 +505,8 @@ async function main() {
         const config = { compilerOptions: { target: 'ESNext', module: 'ESNext', moduleResolution: 'bundler', lib: ['ESNext', 'DOM', 'DOM.Iterable'], strict: true, skipLibCheck: true, baseUrl: root, paths: { '#/*': ['*'], fflate: [path.join(here, 'node_modules/fflate/lib/index.d.ts')] }, allowJs: true, typeRoots: [path.join(here, 'node_modules/@types')], declaration: true, emitDeclarationOnly: true, noEmitOnError: true, rootDir: root, outDir: out }, files: roots };
         const configPath = path.join(scratch, 'tsconfig.json');
         fs.writeFileSync(configPath, JSON.stringify(config));
-        execFileSync('npx', ['-p', 'typescript@5.8.3', '--yes', 'tsc', '--pretty', 'false', '-p', configPath], { stdio: 'inherit' });
+        const compiler = path.join(path.dirname(require.resolve('typescript')), 'tsc.js');
+        execFileSync(process.execPath, [compiler, '--pretty', 'false', '-p', configPath], { stdio: 'inherit' });
         const files = new Map(registry.map(r => [path.join(out, 'bot', r.module.replace(/\.js$/, '.d.ts')), r.module]));
         for (const [file, module] of files) {
             fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -556,11 +563,37 @@ async function main() {
         let index = header + `declare module '@rs2b0t/api' {\n${define ? define.declaration : ''}\n${barrel}\n}\n`;
         for (const m of modules.sort((a,b) => a.module.localeCompare(b.module))) index += `\ndeclare module '*${m.module}' {\n${m.body}\n}\n`;
         checkPaintDeclarations(index, scratch);
-        const products = { 'index.d.ts': index, 'modules.json': JSON.stringify(registry, null, 2) + '\n' };
+        const shimSources = Object.fromEntries(registry.map(entry => [
+            entry.shim,
+            fs.readFileSync(path.join(crate, 'src/shim', entry.shim), 'utf8'),
+        ]));
+        const callbackSnapshot = JSON.parse(fs.readFileSync(path.join(here, 'abi-callbacks.json'), 'utf8'));
+        const nativeFamilyFamilies = deriveNativeFamilyFamilies(callbackSnapshot, registry, shimSources);
+        const navFamilies = deriveNavFamilies({
+            frozenSourceRoot: path.join(frozen, 'src'),
+            nativeSourceRoot: path.join(crate, 'src'),
+            nativeFamilyFamilies,
+            registry,
+        });
+        const abiArtifacts = buildArtifacts({
+            frozenRevision,
+            frozenIndex: fs.readFileSync(path.join(frozen, 'packages/rs2b0t-api/index.d.ts'), 'utf8'),
+            frozenRuntimeIndex: fs.readFileSync(path.join(frozen, 'packages/rs2b0t-api/index.js'), 'utf8'),
+            currentIndex: index,
+            rootSource: fs.readFileSync(path.join(crate, 'src/shim/declared_surface.js'), 'utf8'),
+            registry,
+            overlays: overlay,
+            callbackSnapshot,
+            nativeFamilyFamilies,
+            navFamilies,
+            shimSources,
+        });
+        const products = { 'index.d.ts': index, 'modules.json': JSON.stringify(registry, null, 2) + '\n', ...abiArtifacts };
         for (const [file, content] of Object.entries(products)) {
             const dest = path.join(here, file);
             if (process.argv.includes('--check')) {
-                if (!fs.existsSync(dest) || fs.readFileSync(dest, 'utf8') !== content) throw new Error(`${file} differs from fresh emit; run node generate.cjs`);
+                const actual = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : null;
+                assertGenerated(actual, content, file);
             } else fs.writeFileSync(dest, content);
         }
         console.log(`${process.argv.includes('--check') ? 'Verified' : 'Generated'} ${modules.length} served modules (${registry.filter(r => r.module.startsWith('api/')).length} api/ URLs) with ${overlay.length} named overlay entries.`);

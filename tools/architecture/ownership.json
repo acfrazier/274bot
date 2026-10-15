@@ -2595,6 +2595,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/compat-js/abi-contract.cjs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/compat-js/abi-contract.test.cjs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/compat-js/generate.cjs",
       "owner": "T2"
     },
