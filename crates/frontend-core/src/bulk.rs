@@ -18,7 +18,7 @@ pub enum BulkOutcome {
     /// The bot was not eligible; nothing was sent to it.
     Skipped(String),
     /// The command is retained for completion after an asynchronous prerequisite.
-    Pending(String),
+    Pending,
     /// The bot was eligible but the command was refused.
     Failed(String),
 }
@@ -28,17 +28,13 @@ impl BulkOutcome {
         match self {
             Self::Failed(_) => 0,
             Self::Skipped(_) => 1,
-            Self::Pending(_) => 2,
+            Self::Pending => 2,
             Self::Done => 3,
         }
     }
 
     pub fn skipped(reason: impl Into<String>) -> Self {
         Self::Skipped(reason.into())
-    }
-
-    pub fn pending(reason: impl Into<String>) -> Self {
-        Self::Pending(reason.into())
     }
 
     pub fn failed(reason: impl Into<String>) -> Self {
@@ -155,7 +151,7 @@ impl BulkReport {
         self.count(|o| matches!(o, BulkOutcome::Failed(_)))
     }
     pub fn pending_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Pending(_)))
+        self.count(|o| matches!(o, BulkOutcome::Pending))
     }
 
     fn count(&self, pick: impl Fn(&BulkOutcome) -> bool) -> usize {
@@ -229,14 +225,15 @@ impl BulkReport {
             for row in self
                 .rows
                 .iter()
-                .filter(|row| matches!(&row.outcome, BulkOutcome::Pending(_)))
+                .filter(|row| matches!(&row.outcome, BulkOutcome::Pending))
                 .take(LISTED)
             {
-                let BulkOutcome::Pending(reason) = &row.outcome else {
-                    continue;
-                };
-                let _ = write!(text, "{sep}");
-                write_row_reason(&mut text, row, reason);
+                let _ = write!(
+                    text,
+                    "{sep}{}: {}",
+                    row.profile,
+                    row.detail.as_deref().unwrap_or("pending")
+                );
                 sep = ", ";
             }
         }
@@ -305,10 +302,7 @@ mod tests {
         let report = BulkReport::new(
             "Assign marked",
             "assigned",
-            vec![BulkRow::new(
-                "alice",
-                BulkOutcome::pending("catalog scan pending"),
-            )],
+            vec![BulkRow::new("alice", BulkOutcome::Pending).with_detail("catalog scan pending")],
             None,
         );
 
