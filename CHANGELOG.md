@@ -131,11 +131,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Release engineering
 
-- The architecture checker and its rules now live in the operator-owned
-  `274bot-arch` repo (`main`); this repo keeps only the
+- The architecture checker, its tests, and the crate-edge policy now live
+  in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
   `tools/architecture/run.sh` runner, and CI runs the same check on pushes
-  and PRs. Propose rule changes (crate edges, ownership rows, seam types)
-  as a patch or branch bundle for the operator to push.
+  and PRs. The fine data (`ownership.json`, `inventories.json`,
+  `foreign_types.json`) stays beside the runner and is reviewed like code.
+  Propose edge-policy changes (crate edges, kinds, migrations, configuration
+  activation) as a patch or branch bundle for the operator to push.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
