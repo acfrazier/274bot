@@ -13,7 +13,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use rand_core::{OsRng, RngCore};
 
@@ -328,23 +328,27 @@ static TARGET_LOCKS: Mutex<Option<TargetLocks>> = Mutex::new(None);
 
 /// Runs `work` while holding the lock for `key`, so writers to one target
 /// within this process take turns.
-fn serialized<T>(key: PathBuf, work: impl FnOnce() -> T) -> T {
+fn serialized<T>(key: PathBuf, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     let lock = TARGET_LOCKS
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .map_err(|_| io::Error::other("private-file lock registry is poisoned"))?
         .get_or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_default()
         .clone();
     let result = {
-        let _turn = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _turn = lock
+            .lock()
+            .map_err(|_| io::Error::other("private-file target lock is poisoned"))?;
         work()
     };
-    let mut locks = TARGET_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    // Only the map and this call hold the lock: nobody is waiting on it.
-    if Arc::strong_count(&lock) == 2 {
-        if let Some(map) = locks.as_mut() {
-            map.remove(&key);
+    // A registry failure after publication must not claim that the write failed.
+    if let Ok(mut locks) = TARGET_LOCKS.lock() {
+        // Only the map and this call hold the lock: nobody is waiting on it.
+        if Arc::strong_count(&lock) == 2 {
+            if let Some(map) = locks.as_mut() {
+                map.remove(&key);
+            }
         }
     }
     result
@@ -611,6 +615,7 @@ fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict 
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
@@ -697,6 +702,26 @@ mod tests {
 
         assert!(target.is_dir(), "the target is untouched");
         assert_eq!(names(&dir), ["state.json"], "the temp was removed");
+    }
+
+    #[test]
+    fn a_poisoned_target_lock_is_reported_without_publishing() {
+        let dir = scratch("poisoned-lock");
+        let target = dir.join("state.json");
+        let key = fs::canonicalize(&dir).unwrap().join("state.json");
+
+        let panic = std::panic::catch_unwind(|| {
+            let _ = serialized(key, || -> io::Result<()> {
+                panic!("poison the target lock");
+            });
+        });
+        assert!(panic.is_err(), "the test must poison its target lock");
+
+        let error = write_private_file(&target, b"must not publish").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "private-file target lock is poisoned");
+        assert!(!target.exists());
+        assert!(names(&dir).is_empty());
     }
 
     #[test]
@@ -1043,6 +1068,7 @@ mod tests {
 }
 
 #[cfg(all(test, windows))]
+#[allow(clippy::unwrap_used)]
 mod windows_tests {
     use std::os::windows::fs::OpenOptionsExt;
     use std::time::Duration;

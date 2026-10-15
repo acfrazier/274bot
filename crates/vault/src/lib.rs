@@ -49,6 +49,7 @@ const MAGIC: &[u8; 8] = b"274VAULT";
 const FORMAT_VERSION: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
+const TAG_LEN: usize = 16;
 const KEY_LEN: usize = 32;
 /// PBKDF2 iterations used when creating a new vault. Unlock reads the round
 /// count from the file header and every save keeps it, so a file written at a
@@ -245,6 +246,12 @@ pub enum VaultError {
     NotFound(PathBuf),
     #[error("wrong passphrase")]
     WrongPassphrase,
+    #[error("invalid compiled settings envelope")]
+    InvalidCompiledSettingsEnvelope,
+    #[error("invalid compiled settings schema version")]
+    InvalidCompiledSettingsSchemaVersion,
+    #[error("compiled settings values must be an object")]
+    CompiledSettingsValuesNotObject,
     #[error("corrupt vault file: {0}")]
     Corrupt(String),
     #[error("io: {0}")]
@@ -586,6 +593,10 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
             "pbkdf2 rounds {rounds} outside the accepted range 1..={MAX_PBKDF2_ROUNDS}"
         )));
     }
+
+    if blob.len() < HEADER_LEN + TAG_LEN {
+        return Err(VaultError::Corrupt("ciphertext too short".into()));
+    }
     let mut salt = [0u8; SALT_LEN];
     salt.copy_from_slice(&blob[MAGIC.len() + 5..HEADER_LEN - NONCE_LEN]);
     Ok((salt, rounds, &blob[HEADER_LEN - NONCE_LEN..]))
@@ -886,6 +897,21 @@ mod tests {
         assert!(path.exists());
         let v = Vault::unlock(&path, "correct-horse").unwrap();
         assert_eq!(v.get("alice").unwrap().password, "s3cret");
+    }
+
+    #[test]
+    fn truncated_ciphertext_is_corrupt_not_a_wrong_passphrase() {
+        let path = tmp_path("truncated-ciphertext.vault");
+        Vault::create(&path, PASS).unwrap();
+        let mut blob = std::fs::read(&path).unwrap();
+        blob.truncate(super::HEADER_LEN);
+        std::fs::write(&path, &blob).unwrap();
+
+        assert!(matches!(
+            Vault::unlock(&path, PASS),
+            Err(VaultError::Corrupt(message)) if message == "ciphertext too short"
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), blob);
     }
 
     #[test]
