@@ -194,6 +194,30 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/marked.rs|BulkScope",
+      "path": "crates/frontend-core/src/marked.rs",
+      "symbol": "BulkScope",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.2 bulk-scope choice is a Copy discriminator without a payload."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/marked.rs|MarkedAction",
+      "path": "crates/frontend-core/src/marked.rs",
+      "symbol": "MarkedAction",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.2 marked-action choice is a Copy discriminator without a payload."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/marked.rs|MarkedBlock",
+      "path": "crates/frontend-core/src/marked.rs",
+      "symbol": "MarkedBlock",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.2 marked-action refusal is a Copy discriminator without a payload."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/marked.rs|MarkedCommandReport",
       "path": "crates/frontend-core/src/marked.rs",
       "symbol": "MarkedCommandReport",

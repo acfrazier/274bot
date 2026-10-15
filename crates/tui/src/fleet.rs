@@ -12,71 +12,13 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use frontend_core::views::run_state_label;
-use frontend_core::{FleetRow, MarkedSelection, Phase, ProfileIdentity};
+use frontend_core::{
+    fill_visible_indices, member_row, profile_id_at, state_label, FleetOrder, FleetRow,
+    MarkedSelection, ProfileIdentity,
+};
 use script::RunState;
 
 use crate::layout::SizeClass;
-
-/// Member `index`'s row in the core's fleet projection. Rows follow load
-/// order, so the common case is one comparison, not a scan; `None` for a
-/// member the core has not projected yet.
-pub fn member_row<'a>(
-    names: &[String],
-    rows: &'a [FleetRow],
-    index: usize,
-) -> Option<&'a FleetRow> {
-    let name = names.get(index)?;
-    match rows.get(index) {
-        Some(row) if row.name() == *name => Some(row),
-        _ => rows.iter().find(|row| row.name() == *name),
-    }
-}
-
-/// The row's status label (the one the panel's caps show); a member not
-/// projected yet is offline.
-pub fn state_label(row: Option<&FleetRow>) -> &str {
-    row.map_or(Phase::Offline.label(), |row| row.brief())
-}
-
-/// ASCII case-insensitive substring test without allocating.
-fn contains_ci(hay: &str, needle: &str) -> bool {
-    let (hay, needle) = (hay.as_bytes(), needle.as_bytes());
-    needle.is_empty()
-        || hay
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle))
-}
-
-/// Whether one filter term matches: a name substring, `wN` / `world:N`,
-/// or a status substring: the phase (`ready`, `queued`, `login error`, …)
-/// or the row's label (`running`, `idle`, …).
-fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
-    let phase = row.map_or(Phase::Offline, |row| row.phase());
-    if contains_ci(name, term)
-        || contains_ci(phase.label(), term)
-        || contains_ci(state_label(row), term)
-    {
-        return true;
-    }
-    let bytes = term.as_bytes();
-    let number = if bytes.len() > 6 && bytes[..6].eq_ignore_ascii_case(b"world:") {
-        &term[6..]
-    } else if bytes.len() > 1 && bytes[0].eq_ignore_ascii_case(&b'w') {
-        &term[1..]
-    } else {
-        return false;
-    };
-    number
-        .parse::<u16>()
-        .is_ok_and(|world| row.and_then(|row| row.world()) == Some(world))
-}
-
-/// Every whitespace-separated filter term must match.
-pub fn row_matches(name: &str, row: Option<&FleetRow>, filter: &str) -> bool {
-    filter
-        .split_whitespace()
-        .all(|term| term_matches(name, row, term))
-}
 
 /// Renderer-local fleet state. Marks are the shared identity-based selection
 /// ("selected N of M"); they never change the selected bot and are dropped
@@ -105,14 +47,13 @@ impl FleetState {
     /// departed identities. `ids` parallels `names`; missing ids use a
     /// deterministic fixture identity.
     pub fn sync_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity], rows: &[FleetRow]) {
-        self.shown.clear();
-        for (index, name) in names.iter().enumerate() {
-            if self.filter.is_empty()
-                || row_matches(name, member_row(names, rows, index), &self.filter)
-            {
-                self.shown.push(index);
-            }
-        }
+        fill_visible_indices(
+            names,
+            rows,
+            &self.filter,
+            FleetOrder::LoadOrder,
+            &mut self.shown,
+        );
         if !self.cursor_name.is_empty() {
             if let Some(pos) = self
                 .shown
@@ -124,9 +65,7 @@ impl FleetState {
         }
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
         self.remember_cursor(names);
-        let identities = names.iter().enumerate().map(|(index, name)| {
-            profile_id(ids, names, index).unwrap_or_else(|| ProfileIdentity::synthetic(name))
-        });
+        let identities = (0..names.len()).filter_map(|index| profile_id_at(ids, names, index));
         self.selection.retain(identities);
     }
 
@@ -176,11 +115,12 @@ impl FleetState {
         ids: &[ProfileIdentity],
         index: usize,
     ) {
-        let Some(name) = names.get(index) else {
+        if names.get(index).is_none() {
             return;
         };
-        let identity =
-            profile_id(ids, names, index).unwrap_or_else(|| ProfileIdentity::synthetic(name));
+        let Some(identity) = profile_id_at(ids, names, index) else {
+            return;
+        };
         self.selection.toggle(identity);
     }
 
@@ -193,12 +133,7 @@ impl FleetState {
     }
 
     pub fn mark_all_shown_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity]) {
-        let identities = self
-            .shown
-            .iter()
-            .filter_map(|&index| profile_id(ids, names, index))
-            .collect::<Vec<_>>();
-        self.selection.mark_all(identities);
+        self.selection.mark_shown(names, ids, &self.shown);
     }
 
     /// Keep the cursor inside a window of `rows` lines.
@@ -213,14 +148,6 @@ impl FleetState {
         }
         self.scroll = self.scroll.min(self.shown.len().saturating_sub(rows));
     }
-}
-
-fn profile_id(ids: &[ProfileIdentity], names: &[String], index: usize) -> Option<ProfileIdentity> {
-    ids.get(index).copied().or_else(|| {
-        names
-            .get(index)
-            .map(|name| ProfileIdentity::synthetic(name))
-    })
 }
 
 /// The table widget over the fleet `names` and the core's projected `rows`.
@@ -382,7 +309,7 @@ impl FleetTable<'_> {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             cell.clear();
-            let identity = profile_id(ids, names, member).expect("fleet row identity");
+            let identity = profile_id_at(ids, names, member).expect("fleet row identity");
             cell.push_str(if state.is_marked_id(identity) {
                 "[x]"
             } else {
