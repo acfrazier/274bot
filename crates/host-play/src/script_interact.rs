@@ -198,6 +198,9 @@ pub(crate) fn dispatch_native_bank_deposit(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
     trace: &script::native::BankDepositTrace,
+    _name: &str,
+    _authority: &script::native::HostAuthority,
+    _tick: u64,
 ) -> BankDepositDispatch {
     use api::interact::{ActionSpec, OpTarget, SendResult};
 
@@ -226,6 +229,10 @@ pub(crate) fn dispatch_native_bank_deposit(
         .and_then(Option::as_deref);
     if option != Some(trace.option.as_ref()) {
         return refuse("operation-mismatch");
+    }
+    #[cfg(test)]
+    if super::gatherer_recovery_live::refuse_deposit_once(_name, _authority, trace, _tick) {
+        return refuse("bank deposit dispatch was refused");
     }
     match api::interact::Interactions::new(snapshot, driver)
         .interact(OpTarget::Item(item), ActionSpec::Operation(trace.operation))
