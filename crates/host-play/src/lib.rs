@@ -517,14 +517,19 @@ impl Play {
         let Some(arm) = self.arms.get(name) else {
             return;
         };
-        let mut q = self.queue.lock();
-        q.prefer_owner(arm.queue_owner);
-        publish_queue_place(
-            &q,
-            &mut lock_statuses(&self.statuses),
-            name,
-            arm.queue_owner,
-        );
+        let event = {
+            let mut q = self.queue.lock();
+            q.prefer_owner(arm.queue_owner);
+            publish_queue_place(
+                &q,
+                &mut lock_statuses(&self.statuses),
+                name,
+                arm.queue_owner,
+            )
+        };
+        if let Some(event) = event {
+            arm.publish_queued(event);
+        }
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).

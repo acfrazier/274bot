@@ -103,6 +103,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   cancelled in the log, one line per save, instead of being dropped
   silently.
 
+### Login
+
+- A login that finishes after its lease deadline, Logout, or world switch
+  cannot become an active session. An expired handshake keeps its place until
+  it actually returns, so another bot cannot overlap it. The queue cancels
+  its socket and then admits the next bot in normal order.
+
 ### Panel
 
 - The Fleet window's filter matches several words and world numbers, the

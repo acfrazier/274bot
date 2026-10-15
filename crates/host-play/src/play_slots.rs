@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
+use api::lifecycle::Intent;
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::{Cache, IfType, IfTypeMut};
@@ -25,7 +26,7 @@ use crate::memory;
 use crate::play_bootstrap::{bot_client_config, PlayConnection};
 use crate::play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
-    granted_permit_world_is_current, on_login_success, plan_login_retry,
+    granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, server_hold, should_handshake,
     sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
     wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
@@ -172,8 +173,7 @@ impl Play {
     pub(super) fn signal_slot_stop(&self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             let connected = self.slot_connected(name);
-            arm.stop.store(true, Ordering::Relaxed);
-            arm.notify_retry_wait();
+            arm.post_intent(Intent::RemoveSlot);
             self.queue.lock().leave_owner(arm.queue_owner);
             if connected {
                 host_log!(
@@ -619,6 +619,15 @@ pub(super) fn reset_slot_session_work(
     }
 }
 
+/// The per-slot effects retired together at a session boundary.
+struct BoundaryWork<'a> {
+    scripts: &'a ScriptWall,
+    cheats: &'a Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: &'a Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    channels: &'a super::script_channels::SlotChannels,
+}
+
 /// Reset one session boundary of the slot thread. A drop relogs when a login
 /// is wanted or a script is running or paused (frozen `wantLogin =
 /// credentials && (autoLogin || scriptActive())`,
@@ -635,16 +644,19 @@ pub(super) fn reset_slot_session_work(
 fn reset_slot_session_boundary(
     name: &str,
     arm: &SlotArm,
-    scripts: &ScriptWall,
-    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    channels: &super::script_channels::SlotChannels,
+    work: BoundaryWork<'_>,
+    keep_for_exit: bool,
 ) -> bool {
-    arm.set_script_active(script_active(scripts, name));
+    let BoundaryWork {
+        scripts,
+        cheats,
+        wires,
+        navs,
+        channels,
+    } = work;
     let deliberate_logout = arm.take_logout_work_reset();
     let stopping = arm.stop.load(Ordering::Relaxed);
-    let keep_work = !deliberate_logout && !stopping && arm.keeps_script_work_after_exit();
+    let keep_work = !deliberate_logout && !stopping && keep_for_exit;
     reset_slot_session_work(name, scripts, cheats, wires, navs, keep_work);
     if channels.tracks() {
         let (generation, kept) = script_slot(scripts, name)
@@ -673,7 +685,7 @@ fn log_session_boundary(name: &str, arm: &SlotArm, keep_work: bool, kind: &str) 
         Level::Info,
         slot = name,
         "session boundary kind={kind} keep_work={keep_work} relog={relog} stopping={stopping} script_active={script_active} error_hold={error_hold} auto_intent={auto_intent} auto_login={} want_login={} want_logout={} latch={:?}",
-        arm.auto_login.load(Ordering::Relaxed),
+        arm.auto_login(),
         arm.wants_login(),
         arm.wants_logout(),
         arm.login_latch_reason()
@@ -690,10 +702,22 @@ pub(super) fn end_slot_session(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     channels: &super::script_channels::SlotChannels,
 ) {
-    // Publish offline before resetting so a concurrent Logout becomes an
-    // offline reset instead of falling through the just-ended session.
-    arm.mark_session_offline();
-    let keep_work = reset_slot_session_boundary(name, arm, scripts, cheats, wires, navs, channels);
+    // Reduce a fallback exit exactly once if the pump left without a client
+    // exit reason; otherwise consume the decision recorded before that fact.
+    arm.set_script_active(script_active(scripts, name));
+    let keep_for_exit = arm.take_session_boundary();
+    let keep_work = reset_slot_session_boundary(
+        name,
+        arm,
+        BoundaryWork {
+            scripts,
+            cheats,
+            wires,
+            navs,
+            channels,
+        },
+        keep_for_exit,
+    );
     log_session_boundary(name, arm, keep_work, "exit");
 }
 
@@ -709,17 +733,25 @@ pub(super) fn apply_offline_logout_reset(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     channels: &super::script_channels::SlotChannels,
 ) {
-    if !arm.logout_work_reset_pending() {
+    if !arm.take_logout_work_reset() {
         return;
     }
     arm.set_script_active(script_active(scripts, name));
     let (script_active, _, _) = arm.relog_decision_context();
     if script_active {
-        let keep_work =
-            reset_slot_session_boundary(name, arm, scripts, cheats, wires, navs, channels);
+        let keep_work = reset_slot_session_boundary(
+            name,
+            arm,
+            BoundaryWork {
+                scripts,
+                cheats,
+                wires,
+                navs,
+                channels,
+            },
+            false,
+        );
         log_session_boundary(name, arm, keep_work, "offline_logout");
-    } else {
-        let _ = arm.take_logout_work_reset();
     }
 }
 
@@ -1024,6 +1056,7 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
+                    arm.prepared();
                     enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
                     #[cfg(test)]
                     arm.panic_after_queue_for_test();
@@ -1132,9 +1165,8 @@ fn spawn_slot_thread(
                         }
                         continue;
                     };
-                    let login_world_generation = arm.world_generation.load(Ordering::Relaxed);
-                    mark_login_started(&slot_statuses, &username);
-                    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+                    let login_world_generation = arm.world_generation();
+                    let reconnect = arm.reconnects();
                     host_log!(
                         Category::Login,
                         Level::Info,
@@ -1163,21 +1195,43 @@ fn spawn_slot_thread(
                     // and the queue shuts the socket if the lease ends first.
                     let Some(login) = permit.attempt(
                         |deadline, cancel| {
+                            if !arm.begin_attempt(login_command, login_world_generation, cancel.clone()) {
+                                return Ok(false);
+                            }
+                            mark_login_started(&slot_statuses, &username);
                             client.set_login_deadline(deadline);
-                            client.set_login_cancel(cancel);
-                            client.login(&username, &password, reconnect)
+                            client.set_login_cancel(cancel.clone());
+                            let result = client.login(&username, &password, reconnect);
+                            let current = arm.finish_attempt(
+                                login_command,
+                                login_world_generation,
+                                deadline,
+                                &cancel,
+                                &result,
+                            );
+                            if !current {
+                                // Client::login may have already installed a live
+                                // stream and ingame state before returning Ok.
+                                if client.ingame {
+                                    client.logout();
+                                } else if let Some(mut stream) = client.stream.take() {
+                                    stream.close();
+                                }
+                                return Ok(false);
+                            }
+                            result.map(|()| true)
                         },
                         |result| server_hold(result, &backoff),
                     ) else {
                         continue;
                     };
                     match login {
-                        Ok(()) => {
+                        Ok(false) => continue,
+                        Ok(true) => {
                             show_title_message(&mut client, "", "");
                             backoff.reset();
                             if let Some(round) = world_round.as_mut() { round.reset(); }
                             key_refreshed = false;
-                            on_login_success(&arm, login_command);
                             publish_login_lowmem(
                                 &slot_statuses,
                                 &username,
@@ -1397,19 +1451,24 @@ fn spawn_slot_thread(
                                 debug_replies = super::debug_replies::DebugReplies::default();
                                 session_epoch = session_epoch.wrapping_add(1);
                                 if c.ingame {
+                                    arm_latch_obs.set_script_active(script_active(&slot_scripts, name));
                                     reset_slot_session_boundary(
                                         name,
                                         &arm_latch_obs,
-                                        &slot_scripts,
-                                        &slot_cheats,
-                                        &slot_wires,
-                                        &slot_navs,
-                                        &observe_channels,
+                                        BoundaryWork {
+                                            scripts: &slot_scripts,
+                                            cheats: &slot_cheats,
+                                            wires: &slot_wires,
+                                            navs: &slot_navs,
+                                            channels: &observe_channels,
+                                        },
+                                        arm_latch_obs.keeps_script_work_after_exit(),
                                     );
                                     // Before the first script tick of the
                                     // session (design-bank-snapshot §1.4).
                                     slot_bank.session_started();
                                 } else {
+                                    observe_client_session_exit(c, &arm_latch_obs);
                                     end_slot_session(
                                         name,
                                         &arm_latch_obs,
@@ -1558,13 +1617,16 @@ fn spawn_slot_thread(
                                 false
                             };
                             #[cfg(test)]
-                            let hold = status.hold
-                                || !ready
-                                || session_boundary
-                                || welcome_step.hold
-                                || injected_maze_hold;
+                            let guardian_hold = status.hold || injected_maze_hold;
                             #[cfg(not(test))]
-                            let hold = status.hold || !ready || session_boundary || welcome_step.hold;
+                            let guardian_hold = status.hold;
+                            let session_ready = arm_latch_obs.update_session_readiness(
+                                ready,
+                                welcome_step.hold,
+                                guardian_hold,
+                                session_boundary,
+                            );
+                            let hold = !session_ready || !ready || session_boundary;
                             // Collect intent before either follow pump or script
                             // dispatch; this is the shared takeover ordering seam.
                             // Keep these commands for their normal late send/hold gate.
@@ -1854,7 +1916,7 @@ fn spawn_slot_thread(
                     },
                     knock,
                 );
-                if pump_had_session && arm.session_online() {
+                if pump_had_session && arm.session_boundary_pending() {
                     publish_slot_disconnected(&slot_statuses, &username);
                     end_slot_session(
                         &username,

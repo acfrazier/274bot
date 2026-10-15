@@ -13,12 +13,245 @@ fn busy() -> LoginError {
     LoginError::response(5, "", "account in use")
 }
 
+fn tcp_client(port: u16) -> Client {
+    Client::new_with_revision(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R289,
+    )
+}
+
+fn assert_transport_event(
+    error: LoginError,
+    stage: client::client::LoginStage,
+    kind: std::io::ErrorKind,
+    expected: TransportFailure,
+) {
+    let transport = error
+        .transport
+        .as_ref()
+        .expect("real client transport error");
+    assert_eq!(transport.stage, stage);
+    assert_eq!(transport.kind, kind);
+    let arm = SlotArm::new(7, true);
+    let command = arm.login_command(false).unwrap();
+    let world_generation = arm.world_generation();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world_generation, cancel.clone()));
+    let result = Err(error);
+    assert!(arm.finish_attempt(
+        command,
+        world_generation,
+        Instant::now() + Duration::from_secs(1),
+        &cancel,
+        &result,
+    ));
+    let event = arm.latest_lifecycle_event().unwrap();
+    assert_eq!(
+        event.scope(),
+        api::identity::Scope::Slot(arm.lifecycle.lock().session.slot())
+    );
+    assert_eq!(
+        event.payload(),
+        &SessionEventOut::HandshakeAborted {
+            reason: AbortedAttempt::Transport(expected),
+        }
+    );
+    assert_eq!(arm.session_key(), None);
+}
+
+#[test]
+fn real_client_connect_refusal_reports_connect_transport_event() {
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let error = tcp_client(port)
+        .login("alice", "secret", false)
+        .unwrap_err();
+    assert_transport_event(
+        error,
+        client::client::LoginStage::Connect,
+        std::io::ErrorKind::ConnectionRefused,
+        TransportFailure::Connect,
+    );
+}
+
+#[test]
+fn real_client_partial_seed_timeout_reports_read_transport_event() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        socket.write_all(&[0; 9]).unwrap();
+        held.recv_timeout(Duration::from_secs(2)).unwrap();
+    });
+    let mut client = tcp_client(port);
+    client.set_login_deadline(Instant::now() + Duration::from_millis(150));
+    let error = client.login("alice", "secret", false).unwrap_err();
+    release.send(()).unwrap();
+    server.join().unwrap();
+    assert_transport_event(
+        error,
+        client::client::LoginStage::ReadSeed,
+        std::io::ErrorKind::TimedOut,
+        TransportFailure::Read,
+    );
+}
+
+#[test]
+fn real_client_partial_seed_eof_reports_closed_transport_event() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        socket.write_all(&[0; 9 + 2]).unwrap();
+    });
+    let error = tcp_client(port)
+        .login("alice", "secret", false)
+        .unwrap_err();
+    server.join().unwrap();
+    assert_transport_event(
+        error,
+        client::client::LoginStage::ReadSeed,
+        std::io::ErrorKind::UnexpectedEof,
+        TransportFailure::Closed,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn real_client_adopted_reset_socket_reports_write_transport_event() {
+    use client::io::client_stream::ClientStream;
+    use std::net::TcpListener;
+    use std::os::fd::AsRawFd;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut stream = ClientStream::connect("127.0.0.1", port).unwrap();
+    let (accepted, _) = listener.accept().unwrap();
+    let linger = libc::linger {
+        l_onoff: 1,
+        l_linger: 0,
+    };
+    // SAFETY: `accepted` owns a live socket for the duration of this call,
+    // and `linger` is initialized with the exact SO_LINGER layout and size.
+    // The result and the peer's observed reset below verify the invariant.
+    let set = unsafe {
+        libc::setsockopt(
+            accepted.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            (&linger as *const libc::linger).cast(),
+            std::mem::size_of::<libc::linger>() as libc::socklen_t,
+        )
+    };
+    assert_eq!(set, 0, "SO_LINGER: {}", std::io::Error::last_os_error());
+    drop(accepted);
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        match stream.available() {
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
+            Ok(0) if Instant::now() < until => thread::yield_now(),
+            result => panic!("expected local server reset before the login write: {result:?}"),
+        }
+    }
+    let mut client = tcp_client(port);
+    client.stream = Some(stream);
+    client.baton = true;
+    client.set_login_deadline(Instant::now() + Duration::from_secs(1));
+    let error = client.login("alice", "secret", true).unwrap_err();
+    let transport = error.transport.as_ref().unwrap();
+    assert!(matches!(
+        transport.kind,
+        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+    ));
+    let kind = transport.kind;
+    assert_transport_event(
+        error,
+        client::client::LoginStage::SendHello,
+        kind,
+        TransportFailure::Write,
+    );
+}
+
+#[test]
+fn real_response_sixteen_publishes_server_hold_with_exact_deadline() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        let mut reply = [0; 9];
+        reply[8] = 16;
+        socket.write_all(&reply).unwrap();
+    });
+    let error = tcp_client(port)
+        .login("alice", "secret", false)
+        .unwrap_err();
+    server.join().unwrap();
+    assert_eq!(error.code, 16, "the real client read response 16");
+    let backoff = LoginBackoff::new();
+    let hold = server_hold(&Err::<(), _>(error), &backoff).unwrap();
+    let at = Instant::now();
+    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    queue.lock().hold_for(at, hold);
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = SlotArm::new(7, true);
+    arm.prepared();
+    enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
+    let event = arm.latest_lifecycle_event().unwrap();
+    assert_eq!(
+        event.scope(),
+        Scope::Slot(arm.lifecycle.lock().session.slot())
+    );
+    assert_eq!(
+        event.payload(),
+        &SessionEventOut::Queued {
+            place: 1,
+            total: 1,
+            blocker: Some(QueueBlocker::ServerHold {
+                until: Deadline::at(at + hold),
+            }),
+        }
+    );
+    assert_eq!(
+        statuses.lock().unwrap()[0].queue_blocker,
+        Some(AdmitBlocker::ServerHold { until: at + hold })
+    );
+}
+
+fn poll_permit(queue: &mut LoginQueue, owner: u64, uid: i32, now: Instant) -> Permit {
+    let polled = queue.poll_owner(owner, uid, now);
+    assert!(polled.cancels.is_empty());
+    polled.permit
+}
+
 fn queue_attempt(queue: &mut LoginQueue, arm: &SlotArm, now: Instant) {
     queue.enqueue_owner(arm.queue_owner, 7);
     if let Some(until) = arm.clean_release_admission_at(HOST, PORT, now) {
         queue.defer_owner_until(arm.queue_owner, until);
     }
-    assert_eq!(queue.poll_owner(arm.queue_owner, 7, now), Permit::Grant);
+    assert_eq!(poll_permit(queue, arm.queue_owner, 7, now), Permit::Grant);
     assert!(queue
         .start_attempt(arm.queue_owner, now, LoginCancel::new())
         .is_some());
@@ -34,7 +267,7 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
     assert_eq!(until, start + host::login_queue::LOGIN_START_SPACING);
     queue.defer_owner_until(arm.queue_owner, until);
     assert!(matches!(
-        queue.poll_owner(arm.queue_owner, 7, start),
+        poll_permit(&mut queue, arm.queue_owner, 7, start),
         Permit::Wait(_)
     ));
     assert_eq!(queue.status_owner(arm.queue_owner).unwrap().position, 1);
@@ -64,7 +297,7 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
     let owner = 1;
     for _ in 0..4 {
         queue.enqueue_owner(owner, 7);
-        assert_eq!(queue.poll_owner(owner, 7, now), Permit::Grant);
+        assert_eq!(poll_permit(&mut queue, owner, 7, now), Permit::Grant);
         assert!(queue
             .start_attempt(owner, now, LoginCancel::new())
             .is_some());
@@ -73,7 +306,7 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
 
     queue.enqueue_owner(owner, 7);
     queue.enqueue_owner(2, 8);
-    assert_eq!(queue.poll_owner(2, 8, now), Permit::Grant);
+    assert_eq!(poll_permit(&mut queue, 2, 8, now), Permit::Grant);
     assert!(queue.start_attempt(2, now, LoginCancel::new()).is_some());
     queue.enqueue_owner(3, 9);
 
@@ -81,7 +314,7 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
         username: "alice".into(),
         ..SlotStatus::default()
     }];
-    publish_queue_place(&queue, &mut rows, "alice", owner);
+    let event = publish_queue_place(&queue, &mut rows, "alice", owner).unwrap();
     assert_eq!(
         (rows[0].queue_position, rows[0].queue_total),
         (1, 2),
@@ -96,6 +329,14 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
         ),
         "the skipped owner publishes the device cooldown reason"
     );
+    assert!(matches!(
+        event,
+        SessionEventOut::Queued {
+            place: 1,
+            total: 2,
+            blocker: Some(QueueBlocker::DeviceBudget { until: Some(_) }),
+        }
+    ));
 }
 
 #[test]
@@ -195,7 +436,7 @@ fn code_sixteen_keeps_shared_hold_and_does_not_extend_release_budget() {
     queue.enqueue_owner(arm.queue_owner, 7);
     queue.defer_owner_until(arm.queue_owner, start + CLEAN_RELEASE_CADENCE);
     assert!(matches!(
-        queue.poll_owner(arm.queue_owner, 7, start),
+        poll_permit(&mut queue, arm.queue_owner, 7, start),
         Permit::Wait(_)
     ));
     assert!(arm
@@ -216,13 +457,13 @@ fn stop_logout_withdraw_world_and_identity_invalidate_release_wait() {
             0 => arm.stop.store(true, Ordering::Relaxed),
             1 => arm.request_logout(),
             2 => arm.withdraw_login(),
-            3 => {
-                arm.world_generation.fetch_add(1, Ordering::Relaxed);
-            }
+            3 => arm.switch_world(2),
             4 => {
                 arm.uid.store(8, Ordering::Relaxed);
             }
-            5 => arm.invalidate_login_identity(),
+            5 => {
+                arm.post_intent(Intent::LoginIdentityChanged);
+            }
             6 => arm.set_auto_login(false),
             _ => unreachable!(),
         }
@@ -265,27 +506,36 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
     queue.enqueue_owner(u64::MAX, 9);
     queue.enqueue_owner(arm.queue_owner, 7);
     queue.defer_owner_until(arm.queue_owner, now + CLEAN_RELEASE_CADENCE);
-    assert_eq!(queue.poll_owner(u64::MAX, 9, now), Permit::Grant);
+    assert_eq!(poll_permit(&mut queue, u64::MAX, 9, now), Permit::Grant);
     queue
         .start_attempt(u64::MAX, now, LoginCancel::new())
         .unwrap();
     let later = now + CLEAN_RELEASE_CADENCE;
     assert!(
-        matches!(queue.poll_owner(arm.queue_owner, 7, later), Permit::Wait(_)),
+        matches!(
+            poll_permit(&mut queue, arm.queue_owner, 7, later),
+            Permit::Wait(_)
+        ),
         "still one handshake even after release deadline"
     );
     assert!(queue.acknowledge_login_return(u64::MAX, later));
-    assert_eq!(queue.poll_owner(arm.queue_owner, 7, later), Permit::Grant);
+    assert_eq!(
+        poll_permit(&mut queue, arm.queue_owner, 7, later),
+        Permit::Grant
+    );
     queue
         .start_attempt(arm.queue_owner, later, LoginCancel::new())
         .unwrap();
     queue.enqueue_owner(u64::MAX - 1, 10);
     assert!(matches!(
-        queue.poll_owner(u64::MAX - 1, 10, later),
+        poll_permit(&mut queue, u64::MAX - 1, 10, later),
         Permit::Wait(_)
     ));
     assert!(queue.acknowledge_login_return(arm.queue_owner, later));
-    assert_eq!(queue.poll_owner(u64::MAX - 1, 10, later), Permit::Grant);
+    assert_eq!(
+        poll_permit(&mut queue, u64::MAX - 1, 10, later),
+        Permit::Grant
+    );
 }
 
 #[test]
@@ -305,9 +555,7 @@ fn queued_release_cancellation_retires_place_without_withdrawing_replacement() {
             match action {
                 0 => arm.stop.store(true, Ordering::Relaxed),
                 1 => arm.request_logout(),
-                2 => {
-                    arm.world_generation.fetch_add(1, Ordering::Relaxed);
-                }
+                2 => arm.switch_world(2),
                 3 => {
                     arm.uid.store(8, Ordering::Relaxed);
                 }
@@ -326,7 +574,7 @@ fn queued_release_cancellation_retires_place_without_withdrawing_replacement() {
         }
         queue.lock().enqueue_owner(u64::MAX, 9);
         assert_eq!(
-            queue.lock().poll_owner(u64::MAX, 9, Instant::now()),
+            poll_permit(&mut queue.lock(), u64::MAX, 9, Instant::now()),
             Permit::Grant
         );
     }

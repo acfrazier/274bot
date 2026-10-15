@@ -1612,12 +1612,32 @@ fn current_client_transport_failures_keep_typed_stage_and_session_envelope() {
     use std::io::ErrorKind;
 
     let cases = [
-        (LoginStage::Connect, ErrorKind::ConnectionRefused, TransportFailure::Connect),
+        (
+            LoginStage::Connect,
+            ErrorKind::ConnectionRefused,
+            TransportFailure::Connect,
+        ),
         // Current ClientStream flattens TLS setup to Connect/Other.
-        (LoginStage::Connect, ErrorKind::Other, TransportFailure::Connect),
-        (LoginStage::ReadSeed, ErrorKind::InvalidData, TransportFailure::Read),
-        (LoginStage::SendLogin, ErrorKind::BrokenPipe, TransportFailure::Write),
-        (LoginStage::ReadResponse, ErrorKind::UnexpectedEof, TransportFailure::Closed),
+        (
+            LoginStage::Connect,
+            ErrorKind::Other,
+            TransportFailure::Connect,
+        ),
+        (
+            LoginStage::ReadSeed,
+            ErrorKind::InvalidData,
+            TransportFailure::Read,
+        ),
+        (
+            LoginStage::SendLogin,
+            ErrorKind::BrokenPipe,
+            TransportFailure::Write,
+        ),
+        (
+            LoginStage::ReadResponse,
+            ErrorKind::UnexpectedEof,
+            TransportFailure::Closed,
+        ),
     ];
     let key = session(0);
     let mut gate = SessionGate::new(slot());
