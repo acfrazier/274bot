@@ -5,11 +5,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use frontend_core::{MapBakeChoice, MapBakeGate, MapBakePrompt};
+use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::map_cache::fixture::{
     fixture_descriptor, ship_fixture_terrain, CountingMapProducer,
 };
 use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
-use panel::ui_state::{load_at, save_at};
+use panel::ui_state::{load_from, save_to};
 use script::{LoadoutsStore, ScriptSettingsStore, ScriptSource};
 use serde_json::json;
 use vault::{RasterMode, Vault};
@@ -149,8 +150,13 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         "a current rewrite must preserve every 0.1.8.1 profile field"
     );
 
-    let prefs_path = copy_fixture_file(&fixture, &scratch, "panel-ui.json");
-    let prefs = load_at(&prefs_path);
+    copy_fixture_file(&fixture, &scratch, "panel-ui.json");
+    copy_fixture_file(&fixture, &scratch, "loadouts.json");
+    // The scratch directory is the state root the current readers open: the
+    // preferences and the loadouts form go through one process service.
+    let service = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
+    let preferences = service.preferences();
+    let prefs = load_from(&preferences);
     assert_eq!(prefs.last_focus.as_deref(), Some("fixture-manual"));
     assert!(!prefs.collapsed["fixture-auto"]["script"]);
     assert!(prefs.collapsed["fixture-auto"]["debug"]);
@@ -212,11 +218,12 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert_eq!(prefs.chrome.bg, "#101820");
     assert_eq!(prefs.chrome.text, "#F0F4F8");
     let expected_prefs = prefs.clone();
-    save_at(&prefs_path, &prefs);
-    assert_eq!(load_at(&prefs_path), expected_prefs);
+    save_to(&preferences, &prefs);
+    let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
+    assert_eq!(load_from(&reopened.preferences()), expected_prefs);
 
-    let loadouts_path = copy_fixture_file(&fixture, &scratch, "loadouts.json");
-    let mut loadouts = LoadoutsStore::at(loadouts_path.clone());
+    let mut loadouts = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+    assert_eq!(loadouts.load_error(), None);
     let expected_loadouts = loadouts.snapshot();
     assert_eq!(loadouts.names(), ["melee-main", "utility"]);
     let melee = loadouts.get("melee-main").unwrap();
@@ -232,10 +239,17 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert_eq!(utility.unassigned, ["Ghostspeak amulet"]);
     assert_eq!(utility.carry[0].item, "Coins");
     assert_eq!(utility.carry[0].qty, 5000);
+    // Save with the current writer: change one supply, then change it back,
+    // so the file is rewritten from the typed rows twice.
+    let mut edited = expected_loadouts[0].clone();
+    edited.carry[0].qty += 1;
+    loadouts.upsert(edited);
+    loadouts.save().unwrap();
     loadouts.upsert(expected_loadouts[0].clone());
     loadouts.save().unwrap();
+    let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
     assert_eq!(
-        LoadoutsStore::at(loadouts_path).snapshot(),
+        LoadoutsStore::over(Arc::new(reopened.operator_loadouts())).snapshot(),
         expected_loadouts
     );
 
@@ -284,7 +298,8 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
         .collect();
 
     // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
-    let prefs = load_at(&bot.join("panel-ui.json"));
+    let service = LocalStateService::open_process(StateRoot::new(bot.clone()));
+    let prefs = load_from(&service.preferences());
     assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
     let root = MapCacheRoot::from_home(&home);
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");

@@ -531,6 +531,23 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
     }
 }
 
+/// A peer frontend sets the durable global danger-zone grant, through a
+/// second service on the session's files; the session sees it once its own
+/// preferences re-read.
+fn peer_sets_danger_zones(
+    peer: &host_play::local_state::Preferences,
+    session: &Session,
+    enabled: bool,
+) {
+    frontend_core::nav_preference(
+        peer,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(enabled),
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+}
+
 #[test]
 fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -546,13 +563,8 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     let mut session = Session::new();
     session.ui.nav.allow_danger_zones = false;
     session.walkto_open = true;
-    let path = crate::ui_state::path();
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
-    )
-    .unwrap();
+    let peer = crate::test_support::thread_preferences();
+    peer_sets_danger_zones(&peer, &session, false);
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     let checkbox = super::last_picker_layout().route_zones_rect;
     assert_ne!(checkbox, [[0.0, 0.0], [0.0, 0.0]]);
@@ -562,12 +574,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     ];
 
     session.route_through_zones = true;
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(true),
-    )
-    .unwrap();
+    peer_sets_danger_zones(&peer, &session, true);
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     assert_eq!(
         super::last_picker_layout().route_zones_rect,
@@ -585,12 +592,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
         "the hidden checkbox cannot grant danger"
     );
 
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
-    )
-    .unwrap();
+    peer_sets_danger_zones(&peer, &session, false);
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     assert_ne!(
         super::last_picker_layout().route_zones_rect,
@@ -599,7 +601,11 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     );
     assert!(!session.ui.nav.allow_danger_zones);
 
-    std::fs::write(&path, b"{corrupt").unwrap();
+    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    session
+        .preferences
+        .reload()
+        .expect_err("corrupt preferences are refused");
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     assert_ne!(
         super::last_picker_layout().route_zones_rect,

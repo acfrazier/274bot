@@ -242,42 +242,22 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
-/// The shared preference: `session_log_file` in `panel-ui.json`, off when
-/// the file or the key is absent (every 0.1.8.1 prefs file).
-pub fn session_log_setting() -> bool {
-    session_log_setting_at(&host_play::panel_ui_path())
-}
-
-pub fn session_log_setting_at(prefs: &Path) -> bool {
-    std::fs::read(prefs)
-        .ok()
-        .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok())
-        .and_then(|v| v.get(SESSION_LOG_KEY)?.as_bool())
+/// The shared preference: `session_log_file`, off when the file or the key
+/// is absent (every 0.1.8.1 prefs file) or the preferences cannot be read.
+pub fn session_log_setting(preferences: &host_play::local_state::Preferences) -> bool {
+    preferences
+        .value(SESSION_LOG_KEY)
+        .and_then(|value| value.as_bool())
         .unwrap_or(false)
 }
 
-/// Store the preference, keeping every other key in the file.
-pub fn persist_session_log_setting(on: bool) -> io::Result<()> {
-    persist_session_log_setting_at(&host_play::panel_ui_path(), on)
-}
-
-pub fn persist_session_log_setting_at(prefs: &Path, on: bool) -> io::Result<()> {
-    host_play::update_panel_ui_at(prefs, |value, _, corrupt| {
-        if corrupt {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                "invalid panel-ui.json",
-            ));
-        }
-        let obj = value.as_object_mut().ok_or_else(|| {
-            io::Error::new(
-                ErrorKind::InvalidData,
-                format!("{} is not a JSON object", prefs.display()),
-            )
-        })?;
-        obj.insert(SESSION_LOG_KEY.into(), serde_json::Value::Bool(on));
-        Ok(None)
-    })
+/// Store the preference durably, keeping every other one. A preferences
+/// file the service refused is never written: that is an error.
+pub fn persist_session_log_setting(
+    preferences: &host_play::local_state::Preferences,
+    on: bool,
+) -> io::Result<()> {
+    preferences.set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
 }
 
 /// Open (on) or close (off) this process's session file on the global

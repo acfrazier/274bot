@@ -104,15 +104,7 @@ const CORE: &[(&str, Decision)] = &[
         Row(C::SetSessionLog(true)),
     ),
     (
-        "log_file.rs::persist_session_log_setting_at",
-        Row(C::SetSessionLog(true)),
-    ),
-    (
         "log_file.rs::session_log_setting",
-        Excluded("reads the persisted setting"),
-    ),
-    (
-        "log_file.rs::session_log_setting_at",
         Excluded("reads the persisted setting"),
     ),
     // map_bake.rs
@@ -161,7 +153,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     // nav_prefs.rs
     (
-        "nav_prefs.rs::nav_preference_at",
+        "nav_prefs.rs::nav_preference",
         Row(C::SetNavPreference(NavPreference::AllowTeleports, true)),
     ),
     // profile_form.rs: the form-save machine.
@@ -272,11 +264,11 @@ const CORE: &[(&str, Decision)] = &[
     ),
     // quester_paths.rs
     (
-        "quester_paths.rs::QuesterPathsController::restore_at",
+        "quester_paths.rs::QuesterPathsController::restore",
         Excluded("startup restore of the persisted settings"),
     ),
     (
-        "quester_paths.rs::QuesterPathsController::apply_changed_at",
+        "quester_paths.rs::QuesterPathsController::apply_changed",
         Row(C::SetQuesterPaths),
     ),
     (
@@ -506,6 +498,10 @@ const CORE: &[(&str, Decision)] = &[
         "session.rs::OperatorSession::set_walk_globals_store",
         Excluded(STARTUP),
     ),
+    (
+        "session.rs::OperatorSession::bind_local_state",
+        Excluded(STARTUP),
+    ),
     ("session.rs::OperatorSession::play_mut", Excluded(ACCESSOR)),
     ("session.rs::OperatorSession::close_play", Row(C::Quit)),
     (
@@ -612,7 +608,7 @@ const CORE: &[(&str, Decision)] = &[
     ("views.rs::script_status_rows", Excluded(FORMAT)),
     // walk_permissions.rs
     (
-        "walk_permissions.rs::WalkGlobalsView::persist_changed_at",
+        "walk_permissions.rs::WalkGlobalsView::persist_changed",
         Rows(
             &[
                 C::SetNavPreference(NavPreference::AllowTeleports, true),

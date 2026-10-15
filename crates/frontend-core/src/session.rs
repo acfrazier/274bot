@@ -606,7 +606,11 @@ pub struct OperatorSession<Io> {
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
     walk_globals: host_play::WalkGlobals,
-    walk_globals_store: Option<std::path::PathBuf>,
+    walk_globals_store: Option<host_play::local_state::Preferences>,
+    /// The process local-state service the front end's composition root
+    /// opened; every `Play` this session adopts uses it, so the process has
+    /// one writer for its state files.
+    local_state: Option<Arc<host_play::local_state::LocalStateService>>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -675,6 +679,7 @@ impl<Io> OperatorSession<Io> {
             pause_script_on_manual_walk_abort: true,
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
+            local_state: None,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -690,15 +695,30 @@ impl<Io> OperatorSession<Io> {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
+        if let Some(service) = self.local_state.as_ref() {
+            play.adopt_local_state(Arc::clone(service));
+        }
         play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
         play.set_walk_globals(self.walk_globals);
-        if let Some(path) = self.walk_globals_store.as_ref() {
-            play.set_walk_globals_store(path.clone());
+        if let Some(preferences) = self.walk_globals_store.as_ref() {
+            play.set_walk_globals_store(preferences.clone());
         }
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
         self.writer = None;
+    }
+
+    /// Bind the process local-state service the front end's composition
+    /// root opened, before any `Play` starts: [`Self::start`] hands it to
+    /// each `Play`, so slots and forms write through one service.
+    pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
+        self.local_state = Some(service);
+    }
+
+    /// The process local-state service bound at startup, if any.
+    pub fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+        self.local_state.as_ref()
     }
 
     /// Project the persisted manual-movement pause setting onto the current
@@ -721,12 +741,13 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Interactive frontends share the durable store even after Continue anyway.
-    pub fn set_walk_globals_store(&mut self, path: std::path::PathBuf) {
+    /// Interactive frontends share the durable preferences even after
+    /// Continue anyway: every admission reads the globals from them.
+    pub fn set_walk_globals_store(&mut self, preferences: host_play::local_state::Preferences) {
         if let Some(play) = self.play.as_mut() {
-            play.set_walk_globals_store(path.clone());
+            play.set_walk_globals_store(preferences.clone());
         }
-        self.walk_globals_store = Some(path);
+        self.walk_globals_store = Some(preferences);
     }
 
     pub fn vault(&self) -> Option<&Vault> {

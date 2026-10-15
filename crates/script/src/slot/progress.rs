@@ -198,6 +198,22 @@ impl SlotScript {
             run: generation,
             session: self.work_epoch,
         };
+        // The operator's rows the compile overrides kits with, leased on
+        // this thread from the bound state capability (absent when none is
+        // bound); a cold domain refuses the read with its typed reason.
+        let operator = match self.local_state.as_deref() {
+            Some(state) => match state.operator_loadouts() {
+                Ok(operator) => operator,
+                Err(code) => {
+                    seat.progress_page = Some(ProgressPage::Refused {
+                        token,
+                        reason: format!("unavailable:{code}").into(),
+                    });
+                    return;
+                }
+            },
+            None => crate::local_state::OperatorLoadouts::absent(),
+        };
         let job = FamilyPreparation::run(move |cap| {
             let pin = selected
                 .selected_pin()
@@ -206,8 +222,9 @@ impl SlotScript {
                 QuestCatalog::from_identity(selected.quest_identity())
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
-            let path = crate::quester::compile::compile_path(bytes, &selected, &quests, cap)
-                .map_err(compile_error_reason)?;
+            let path =
+                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
+                    .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,
                 pin,

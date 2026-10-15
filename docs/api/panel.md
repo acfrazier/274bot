@@ -501,8 +501,20 @@ WalkTo, above profile) is
 **slot** (capture), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**
 (sidecar 50 / only-render-selected). **Loadouts** is a live window (CRUD
-presets; `optionsFrom: 'loadouts'` combos in Parameters). Text and buttons
-wrap or equal-width-squish — **no horizontal scroll**.
+presets; `optionsFrom: 'loadouts'` combos in Parameters). It saves through
+the process local-state service, the same writer the bots read: a save is a
+typed edit per changed row against the list it loaded, a change made
+meanwhile (another 274bot on the same home) is reported as a conflict and
+the edit kept, and a rename is one edit that keeps the loadout's place in
+the list (a rename onto another loadout's name is refused). A
+`loadouts.json` whose loadouts share a name (an older editor could save
+one) is renamed apart once, when it is read and before anything is leased
+or saved: its exact bytes are copied to `loadouts.json.duplicates-<time>`,
+then the second loadout of a name becomes `<name> (2)`, the third
+`<name> (3)`, and so on (a name another loadout has is skipped), each
+keeping its gear and its place, with a warning and an audit line in the
+log; while that cannot be done the file is refused. Text and
+buttons wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
 is a live toggle), dim **build line** (`beta 1 ·` git short SHA,
 `-dirty` when the tree was dirty; hover is crate version then full

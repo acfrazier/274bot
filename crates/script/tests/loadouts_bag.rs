@@ -34,12 +34,7 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
     use api::loadout::Loadout;
     use script::{resolve_setting_options, LoadoutsStore};
 
-    let dir = std::env::temp_dir().join(format!("274bot-loadouts-combo-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("loadouts.json");
-    let mut store = LoadoutsStore::at(path);
-    store.upsert(Loadout::new("a"));
-    store.upsert(Loadout::new("b"));
+    let store = LoadoutsStore::detached(vec![Loadout::new("a"), Loadout::new("b")]);
     let def = SettingDef {
         id: "loadout".into(),
         ty: "string".into(),

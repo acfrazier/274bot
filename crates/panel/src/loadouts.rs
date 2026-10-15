@@ -34,6 +34,46 @@ fn resync_qty_bufs(session: &mut Session) {
         .unwrap_or_default();
 }
 
+/// The selected row's name, taken before an edit so the row can be found
+/// again whatever the list becomes.
+fn selected_name(session: &Session) -> Option<String> {
+    session
+        .loadouts
+        .loadouts()
+        .get(session.loadouts_sel)
+        .map(|row| row.name.clone())
+}
+
+/// Where the row called `name` sits in the form's list now.
+fn position_of(session: &Session, name: &str) -> Option<usize> {
+    session
+        .loadouts
+        .loadouts()
+        .iter()
+        .position(|row| row.name == name)
+}
+
+/// A save landed: the form now holds exactly the rows the store holds, so
+/// the saved row is selected by its name, not by the index it had (a new
+/// row is appended; a renamed one keeps its place).
+fn select_saved(session: &mut Session, name: &str) {
+    if let Some(index) = position_of(session, name) {
+        session.loadouts_sel = index;
+    }
+    sync_draft(session);
+}
+
+/// A save did not land: drop the edits the form made, keep the operator's
+/// draft, and keep the selection on the row it was on, found again by name
+/// (after a conflict the form's rows are the store's latest, in an order
+/// that may differ).
+fn discard_failed_save(session: &mut Session, selected: Option<String>) {
+    session.loadouts.discard();
+    if let Some(index) = selected.and_then(|name| position_of(session, &name)) {
+        session.loadouts_sel = index;
+    }
+}
+
 pub fn save_draft(session: &mut Session) -> bool {
     let Some(draft) = session.loadouts_draft.clone() else {
         session.loadouts_status = "No loadout selected.".into();
@@ -43,19 +83,26 @@ pub fn save_draft(session: &mut Session) -> bool {
         session.loadouts_status = "Name is required.".into();
         return false;
     }
-    let backup = session.loadouts.snapshot();
+    let selected = selected_name(session);
+    let saved = draft.name.clone();
     if session.loadouts_sel < session.loadouts.loadouts().len() {
-        session.loadouts.replace_at(session.loadouts_sel, draft);
+        // The name is the row's key in the store: a rename onto another
+        // row's name is refused rather than replacing that row.
+        if !session.loadouts.replace_at(session.loadouts_sel, draft) {
+            session.loadouts_status = format!("A loadout named \"{saved}\" already exists.");
+            return false;
+        }
     } else {
         session.loadouts.upsert(draft);
     }
     match session.loadouts.save() {
         Ok(()) => {
+            select_saved(session, &saved);
             session.loadouts_status = "Saved.".into();
             true
         }
         Err(err) => {
-            session.loadouts.restore(backup);
+            discard_failed_save(session, selected);
             session.loadouts_status = format!("Save failed: {err}");
             false
         }
@@ -64,16 +111,15 @@ pub fn save_draft(session: &mut Session) -> bool {
 
 fn add_loadout(session: &mut Session) {
     let name = unique_loadout_name(session.loadouts.loadouts(), "loadout");
-    let backup = session.loadouts.snapshot();
-    session.loadouts.upsert(Loadout::new(name));
+    let selected = selected_name(session);
+    session.loadouts.upsert(Loadout::new(name.clone()));
     match session.loadouts.save() {
         Ok(()) => {
-            session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
-            sync_draft(session);
+            select_saved(session, &name);
             session.loadouts_status = "Saved.".into();
         }
         Err(err) => {
-            session.loadouts.restore(backup);
+            discard_failed_save(session, selected);
             session.loadouts_status = format!("Save failed: {err}");
         }
     }
@@ -90,31 +136,24 @@ fn duplicate_loadout(session: &mut Session) {
     };
     let mut dup = src.clone();
     dup.name = unique_loadout_name(session.loadouts.loadouts(), &format!("{} copy", src.name));
-    let backup = session.loadouts.snapshot();
+    let name = dup.name.clone();
     session.loadouts.upsert(dup);
     match session.loadouts.save() {
         Ok(()) => {
-            session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
-            sync_draft(session);
+            select_saved(session, &name);
             session.loadouts_status = "Saved.".into();
         }
         Err(err) => {
-            session.loadouts.restore(backup);
+            discard_failed_save(session, Some(src.name));
             session.loadouts_status = format!("Save failed: {err}");
         }
     }
 }
 
 fn delete_loadout(session: &mut Session) {
-    let Some(name) = session
-        .loadouts
-        .loadouts()
-        .get(session.loadouts_sel)
-        .map(|row| row.name.clone())
-    else {
+    let Some(name) = selected_name(session) else {
         return;
     };
-    let backup = session.loadouts.snapshot();
     session.loadouts.remove(&name);
     match session.loadouts.save() {
         Ok(()) => {
@@ -125,7 +164,7 @@ fn delete_loadout(session: &mut Session) {
             session.loadouts_status = "Saved.".into();
         }
         Err(err) => {
-            session.loadouts.restore(backup);
+            discard_failed_save(session, Some(name));
             session.loadouts_status = format!("Save failed: {err}");
         }
     }
@@ -547,20 +586,36 @@ fn search_popup(ui: &Ui, session: &mut Session) {
 mod tests {
     use super::*;
     use crate::session::Session;
-    use crate::test_support::TestDir;
+    use crate::test_support::{scratch_service, thread_state_root, TestDir};
     use script::LoadoutsStore;
     use std::collections::HashSet;
+    use std::path::Path;
+    use std::sync::Arc;
 
-    fn session_with_store() -> (Session, TestDir) {
+    /// A form over the loadouts of a service opened on `dir`, a scratch
+    /// state root (another such form on the same `dir` is another writer).
+    fn store_in(dir: &Path) -> LoadoutsStore {
+        LoadoutsStore::over(Arc::new(scratch_service(dir).operator_loadouts()))
+    }
+
+    /// A session whose Loadouts form holds `rows`, saved in a scratch root,
+    /// with the first selected.
+    fn session_with(rows: Vec<Loadout>) -> (Session, TestDir) {
         let dir = TestDir::new("loadouts");
-        let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
-        store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
+        let mut store = store_in(&dir);
+        for row in rows {
+            store.upsert(row);
+        }
         store.save().unwrap();
         let mut session = Session::new();
         session.loadouts = store;
         session.loadouts_sel = 0;
         sync_draft(&mut session);
         (session, dir)
+    }
+
+    fn session_with_store() -> (Session, TestDir) {
+        session_with(vec![Loadout::new("melee").with_carry("Lobster", 8)])
     }
 
     #[test]
@@ -586,14 +641,40 @@ mod tests {
         assert_eq!(session.loadouts_status, "Name is required.");
     }
 
+    /// Rows are keyed by name in the store: renaming a draft onto another
+    /// row's name is refused, not a silent replacement of that row.
+    #[test]
+    fn renaming_onto_another_loadouts_name_is_refused_and_keeps_both() {
+        let (mut session, dir) = session_with(vec![
+            Loadout::new("melee").with_carry("Lobster", 8),
+            Loadout::new("range").with_carry("Shark", 3),
+        ]);
+        session.loadouts_sel = 1;
+        sync_draft(&mut session);
+        session.loadouts_draft.as_mut().unwrap().name = "melee".into();
+        assert!(!save_draft(&mut session));
+        assert_eq!(
+            session.loadouts_status,
+            "A loadout named \"melee\" already exists."
+        );
+        assert_eq!(session.loadouts.names(), ["melee", "range"]);
+        assert_eq!(
+            session.loadouts.get("melee").unwrap().carry[0],
+            CarryEntry::new("Lobster", 8)
+        );
+        assert_eq!(session.loadouts_sel, 1);
+        assert_eq!(store_in(&dir).names(), ["melee", "range"]);
+    }
+
     #[test]
     fn failed_save_restores_store_and_does_not_report_saved() {
         let (mut session, _dir) = session_with_store();
         session.loadouts_draft.as_mut().unwrap().name = "changed".into();
         // Recreate the store path as a directory so the write fails.
         let fail_dir = TestDir::new("loadouts-fail");
-        let file = fail_dir.join("loadouts.json");
-        let mut store = LoadoutsStore::at(file.clone());
+        let service = scratch_service(&fail_dir);
+        let file = service.root().loadouts_file();
+        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
         store.save().unwrap();
         std::fs::remove_file(&file).unwrap();
@@ -603,9 +684,135 @@ mod tests {
         session.loadouts_draft.as_mut().unwrap().name = "changed".into();
         assert!(!save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
+        assert!(!session.loadouts.is_dirty(), "the failed edit is dropped");
+        assert_eq!(session.loadouts_sel, 0);
+        assert_eq!(
+            session.loadouts_draft.as_ref().unwrap().name,
+            "changed",
+            "the operator's draft stays for another try"
+        );
         assert!(session.loadouts_status.starts_with("Save failed:"));
         assert!(!session.loadouts_status.contains("Saved."));
         drop(fail_dir);
+    }
+
+    /// A rename replaces the row where it stands (T5.2 r4): the saved row
+    /// keeps its index, in the form and in the file, and the form follows
+    /// it by name.
+    #[test]
+    fn renamed_row_keeps_its_place_and_stays_selected_by_name() {
+        let (mut session, dir) = session_with(vec![
+            Loadout::new("melee").with_carry("Lobster", 8),
+            Loadout::new("range"),
+            Loadout::new("tank"),
+        ]);
+        session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
+        assert!(save_draft(&mut session));
+        assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
+        assert_eq!(session.loadouts_sel, 0);
+        let draft = session.loadouts_draft.as_ref().unwrap();
+        assert_eq!(draft.name, "melee2");
+        assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
+        assert_eq!(store_in(&dir).names(), ["melee2", "range", "tank"]);
+
+        // The next save writes the renamed row, not another one.
+        session.loadouts_draft.as_mut().unwrap().carry[0].qty = 9;
+        assert!(save_draft(&mut session));
+        assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
+        assert_eq!(session.loadouts.get("melee2").unwrap().carry[0].qty, 9);
+        assert!(session.loadouts.get("range").unwrap().carry.is_empty());
+    }
+
+    #[test]
+    fn new_and_duplicate_select_the_saved_row_by_name() {
+        let (mut session, _dir) = session_with(vec![
+            Loadout::new("melee").with_carry("Lobster", 8),
+            Loadout::new("range"),
+        ]);
+        add_loadout(&mut session);
+        assert_eq!(session.loadouts_status, "Saved.");
+        assert_eq!(session.loadouts.names(), ["melee", "range", "loadout"]);
+        assert_eq!(session.loadouts_sel, 2);
+        assert_eq!(session.loadouts_draft.as_ref().unwrap().name, "loadout");
+
+        session.loadouts_sel = 0;
+        sync_draft(&mut session);
+        duplicate_loadout(&mut session);
+        assert_eq!(
+            session.loadouts.names(),
+            ["melee", "range", "loadout", "melee copy"]
+        );
+        assert_eq!(session.loadouts_sel, 3);
+        let draft = session.loadouts_draft.as_ref().unwrap();
+        assert_eq!(draft.name, "melee copy");
+        assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
+    }
+
+    /// Another writer changed the loadouts after this form loaded them: the
+    /// save is refused, nothing of the other writer is overwritten, the form
+    /// shows what the store holds now, and the selection stays on its row
+    /// (found by name: that row's index moved).
+    #[test]
+    fn a_conflicting_save_is_refused_and_the_selection_follows_its_row() {
+        let (mut session, dir) = session_with(vec![
+            Loadout::new("first"),
+            Loadout::new("melee").with_carry("Lobster", 8),
+        ]);
+        session.loadouts_sel = 1;
+        sync_draft(&mut session);
+        let mut other = store_in(&dir);
+        other.remove("first");
+        other.upsert(Loadout::new("tank"));
+        other.save().unwrap();
+
+        session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
+        assert!(!save_draft(&mut session));
+        assert!(
+            session.loadouts_status.starts_with("Save failed:"),
+            "got {:?}",
+            session.loadouts_status
+        );
+        assert_eq!(session.loadouts.names(), ["melee", "tank"]);
+        assert!(!session.loadouts.is_dirty());
+        assert_eq!(session.loadouts_sel, 0, "melee is now the first row");
+        assert_eq!(
+            session.loadouts_draft.as_ref().unwrap().name,
+            "melee2",
+            "the operator's draft stays for another try"
+        );
+        assert_eq!(store_in(&dir).names(), ["melee", "tank"]);
+    }
+
+    /// A file the service refused leaves the form empty with its reason as
+    /// the status, and no save writes over it.
+    #[test]
+    fn unreadable_loadouts_file_is_named_in_the_status_and_never_written_over() {
+        let _iso = script::IsolatedEnv::enter("loadouts-refused");
+        let file = thread_state_root().loadouts_file();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let corrupt = b"{ not valid json";
+        std::fs::write(&file, corrupt).unwrap();
+
+        let mut session = Session::new();
+        let error = session
+            .loadouts
+            .load_error()
+            .expect("the refused file is named")
+            .to_string();
+        assert!(
+            session.loadouts_status.contains(&error),
+            "the status carries the reason: {:?}",
+            session.loadouts_status
+        );
+        assert!(session.loadouts.loadouts().is_empty());
+
+        add_loadout(&mut session);
+        assert!(
+            session.loadouts_status.starts_with("Save failed:"),
+            "got {:?}",
+            session.loadouts_status
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), corrupt);
     }
 
     #[test]

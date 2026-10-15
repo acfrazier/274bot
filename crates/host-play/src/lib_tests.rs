@@ -7483,6 +7483,82 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     );
 }
 
+/// T5.2 r2 item 10 (sol P2): every compiled Start reads the operator's
+/// loadouts file again, so a run whose bag names no loadout (a Quester
+/// compiling Paths through its lease) sees a row the frontend's form saved
+/// after the service hydrated.
+#[test]
+fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
+    let scratch = script::IsolatedEnv::enter("compiled-start-refresh");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
+    let service = local_state::LocalStateService::open(
+        root.clone(),
+        &[
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            api::local_state::LocalStateDomain::BankHints,
+        ],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let composition = Arc::new(local_state::StateComposition::new(
+        Arc::clone(&service),
+        "local-289",
+        api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, "test-content")
+            .unwrap(),
+    ));
+    play.local_state = Some(Arc::clone(&composition));
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let identity = composition
+        .identity(
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            "alice",
+        )
+        .unwrap();
+    assert_eq!(
+        service
+            .readback_lease(&identity, Duration::from_secs(10))
+            .unwrap(),
+        None,
+        "hydrated with no file"
+    );
+    // Another writer (an older build, a hand edit) saves a row after the
+    // service hydrated; the Start must read it again.
+    let melee = api::loadout::Loadout::new("melee").with_slot("righthand", "Rune scimitar");
+    vault::write_private_file(
+        &root.loadouts_file(),
+        serde_json::to_string_pretty(std::slice::from_ref(&melee))
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap();
+
+    // The operator's compiled Start. It may refuse later (no game data
+    // offline); the read happens before that.
+    let _ = play.script_start(
+        "alice",
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    );
+    let lease = api::local_state::LocalStatePort::lease(&*service, &identity).unwrap();
+    assert_eq!(
+        lease.snapshot().as_loadouts().unwrap(),
+        std::slice::from_ref(&melee),
+        "the compiled Start refreshed the rows its run leases"
+    );
+}
+
 #[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");

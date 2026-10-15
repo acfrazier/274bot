@@ -606,8 +606,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         monotonic: false,
     };
     let areas = HashMap::new();
-    let loadouts =
-        LoadoutOverlay::from_default_store(Arc::<[api::loadout::Loadout]>::from(Vec::new()));
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
     let recipes = HashMap::new();
     let path = FactKey::new("combat_unattackable");
     let cx = fixture_compile_context(

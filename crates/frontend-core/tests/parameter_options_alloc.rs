@@ -56,10 +56,7 @@ fn quest_options() -> frontend_core::scripts::ParameterOptions {
         .find(|field| field.id == "quests")
         .expect("Quester schema has a quest roster");
     let bag = serde_json::Map::from_iter([("quests".into(), serde_json::json!(["cook"]))]);
-    let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-        "frontend-core-preserved-labels-{}.json",
-        std::process::id()
-    )));
+    let loadouts = LoadoutsStore::default();
     resolve_parameter_options(quests, &bag, &loadouts, None)
 }
 

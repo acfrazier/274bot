@@ -74,7 +74,25 @@ pub fn valid_component(value: &str) -> bool {
 /// inspect or set ACLs, so the directory's inherited ACL is what protects the
 /// file.
 pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
-    publish(path, data, Publish::Replace)
+    publish(path, data, Publish::Replace, &mut || Ok(()))
+}
+
+/// [`write_private_file`] with a last look before publication: `check` runs
+/// after the bytes are staged and flushed, immediately before the rename. An
+/// error from it publishes nothing (the staged file is removed) and is
+/// returned. A writer that holds its own cross-process lock uses this to
+/// re-check what the target holds at the last moment, so a writer that does
+/// not take that lock can replace the target only in the instant between the
+/// check and the rename, not during the slow staging write and flush.
+pub fn write_private_file_checked(
+    path: &Path,
+    data: &[u8],
+    check: impl FnOnce() -> io::Result<()>,
+) -> Result<(), io::Error> {
+    let mut check = Some(check);
+    publish(path, data, Publish::Replace, &mut || {
+        check.take().map_or(Ok(()), |check| check())
+    })
 }
 
 /// Creates `path` with `data`, failing with [`io::ErrorKind::AlreadyExists`]
@@ -89,7 +107,7 @@ pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
 /// place: still exclusive, but a crash mid-write leaves a truncated file
 /// where a new file was being created (no earlier data is at risk).
 pub fn create_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
-    publish(path, data, Publish::CreateNew)
+    publish(path, data, Publish::CreateNew, &mut || Ok(()))
 }
 
 #[derive(Clone, Copy)]
@@ -98,7 +116,12 @@ enum Publish {
     CreateNew,
 }
 
-fn publish(path: &Path, data: &[u8], mode: Publish) -> io::Result<()> {
+fn publish(
+    path: &Path,
+    data: &[u8],
+    mode: Publish,
+    before_publish: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<()> {
     let name = path.file_name().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -111,7 +134,7 @@ fn publish(path: &Path, data: &[u8], mode: Publish) -> io::Result<()> {
         .unwrap_or_else(|| Path::new("."));
     ensure_private_dir(dir)?;
     serialized(fs::canonicalize(dir)?.join(name), || {
-        publish_staged(dir, name, path, data, mode)
+        publish_staged(dir, name, path, data, mode, before_publish)
     })
 }
 
@@ -121,6 +144,7 @@ fn publish_staged(
     path: &Path,
     data: &[u8],
     mode: Publish,
+    before_publish: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<()> {
     let staged = Staged::write(dir, name, data)?;
     if !staged.is_ours() {
@@ -129,6 +153,10 @@ fn publish_staged(
             "{}: the staging file was replaced while it was written; nothing was published",
             staged.path.display()
         )));
+    }
+    if let Err(error) = before_publish() {
+        staged.discard();
+        return Err(error);
     }
     let published = match mode {
         Publish::Replace => replace(&staged.path, path),
@@ -669,6 +697,34 @@ mod tests {
 
         assert!(target.is_dir(), "the target is untouched");
         assert_eq!(names(&dir), ["state.json"], "the temp was removed");
+    }
+
+    #[test]
+    fn a_refusing_check_publishes_nothing_and_leaves_no_temp() {
+        let dir = scratch("checked");
+        let target = dir.join("state.json");
+        fs::write(&target, "old").unwrap();
+        let mut staged_seen = Vec::new();
+
+        let refused = write_private_file_checked(&target, b"new", || {
+            // The bytes are staged and flushed beside the target by now.
+            staged_seen = names(&dir);
+            Err(io::Error::other("the target changed"))
+        })
+        .unwrap_err();
+
+        assert_eq!(refused.to_string(), "the target changed");
+        assert_eq!(
+            staged_seen.len(),
+            2,
+            "the staged temp exists during the check"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+        assert_eq!(names(&dir), ["state.json"], "the temp was removed");
+
+        write_private_file_checked(&target, b"new", || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert_eq!(names(&dir), ["state.json"]);
     }
 
     #[test]

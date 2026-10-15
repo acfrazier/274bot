@@ -4,6 +4,8 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::snapshot::WorldTile;
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
@@ -417,6 +419,39 @@ impl Play {
                 world.named_bank_facts().cloned().unwrap_or_default()
             })
             .unwrap_or_default();
+        // The process local-state service (T5.2): opened once here, at the
+        // bound profile's explicit state root, for the domains the current
+        // files back. The legacy direct connection has no launch profile
+        // and opens none.
+        let local_state = connection.profile().and_then(|profile| {
+            let scope = match api::local_state::ContentScope::try_new(
+                profile.revision(),
+                profile.cache_id(),
+            ) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Warn,
+                        "local state: content scope {error}; no state service for this Play"
+                    );
+                    return None;
+                }
+            };
+            let service = super::local_state::LocalStateService::open(
+                super::local_state::StateRoot::new(profile.state_root().to_path_buf()),
+                &[
+                    api::local_state::LocalStateDomain::LoadoutsReferences,
+                    api::local_state::LocalStateDomain::BankHints,
+                ],
+                Arc::new(api::identity::RequestIdMinter::new()),
+            );
+            Some(Arc::new(super::local_state::StateComposition::new(
+                service,
+                profile.name(),
+                scope,
+            )))
+        });
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             auto_world: None,
@@ -451,6 +486,7 @@ impl Play {
             world,
             wakes: HashMap::new(),
             capacity: Arc::new(host::CapacityMonitor::new()),
+            local_state,
         }
     }
 }

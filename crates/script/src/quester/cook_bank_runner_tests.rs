@@ -668,6 +668,7 @@ fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
             &selected,
             &quests,
             cap,
+            &crate::local_state::OperatorLoadouts::absent(),
         )
     })
     .unwrap();

@@ -85,9 +85,15 @@ fn quest_pair_r2_registry_load_validates_both_declared_gangs() {
             .bytes(PATH_ID)
             .expect("both valid roles admit the paired document");
         for gang in [Gang::Phoenix, Gang::BlackArm] {
-            let path =
-                compile_path_for_gang(bytes.as_ref(), &selected, &quests, worker, Some(gang))
-                    .unwrap();
+            let path = compile_path_for_gang(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                Some(gang),
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+            .unwrap();
             assert_eq!(
                 path.role.as_ref().unwrap().0.as_ref(),
                 match gang {
@@ -127,6 +133,7 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
             &quests,
             worker,
             Some(Gang::BlackArm),
+            &script::local_state::OperatorLoadouts::absent(),
         )
         .unwrap();
         document["roles"][1]["sequences"][0]["steps"][0]["comment"] =
@@ -141,6 +148,7 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
             &quests,
             worker,
             Some(Gang::BlackArm),
+            &script::local_state::OperatorLoadouts::absent(),
         )
         .unwrap();
         assert_ne!(first_path.digest, second_path.digest);

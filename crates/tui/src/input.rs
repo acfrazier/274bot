@@ -424,7 +424,10 @@ impl TuiApp {
                 let focused = self.focused_name();
                 self.log.save(focused.as_deref());
             }
-            Command::LogSessionFile => self.log.toggle_session_file(),
+            Command::LogSessionFile => {
+                let preferences = self.shared_preferences().cloned();
+                self.log.toggle_session_file(preferences.as_ref())
+            }
             Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
             Command::LoadLoginAll
             | Command::LogoutAll
@@ -464,8 +467,9 @@ impl TuiApp {
 
     fn log_search_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let focused = self.focused_name();
+        let preferences = self.shared_preferences().cloned();
         self.log
-            .on_key(key, focused.as_deref())
+            .on_key(key, focused.as_deref(), preferences.as_ref())
             .then_some(AppAction::None)
     }
 
@@ -569,7 +573,11 @@ impl TuiApp {
             },
             Screen::Logs => {
                 let focused = self.focused_name();
-                if self.log.on_key(key, focused.as_deref()) {
+                let preferences = self.shared_preferences().cloned();
+                if self
+                    .log
+                    .on_key(key, focused.as_deref(), preferences.as_ref())
+                {
                     AppAction::None
                 } else if key.code == KeyCode::Esc {
                     self.show_screen(Screen::Overview)
@@ -593,7 +601,12 @@ impl TuiApp {
 
     fn drawer_key(&mut self, key: KeyEvent) -> AppAction {
         let focused = self.focused_name();
-        if !self.log.on_key(key, focused.as_deref()) && key.code == KeyCode::Esc {
+        let preferences = self.shared_preferences().cloned();
+        if !self
+            .log
+            .on_key(key, focused.as_deref(), preferences.as_ref())
+            && key.code == KeyCode::Esc
+        {
             self.key_focus = Pane::Detail;
         }
         AppAction::None
@@ -643,21 +656,21 @@ impl TuiApp {
                     self.map_route_through_zones = false;
                 }
                 self.queue_nav_preference(preference);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }
             SettingsKey::ScriptScopeNoticeAck => {
                 self.script_scope_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }
             SettingsKey::SurvivableRoutingNoticeAck => {
                 self.survivable_routing_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::SurvivableRoutingNoticeAck);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }
