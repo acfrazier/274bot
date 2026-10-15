@@ -15,7 +15,7 @@ const GATHERER_START: WorldTile = WorldTile {
 const BRONZE_AXE_ID: i32 = 1351;
 const NORMAL_TREE_ID: i32 = 1276;
 const WOODCUTTING_STAT_ID: i32 = 8;
-const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
+pub(crate) const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "skill",
         value: ScriptInjectValue::Str("Woodcutting"),

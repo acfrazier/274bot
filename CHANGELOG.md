@@ -55,13 +55,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   including hits that miss. Before, it could walk straight back to its
   fishing or gathering spot between hits, next to the attacker. It runs far
   enough that the attacker gives up chasing, which now also outruns a Swarm,
-  and returns only once the attacker has gone. If it can't get away, it
-  stops trying after about 15 seconds and hands control back to the script.
+  and normally returns only once the attacker has gone. If the bot is still
+  being attacked but gets no farther away for about 13 seconds (it is boxed
+  in), it stops trying, stops walking and lets the script resume, including
+  eating.
+  Only an attacker out of sight or no longer attacking can keep the script
+  paused for up to about 10 minutes. After either limit, the bot does not
+  walk back toward the attacker.
 - Panel and TUI have a new per-event Policies control for random events.
   Flee is the default and the only option that works yet.
+- When a chopped tree becomes an Ent, the Guardian stops chopping and waits
+  for the tree to return before the Gatherer resumes. This prevents the Ent
+  from breaking the axe.
+- Lost-tool recovery no longer abandons a pickaxe or axe after one refused
+  click. It retries on the next game tick within the existing recovery
+  limit.
 
 ### Scripts
 
+- The Gatherer continues message boxes before waiting for its inventory tab.
+  A Mime emote-unlock message after the return teleport no longer prevents
+  gathering from resuming.
 - Scripts can now use `shouldBankNow`, `isDisposableGatherJunk` and
   `waitBankReady`. The junk check covers gems, strange fruit, beer, kebabs,
   the random-event casket, fliers and half-eaten pies. `waitBankReady` returns
@@ -157,6 +171,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.2` 
   scripts it replaces with its own versions (such as Woodcutter or
   CowKiller), aren't matched to a 274bot script either. The preview lists
   each of these with the reason.
+
+### Fixed during development
+
+- The random-event Guardian remembers where an attacker first appeared,
+  before its delayed attack starts. It keeps fleeing if a Tree spirit still
+  targets the bot after the first escape.
+- The escape route goes far enough to let an attacker stop chasing and leave.
+  A visible attacker normally prevents the bot from returning too soon.
+- When an attacker leaves view, the bot continues toward its escape target.
+  If the bot stops beyond the attacker's reach, it returns after about
+  13 seconds without seeing the attacker, even if the route stopped short.
+- A failed escape no longer prevents the script from eating for several
+  minutes while an attacker keeps hitting a boxed-in bot. After the bot
+  stops trying, the same attacker cannot immediately pause the script again.
+- Ordinary monsters with random-event names no longer trigger event handling.
+  A former attacker no longer hides a newly detected event.
+- The Guardian uses visible player targeting to avoid claiming another
+  player's nearby Ent. Before that target is visible, a nearby Ent can still
+  be mistaken for this bot's event. All Ent waits end after 60 game ticks.
+- Without selected game content, the status still shows an identified event
+  attacker, but the Guardian does not guess a flee distance or pause the script.
 
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 

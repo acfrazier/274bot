@@ -17,6 +17,7 @@ use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
 use crate::proof::Proof;
+use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 use crate::{Scenario, StepKind, SustainWhen, Wait};
 
 /// The runner's pollable status (the UI and the headless test read it).
@@ -44,6 +45,7 @@ enum Phase {
 enum TerminalOutcome {
     Pass,
     Fail(String),
+    Unavailable(String),
 }
 
 struct TerminalCleanup {
@@ -435,6 +437,9 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// Random-event Guardian episode, armed by an
+    /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
+    random_event: Option<RandomEventEpisode>,
     /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
     protect_window: Option<ProtectWindowObservation>,
     /// StartScript has begun: paint published before it cannot belong to
@@ -544,6 +549,7 @@ impl ScenarioRunner {
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            random_event: None,
             protect_window: None,
             script_started: false,
             receipt_prefixes,
@@ -816,7 +822,7 @@ impl ScenarioRunner {
     pub fn status(&self) -> RunnerStatus {
         match self.phase {
             Phase::Done => match self.evidence.as_ref().map(|e| e.outcome) {
-                Some("FAIL") => RunnerStatus::Failed(
+                Some("FAIL" | "UNAVAILABLE") => RunnerStatus::Failed(
                     self.evidence
                         .as_ref()
                         .and_then(|e| e.message.clone())
@@ -1002,7 +1008,24 @@ impl ScenarioRunner {
                     return;
                 }
             };
-            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
+            let random_event_holds = match self.observe_random_event(client, hold) {
+                Verdict::Pending => false,
+                Verdict::Pass => true,
+                Verdict::Fail(message) => {
+                    self.finish_fail(&format!(
+                        "step {} ({}): {message}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+                Verdict::Unavailable(message) => {
+                    self.finish_unavailable(&message);
+                    return;
+                }
+            };
+            let native_episode_holds = random_event_holds
+                && self.observe_lamp_redemption(hold).unwrap_or(true)
                 && self.observe_maze_completion(hold).unwrap_or(true)
                 && stall_combat_holds;
             let arm_holds = match &self.current_step().kind {
@@ -1049,6 +1072,14 @@ impl ScenarioRunner {
                     .or_else(|| {
                         self.stall_combat
                             .map(|state| format!("{} [stall_combat={state:?}]", arm.name()))
+                    })
+                    .or_else(|| {
+                        matches!(
+                            self.current_step().kind,
+                            StepKind::ObserveRandomEvent { .. }
+                        )
+                        .then(|| self.random_event.as_ref().map(RandomEventEpisode::summary))
+                        .flatten()
                     })
                     .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
@@ -1150,6 +1181,13 @@ impl ScenarioRunner {
             StepKind::ObserveStallCombat { .. }
         )
         .then_some(StallCombatObservation::FirstSession);
+        if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
+            // The cells run on the 289 engine (`tools/engine-patches/289`);
+            // missing content data leaves the evade range unknown, which the
+            // oracle reports instead of guessing.
+            let data = api::game_data::for_revision(client::io::ClientRevision::R289).ok();
+            self.random_event = Some(RandomEventEpisode::new(cell).with_game_data(data));
+        }
         if matches!(self.current_step().kind, StepKind::StopScript) {
             self.script_idle = false;
             self.script_started = false;
@@ -1617,7 +1655,8 @@ impl ScenarioRunner {
             | StepKind::StopScript
             | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
-            | StepKind::ObserveStallCombat { .. } => Ok(()),
+            | StepKind::ObserveStallCombat { .. }
+            | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {
@@ -1798,6 +1837,45 @@ impl ScenarioRunner {
         self.record_fail(msg);
     }
 
+    /// The cell needs an engine test patch this engine lacks: end the run
+    /// as UNAVAILABLE (reported as a failed status) naming the patch.
+    fn finish_unavailable(&mut self, msg: &str) {
+        if matches!(self.phase, Phase::Cleaning) {
+            return;
+        }
+        if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
+            self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Unavailable(msg.to_owned()));
+            return;
+        }
+        self.record_terminal("UNAVAILABLE", msg);
+    }
+
+    /// Feed the current frame to the armed random-event episode and send
+    /// its trigger when it asks for one. Steps without an episode pass.
+    fn observe_random_event(&mut self, client: &mut Client, hold: bool) -> Verdict {
+        if !matches!(
+            self.current_step().kind,
+            StepKind::ObserveRandomEvent { .. }
+        ) {
+            return Verdict::Pass;
+        }
+        let Some(episode) = self.random_event.as_mut() else {
+            return Verdict::Pass;
+        };
+        let frame = Frame::from_snapshot(
+            &self.snapshot,
+            episode.cell(),
+            hold,
+            self.obj_names.as_deref(),
+        );
+        if let Some(command) = episode.next_send(&frame) {
+            if !cheat(client, &command).is_sent() {
+                return Verdict::Fail(format!("driver rejected `{command}`"));
+            }
+        }
+        episode.observe(frame)
+    }
+
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
         self.phase = Phase::Cleaning;
         self.terminal_cleanup = Some(TerminalCleanup {
@@ -1846,7 +1924,7 @@ impl ScenarioRunner {
             Some(TerminalOutcome::Pass) => {
                 format!("could not restore world speed to 600ms: {reason}")
             }
-            Some(TerminalOutcome::Fail(original)) => {
+            Some(TerminalOutcome::Fail(original) | TerminalOutcome::Unavailable(original)) => {
                 format!("{original}; additionally could not restore world speed to 600ms: {reason}")
             }
             None => format!("could not restore world speed to 600ms: {reason}"),
@@ -1858,6 +1936,7 @@ impl ScenarioRunner {
         match outcome {
             TerminalOutcome::Pass => self.record_pass(),
             TerminalOutcome::Fail(message) => self.record_fail(&message),
+            TerminalOutcome::Unavailable(message) => self.record_terminal("UNAVAILABLE", &message),
         }
     }
 
@@ -1890,15 +1969,20 @@ impl ScenarioRunner {
             .protect_window
             .as_ref()
             .map(ProtectWindowObservation::evidence);
+        evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         self.evidence = Some(evidence);
     }
 
     fn record_fail(&mut self, msg: &str) {
+        self.record_terminal("FAIL", msg);
+    }
+
+    fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
             self.scenario.name,
-            "FAIL",
+            outcome,
             self.current_predicate_name(),
             Some(msg.to_string()),
             self.total_ticks,
@@ -1911,6 +1995,7 @@ impl ScenarioRunner {
             .protect_window
             .as_ref()
             .map(ProtectWindowObservation::evidence);
+        evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         self.evidence = Some(evidence);
     }
 }

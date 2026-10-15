@@ -1,0 +1,42 @@
+From cc359656b4acd216ca452495874b6beba9a0ac75 Mon Sep 17 00:00:00 2001
+From: Austen Frazier <acfrazier@gmail.com>
+Date: Thu, 10 Sep 2026 16:02:42 -0400
+Subject: [PATCH] Add guarded local givebank fixture
+
+---
+ .../game/client/handler/ClientCheatHandler.ts | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/src/network/game/client/handler/ClientCheatHandler.ts b/src/network/game/client/handler/ClientCheatHandler.ts
+index 81d44d5f..ee6c96c9 100644
+--- a/src/network/game/client/handler/ClientCheatHandler.ts
++++ b/src/network/game/client/handler/ClientCheatHandler.ts
+@@ -352,6 +352,25 @@ export default class ClientCheatHandler extends ClientGameMessageHandler<ClientC
+ 
+                 const count = Math.max(1, Math.min(tryParseInt(args[1], 1), 0x7fffffff));
+                 player.invAdd(InvType.INV, obj, count);
++            } else if (cmd === 'givebank' && !Environment.node.production && player.staffModLevel >= 4) {
++                // custom (local harness / non-production): seed the bank without booth deposit.
++                // ::givebank <item> (amount)
++                if (args.length < 1) {
++                    return false;
++                }
++
++                const obj = ObjType.getId(args[0]);
++                if (obj === -1) {
++                    return false;
++                }
++
++                const bank = InvType.getId('bank');
++                if (bank === -1) {
++                    return false;
++                }
++
++                const count = Math.max(1, Math.min(tryParseInt(args[1], 1), 0x7fffffff));
++                player.invAdd(bank, obj, count);
+             } else if (cmd === 'giveother' && Environment.node.production) {
+                 // custom
+                 if (args.length < 2) {
+-- 
+2.56.0
+
