@@ -28,6 +28,7 @@ struct Retirement {
     isolate: LoadIsolate,
     done: Sender<Vec<String>>,
     deadline: Instant,
+    awaiting_setup: bool,
     validation: bool,
 }
 
@@ -42,9 +43,62 @@ struct Registry {
     active: usize,
     retiring: Vec<Retirement>,
     quarantined: Vec<Quarantined>,
+    /// Rows temporarily owned by the worker outside this lock still count
+    /// as retiring in concurrent capacity/status snapshots.
+    processing_gameplay: usize,
+    processing_validation: usize,
     /// Raw Drop may revoke a live isolate without a waiting slot. It remains
     /// supervised and charged rather than becoming an untracked detached thread.
     uncredited: Vec<JoinHandle<()>>,
+}
+
+/// Physical process census. Retiring gameplay/validation rows retain their J/V
+/// charge; quarantined rows hold an A credit until their OS thread joins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IsolateCapacityStatus {
+    pub active: usize,
+    pub retiring_gameplay: usize,
+    pub retiring_validation: usize,
+    pub quarantined: usize,
+    pub quarantined_validation: usize,
+    pub uncredited: usize,
+}
+
+impl Registry {
+    fn status(&self) -> IsolateCapacityStatus {
+        IsolateCapacityStatus {
+            active: self.active,
+            retiring_gameplay: self.retiring.iter().filter(|row| !row.validation).count()
+                + self.processing_gameplay,
+            retiring_validation: self.retiring.iter().filter(|row| row.validation).count()
+                + self.processing_validation,
+            quarantined: self.quarantined.len(),
+            quarantined_validation: self
+                .quarantined
+                .iter()
+                .filter(|row| row.validation_done.is_some())
+                .count(),
+            uncredited: self.uncredited.len(),
+        }
+    }
+
+    /// `None` parks until a producer notifies; only live retirement custody
+    /// needs the 5 ms join probe. A registered deadline uses its absolute time.
+    fn wait_budget(&self) -> Option<Duration> {
+        let until = self.deadlines.iter().map(|entry| entry.at).min();
+        let retiring = !self.retiring.is_empty()
+            || !self.quarantined.is_empty()
+            || !self.uncredited.is_empty();
+        match (until, retiring) {
+            (None, false) => None,
+            (Some(at), false) => Some(at.saturating_duration_since(Instant::now())),
+            (Some(at), true) => Some(
+                at.saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(5)),
+            ),
+            (None, true) => Some(Duration::from_millis(5)),
+        }
+    }
 }
 
 pub(super) struct Supervisor {
@@ -89,6 +143,17 @@ pub(super) fn worker_count() -> usize {
     })
 }
 
+/// Snapshot of physical JS admission and retirement, including rows whose
+/// logical Stop has completed but whose isolate thread has not joined.
+pub fn capacity_status() -> Result<IsolateCapacityStatus, LoadIsolateError> {
+    let service = get()?;
+    let registry = service
+        .state
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    Ok(registry.status())
+}
+
 struct WorkerAlive<'a>(&'a AtomicBool);
 
 impl Drop for WorkerAlive<'_> {
@@ -103,7 +168,11 @@ pub(super) struct Permit(Arc<Supervisor>);
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut registry = self.0.state.lock().unwrap();
+        let mut registry = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         registry.active -= 1;
         self.0.changed.notify_one();
     }
@@ -118,13 +187,26 @@ impl Supervisor {
                 "supervisor worker stopped".into(),
             ));
         }
-        let mut registry = self.state.lock().unwrap();
+        let mut registry = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         Self::reap(&mut registry);
         if registry.quarantined.len() == QUARANTINE_CAP {
-            return Err(LoadIsolateError::QuarantineFull);
+            let status = registry.status();
+            return Err(LoadIsolateError::QuarantineFull {
+                quarantined: status.quarantined,
+                retiring_gameplay: status.retiring_gameplay,
+                retiring_validation: status.retiring_validation,
+            });
         }
         if registry.active >= ISOLATE_CAP {
-            return Err(LoadIsolateError::IsolateCapacity);
+            let status = registry.status();
+            return Err(LoadIsolateError::IsolateCapacity {
+                active: status.active,
+                retiring_gameplay: status.retiring_gameplay,
+                retiring_validation: status.retiring_validation,
+            });
         }
         registry.active += 1;
         Ok(Permit(Arc::clone(self)))
@@ -143,7 +225,10 @@ impl Supervisor {
                 "supervisor worker stopped".into(),
             ));
         }
-        let mut registry = self.state.lock().unwrap();
+        let mut registry = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if registry.deadlines.len() >= ISOLATE_CAP * 2 {
             return Err(LoadIsolateError::SupervisorCapacity);
         }
@@ -168,7 +253,10 @@ impl Supervisor {
                 "supervisor worker stopped".into(),
             ));
         }
-        let mut registry = self.state.lock().unwrap();
+        let mut registry = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if registry.deadlines.len() >= ISOLATE_CAP * 2 {
             return Err(LoadIsolateError::SupervisorCapacity);
         }
@@ -182,19 +270,42 @@ impl Supervisor {
         Ok(())
     }
 
+    fn retirement_deadline(setup: &super::SetupState, now: Instant) -> Instant {
+        match setup {
+            super::SetupState::Pending { deadline, .. } => *deadline + JOIN_TIMEOUT,
+            _ => now + JOIN_TIMEOUT,
+        }
+    }
+
     pub(super) fn retire(&self, isolate: LoadIsolate, done: Sender<Vec<String>>, validation: bool) {
-        let mut registry = self.state.lock().unwrap();
+        // Setup retains its original 10-second deadline, followed by the
+        // 2-second join allowance. A ready isolate needs only join.
+        let setup = isolate
+            .setup
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let awaiting_setup = matches!(*setup, super::SetupState::Pending { .. });
+        let deadline = Self::retirement_deadline(&setup, Instant::now());
+        drop(setup);
+        let mut registry = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         registry.retiring.push(Retirement {
             isolate,
             done,
-            deadline: Instant::now() + JOIN_TIMEOUT,
+            deadline,
+            awaiting_setup,
             validation,
         });
         self.changed.notify_one();
     }
 
     pub(super) fn retain_uncredited(&self, handle: JoinHandle<()>) {
-        let mut registry = self.state.lock().unwrap();
+        let mut registry = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         registry.uncredited.push(handle);
         self.changed.notify_one();
     }
@@ -225,18 +336,34 @@ impl Supervisor {
     fn run(self: Arc<Self>) {
         self.alive.store(true, Ordering::Release);
         let _alive = WorkerAlive(&self.alive);
+        let mut expired = Vec::new();
+        let mut retiring = Vec::new();
+        let mut still_retiring = Vec::new();
+        let mut credited = Vec::new();
         loop {
-            let mut registry = self.state.lock().unwrap();
+            let mut registry = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let now = Instant::now();
             Self::reap(&mut registry);
+            // Both deadline and retirement work leave the process registry
+            // before taking isolate locks or dropping an isolate.
+            expired.clear();
             let mut i = 0;
             while i < registry.deadlines.len() {
-                if registry.deadlines[i].at > now {
+                if registry.deadlines[i].at <= now {
+                    expired.push(registry.deadlines.swap_remove(i));
+                } else {
                     i += 1;
-                    continue;
                 }
-                let entry = registry.deadlines.swap_remove(i);
-                let mut state = entry.teardown.lock().unwrap();
+            }
+            drop(registry);
+            for entry in expired.drain(..) {
+                let mut state = entry
+                    .teardown
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
                 match entry.kind {
                     DeadlineKind::Execution { id, owner } => {
                         if state.phase == TeardownPhase::Running
@@ -265,40 +392,68 @@ impl Supervisor {
                     }
                 }
             }
-            let mut i = 0;
-            while i < registry.retiring.len() {
-                let row = &mut registry.retiring[i];
+            let mut registry = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            std::mem::swap(&mut retiring, &mut registry.retiring);
+            registry.processing_gameplay = retiring.iter().filter(|row| !row.validation).count();
+            registry.processing_validation = retiring.len() - registry.processing_gameplay;
+            // Only this worker credits quarantines. Reserve the available
+            // slots locally; concurrent reaping can only increase capacity.
+            let mut quarantine_room = QUARANTINE_CAP - registry.quarantined.len();
+            drop(registry);
+
+            // The scratch vectors retain their allocations across join probes.
+            let now = Instant::now();
+            for mut row in retiring.drain(..) {
                 // A setup handle can arrive after Stop. Poll without blocking,
                 // then terminate before onStop can take ownership of V8.
-                let _ = row.isolate.resolve_setup(None);
+                let setup = row.isolate.resolve_setup(None);
+                if row.awaiting_setup && setup != super::Ready::Pending {
+                    row.awaiting_setup = false;
+                    row.deadline = row.deadline.min(Instant::now() + JOIN_TIMEOUT);
+                }
                 if row
                     .isolate
                     .handle
                     .as_ref()
                     .is_some_and(JoinHandle::is_finished)
                 {
-                    let mut row = registry.retiring.swap_remove(i);
                     if let Some(handle) = row.isolate.handle.take() {
                         let _ = handle.join();
                     }
                     row.isolate.pump_logs();
-                    let lines = std::mem::take(&mut *row.isolate.logs.lock().unwrap());
+                    let lines = std::mem::take(
+                        &mut *row
+                            .isolate
+                            .logs
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
                     let _ = row.done.send(lines);
-                } else if now >= row.deadline && registry.quarantined.len() < QUARANTINE_CAP {
-                    let mut row = registry.retiring.swap_remove(i);
+                    // Drop the LoadIsolate here, before reacquiring registry.
+                } else if now >= row.deadline && quarantine_room != 0 {
                     // A gameplay slot releases J only with this credited A
                     // transfer. Validation keeps its permit until real join.
                     row.isolate.pump_logs();
-                    let mut lines = std::mem::take(&mut *row.isolate.logs.lock().unwrap());
+                    let mut lines = std::mem::take(
+                        &mut *row
+                            .isolate
+                            .logs
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
                     lines.push("JS isolate quarantined after join deadline".into());
                     if let Some(handle) = row.isolate.handle.take() {
+                        quarantine_room -= 1;
                         if row.validation {
-                            registry.quarantined.push(Quarantined {
+                            credited.push(Quarantined {
                                 handle,
                                 validation_done: Some((row.done, lines)),
                             });
                         } else {
-                            registry.quarantined.push(Quarantined {
+                            credited.push(Quarantined {
                                 handle,
                                 validation_done: None,
                             });
@@ -306,19 +461,228 @@ impl Supervisor {
                         }
                     }
                 } else {
-                    i += 1;
+                    still_retiring.push(row);
                 }
             }
-            let until = registry
+            let mut registry = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            registry.processing_gameplay = 0;
+            registry.processing_validation = 0;
+            registry.retiring.append(&mut still_retiring);
+            registry.quarantined.append(&mut credited);
+            if let Some(duration) = registry.wait_budget() {
+                drop(
+                    self.changed
+                        .wait_timeout(registry, duration)
+                        .unwrap_or_else(|poison| poison.into_inner()),
+                );
+            } else {
+                drop(
+                    self.changed
+                        .wait(registry)
+                        .unwrap_or_else(|poison| poison.into_inner()),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_registry_parks_until_notification() {
+        let registry = Registry::default();
+        assert_eq!(registry.wait_budget(), None);
+        assert_eq!(registry.status().quarantined, 0);
+        assert_eq!(registry.status().retiring_validation, 0);
+    }
+
+    #[test]
+    fn setup_stop_preserves_original_setup_deadline_plus_join() {
+        let now = Instant::now();
+        let (tx, rx) = mpsc::channel();
+        let setup = super::super::SetupState::Pending {
+            rx,
+            deadline: now + super::super::SETUP_TIMEOUT,
+        };
+        assert_eq!(
+            Supervisor::retirement_deadline(&setup, now),
+            now + super::super::SETUP_TIMEOUT + JOIN_TIMEOUT
+        );
+        drop(tx);
+        assert_eq!(
+            Supervisor::retirement_deadline(&super::super::SetupState::Ready, now),
+            now + JOIN_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn quarantined_validation_receipt_waits_for_physical_thread_join() {
+        let (release, held) = mpsc::channel();
+        let handle = std::thread::spawn(move || held.recv().unwrap());
+        let (done, receipt) = mpsc::channel();
+        let mut registry = Registry::default();
+        registry.quarantined.push(Quarantined {
+            handle,
+            validation_done: Some((done, vec!["joined validator".into()])),
+        });
+        assert_eq!(registry.status().quarantined_validation, 1);
+        Supervisor::reap(&mut registry);
+        assert!(matches!(receipt.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        release.send(()).unwrap();
+        while !registry.quarantined[0].handle.is_finished() {
+            std::thread::yield_now();
+        }
+        Supervisor::reap(&mut registry);
+        assert_eq!(receipt.recv().unwrap(), vec!["joined validator"]);
+        assert_eq!(registry.status().quarantined_validation, 0);
+    }
+
+    #[test]
+    fn isolate_capacity_refuses_without_uncharging_retirees() {
+        let service = Arc::new(Supervisor {
+            state: Mutex::new(Registry {
+                active: ISOLATE_CAP,
+                ..Registry::default()
+            }),
+            changed: Condvar::new(),
+            alive: AtomicBool::new(true),
+        });
+        assert!(matches!(
+            service.admit(),
+            Err(LoadIsolateError::IsolateCapacity {
+                active: ISOLATE_CAP,
+                ..
+            })
+        ));
+        assert_eq!(service.state.lock().unwrap().status().active, ISOLATE_CAP);
+    }
+
+    #[test]
+    fn poisoned_isolate_deadline_does_not_poison_process_registry() {
+        let isolate = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            super::super::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(isolate.probe("1").unwrap(), 1);
+        assert_eq!(isolate.poll_ready(), super::super::Ready::Ready);
+        let teardown = Arc::new(Mutex::new(TeardownState::new()));
+        let poisoned = Arc::clone(&teardown);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().unwrap();
+            panic!("isolate-local lock fault");
+        })
+        .join();
+        get()
+            .unwrap()
+            .arm_hook(
+                Arc::clone(&teardown),
+                isolate.terminate.get().unwrap().clone(),
+                Instant::now(),
+            )
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            let guard = get().unwrap().state.lock().unwrap();
+            let pending = guard
                 .deadlines
                 .iter()
-                .map(|entry| entry.at)
-                .min()
-                .unwrap_or_else(|| now + Duration::from_millis(5));
-            let duration = until
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(5));
-            let _guard = self.changed.wait_timeout(registry, duration).unwrap();
+                .any(|deadline| Arc::ptr_eq(&deadline.teardown, &teardown));
+            drop(guard);
+            if !pending {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "poisoned deadline was not processed"
+            );
+            std::thread::yield_now();
         }
+        assert_eq!(worker_count(), 1);
+        let peer = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            super::super::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(peer.probe("1").unwrap(), 1);
+        peer.join();
+        isolate.join();
+    }
+
+    #[test]
+    fn poisoned_retiree_does_not_stop_process_supervisor() {
+        const CHILD: &str = "SCRIPT_POISONED_RETIREE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "load::isolate::supervisor::tests::poisoned_retiree_does_not_stop_process_supervisor",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "poisoned retirement child failed: {status}"
+            );
+            return;
+        }
+
+        let isolate = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            super::super::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(isolate.probe("1").unwrap(), 1);
+        assert_eq!(isolate.poll_ready(), super::super::Ready::Ready);
+        let poisoned = Arc::clone(&isolate.teardown);
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoned.lock().unwrap();
+            panic!("poison a real isolate teardown");
+        })
+        .join()
+        .is_err());
+        let (done, receipt) = mpsc::channel();
+        isolate.send(super::super::IsolateCmd::Stop { invoke_hook: false });
+        get().unwrap().retire(isolate, done, false);
+        let _lines = receipt
+            .recv_timeout(Duration::from_secs(3))
+            .expect("poisoned isolate must complete retirement");
+        // The receipt precedes the final row drop. Wait until that drop is
+        // accounted for, then assert the worker survived it. On the old path,
+        // reacquiring the registry waits for the supervisor's poisoned drop.
+        let until = Instant::now() + Duration::from_secs(3);
+        loop {
+            let registry = get()
+                .unwrap()
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let retired = registry.retiring.is_empty() && registry.processing_gameplay == 0;
+            drop(registry);
+            if retired {
+                break;
+            }
+            assert!(Instant::now() < until, "retirement never settled");
+            std::thread::yield_now();
+        }
+        assert_eq!(worker_count(), 1, "one poisoned isolate cannot stop JS");
+        let peer = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            super::super::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(peer.probe("1").unwrap(), 1);
+        peer.join();
     }
 }

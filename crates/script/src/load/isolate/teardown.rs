@@ -19,14 +19,21 @@ pub(super) enum ExecutionInterrupt {
     Watchdog,
     Pause,
     SessionReset,
+    NoDeadline(DeadlineRefusal),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum DeadlineRefusal {
+    Capacity,
+    Stopped,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct InterruptedExecution {
     pub(super) owner: ExecutionInterrupt,
-    /// Set only by the V8-entry fence around the call that consumed the
-    /// terminate. A request that arrived after a call returned is cancelled,
-    /// never treated as a cut.
+    /// Set by the V8-entry fence when the call consumed termination. A
+    /// refused independent deadline is terminal even before entry and is
+    /// marked here at refusal; later stale requests are cancelled, not cuts.
     pub(super) consumed: bool,
 }
 
@@ -45,6 +52,9 @@ pub(super) struct TeardownState {
     /// Unit-test-only wider budget for success-path hook assertions.
     #[cfg(test)]
     pub(super) test_hook_timeout: Option<Duration>,
+    /// Isolate-local fault seam; no process-global supervisor state is changed.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(super) fail_execution_registration: Option<DeadlineRefusal>,
     /// An interruptible tick/recovery eval is currently inside V8. Stop,
     /// Pause, connection reset, and the dispatch watchdog may terminate only
     /// while this is true.
@@ -78,6 +88,8 @@ impl TeardownState {
             interrupt_issued: false,
             hook_entry_delay: None,
             fail_hook_registration: false,
+            #[cfg(any(test, feature = "test-hooks"))]
+            fail_execution_registration: None,
             #[cfg(test)]
             test_hook_timeout: None,
             execution_active: false,

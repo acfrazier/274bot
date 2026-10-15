@@ -10,6 +10,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
+- Load-script validation now waits for bounded admission without failing
+  merely because multiple refreshes submit together. If the independent JS
+  deadline service refuses a running execution, its tick error identifies
+  the service condition instead of calling the execution runaway.
+- A poisoned Load-script isolate can now retire without stopping the shared
+  deadline supervisor or refusing new scripts for other accounts.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

@@ -173,10 +173,35 @@ platform after that point. One Tokio runtime bridges the per-bot isolate
 threads; one supervisor owns execution/hook deadlines and physical retirement.
 Dropping a Load handle does not release its process isolate reservation until
 the V8 thread exits. A bounded quarantine retains over-deadline threads; when
-full, new JS is refused instead of silently detaching another worker.
-Catalog refresh validation uses one serialized, bounded process seat. An
-invalidated refresh cancels its queued and remaining cards; the current
-generation alone can apply the returned prepared cards.
+all four credits are occupied, new JS is refused instead of silently detaching
+another worker. `script::load::isolate_capacity_status()` reports active
+isolate reservations, unjoined retiring gameplay and validation rows, credited
+quarantine (including validators), and uncredited raw-drop rows. Retiring rows
+remain charged to their original admission until joined or credited transfer;
+a quarantined validator retains its validation seat until actual join. The
+retirement log line `JS isolate quarantined after join deadline` means physical
+join did not occur by the setup (10 s when still starting) plus join (2 s)
+allowance, not that the isolate or permit has been freed. It is not a process
+shutdown; at saturation the JS Start/restart/validation refusal remains visible.
+The supervisor processes retirement outside its process registry lock and
+recovers poisoned isolate-local locks during cleanup: a failed isolate cannot
+poison the process registry or stop admissions for unrelated accounts.
+If the independent execution deadline supervisor is stopped or at capacity,
+the current execution is cut immediately and its tick error names the actual
+cause rather than labelling healthy work runaway. Pause normally allows
+already-entered healthy work to finish, except when no independent deadline
+could be registered; an unbounded execution is never allowed to continue.
+Catalog refresh validation uses one serialized process seat with a bounded
+16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
+is `LoadIsolate::validate_prepared_batch`, which returns an owning
+`ValidationBatch` receipt. When that queue is full, the refresh owner retains
+its one pending batch on the receipt and retries non-blockingly on later
+polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
+receipt cancels a held pending batch or skips an already-queued one. The
+current generation alone can apply the returned prepared cards.
+The former synchronous `validate_source`/`PreparedCard::validate` one-off
+helpers and their `Single` queue job are removed; tests and product use the
+same bounded batch/receipt path, so no one-off queue-full refusal remains.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
