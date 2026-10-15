@@ -56,6 +56,10 @@ pub struct ScriptStartHandle {
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+    /// The Play's state composition: a Start without caller-owned loadouts
+    /// leases the operator's rows from it. `None` for the legacy direct
+    /// connection, whose Starts post no operator rows.
+    state: Option<Arc<super::local_state::StateComposition>>,
 }
 
 pub(crate) enum StartRequest<'a> {
@@ -82,21 +86,22 @@ fn validate_script_loadout_setting(
         .map_err(|error| error.to_string())
 }
 
-fn validate_default_script_loadout_setting(
-    bag: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(), String> {
-    if !bag.contains_key("loadout") {
-        return Ok(());
-    }
-    let loadouts = script::LoadoutsStore::with_default_path();
-    validate_script_loadout_setting(loadouts.loadouts(), Some(bag))
-}
-
 impl ScriptStartHandle {
+    /// The operator's loadout rows for a Start on `name`'s slot: the state
+    /// composition's current lease (a readback, so a row the frontend's
+    /// form just saved is seen), or no rows for a composition without a
+    /// state service.
+    fn operator_loadouts(&self, name: &str) -> Result<Vec<api::loadout::Loadout>, String> {
+        match &self.state {
+            Some(state) => state.operator_loadouts(name),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
     /// (the slot thread is already pumping). Operator loadouts come from
-    /// the default store; harness scenario Start uses
+    /// the process state service; harness scenario Start uses
     /// [`Self::start_load_with_loadouts`] when the scenario owns fixture
     /// loadouts.
     pub fn start_load(
@@ -194,7 +199,13 @@ impl ScriptStartHandle {
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
             StartRequest::Compiled { id, bag } => {
-                if let Err(error) = validate_default_script_loadout_setting(&bag) {
+                let validated = if bag.contains_key("loadout") {
+                    self.operator_loadouts(name)
+                        .and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = validated {
                     Err(Refused(error))
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
@@ -218,35 +229,30 @@ impl ScriptStartHandle {
                 siblings,
                 loadouts,
             } => {
-                if let Some(loadouts) = loadouts {
-                    let result = match validate_script_loadout_setting(loadouts, bag.as_ref()) {
-                        Ok(()) => slot
-                            .start_load_with_loadouts_and_game_data(
-                                source,
-                                shape,
-                                siblings,
-                                loadouts,
-                                self.game_data.clone(),
-                                Arc::clone(&self.named_banks),
-                            )
-                            .map_err(Refused),
-                        Err(error) => Err(Refused(error)),
-                    };
-                    if result.is_ok() {
-                        if let Some(bag) = bag.as_ref() {
-                            slot.post_settings_bag(bag);
+                // Caller-owned rows (a harness scenario's fixtures) or the
+                // operator's current rows from the state service.
+                let leased;
+                let loadouts = match loadouts {
+                    Some(loadouts) => Ok(loadouts),
+                    None => match self.operator_loadouts(name) {
+                        Ok(rows) => {
+                            leased = rows;
+                            Ok(leased.as_slice())
                         }
-                    }
-                    result
-                } else {
-                    slot.start_load_with_settings_and_game_data_typed(
+                        Err(error) => Err(error),
+                    },
+                };
+                match loadouts {
+                    Ok(loadouts) => slot.start_load_with_settings_and_game_data_typed(
                         source,
                         shape,
                         bag.as_ref(),
                         siblings,
+                        loadouts,
                         self.game_data.clone(),
                         Arc::clone(&self.named_banks),
-                    )
+                    ),
+                    Err(error) => Err(Refused(error)),
                 }
             }
         };
@@ -621,6 +627,7 @@ impl Play {
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
+            state: self.local_state.clone(),
         }
     }
 

@@ -281,6 +281,7 @@ impl ProfileOptions {
             nav_flags: absolute(nav_flags),
             content_dir,
             vault_path: absolute(vault_path),
+            state_root: absolute(bot_dir),
             catalog_root: self
                 .catalog_root
                 .clone()

@@ -1,11 +1,17 @@
-//! Operator loadouts persisted at `~/.274bot/loadouts.json` (0o600).
+//! Operator loadouts persisted at `<state root>/loadouts.json` (0o600).
 //!
 //! Wire shape is `{ name, worn: {slot: name}, carry: [{item, qty}], unassigned? }`.
 //! Legacy `{ worn: [name], carry: [name] }` files are read without guessing
 //! slots or dropping items. `optionsFrom: 'loadouts'` fills setting combos
 //! from [`LoadoutsStore::names`]. The neutral values (`Loadout`,
 //! `CarryEntry`, the worn-slot table) live in `api::loadout`; this module
-//! keeps the store, its file I/O and the behaviour helpers.
+//! keeps the frontends' form editor over an explicit path (T5.5 moves the
+//! forms to the local-state port) and the behaviour helpers.
+//!
+//! There is no default path: the composition root resolves the state root
+//! once and hands the file's path in ([`LoadoutsStore::at`]). Slots and
+//! native cards read operator loadouts through the process local-state
+//! service ([`crate::local_state::SlotState`]), never through this store.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -39,11 +45,6 @@ pub fn worn_slot_label(slot: &str) -> &'static str {
     }
 }
 
-/// Default operator loadouts path (`~/.274bot/loadouts.json`).
-pub fn default_loadouts_path() -> PathBuf {
-    crate::bot_file("loadouts.json")
-}
-
 /// Persisted loadout list.
 pub struct LoadoutsStore {
     path: PathBuf,
@@ -62,10 +63,6 @@ impl LoadoutsStore {
             loadouts,
             dirty: false,
         }
-    }
-
-    pub fn with_default_path() -> Self {
-        Self::at(default_loadouts_path())
     }
 
     pub fn loadouts(&self) -> &[Loadout] {

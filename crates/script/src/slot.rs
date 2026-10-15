@@ -158,6 +158,10 @@ pub struct SlotScript {
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
     quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
+    /// The slot's local-state capability (T5.2), bound by the composition
+    /// root beside the quest-pair port; `None` when the composition opened
+    /// no state service for this slot.
+    local_state: Option<Arc<crate::local_state::SlotState>>,
     pair_evidence: Option<api::quest_progress::EvidenceStamp>,
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
@@ -286,6 +290,7 @@ impl SlotScript {
             retained: None,
             native_runtime: Default::default(),
             quest_pairs: None,
+            local_state: None,
             pair_evidence: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
@@ -356,6 +361,19 @@ impl SlotScript {
         self.quest_pairs = Some(port);
     }
 
+    /// Install the slot's local-state capability (T5.2): the process
+    /// service plus the account and content identity this slot reads and
+    /// writes under. Native cards receive it on every tick
+    /// ([`crate::native::NativeTick::state`]).
+    pub fn bind_local_state(&mut self, state: Arc<crate::local_state::SlotState>) {
+        self.local_state = Some(state);
+    }
+
+    /// The bound local-state capability, if any.
+    pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
+        self.local_state.as_ref()
+    }
+
     pub fn pair_world_changed(&self, host: &str, port: u16) {
         if let Some(pairs) = &self.quest_pairs {
             pairs.world_changed(host, port);
@@ -368,7 +386,10 @@ impl SlotScript {
     }
 
     /// Start a JS Load isolate (the isolate is spawned here, on Start, not
-    /// at Load). Same state gating as [`SlotScript::start_compiled`].
+    /// at Load) with no operator loadouts posted. Same state gating as
+    /// [`SlotScript::start_compiled`]. The composition root posts the
+    /// operator's rows through [`SlotScript::start_load_with_loadouts`]
+    /// from its local-state lease; nothing here opens a store.
     #[cfg(feature = "load")]
     pub fn start_load(
         &mut self,
@@ -376,8 +397,7 @@ impl SlotScript {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
-        self.start_load_with_loadouts(source, shape, siblings, loadouts.loadouts())
+        self.start_load_with_loadouts(source, shape, siblings, &[])
     }
 
     /// Start with explicit loadouts, avoiding operator filesystem inputs in
@@ -1325,7 +1345,8 @@ impl SlotScript {
         }
     }
 
-    /// Start a JS Load isolate and optionally post the operator settings bag.
+    /// Start a JS Load isolate with `loadouts` posted and optionally post
+    /// the operator settings bag.
     #[cfg(feature = "load")]
     pub fn start_load_with_settings(
         &mut self,
@@ -1333,18 +1354,21 @@ impl SlotScript {
         shape: LoadShape,
         bag: Option<&serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
         self.start_load_with_settings_and_game_data(
             source,
             shape,
             bag,
             siblings,
+            loadouts,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
         )
     }
 
-    /// Start with settings and the immutable facts selected by the owning Play.
+    /// Start with settings, the operator's loadout rows and the immutable
+    /// facts selected by the owning Play.
     #[cfg(feature = "load")]
     pub fn start_load_with_settings_and_game_data(
         &mut self,
@@ -1352,6 +1376,7 @@ impl SlotScript {
         shape: LoadShape,
         bag: Option<&serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
+        loadouts: &[api::loadout::Loadout],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), String> {
@@ -1360,13 +1385,17 @@ impl SlotScript {
             shape,
             bag,
             siblings,
+            loadouts,
             game_data,
             named_banks,
         )
         .map_err(|e| e.to_string())
     }
 
-    /// Typed initial-start boundary; refuses active slots before evaluating source.
+    /// Typed initial-start boundary; refuses active slots before evaluating
+    /// source. `loadouts` are the operator's rows the composition leased
+    /// from the local-state service: a `loadout` setting in `bag` must
+    /// name one of them, or the start is refused before anything spawns.
     #[cfg(feature = "load")]
     pub fn start_load_with_settings_and_game_data_typed(
         &mut self,
@@ -1374,13 +1403,13 @@ impl SlotScript {
         shape: LoadShape,
         bag: Option<&serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
+        loadouts: &[api::loadout::Loadout],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartLoadError> {
-        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
         if let Some(bag) = bag {
             let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
-            crate::loadouts_store::resolve_script_loadout_setting(loadouts.loadouts(), wanted)
+            crate::loadouts_store::resolve_script_loadout_setting(loadouts, wanted)
                 .map(|_| ())
                 .map_err(|error| StartLoadError::Refused(error.to_string()))?;
         }
@@ -1388,7 +1417,7 @@ impl SlotScript {
             source,
             shape,
             siblings,
-            loadouts.loadouts(),
+            loadouts,
             game_data,
             named_banks,
         )?;
@@ -2310,6 +2339,7 @@ impl SlotScript {
                     &mut retained,
                     &mut self.native_runtime,
                     self.quest_pairs.as_deref(),
+                    self.local_state.as_deref(),
                 )
             }
         };
