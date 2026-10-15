@@ -494,6 +494,11 @@ impl SlotArm {
         self.lifecycle.lock().session.current()
     }
 
+    /// Borrow the actual session gate while its owner lock remains held.
+    pub(super) fn session_gate(&self) -> parking_lot::MappedMutexGuard<'_, SessionGate> {
+        parking_lot::MutexGuard::map(self.lifecycle.lock(), |lifecycle| &mut lifecycle.session)
+    }
+
     pub fn latest_lifecycle_event(&self) -> Option<Event<SessionEventOut>> {
         self.lifecycle.lock().latest_event.clone()
     }

@@ -17,19 +17,148 @@ pub use pending::{
     PendingWithdrawXPhase,
 };
 
+use crate::native::seat::{Admission, EmissionSource, GameplaySeat};
+use api::identity::{ExecutionId, Fence, RequestId, RequestIdMinter};
+use api::script_contract::RequestStamp;
+use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::ctx::ScriptCtx;
 #[cfg(feature = "load")]
-use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
+use crate::isolate_fb::{DecodedSeatBatch, IsolateBuf, SeatStartArgs, SnapshotFingerprint};
 #[cfg(feature = "load")]
 use crate::load::{GameplayFactory, LoadIsolate, LoadShape, Ready};
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
 use serde::Serialize;
+
+// The seat's host ids occupy the high host range. Other process services
+// currently mint from HOST_FIRST; no separate seat instance can reuse an id.
+static SEAT_REQUEST_IDS: RequestIdMinter = match RequestIdMinter::starting_at(1 << 63) {
+    Ok(ids) => ids,
+    Err(_) => panic!("host request namespace is too small"),
+};
+
+enum SeatEffect {
+    Native(crate::native::HostAction),
+    #[cfg(feature = "load")]
+    Interact(crate::load::QueuedInteract),
+}
+
+/// Read-only, allocation-free counters for this slot's armed gameplay seat.
+/// Late controls are expected duplicates, not user-visible failures.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SlotMetrics {
+    pub dropped: u64,
+    pub late_controls: u64,
+}
+
+/// Test-support read-only receipt for the real slot-owned seat.
+#[cfg(feature = "test-hooks")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatProbe {
+    pub held: bool,
+    pub dropped: u64,
+    pub late_controls: u64,
+    pub live: usize,
+    pub results: usize,
+    pub reserved_releases: usize,
+    pub mirror_revokes_consumed: u64,
+}
+/// Native ledger request tokens start at one and are scoped to the current
+/// run. Keep their seat release handles in the lower half of the host range;
+/// the slot's compiled owner minter starts in the upper half.
+fn native_walk_id(raw: u64) -> Option<RequestId> {
+    (raw > 0 && raw < RequestId::HOST_FIRST)
+        .then(|| RequestId::from_raw(RequestId::HOST_FIRST + raw))
+        .flatten()
+}
+
+fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Option<RequestId> {
+    match req {
+        crate::shim::InteractReq::Walk { request_id, .. }
+        | crate::shim::InteractReq::WalkNear { request_id, .. } => {
+            RequestId::from_raw(*request_id).or(owner)
+        }
+        // WalkTo is one immediate click, and WalkNearestBank has no
+        // correlated AbortWalk handle to reserve.
+        _ => None,
+    }
+}
+
+fn seat_interact_class(
+    req: &crate::shim::InteractReq,
+    owner: Option<RequestId>,
+) -> (
+    api::script_contract::EmissionClass,
+    Option<api::script_contract::Release>,
+) {
+    use api::script_contract::{EmissionClass, Release};
+    match req {
+        crate::shim::InteractReq::AbortWalk { request_id } => (
+            EmissionClass::Release,
+            RequestId::from_raw(*request_id)
+                .or(owner)
+                .map(Release::AbortWalk),
+        ),
+        crate::shim::InteractReq::GatherStop { .. } => {
+            (EmissionClass::Release, Some(Release::GatherStop))
+        }
+        crate::shim::InteractReq::CombatStop { .. } => {
+            (EmissionClass::Release, Some(Release::CombatStop))
+        }
+        _ if req.is_game() => (EmissionClass::Gameplay, None),
+        _ => (EmissionClass::Lifecycle, None),
+    }
+}
+
+#[cfg(feature = "load")]
+fn seat_live_details<'a>(
+    seat: &'a GameplaySeat<SeatEffect>,
+    api: Option<&api_seat::ApiSeat>,
+    compiled: Option<&CompiledRun>,
+    compiled_owner: Option<RequestId>,
+) -> [crate::isolate_fb::SeatLiveDetails<'a>; api::script_contract::MAX_LIVE] {
+    use crate::isolate_fb::{SeatLiveDetails, SeatPromptInput};
+    use crate::native::NativePhase;
+    let unused_id = seat.live().first().map_or_else(
+        || RequestId::isolate(1).expect("isolate namespace"),
+        |entry| entry.id,
+    );
+    let mut details = [SeatLiveDetails {
+        id: unused_id,
+        phase: NativePhase::Working,
+        prompt: None,
+    }; api::script_contract::MAX_LIVE];
+    for (detail, entry) in details.iter_mut().zip(seat.live()) {
+        detail.id = entry.id;
+        let prompt = seat.prompt_payload(entry.id);
+        detail.prompt = prompt.map(|prompt| SeatPromptInput {
+            sequence: prompt.seq,
+            point: prompt.point.member(),
+            args: &prompt.args,
+        });
+        detail.phase = if prompt.is_some() {
+            NativePhase::Waiting
+        } else {
+            seat.machine_phase(entry.id)
+                .or_else(|| api.and_then(|api| api.phase_for(entry.id)))
+                .or_else(|| {
+                    (compiled_owner == Some(entry.id)).then(|| {
+                        compiled
+                            .and_then(|run| run.output.status.as_ref().map(|status| status.phase))
+                            .unwrap_or(NativePhase::Working)
+                    })
+                })
+                .unwrap_or(NativePhase::Working)
+        };
+    }
+    details
+}
+
 #[cfg(feature = "load")]
 const CUT_RESTART_LIMIT: usize = 3;
 #[cfg(feature = "load")]
@@ -158,6 +287,15 @@ pub struct SlotScript {
     /// A watchdog restart awaiting capacity keeps its current instance until
     /// the replacement job is accepted on a later slot turn.
     pending_compiled_restart: bool,
+    /// One native owner for compiled cards and Load; the payload enum only
+    /// selects an existing downstream dispatcher, never a second scheduler.
+    seat: Option<Box<GameplaySeat<SeatEffect>>>,
+    seat_compiled_owner: Option<RequestId>,
+    seat_fence: Fence<ExecutionId>,
+    seat_delivery: Vec<SeatEffect>,
+    seat_native_delivery: VecDeque<crate::native::HostAction>,
+    #[cfg(feature = "load")]
+    seat_interact_delivery: Vec<crate::load::QueuedInteract>,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
@@ -292,6 +430,13 @@ impl SlotScript {
             preparing: None,
             pending_compiled_start: None,
             pending_compiled_restart: false,
+            seat: None,
+            seat_compiled_owner: None,
+            seat_fence: Fence::new(),
+            seat_delivery: Vec::new(),
+            seat_native_delivery: VecDeque::new(),
+            #[cfg(feature = "load")]
+            seat_interact_delivery: Vec::new(),
             #[cfg(feature = "load")]
             api: None,
             retained: None,
@@ -379,6 +524,196 @@ impl SlotScript {
     /// The bound local-state capability, if any.
     pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
         self.local_state.as_ref()
+    }
+    /// Align the compiled execution with the actual host session gate, not
+    /// `work_epoch` (which also advances for transient down observations).
+    /// Called while the host holds the gate borrow across the native tick.
+    pub fn align_seat_session(&mut self, ready: Option<api::identity::SessionKey>) {
+        let Some(session) = ready.filter(|key| key.slot().incarnation().get() == self.incarnation)
+        else {
+            if let Some(seat) = &mut self.seat {
+                seat.hold(true);
+            }
+            return;
+        };
+        if let Some(run) = self.compiled.as_mut() {
+            if run.run.session != session.epoch() {
+                run.rekey_session(session.epoch());
+            }
+        }
+        if let Some(seat) = &mut self.seat {
+            if seat.run().session != session.epoch() {
+                seat.reconnect(session.epoch());
+                self.discard_seat_gameplay_delivery();
+            }
+        }
+        if self.seat_compiled_owner.is_none() {
+            if let Some(run) = self.compiled.as_ref() {
+                let key = run.run;
+                let card = run.config.card();
+                self.admit_compiled_owner(key, card);
+            }
+        }
+        if let Some(seat) = &mut self.seat {
+            seat.hold(false);
+        }
+        if let Some(run) = self.seat.as_ref().map(|seat| seat.run()) {
+            self.seat_fence.arm(ExecutionId::first(run));
+        }
+    }
+
+    /// Guardian authority precedes every request foreground. Called even
+    /// when the host suppresses the compiled tick itself.
+    pub fn seat_guardian_hold(&mut self, held: bool) {
+        let Some(seat) = &mut self.seat else {
+            return;
+        };
+        seat.hold(held);
+        if held {
+            self.discard_seat_gameplay_delivery();
+        }
+    }
+
+    /// Snapshot the seat's bounded counters without a test-only capability or
+    /// an isolate round trip. An unarmed slot has no seat events to report.
+    pub fn slot_metrics(&self) -> SlotMetrics {
+        self.seat
+            .as_ref()
+            .map_or(SlotMetrics::default(), |seat| SlotMetrics {
+                dropped: seat.dropped(),
+                late_controls: seat.late_controls(),
+            })
+    }
+
+    /// Read-only seat state for the ignored live and test-support cells.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_probe(&self) -> Option<SeatProbe> {
+        let seat = self.seat.as_ref()?;
+        Some(SeatProbe {
+            held: seat.held(),
+            dropped: seat.dropped(),
+            late_controls: seat.late_controls(),
+            live: seat.live().len(),
+            results: seat.results().len(),
+            reserved_releases: seat.reserved_releases(),
+            mirror_revokes_consumed: seat.mirror_revokes_consumed(),
+        })
+    }
+
+    /// A non-guardian held tick discards one-shot script effects. Guardian
+    /// SessionHeld takes a different path: it keeps reserved releases.
+    pub fn seat_held_tick(&mut self) {
+        let Some(seat) = self.seat.as_mut() else {
+            return;
+        };
+        if seat.held() {
+            return;
+        }
+        seat.held_tick();
+        let mut dropped = self.seat_native_delivery.len();
+        self.seat_native_delivery.clear();
+        #[cfg(feature = "load")]
+        {
+            dropped += self.seat_interact_delivery.len() + self.compiled_interacts.len();
+            self.seat_interact_delivery.clear();
+            self.compiled_interacts.clear();
+            self.compiled_interact_outcome_seqs.clear();
+        }
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            dropped += ledger.outbox.len();
+            ledger.outbox.clear();
+        }
+        seat.count_dropped(dropped);
+    }
+
+    fn discard_seat_gameplay_delivery(&mut self) {
+        let Some(seat) = &mut self.seat else {
+            return;
+        };
+        let native_before = self.seat_native_delivery.len();
+        self.seat_native_delivery.retain(|action| {
+            let keep = match &action.effect {
+                crate::native::HostEffect::Interaction(req) => {
+                    seat_interact_class(req, None).0
+                        != api::script_contract::EmissionClass::Gameplay
+                }
+                _ => false,
+            };
+            if !keep {
+                let walk = match &action.effect {
+                    crate::native::HostEffect::Walk(_) => native_walk_id(action.request_id.get()),
+                    crate::native::HostEffect::Interaction(req) => seat_walk_id(req, None),
+                    _ => None,
+                };
+                if let Some(id) = walk {
+                    seat.discard_unarmed_walk(id);
+                }
+            }
+            keep
+        });
+        let native_dropped = native_before - self.seat_native_delivery.len();
+        #[cfg(feature = "load")]
+        let dropped = {
+            let interact_before = self.seat_interact_delivery.len();
+            self.seat_interact_delivery.retain(|queued| {
+                let keep = seat_interact_class(&queued.req, None).0
+                    != api::script_contract::EmissionClass::Gameplay;
+                if !keep {
+                    if let Some(id) = seat_walk_id(&queued.req, None) {
+                        seat.discard_unarmed_walk(id);
+                    }
+                }
+                keep
+            });
+            native_dropped + interact_before - self.seat_interact_delivery.len()
+        };
+        #[cfg(not(feature = "load"))]
+        let dropped = native_dropped;
+        seat.count_dropped(dropped);
+    }
+
+    fn arm_seat(&mut self, run: api::selected::RunKey) {
+        self.seat_fence.arm(ExecutionId::first(run));
+        self.seat = Some(Box::new(GameplaySeat::new(run)));
+        self.seat_compiled_owner = None;
+        self.seat_delivery.clear();
+        self.seat_native_delivery.clear();
+        #[cfg(feature = "load")]
+        self.seat_interact_delivery.clear();
+    }
+
+    fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
+        if run.slot_key().is_none() {
+            return;
+        }
+        self.arm_seat(run);
+        self.admit_compiled_owner(run, card);
+    }
+
+    fn admit_compiled_owner(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
+        if run.slot_key().is_none() {
+            return;
+        }
+        let kind = match card.0 {
+            "Gatherer" => crate::native::request::NativeKind::Gather,
+            "Quester" => crate::native::request::NativeKind::Quester,
+            #[cfg(feature = "load")]
+            "Sherlock" => crate::native::request::NativeKind::Clue,
+            #[cfg(any(test, feature = "test-hooks"))]
+            "test" => crate::native::request::NativeKind::BankNearest,
+            _ => panic!("unregistered compiled seat family: {}", card.0),
+        };
+        let id = SEAT_REQUEST_IDS.mint().expect("host request id exhausted");
+        let stamp = RequestStamp::new(id, None, None, ExecutionId::first(run))
+            .expect("compiled run is bound");
+        let admitted = self
+            .seat
+            .as_mut()
+            .expect("armed native seat")
+            .start(stamp, kind, false)
+            .expect("new seat has a request credit");
+        assert_eq!(admitted, Admission::Admitted);
+        self.seat_compiled_owner = Some(id);
     }
 
     pub fn pair_world_changed(&self, host: &str, port: u16) {
@@ -584,12 +919,22 @@ impl SlotScript {
         if std::mem::take(&mut self.fail_spawn_for_test) {
             return Err("isolate thread: test-injected spawn failure".to_string());
         }
+        let run_generation = self
+            .runtime_generation
+            .checked_add(u64::from(bump))
+            .ok_or_else(|| "run generation exhausted".to_string())?;
+        let execution = ExecutionId::first(api::selected::RunKey {
+            slot: self.incarnation,
+            run: run_generation,
+            session: self.work_epoch,
+        });
         let isolate = GameplayFactory::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
             identity.siblings.iter().cloned().collect(),
             identity.game_data.clone(),
             Arc::clone(&identity.named_banks),
+            Some(execution),
         )
         .map_err(|error| error.to_string())?;
         isolate.post_loadouts(&identity.loadouts);
@@ -611,7 +956,7 @@ impl SlotScript {
         self.state = RunState::Starting;
         if bump {
             self.setup_generation_base = Some(self.runtime_generation);
-            self.runtime_generation = self.runtime_generation.wrapping_add(1);
+            self.runtime_generation = run_generation;
             self.last_settings_fp = None;
         }
         Ok(())
@@ -711,6 +1056,13 @@ impl SlotScript {
                                 isolate.pause();
                                 self.state = RunState::Paused;
                             }
+                        }
+                        if self.incarnation != 0 {
+                            self.arm_seat(api::selected::RunKey {
+                                slot: self.incarnation,
+                                run: self.runtime_generation,
+                                session: self.work_epoch,
+                            });
                         }
                         self.settle_start(StartOutcome::Ready);
                     }
@@ -973,6 +1325,15 @@ impl SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
+        if let Some(seat) = &mut self.seat {
+            seat.stop();
+        }
+        self.seat_fence.revoke();
+        self.seat_compiled_owner = None;
+        self.seat_delivery.clear();
+        self.seat_native_delivery.clear();
+        #[cfg(feature = "load")]
+        self.seat_interact_delivery.clear();
         #[cfg(feature = "load")]
         self.teardown_api(reason);
         self.native_runtime.revoke();
@@ -1087,6 +1448,25 @@ impl SlotScript {
         if let Some(run) = self.compiled.as_mut() {
             run.rekey_session(self.work_epoch);
         }
+        if let Some(seat) = &mut self.seat {
+            if reconnect {
+                seat.reconnect(self.work_epoch);
+            } else {
+                let mut run = seat.run();
+                run.session = self.work_epoch;
+                seat.reset(run);
+                self.seat_compiled_owner = None;
+            }
+        }
+        if reconnect {
+            self.discard_seat_gameplay_delivery();
+        } else {
+            self.seat_delivery.clear();
+            self.seat_native_delivery.clear();
+            #[cfg(feature = "load")]
+            self.seat_interact_delivery.clear();
+        }
+        self.seat_fence.revoke();
         #[cfg(feature = "load")]
         self.api_session_boundary(reconnect);
         #[cfg(feature = "load")]
@@ -1100,13 +1480,18 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         {
+            let execution = ExecutionId::first(api::selected::RunKey {
+                slot: self.incarnation,
+                run: self.runtime_generation,
+                session: self.work_epoch,
+            });
             let carried_error = self.active_tick_error_generation.is_some();
             let held = reconnect && self.load.is_some();
             if let Some(isolate) = &self.load {
                 let generation = if held {
-                    isolate.reconnect_session_work()
+                    isolate.reconnect_session_work(Some(execution))
                 } else {
-                    isolate.reset_session_work()
+                    isolate.reset_session_work(Some(execution))
                 };
                 self.active_tick_error_generation = carried_error.then_some(generation);
             } else {
@@ -1479,6 +1864,25 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
+        let details = self.seat.as_ref().map(|seat| {
+            seat_live_details(
+                seat,
+                self.api.as_deref(),
+                self.compiled.as_deref(),
+                self.seat_compiled_owner,
+            )
+        });
+        if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
+            native.seat_page = Some(
+                crate::isolate_fb::SeatPageInput::new(
+                    seat.live(),
+                    seat.results(),
+                    &details[..seat.live().len()],
+                    seat.mirror_revokes_consumed(),
+                )
+                .expect("slot-owned seat page invariant"),
+            );
+        }
         let (bytes, fp, evidence_changed) =
             self.ipc.encode_snapshot_delta_with_native_and_evidence(
                 self.last_snapshot.as_ref(),
@@ -1516,6 +1920,25 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
+        let details = self.seat.as_ref().map(|seat| {
+            seat_live_details(
+                seat,
+                self.api.as_deref(),
+                self.compiled.as_deref(),
+                self.seat_compiled_owner,
+            )
+        });
+        if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
+            native.seat_page = Some(
+                crate::isolate_fb::SeatPageInput::new(
+                    seat.live(),
+                    seat.results(),
+                    &details[..seat.live().len()],
+                    seat.mirror_revokes_consumed(),
+                )
+                .expect("slot-owned seat page invariant"),
+            );
+        }
         let (bytes, fp, evidence_changed) = self.ipc.encode_snapshot_wake_with_native_and_evidence(
             self.last_snapshot.as_mut(),
             input,
@@ -1661,9 +2084,131 @@ impl SlotScript {
         changed
     }
 
+    fn capture_native_seat_rows(&mut self) {
+        let Some(seat) = self.seat.as_mut() else {
+            return;
+        };
+        let owner = self.seat_compiled_owner.or_else(|| seat.session());
+        let source = owner.map_or(EmissionSource::Root, EmissionSource::Owner);
+        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+            return;
+        };
+        for action in ledger.outbox.drain(..) {
+            if !action.live() {
+                seat.count_dropped(1);
+                continue;
+            }
+            let walk = match &action.effect {
+                crate::native::HostEffect::Walk(_) => native_walk_id(action.request_id.get()),
+                crate::native::HostEffect::Interaction(req) => seat_walk_id(req, owner),
+                _ => None,
+            };
+            if matches!(&action.effect, crate::native::HostEffect::Walk(_)) && walk.is_none() {
+                seat.count_dropped(1);
+                continue;
+            }
+            let (class, release) = match &action.effect {
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::AbortWalk {
+                    request_id,
+                }) => (
+                    api::script_contract::EmissionClass::Release,
+                    native_walk_id(*request_id)
+                        .or(owner)
+                        .map(api::script_contract::Release::AbortWalk),
+                ),
+                crate::native::HostEffect::Interaction(req) => seat_interact_class(req, owner),
+                crate::native::HostEffect::Walk(_)
+                | crate::native::HostEffect::BankPick(_)
+                | crate::native::HostEffect::AssessWalk(_) => {
+                    (api::script_contract::EmissionClass::Gameplay, None)
+                }
+            };
+            let effect = SeatEffect::Native(action);
+            let result = match walk {
+                Some(id) => seat.push_walk(effect, source, id),
+                None => seat.push(effect, class, source, release),
+            };
+            if let Err(error) = result {
+                self.pending_logs
+                    .push(format!("seat native emission refused: {error:?}"));
+            }
+        }
+    }
+
+    #[cfg(feature = "load")]
+    fn capture_compiled_seat_interacts(&mut self) {
+        let Some(seat) = self.seat.as_mut() else {
+            return;
+        };
+        let owner = self.seat_compiled_owner.or_else(|| seat.session());
+        let source = owner.map_or(EmissionSource::Root, EmissionSource::Owner);
+        let reqs = &mut self.compiled_interacts;
+        let stamps = &mut self.compiled_interact_outcome_seqs;
+        debug_assert_eq!(reqs.len(), stamps.len());
+        for (req, observed_walk_outcome_seq) in reqs.drain(..).zip(stamps.drain(..)) {
+            let (class, release) = seat_interact_class(&req, owner);
+            let walk = seat_walk_id(&req, owner);
+            let reserved_policy = matches!(req, crate::shim::InteractReq::RunPolicyOverride { .. });
+            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
+                req,
+                observed_walk_outcome_seq,
+            });
+            let result = match walk {
+                Some(id) if class == api::script_contract::EmissionClass::Gameplay => {
+                    seat.push_walk(effect, source, id)
+                }
+                _ if reserved_policy => seat.push_policy(effect, source),
+                _ => seat.push(effect, class, source, release),
+            };
+            if let Err(error) = result {
+                self.pending_logs
+                    .push(format!("seat compiled interaction refused: {error:?}"));
+            }
+        }
+    }
+
+    fn dispatch_seat_rows(&mut self) {
+        let Some(seat) = self.seat.as_mut() else {
+            return;
+        };
+        seat.take();
+        seat.dispatch_into(&mut self.seat_delivery);
+        for row in self.seat_delivery.drain(..) {
+            match row {
+                SeatEffect::Native(action) => self.seat_native_delivery.push_back(action),
+                #[cfg(feature = "load")]
+                SeatEffect::Interact(interact) => self.seat_interact_delivery.push(interact),
+            }
+        }
+    }
+
+    /// A row captured before ordinary Done retains its immutable lease until
+    /// the host's final dispatch fence for this frame. Error/Stop never use
+    /// this path; they revoke the owner and clear the seat.
+    pub fn completed_seat_dispatch_open(&self) -> bool {
+        self.state == RunState::Idle
+            && !self.want_run
+            && self.lifecycle_receipt.as_ref().is_some_and(|receipt| {
+                receipt.runtime_generation == self.runtime_generation
+                    && receipt.state == ScriptTerminalState::Completed
+            })
+            && self
+                .native_runtime
+                .ledger
+                .as_ref()
+                .and_then(|ledger| ledger.owner.as_ref())
+                .is_some_and(|owner| owner.live())
+    }
+
     /// Queued native work the host may dispatch now. Work queued before a
     /// watchdog recovery hold waits for it to end; Blocked revoked its work.
     pub fn has_native_actions(&self) -> bool {
+        if let Some(seat) = &self.seat {
+            let completed = self.completed_seat_dispatch_open();
+            return completed
+                || (self.dispatch_open()
+                    && (!self.seat_native_delivery.is_empty() || seat.has_rows()));
+        }
         self.native_runtime
             .ledger
             .as_ref()
@@ -1674,7 +2219,23 @@ impl SlotScript {
     /// The host calls this only while holding the slot's final dispatch fence.
     /// Keep the bounded outbox's allocation for the next observed tick.
     pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
-        if !self.dispatch_open() {
+        if !self.dispatch_open() && !self.completed_seat_dispatch_open() {
+            return None;
+        }
+        if self.seat.is_some() {
+            let completed = self.completed_seat_dispatch_open();
+            self.dispatch_seat_rows();
+            while let Some(action) = self.seat_native_delivery.pop_front() {
+                if action.live() {
+                    return Some(action);
+                }
+                if let Some(seat) = &mut self.seat {
+                    seat.count_dropped(1);
+                }
+            }
+            if completed {
+                self.native_runtime.revoke();
+            }
             return None;
         }
         let ledger = self.native_runtime.ledger.as_mut()?;
@@ -1766,6 +2327,13 @@ impl SlotScript {
     /// decisions cannot become fresh merely by passing through a raw queue.
     #[cfg(feature = "load")]
     pub fn drain_interacts(&mut self) -> Vec<crate::shim::InteractReq> {
+        if self.seat.is_some() {
+            self.dispatch_seat_rows();
+            return std::mem::take(&mut self.seat_interact_delivery)
+                .into_iter()
+                .map(|queued| queued.req)
+                .collect();
+        }
         self.drain_interacts_stamped()
             .into_iter()
             .map(|queued| queued.req)
@@ -1797,6 +2365,259 @@ impl SlotScript {
         }
     }
 
+    /// One physical isolate batch is the custody unit: its generation and
+    /// observed-walk stamp cannot be borrowed from a later producer tick.
+    #[cfg(feature = "load")]
+    fn consume_seat_batch(
+        &mut self,
+        mut batch: DecodedSeatBatch,
+        observed_walk_outcome_seq: u64,
+        machine_events: &[crate::machine::MachineEvent],
+    ) {
+        use api::script_contract::{AuthorityStatus, EmissionClass};
+        let Some(seat) = self.seat.as_ref() else {
+            self.pending_logs
+                .push("seat batch without an armed seat".into());
+            return;
+        };
+        let run = seat.run();
+        let Some(execution) = self.seat_fence.current() else {
+            self.pending_logs
+                .push("seat batch without an execution fence".into());
+            return;
+        };
+        if batch.starts.iter().any(|start| {
+            start.run != run.run
+                || start.session != run.session
+                || RequestStamp::new(start.id, start.parent, None, execution).is_err()
+        }) {
+            self.pending_logs
+                .push("dropped malformed seat batch: start run or stamp".into());
+            self.seat
+                .as_mut()
+                .expect("armed")
+                .count_dropped(batch.reqs.len());
+            return;
+        }
+        if let Err(error) = seat
+            .validate_mirror_revokes(batch.mirror_revokes.iter().map(|row| (row.owner, row.seq)))
+        {
+            // An ordered connection cannot skip an unacknowledged sequence:
+            // the adapter carries a contiguous prefix until page receipt.
+            self.pending_logs.push(format!(
+                "dropped malformed seat batch: mirror sequence {error:?}"
+            ));
+            self.seat
+                .as_mut()
+                .expect("armed")
+                .count_dropped(batch.reqs.len());
+            return;
+        }
+        // The isolate emitted these rows before this host batch applied its
+        // terminal controls. Pin push-time authority now; watermark, controls
+        // and starts then settle or witness the rows before Take/Dispatch.
+        for row in batch.reqs {
+            let source = match (row.lineage, row.mirror_owner) {
+                (None, None) => EmissionSource::Root,
+                (lineage, mirror) => {
+                    let pending = lineage.and_then(|id| {
+                        let seat = self.seat.as_ref().expect("armed");
+                        (!seat.live().iter().any(|entry| entry.id == id)
+                            && !seat.results().iter().any(|result| result.id == id)
+                            && !matches!(
+                                seat.lookup(id),
+                                AuthorityStatus::Revoked | AuthorityStatus::Expired
+                            ))
+                        .then(|| batch.starts.iter().find(|start| start.id == id))
+                        .flatten()
+                    });
+                    match (lineage, mirror, pending) {
+                        (Some(id), None, Some(start)) => EmissionSource::Pending {
+                            owner: id,
+                            parent: start.parent,
+                            kind: start.kind,
+                        },
+                        (Some(id), Some(owner), Some(start)) => EmissionSource::PendingMirror {
+                            owner,
+                            pending: id,
+                            parent: start.parent,
+                            kind: start.kind,
+                        },
+                        (Some(id), _, None)
+                            if !self
+                                .seat
+                                .as_ref()
+                                .expect("armed")
+                                .live()
+                                .iter()
+                                .any(|entry| entry.id == id)
+                                && !self
+                                    .seat
+                                    .as_ref()
+                                    .expect("armed")
+                                    .results()
+                                    .iter()
+                                    .any(|result| result.id == id)
+                                && !matches!(
+                                    self.seat.as_ref().expect("armed").lookup(id),
+                                    AuthorityStatus::Revoked | AuthorityStatus::Expired
+                                ) =>
+                        {
+                            EmissionSource::InvalidExternal(id)
+                        }
+                        (Some(id), None, None) => EmissionSource::Owner(id),
+                        (parent, Some(owner), None) => EmissionSource::Mirror { owner, parent },
+                        (None, Some(_), Some(_)) => {
+                            unreachable!("a pending start requires a lineage id")
+                        }
+                        (None, None, _) => unreachable!("root handled above"),
+                    }
+                }
+            };
+            let (class, release) =
+                seat_interact_class(&row.request, row.lineage.or(row.mirror_owner));
+            let walk = seat_walk_id(&row.request, row.mirror_owner.or(row.lineage));
+            let reserved_policy = matches!(
+                row.request,
+                crate::shim::InteractReq::RunPolicyOverride { .. }
+            );
+            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
+                req: row.request,
+                observed_walk_outcome_seq,
+            });
+            let result = match walk {
+                Some(id) if class == EmissionClass::Gameplay => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push_walk(effect, source, id),
+                _ if reserved_policy => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push_policy(effect, source),
+                _ => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push(effect, class, source, release),
+            };
+            if let Err(error) = result {
+                self.pending_logs
+                    .push(format!("seat isolate emission refused: {error:?}"));
+            }
+        }
+        let seat = self.seat.as_mut().expect("armed");
+        seat.watermark(batch.consumed_terminal_seq);
+        for cancel in &batch.cancels {
+            if !seat.live().iter().any(|entry| entry.id == cancel.of)
+                && !seat.results().iter().any(|result| result.id == cancel.of)
+                && batch.starts.iter().any(|start| start.id == cancel.of)
+            {
+                // The cancellation is part of the carried pending start.
+                continue;
+            }
+            if let Err(error) = seat.cancel(cancel.of, cancel.reason) {
+                self.pending_logs
+                    .push(format!("seat cancel refused: {error:?}"));
+            }
+        }
+        for revoke in &batch.mirror_revokes {
+            if let Err(error) = seat.apply_mirror_revoke(revoke.owner, revoke.seq) {
+                self.pending_logs
+                    .push(format!("seat mirror revoke refused: {error:?}"));
+            }
+        }
+        for decision in &mut batch.decisions {
+            if seat.decide_with_answer(
+                decision.of,
+                decision.sequence,
+                std::mem::take(&mut decision.answer),
+            ) == crate::native::seat::SeatDecisionStatus::Invalid
+            {
+                self.pending_logs.push(format!(
+                    "seat decision did not match a live prompt: {} seq {}",
+                    decision.of.get(),
+                    decision.sequence.get()
+                ));
+            }
+        }
+        self.stop_cancelled_api_work();
+        for start in &mut batch.starts {
+            let stamp = RequestStamp::new(start.id, start.parent, None, execution)
+                .expect("start stamp was preflighted");
+            let cancelled = batch.cancels.iter().any(|cancel| {
+                cancel.of == start.id
+                    && cancel.reason == api::script_contract::CallbackCancelReason::ParentAborted
+            });
+            let admission = match self
+                .seat
+                .as_mut()
+                .expect("armed")
+                .start(stamp, start.kind, cancelled)
+            {
+                Ok(admission) => admission,
+                Err(error) => {
+                    self.pending_logs
+                        .push(format!("seat start refused: {error:?}"));
+                    break;
+                }
+            };
+            match admission {
+                Admission::Admitted => {
+                    if batch.cancels.iter().any(|cancel| {
+                        cancel.of == start.id
+                            && cancel.reason
+                                == api::script_contract::CallbackCancelReason::HookThrew
+                    }) {
+                        if let Err(error) = self.seat.as_mut().expect("armed").cancel(
+                            start.id,
+                            api::script_contract::CallbackCancelReason::HookThrew,
+                        ) {
+                            self.pending_logs
+                                .push(format!("seat hook throw refused: {error:?}"));
+                        }
+                        continue;
+                    }
+                    match std::mem::replace(&mut start.args, SeatStartArgs::Empty) {
+                        SeatStartArgs::Gather(settings) => {
+                            self.start_api_gather(start.id.get(), &Arc::new(settings));
+                        }
+                        SeatStartArgs::Combat(request) => {
+                            self.start_api_combat(start.id.get(), &Arc::new(request));
+                        }
+                        SeatStartArgs::QuestProgress(name) => {
+                            self.start_api_progress(start.id.get(), &name);
+                        }
+                        SeatStartArgs::Empty => {}
+                    }
+                }
+                Admission::Deferred => break,
+                Admission::Refused(_)
+                | Admission::Cancelled
+                | Admission::Duplicate
+                | Admission::Stale => {}
+            }
+        }
+        for event in machine_events {
+            use crate::machine::MachineEventKind;
+            let seat = self.seat.as_mut().expect("armed");
+            let result = match event.kind {
+                MachineEventKind::Phase(phase) => seat.set_machine_phase(event.id, phase),
+                MachineEventKind::Done => seat.complete(event.id, false),
+                MachineEventKind::Failed => seat.complete(event.id, true),
+                MachineEventKind::Aborted(reason) => seat.revoke(event.id, reason),
+                MachineEventKind::ManualWalk => seat.manual_walk(event.id),
+            };
+            if let Err(error) = result {
+                self.pending_logs
+                    .push(format!("seat machine event refused: {error:?}"));
+            }
+        }
+        self.dispatch_seat_rows();
+        self.settle_api_seat_terminals();
+    }
+
     /// Drain one host frame's decoded isolate messages, separating the latest
     /// run-policy replacement from game/lifecycle interacts. The outer option
     /// is "an update was sent"; the inner option is replace versus clear.
@@ -1808,37 +2629,106 @@ impl SlotScript {
         Vec<crate::load::QueuedInteract>,
         bool,
     ) {
+        let batches = self
+            .load
+            .as_ref()
+            .map_or_else(Vec::new, LoadIsolate::drain_seat_batches);
+        let mut carried = Vec::new();
+        for mut queued in batches {
+            let current_generation = self.load.as_ref().expect("batch producer").generation();
+            if queued.generation != current_generation {
+                self.pending_logs
+                    .push("dropped stale seat batch generation".into());
+                if let Some(seat) = self.seat.as_mut() {
+                    seat.count_dropped(queued.batch.reqs.len());
+                }
+                continue;
+            }
+            let run = self.seat.as_ref().map(|seat| seat.run());
+            if run.is_none_or(|run| {
+                queued
+                    .batch
+                    .starts
+                    .iter()
+                    .any(|start| start.run != run.run || start.session != run.session)
+            }) {
+                self.pending_logs
+                    .push("dropped malformed seat batch run stamp".into());
+                if let Some(seat) = self.seat.as_mut() {
+                    seat.count_dropped(queued.batch.reqs.len());
+                }
+                continue;
+            }
+            if self.seat.as_ref().is_some_and(|seat| seat.held()) {
+                let before = queued.batch.reqs.len();
+                queued.batch.reqs.retain(|row| {
+                    seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
+                        != api::script_contract::EmissionClass::Gameplay
+                });
+                self.seat
+                    .as_mut()
+                    .expect("held seat")
+                    .count_dropped(before - queued.batch.reqs.len());
+                // The carrier still owns starts, controls, watermark and
+                // releases. Guardian-held gameplay is never replayed.
+                carried.push(queued);
+                continue;
+            }
+            if self.watchdog.holds_script_actions() {
+                self.seat_held_tick();
+                let dropped = queued.batch.reqs.len();
+                queued.batch.reqs.clear();
+                self.seat.as_mut().expect("armed").count_dropped(dropped);
+                carried.push(queued);
+                continue;
+            }
+            if !self.dispatch_open() {
+                carried.push(queued);
+                continue;
+            }
+            self.consume_seat_batch(
+                queued.batch,
+                queued.observed_walk_outcome_seq,
+                &queued.machine_events,
+            );
+        }
+        if !carried.is_empty() {
+            self.load
+                .as_ref()
+                .expect("batch producer")
+                .restore_seat_batches(carried);
+        }
+        if self.dispatch_open() || self.completed_seat_dispatch_open() {
+            self.dispatch_seat_rows();
+        }
         let mut reqs = self.drain_interacts_stamped();
+        if self.dispatch_open() || self.completed_seat_dispatch_open() {
+            reqs.extend(std::mem::take(&mut self.seat_interact_delivery));
+        }
         let mut policy = None;
-        let mut owned = self.api_owns_foreground();
         reqs.retain(|queued| match &queued.req {
             crate::shim::InteractReq::RunPolicyOverride { policy: update } => {
                 policy = Some(*update);
                 false
             }
+            crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatStop { .. } => {
+                self.consume_api_release(&queued.req);
+                false
+            }
             crate::shim::InteractReq::GatherRun { .. }
-            | crate::shim::InteractReq::GatherStop { .. }
             | crate::shim::InteractReq::CombatFight { .. }
-            | crate::shim::InteractReq::CombatStop { .. }
             | crate::shim::InteractReq::ProgressRead { .. } => {
-                self.consume_api_control(&queued.req);
-                owned |= self.api_owns_foreground();
+                self.pending_logs
+                    .push("dropped malformed legacy API start outside typed seat".into());
+                if let Some(seat) = self.seat.as_mut() {
+                    seat.count_dropped(1);
+                }
                 false
             }
             _ => true,
         });
-        if owned {
-            let before = reqs.len();
-            reqs.retain(|queued| !queued.req.is_game());
-            // Reconnect rows are script game work too; discard them at this
-            // admission edge rather than replaying an old route after the seat.
-            let held = self.take_held_host_walks();
-            self.record_api_dropped_rows(before - reqs.len() + held.len());
-        }
-        if !self.api_owns_foreground() {
-            self.log_api_drop_total();
-        }
-        (policy, reqs, owned)
+        (policy, reqs, self.api_owns_foreground())
     }
 
     /// Diagnostic/test injection: stamps raw rows with the runtime's current
@@ -2279,6 +3169,8 @@ impl SlotScript {
             let input_identity = self.native_input.lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity, evidence_sequence);
             self.tick_api(ctx);
+            self.capture_native_seat_rows();
+            self.settle_api_seat_terminals();
             return;
         }
         self.poll_compiled_frame(ctx);
@@ -2309,7 +3201,13 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
+            if ctx.compiled.hold {
+                self.seat_held_tick();
+                return;
+            }
             self.tick_api(ctx);
+            self.capture_native_seat_rows();
+            self.settle_api_seat_terminals();
             return;
         }
         if self.compiled.is_none() {
@@ -2347,13 +3245,30 @@ impl SlotScript {
                     tick: ctx.tick,
                     sequence: ctx.tick,
                 });
-                run.tick(
+                let service_authority = ctx.compiled.service_gate.and_then(|gate| {
+                    self.seat_fence.current().map(|execution| {
+                        crate::native::ServiceAuthority::new(execution, &self.seat_fence, gate)
+                    })
+                });
+                let (result, interacts) = run.tick(
                     ctx,
                     &mut retained,
                     &mut self.native_runtime,
                     self.quest_pairs.as_deref(),
                     self.local_state.as_deref(),
-                )
+                    service_authority,
+                    self.seat
+                        .as_mut()
+                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                );
+                #[cfg(feature = "load")]
+                {
+                    ctx.compiled.interacts = interacts;
+                }
+                #[cfg(not(feature = "load"))]
+                let _ = interacts;
+                run.finish_tick();
+                result
             }
         };
         if result.is_ok() {
@@ -2367,6 +3282,9 @@ impl SlotScript {
                 self.native_runtime.observed_walk_outcome_seq,
             );
         }
+        self.capture_native_seat_rows();
+        #[cfg(feature = "load")]
+        self.capture_compiled_seat_interacts();
         match result {
             Ok(ScriptFlow::Continue | ScriptFlow::Complete)
                 if self.compiled.as_ref().is_some_and(|run| {
@@ -2387,6 +3305,11 @@ impl SlotScript {
             Ok(ScriptFlow::Continue) => {}
             Ok(ScriptFlow::Blocked(failure)) => self.stop_blocked(failure, ctx.tick),
             Ok(ScriptFlow::Complete) => {
+                if let Some(id) = self.seat_compiled_owner.take() {
+                    if let Some(seat) = &mut self.seat {
+                        let _ = seat.complete(id, false);
+                    }
+                }
                 self.revoke_native_input();
                 #[cfg(feature = "load")]
                 {
@@ -2714,3 +3637,11 @@ fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
 #[cfg(all(test, feature = "load"))]
 #[path = "slot_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "load"))]
+#[path = "slot/seat_wire_tests.rs"]
+mod seat_wire_tests;
+
+#[cfg(all(test, feature = "load"))]
+#[path = "slot/seat_family_tests.rs"]
+mod seat_family_tests;

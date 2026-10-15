@@ -782,7 +782,7 @@ fn session_reset_clears_the_native_bank_observation() {
     let mut snap = base_snapshot();
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
 
     tick(&iso, 1);
     assert_eq!(

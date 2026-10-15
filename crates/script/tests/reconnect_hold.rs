@@ -85,7 +85,7 @@ export default class T extends LoopingBot {
     tick(&iso, &snap);
     assert_eq!(walks(&iso.drain_interacts()).len(), 1, "the walk is out");
 
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     let next = relog(&iso, &mut snap, 2, tile(3240, 3240));
     assert_eq!(
         value(&iso, "globalThis.__ok"),
@@ -167,7 +167,7 @@ export default class T extends LoopingBot {
         "Banking.open walks to the stand first"
     );
 
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     let next = relog(&iso, &mut snap, 2, tile(3230, 3230));
     assert_eq!(value(&iso, "globalThis.__ok"), serde_json::Value::Null);
     assert!(walks(&iso.drain_interacts()).is_empty());
@@ -287,7 +287,7 @@ export default class HillGiantShaped extends TaskBot {
         "walkBack's walk is out: {out:?}"
     );
 
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     let mut next = relog(&iso, &mut snap, n, tile(3230, 3230));
     for _ in 0..5 {
         snap.tick = next;
@@ -342,7 +342,7 @@ export default class T extends LoopingBot {
     let mut snap = ingame_snapshot();
     tick(&iso, &snap);
 
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     sleep(Duration::from_millis(900));
     let here = snap.here.unwrap();
     let next = relog(&iso, &mut snap, 2, here);
@@ -379,7 +379,7 @@ export default class T extends LoopingBot {
     let mut snap = ingame_snapshot();
     tick(&iso, &snap);
 
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     iso.pause();
     iso.resume();
     sleep(Duration::from_millis(900));
@@ -418,7 +418,7 @@ fn a_walk_emitted_but_not_drained_before_the_drop_is_kept_for_the_relog() {
     let mut snap = ingame_snapshot();
     snap.here = Some(tile(3222, 3222));
     tick(&iso, &snap);
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     let next = relog(&iso, &mut snap, 2, tile(3240, 3240));
     assert!(walks(&iso.drain_interacts()).is_empty(), "no second walk");
     let held = iso.take_held_walks();
@@ -453,7 +453,7 @@ fn a_walk_racing_the_drop_goes_out_exactly_once_after_the_relog() {
         snap.here = Some(tile(3222, 3222));
         post_snapshot_input(&iso, &snap);
         iso.on_game_tick(1);
-        iso.reconnect_session_work();
+        iso.reconnect_session_work(None);
         relog(&iso, &mut snap, 2, tile(3240, 3240));
         let mut out = iso.take_held_walks();
         out.extend(iso.drain_interacts());
@@ -492,8 +492,8 @@ export default class T extends LoopingBot {
             iso.probe("(() => { const t = Date.now() + 300; while (Date.now() < t) {} })()")
         });
         sleep(Duration::from_millis(50));
-        iso.reconnect_session_work();
-        iso.reconnect_session_work();
+        iso.reconnect_session_work(None);
+        iso.reconnect_session_work(None);
         busy.join().unwrap().unwrap();
     });
     let here = snap.here.unwrap();
@@ -539,7 +539,7 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     wait_for_execution(&iso, "old-session tick never entered execution");
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     // The relog dispatch wins the race against the old tick.
     let mut out = iso.take_held_walks();
     assert!(walks(&out).is_empty(), "the old tick has not walked yet");

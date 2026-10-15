@@ -328,7 +328,7 @@ export default class T extends LoopingBot {
     let iso = spawn(src);
     tick(&iso, 1, false);
     iso.request_recovery_anchor();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let _ = iso.probe("true");
     assert!(
         iso.drain_lifecycle().is_empty(),

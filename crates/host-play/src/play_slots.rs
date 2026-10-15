@@ -1771,6 +1771,7 @@ fn spawn_slot_thread(
                                 broker_world,
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
+                                Some(arm.as_ref()),
                                 )
                             };
                             let crate::script_runtime::ScriptObservation {

@@ -1,15 +1,63 @@
 //! Native-first capability injection (§26 item 3, §27 §5, §21 §4.2).
 //! This is a borrowed facade over the existing NativeActions/ActionContext,
 //! not a callable fake seat. T1.3 installs it in real owner-controlled contexts.
+use super::abi::{HookCharacterization, HookPath};
+use super::seat::{GameplaySeat, SeatAnswer, SeatError};
 use super::{ActionContext, NativeActions};
-use api::identity::{ActiveTime, ExecutionId, Fence, FenceError, Scope};
+use api::identity::{ActiveTime, ExecutionId, Fence, FenceError, RequestId, Scope};
 use api::lifecycle::SessionGate;
 use api::local_state::{AccountKey, ContentScope, LocalStatePort};
+use api::script_contract::DecisionSequence;
 use api::selected::SelectedPin;
 use api::snapshot::SnapshotView;
 
+/// Closed, source-backed awaited callback point. `HookCharacterization` can
+/// only be constructed by the frozen ABI table; a string cannot mint a point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PromptPoint(&'static HookCharacterization);
+impl PromptPoint {
+    pub fn from_contract_row(row: &'static HookCharacterization) -> Option<Self> {
+        (row.path() == HookPath::Awaited).then_some(Self(row))
+    }
+    pub const fn member(self) -> &'static str {
+        self.0.member()
+    }
+}
+
+/// Owner-borrowed prompt endpoint; no callback producer or JS scheduler lives
+/// in this trait. A native family may use it only while its admitted request
+/// and the owner's execution fence are both live.
+pub trait SeatPromptPort {
+    fn run(&self) -> api::selected::RunKey;
+    fn prompt(
+        &mut self,
+        id: RequestId,
+        point: PromptPoint,
+        args: &[u8],
+    ) -> Result<DecisionSequence, SeatError>;
+    fn take_answer(&mut self, id: RequestId) -> Option<SeatAnswer>;
+}
+
+impl<R> SeatPromptPort for GameplaySeat<R> {
+    fn run(&self) -> api::selected::RunKey {
+        GameplaySeat::run(self)
+    }
+    fn prompt(
+        &mut self,
+        id: RequestId,
+        point: PromptPoint,
+        args: &[u8],
+    ) -> Result<DecisionSequence, SeatError> {
+        GameplaySeat::prompt_with_details(self, id, point, args)
+    }
+    fn take_answer(&mut self, id: RequestId) -> Option<SeatAnswer> {
+        GameplaySeat::take_answer(self, id)
+    }
+}
+
 /// The mutable owner supplies the existing fence and session gate. This value
 /// cannot mint request ids, replace a gate, or grant host-actor lineage.
+#[derive(Clone, Copy)]
 pub struct ServiceAuthority<'a> {
     execution: ExecutionId,
     fence: &'a Fence<ExecutionId>,
@@ -86,10 +134,11 @@ pub struct ScriptServices<'a, 'frame> {
     actions: &'a mut NativeActions,
     context: &'a mut ActionContext<'frame>,
     state: Option<LocalStateCapability<'a>>,
+    prompt_port: Option<&'a mut dyn SeatPromptPort>,
 }
 impl<'a, 'frame> ScriptServices<'a, 'frame> {
-    /// Composition passes the actual frame and capabilities, never substitutes
-    /// a mock service. Production installation remains T1.3.
+    /// The owner passes the existing frame and owner-controlled capabilities.
+    /// Missing local state stays absent instead of selecting a default store.
     pub fn new(
         authority: ServiceAuthority<'a>,
         actions: &'a mut NativeActions,
@@ -104,6 +153,27 @@ impl<'a, 'frame> ScriptServices<'a, 'frame> {
             actions,
             context,
             state,
+            prompt_port: None,
+        })
+    }
+    /// Add the current owner's seat without altering the frozen four-argument
+    /// constructor. A seat from a different run cannot be attached.
+    pub fn with_prompt_port<'port>(
+        self,
+        port: &'port mut dyn SeatPromptPort,
+    ) -> Result<ScriptServices<'port, 'frame>, ServiceError>
+    where
+        'a: 'port,
+    {
+        if port.run() != self.authority.execution().run() {
+            return Err(ServiceError::ContextMismatch);
+        }
+        Ok(ScriptServices {
+            authority: self.authority,
+            actions: self.actions,
+            context: self.context,
+            state: self.state,
+            prompt_port: Some(port),
         })
     }
     pub const fn authority(&self) -> &ServiceAuthority<'a> {
@@ -130,6 +200,31 @@ impl<'a, 'frame> ScriptServices<'a, 'frame> {
         self.authority.check()?;
         Ok(action(self.actions, self.context))
     }
+    /// Post one native-family callback prompt against a live request. Until an
+    /// I-family owns a native callback source, no production family calls it.
+    pub fn prompt(
+        &mut self,
+        id: RequestId,
+        point: PromptPoint,
+        args: &[u8],
+    ) -> Result<DecisionSequence, ServiceError> {
+        let seat = self
+            .prompt_port
+            .as_deref_mut()
+            .ok_or(ServiceError::PromptPortUnavailable)?;
+        self.authority.check()?;
+        seat.prompt(id, point, args).map_err(ServiceError::Seat)
+    }
+    /// Consume the answer only after the native machine resumes from its
+    /// prompt; stale or revoked requests cannot read it through this facade.
+    pub fn take_decision(&mut self, id: RequestId) -> Result<Option<SeatAnswer>, ServiceError> {
+        let seat = self
+            .prompt_port
+            .as_deref_mut()
+            .ok_or(ServiceError::PromptPortUnavailable)?;
+        self.authority.check()?;
+        Ok(seat.take_answer(id))
+    }
     /// Borrow the explicitly injected durable identity without allocating.
     pub fn state_identity(&self) -> Option<(&AccountKey, &ContentScope)> {
         self.state
@@ -150,6 +245,8 @@ impl<'a, 'frame> ScriptServices<'a, 'frame> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("native script service authority is not installed")]
+    AuthorityUnavailable,
     #[error(transparent)]
     Fence(#[from] FenceError<ExecutionId>),
     #[error("native script session is not ready or is held")]
@@ -160,4 +257,8 @@ pub enum ServiceError {
     ContextMismatch,
     #[error("native script local-state capability is not injected")]
     StateUnavailable,
+    #[error("native script prompt port is not injected")]
+    PromptPortUnavailable,
+    #[error("native script prompt refused: {0:?}")]
+    Seat(SeatError),
 }

@@ -8115,6 +8115,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         super::script_channels::BrokerWorld::Unavailable,
         None,
         Some(&mut replies),
+        None,
     );
 
     assert_eq!(
@@ -21106,6 +21107,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             script_channels::BrokerWorld::Local,
             None,
             None,
+            None,
         );
     };
     observe(&mut rig, true, false, 1);
@@ -21243,6 +21245,7 @@ impl ReconnectRig {
             None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
         );
@@ -28590,6 +28593,7 @@ mod host_batch_tests {
                 None,
                 None,
                 super::super::script_channels::BrokerWorld::Unavailable,
+                None,
                 None,
                 None,
             )

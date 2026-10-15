@@ -758,7 +758,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     tick(&iso, 3);
     assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 9)]);
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 4;
     snap.bank_side = &[];
     post_snapshot_input(&iso, &snap);

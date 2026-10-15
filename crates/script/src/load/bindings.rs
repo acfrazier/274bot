@@ -726,8 +726,7 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register canvas onpaint done: {e}"))?;
-    runtime
-        .eval::<()>(crate::shim::PRELUDE)
+    super::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
     super::run_policy_v8::install(runtime).map_err(|e| format!("run-policy v8: {e}"))?;
     super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
@@ -771,8 +770,7 @@ pub(super) fn wire_runtime(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref())
     );
-    runtime
-        .eval::<()>(content.as_str())
+    super::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
     let main = match shape {
@@ -805,9 +803,7 @@ pub(super) fn wire_runtime(
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces
     // here, before any tick runs.
-    runtime
-        .load_modules(&main, side)
-        .map_err(|e| format!("load: {e}"))?;
+    super::lineage_v8::load_modules(runtime, &main, side).map_err(|e| format!("load: {e}"))?;
     Ok(())
 }
 
@@ -891,9 +887,146 @@ const OPTIONAL = {
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
 };
-function host() {
-  return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
+const captureInteractLineage = globalThis.__rs2b0t_capture_interact_lineage;
+const discardInteractLineage = globalThis.__rs2b0t_discard_interact_lineage;
+const interactGate = captureInteractLineage();
+delete globalThis.__rs2b0t_capture_interact_lineage;
+delete globalThis.__rs2b0t_discard_interact_lineage;
+const maxGameplayRows = interactGate[0];
+const maxWalkReleases = interactGate[1];
+const interactPush = Array.prototype.push;
+const interactApply = Reflect.apply;
+const interactGet = Reflect.get;
+const interactGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const interactSetPrototypeOf = Reflect.setPrototypeOf;
+const interactIsArray = Array.isArray;
+const interactArrayPrototype = Array.prototype;
+const InteractProxy = Proxy;
+const interactProxies = new WeakSet();
+function interactionDataField(value, key) {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return undefined;
+  }
+  try {
+    const descriptor = interactGetOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch (_) {
+    return undefined;
+  }
 }
+function includesValue(values, value) {
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] === value) return true;
+  }
+  return false;
+}
+function instrumentInteractQueue(rows) {
+  if (!interactIsArray(rows)) return rows;
+  if (interactProxies.has(rows)) return rows;
+  if (!interactSetPrototypeOf(rows, null)) throw new TypeError('interact queue setup failed');
+  let pushActive = false;
+  let admittedGameplay = 0;
+  let walkReleaseCount = 0;
+  let walkReleaseIds = [];
+  const append = function(...items) {
+    if (items.length === 0) return interactApply(interactPush, rows, items);
+    if (pushActive) throw new TypeError('interact queue append is not reentrant');
+    pushActive = true;
+    let accepted = items;
+    let dropped = 0;
+    let gameplayAfter = admittedGameplay;
+    let releasesAfter = walkReleaseCount;
+    let newReleaseIds = null;
+    if (maxGameplayRows > 0) {
+      let filtered = null;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        let keep = true;
+        if (interactionDataField(item, 'op') === 'abort-walk') {
+          const id = interactionDataField(item, 'request_id');
+          const duplicate = includesValue(walkReleaseIds, id)
+            || (newReleaseIds !== null && includesValue(newReleaseIds, id));
+          if (!duplicate) {
+            if (releasesAfter < maxWalkReleases) {
+              releasesAfter += 1;
+              if (newReleaseIds === null) newReleaseIds = [];
+              newReleaseIds[newReleaseIds.length] = id;
+            } else {
+              keep = false;
+            }
+          }
+        } else if (gameplayAfter < maxGameplayRows) {
+          gameplayAfter += 1;
+        } else {
+          keep = false;
+        }
+        if (!keep) {
+          dropped += 1;
+          if (filtered === null) {
+            filtered = [];
+            for (let j = 0; j < i; j++) filtered[filtered.length] = items[j];
+          }
+        } else if (filtered !== null) {
+          filtered[filtered.length] = item;
+        }
+      }
+      if (filtered !== null) accepted = filtered;
+    }
+    let captured = false;
+    try {
+      captureInteractLineage(accepted.length, dropped);
+      captured = true;
+      const result = accepted.length === 0
+        ? rows.length
+        : interactApply(interactPush, rows, accepted);
+      admittedGameplay = gameplayAfter;
+      walkReleaseCount = releasesAfter;
+      if (newReleaseIds !== null) {
+        for (let i = 0; i < newReleaseIds.length; i++) {
+          walkReleaseIds[walkReleaseIds.length] = newReleaseIds[i];
+        }
+      }
+      return result;
+    } catch (error) {
+      if (captured) discardInteractLineage(accepted.length, dropped);
+      throw error;
+    } finally {
+      pushActive = false;
+    }
+  };
+  const proxy = new InteractProxy(rows, {
+    get(target, property, receiver) {
+      if (property === 'push') return append;
+      const value = interactGet(target, property, receiver);
+      return value === undefined
+        ? interactGet(interactArrayPrototype, property, receiver)
+        : value;
+    },
+    set() { throw new TypeError('interact queue is append-only'); },
+    deleteProperty() { throw new TypeError('interact queue is append-only'); },
+    defineProperty() { throw new TypeError('interact queue is append-only'); },
+    setPrototypeOf() { throw new TypeError('interact queue prototype is fixed'); },
+  });
+  interactProxies.add(proxy);
+  return proxy;
+}
+function host() {
+  const h = globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
+  let interact = instrumentInteractQueue(h.interact);
+  Object.defineProperty(h, 'interact', {
+    configurable: true,
+    enumerable: true,
+    get() { return interact; },
+    set(rows) {
+      if (!interactIsArray(rows) || rows.length !== 0) {
+        throw new TypeError('interact queue can only be reset to an empty array');
+      }
+      interact = instrumentInteractQueue([]);
+    },
+  });
+  return h;
+}
+host();
 const snapshotRootCache = new WeakMap();
 const snapshotNestedCache = new WeakMap();
 function readOnlyView(value, root) {

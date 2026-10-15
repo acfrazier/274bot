@@ -13,11 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-const MAX_SAFE_TOKEN: u64 = (1 << 53) - 1;
-static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
     /// Stop intent must outlive the sync `gather.stop()` call and follow the
@@ -54,20 +50,6 @@ struct GatherRecord {
     stop_epoch: u64,
 }
 
-/// Allocate a nonzero integer exactly representable by a JavaScript Number.
-/// The counter advances past the public range once, then remains exhausted;
-/// it never wraps or reuses a token.
-fn allocate_token(next: &AtomicU64) -> Option<u64> {
-    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |candidate| {
-        if candidate != 0 && candidate <= MAX_SAFE_TOKEN {
-            Some(candidate + 1)
-        } else {
-            None
-        }
-    })
-    .ok()
-}
-
 fn settings_error(settings: &SettingsBag) -> Option<String> {
     GathererSettings::from_bag(settings)
         .err()
@@ -99,7 +81,7 @@ impl Family for GatherSession {
         if !crate::isolate_fb::gather_settings_within_limit(&settings) {
             return Begin::Refuse("invalid-settings".into());
         }
-        let Some(token) = allocate_token(&NEXT_TOKEN) else {
+        let Some(token) = cx.seat_token() else {
             return Begin::Refuse("token-exhausted".into());
         };
         let settings = Arc::new(settings);
@@ -261,7 +243,7 @@ impl Family for CombatSession {
             Ok(request) => Arc::new(request),
             Err(reason) => return Begin::Refuse(reason),
         };
-        let Some(token) = allocate_token(&NEXT_TOKEN) else {
+        let Some(token) = cx.seat_token() else {
             return Begin::Refuse("token-exhausted".into());
         };
         let epoch = observed::with(observed::Scene::epoch);
@@ -416,7 +398,7 @@ impl Family for ProgressQuery {
         if args.quest.trim().is_empty() {
             return Begin::Refuse("invalid-args".into());
         }
-        let Some(token) = allocate_token(&NEXT_TOKEN) else {
+        let Some(token) = cx.seat_token() else {
             return Begin::Refuse("token-exhausted".into());
         };
         let emitted_epoch = observed::with(observed::Scene::epoch);
@@ -463,21 +445,6 @@ impl Family for ProgressQuery {
 
 #[cfg(test)]
 mod tests {
-    use super::{allocate_token, MAX_SAFE_TOKEN};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[test]
-    fn gather_tokens_stop_at_the_javascript_safe_integer_boundary() {
-        let next = AtomicU64::new(MAX_SAFE_TOKEN - 1);
-        assert_eq!(allocate_token(&next), Some(MAX_SAFE_TOKEN - 1));
-        assert_eq!(allocate_token(&next), Some(MAX_SAFE_TOKEN));
-        assert_eq!(allocate_token(&next), None);
-        assert_eq!(next.load(Ordering::Relaxed), MAX_SAFE_TOKEN + 1);
-
-        assert_eq!(allocate_token(&AtomicU64::new(0)), None);
-        assert_eq!(allocate_token(&AtomicU64::new(MAX_SAFE_TOKEN + 1)), None);
-        assert_eq!(allocate_token(&AtomicU64::new(u64::MAX)), None);
-    }
 
     #[test]
     fn gather_isolate_rust_records_stay_inside_estimated_inline_bounds() {

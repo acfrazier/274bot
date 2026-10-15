@@ -181,7 +181,7 @@ fn submit_progress(
 }
 
 impl SlotScript {
-    pub(super) fn start_api_progress(&mut self, token: u64, quest: &str) {
+    pub(in crate::slot) fn start_api_progress(&mut self, token: u64, quest: &str) {
         if !self.load_active() {
             return;
         }

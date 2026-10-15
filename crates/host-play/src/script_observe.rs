@@ -25,6 +25,7 @@ use super::{
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
+use crate::play_login::SlotArm;
 #[cfg(test)]
 use std::sync::{Condvar, LazyLock, Weak};
 
@@ -305,6 +306,7 @@ pub(crate) fn script_observe_cached(
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
         None,
+        None,
     )
     .wrote
 }
@@ -379,6 +381,7 @@ pub(crate) fn script_observe_cached_with_channels(
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
+    service_arm: Option<&SlotArm>,
 ) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -405,6 +408,7 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        slot.seat_guardian_hold(hold);
         let stop_prayers = slot.take_stop_prayer_cleanup();
         let prayer_cleanup_hold = if let Some(snapshot) = snapshot.filter(|_| up) {
             let mut bots = navs.lock().unwrap();
@@ -843,6 +847,9 @@ pub(crate) fn script_observe_cached_with_channels(
                 slot.store_last_world_id(world_id);
             }
             if isolate_hold {
+                if !hold {
+                    slot.seat_held_tick();
+                }
                 // Isolate: tick for onPaint only (hold gate inside V8 via
                 // snapshot.hold). Recovery hold is distinct from guardian
                 // hold: nav follow of the owned recovery route continues,
@@ -882,6 +889,14 @@ pub(crate) fn script_observe_cached_with_channels(
                 // (design-bank-snapshot §1.2): the guard ends with this
                 // block, before effect dispatch, logging and queued cheats.
                 let bank_memory = bank_memory.map(parking_lot::RwLock::read);
+                // Keep the real lifecycle gate stable through this callback.
+                // Its guard drops before host effect dispatch below.
+                let service_gate_guard = if slot.native_run().is_some() {
+                    service_arm.map(SlotArm::session_gate)
+                } else {
+                    None
+                };
+                let service_gate = service_gate_guard.as_deref();
                 let mut ctx = ScriptCtx {
                     driver,
                     tick,
@@ -892,6 +907,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     snapshot,
                     obj_names,
                     compiled: script::CompiledTick {
+                        service_gate,
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         reach_flood: packed.as_ref().and_then(|packed| packed.flood.as_deref()),
@@ -904,6 +920,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         ..Default::default()
                     },
                 };
+                if let Some(gate) = service_gate {
+                    slot.align_seat_session(gate.ready());
+                }
                 if wake_waits {
                     slot.on_snapshot_change(&mut ctx);
                 } else {
@@ -1051,16 +1070,16 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         if slot.load_active() {
             if slot.state() == script::RunState::Running {
-                // Admit controls before taking any carried walks. Both ownership
-                // edges (and a run/Stop pair within this batch) suppress replay.
+                // The seat admits controls and filters captured gameplay before
+                // this host stage. A live API Session still fences a carried
+                // pre-seat route, not releases or already-admitted rows.
                 let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
-                        // Admission already discarded held script walks. The
-                        // host's carried walk is also discarded, but is not a
-                        // script row and must not inflate its drop count.
+                        // This host route predates the Session's foreground.
+                        // The seat, not this branch, decides each script row.
                         let _ = take_carried_walk(navs, name, slot.runtime_generation());
-                        interact.extend(reqs);
+                        interact.extend(take_script_interacts(reqs, slot_input));
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
@@ -1109,9 +1128,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     interact.extend(queued);
                 }
             }
-        } else if slot.state() == script::RunState::Running
+        } else if (slot.state() == script::RunState::Running
             && !slot.watchdog().holds_script_actions()
-            && !prayer_cleanup_hold
+            && !prayer_cleanup_hold)
+            || slot.completed_seat_dispatch_open()
         {
             let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
@@ -1186,7 +1206,8 @@ pub(crate) fn script_observe_cached_with_channels(
                     };
                 };
                 if same_lifetime
-                    && slot.state() == script::RunState::Running
+                    && (slot.state() == script::RunState::Running
+                        || slot.completed_seat_dispatch_open())
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
                     {
@@ -1194,6 +1215,34 @@ pub(crate) fn script_observe_cached_with_channels(
                         let bot = navs.entry(name.to_owned()).or_default();
                         bot.native_permissions = slot.native_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+                    }
+                    // The native seat encodes release rows ahead of gameplay,
+                    // but its two host consumers drain separately. Deliver JS
+                    // Walk releases before the native action loop as well, so
+                    // a fresh native drive cannot overtake a reserved stop.
+                    if interact.iter().any(|queued| {
+                        matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                    }) {
+                        let (releases, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut interact)
+                            .into_iter()
+                            .partition(|queued| {
+                                matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                            });
+                        interact = remaining;
+                        wrote |= dispatch_script_interact_cached(
+                            driver,
+                            snapshot,
+                            obj_names,
+                            here,
+                            navs,
+                            world,
+                            state.clone(),
+                            bank_memory,
+                            name,
+                            releases.into_iter().map(|queued| queued.req).collect(),
+                            cache.clone(),
+                            obj_names_arc.clone(),
+                        );
                     }
                     let mut refused_batch = None;
                     while let Some(action) = slot.take_native_action() {

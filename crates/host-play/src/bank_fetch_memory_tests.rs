@@ -531,6 +531,7 @@ export default class T extends LoopingBot {
                 crate::script_channels::BrokerWorld::Unavailable,
                 None,
                 None,
+                None,
             );
             let probe = script_slot(&scripts, "alice")
                 .unwrap()
