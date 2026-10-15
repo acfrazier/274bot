@@ -78,6 +78,11 @@ const MAX_OPERATION_HANDLES: u32 = 8;
 /// history in 64-snapshot chunks, but reserve the full cap for borrowed
 /// immutable references returned by WorkAdmission::progress.
 const MAX_PROGRESS_SNAPSHOTS_PER_JOB: usize = 32_768;
+/// A qualified registry dispatch consumes one scheduler-owned action even
+/// when the job yields without reporting progress. The 4,096-entry scan,
+/// at most 512 candidates and 64 KiB reads of 1 MiB files fit beneath this
+/// cap with margin; an arbitrary callback cannot renew a long allowance.
+const MAX_QUALIFIED_DISPATCHES_PER_JOB: usize = MAX_PROGRESS_SNAPSHOTS_PER_JOB;
 const PROGRESS_CHUNK: usize = 64;
 const PROGRESS_BYTES_PER_JOB: usize = std::mem::size_of::<ProgressHistory>()
     + (MAX_PROGRESS_SNAPSHOTS_PER_JOB - PROGRESS_CHUNK)
@@ -718,6 +723,7 @@ struct EntryControl {
     abandoned: bool,
     progress_sequence: u64,
     qualified_unit: Option<QualifiedUnit>,
+    qualified_dispatches: usize,
 }
 
 struct JobEntry {
@@ -750,7 +756,10 @@ impl JobEntry {
             Some(
                 unit @ (QualifiedUnit::GatheringFamilyDecode
                 | QualifiedUnit::QuesterProgressCompile),
-            ) if phase == Some(PreparationPhase::Load.index()) => {
+            ) if phase == Some(PreparationPhase::Load.index())
+                && control.qualified_dispatches == 0 =>
+            {
+                control.qualified_dispatches += 1;
                 control.qualified_unit = None;
                 let allowance = match unit {
                     QualifiedUnit::GatheringFamilyDecode => GATHERING_DECODE_SLICE,
@@ -761,8 +770,10 @@ impl JobEntry {
             }
             Some(QualifiedUnit::QuesterRegistryAction)
                 if matches!(phase, Some(phase) if phase == PreparationPhase::Load.index()
-                    || phase == PreparationPhase::Prepare.index()) =>
+                    || phase == PreparationPhase::Prepare.index())
+                    && control.qualified_dispatches < MAX_QUALIFIED_DISPATCHES_PER_JOB =>
             {
+                control.qualified_dispatches += 1;
                 (
                     QUESTER_REGISTRY_SLICE,
                     Some(QualifiedUnit::QuesterRegistryAction),
@@ -1178,17 +1189,25 @@ fn process_step(
     } else {
         None
     };
-    let restore_qualification = timing.qualified.is_some()
-        && matches!(&outcome, ErasedStep::Yielded)
-        && report.progress.is_none()
-        && !report.exceeded;
     let mut published = false;
     let mut yielded = false;
     {
         let mut control = entry.control.lock();
-        if restore_qualification && control.qualified_unit.is_none() {
-            // A pre-work checkpoint yielded without using its one-shot unit.
-            control.qualified_unit = timing.qualified;
+        if control.qualified_unit == Some(QualifiedUnit::QuesterRegistryAction)
+            && control.qualified_dispatches == MAX_QUALIFIED_DISPATCHES_PER_JOB
+            && timing.qualified.is_none()
+            && (report.progress.is_some_and(|progress| {
+                matches!(
+                    progress.phase(),
+                    phase if phase == PreparationPhase::Load.index()
+                        || phase == PreparationPhase::Prepare.index()
+                )
+            }) || matches!(&outcome, ErasedStep::Completed(_) | ErasedStep::Failed(_)))
+        {
+            // A returned registry action after the scheduler's finite
+            // qualified inventory is a per-job violation, not a renewal
+            // granted by an untrusted progress total.
+            violation = Some(CooperativeViolation::ChargeExceeded);
         }
         if shared.shutdown_requested.load(Ordering::Acquire) {
             let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
@@ -1563,6 +1582,7 @@ impl WorkService {
                 abandoned: false,
                 progress_sequence: 0,
                 qualified_unit,
+                qualified_dispatches: 0,
             }),
             cancellation: Arc::new(SharedCancellation::new()),
             terminal: TerminalCell::new(),
