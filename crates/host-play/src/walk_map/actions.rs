@@ -29,7 +29,7 @@ impl FocusToken {
     pub fn capture(arm: &SlotArm) -> Self {
         Self {
             lifetime: arm.queue_owner,
-            world_epoch: arm.world_generation.load(Ordering::Acquire),
+            world_epoch: arm.world_generation(),
         }
     }
 }
