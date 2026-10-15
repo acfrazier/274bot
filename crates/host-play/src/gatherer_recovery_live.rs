@@ -1,10 +1,9 @@
 //! Permanent Engine A proof cells for Gatherer recovery at real Catherby.
 //!
-//! Five independent, fixed-deadline cells cover a transient return stall, the
+//! Four independent, fixed-deadline cells cover a transient return stall, the
 //! already-working Oyster third-transfer sequence, a scoped one-shot refused
-//! deposit, an explicitly permanent full-stack denial, and a content-backed
-//! accepted deposit that moves nothing. The cells seed only their own account
-//! and never create the fishing resource or a world actor.
+//! deposit, and an explicitly permanent full-stack denial. The cells seed only
+//! their own account and never create the fishing resource or a world actor.
 //!
 //! Each receipt keeps per-tick inventory/bank packet generations, the full
 //! inventory/bank observations, status transitions, and parsed native deposit
@@ -56,7 +55,6 @@ const MACKEREL: i32 = 353;
 const COD: i32 = 341;
 const OYSTER: i32 = 407;
 const BASS: i32 = 363;
-const STRANGE_BOX: i32 = 3062;
 
 const NORMAL_SEED: &[&str] = &[
     "setstat fishing 99",
@@ -125,19 +123,6 @@ const SATURATED_SEED: &[&str] = &[
     "give oystershell 1",
     "give raw_bass 24",
     "givebank oystershell 2147483647",
-    "tele 0,44,53,24,44",
-];
-
-// bank.rs2:135-138 calls try_add_macro_cube instead of depositing this item.
-// macro_event_strange_box.rs2:5-7 returns immediately for more than 27 boxes:
-// no transfer, message, timer or spawned actor. Boxes stack (antimacro.obj:748).
-const ACCEPTED_NO_MOVEMENT_SEED: &[&str] = &[
-    "setstat fishing 99",
-    "setstat defence 99",
-    "setstat hitpoints 99",
-    "give harpoon 1",
-    "give macro_cube 28",
-    "give raw_shark 26",
     "tele 0,44,53,24,44",
 ];
 
@@ -291,7 +276,6 @@ enum Mode {
     OysterBaseline,
     RefusedDeposit,
     SaturatedStack,
-    AcceptedNoMovement,
 }
 
 impl Mode {
@@ -301,7 +285,6 @@ impl Mode {
             Self::OysterBaseline => "oyster-third-transfer-baseline",
             Self::RefusedDeposit => "refused-deposit-recovery",
             Self::SaturatedStack => "saturated-oyster-stack",
-            Self::AcceptedNoMovement => "accepted-no-movement",
         }
     }
 
@@ -310,7 +293,6 @@ impl Mode {
             Self::ReturnStall | Self::RefusedDeposit => NORMAL_SEED,
             Self::OysterBaseline => OYSTER_SEED,
             Self::SaturatedStack => SATURATED_SEED,
-            Self::AcceptedNoMovement => ACCEPTED_NO_MOVEMENT_SEED,
         }
     }
 
@@ -633,25 +615,6 @@ fn normal_seed_ready(snapshot: &GameSnapshot) -> bool {
             == 27
 }
 
-fn accepted_no_movement_seed_ready(snapshot: &GameSnapshot) -> bool {
-    snapshot.tile() == Some((SEED_TILE.x, SEED_TILE.z, SEED_TILE.level))
-        && snapshot.inventory().len() == 28
-        && snapshot
-            .inventory()
-            .iter()
-            .any(|item| item.def.id == HARPOON && item.count == 1)
-        && snapshot
-            .inventory()
-            .iter()
-            .any(|item| item.def.id == STRANGE_BOX && item.count == 28)
-        && snapshot
-            .inventory()
-            .iter()
-            .filter(|item| item.def.id == SHARK && item.count == 1)
-            .count()
-            == 26
-}
-
 fn big_net_seed_ready(snapshot: &GameSnapshot) -> bool {
     snapshot.tile() == Some((SEED_TILE.x, SEED_TILE.z, SEED_TILE.level))
         && snapshot
@@ -796,96 +759,6 @@ fn saturated_stack_preflight(receipt: &serde_json::Value) -> bool {
     bank_has_max_stack && no_oyster_dispatch
 }
 
-fn accepted_no_movement_observed(receipt: &serde_json::Value) -> bool {
-    let Some(dispatches) = receipt["dispatches"].as_array() else {
-        return false;
-    };
-    let [first, retry] = dispatches.as_slice() else {
-        return false;
-    };
-    let Some(generation) = first["bank_generation"].as_u64().filter(|&value| value > 0) else {
-        return false;
-    };
-    let distinct_requests = first["request_id"].as_u64().is_some_and(|request| {
-        request > 0
-            && retry["request_id"]
-                .as_u64()
-                .is_some_and(|next| next > request)
-    });
-    if !distinct_requests
-        || !dispatches.iter().all(|dispatch| {
-            dispatch["bank_generation"].as_u64() == Some(generation)
-                && dispatch["transfer"].as_u64() == Some(1)
-                && dispatch["item_id"].as_i64() == Some(i64::from(STRANGE_BOX))
-                && dispatch["slot"].as_i64() == Some(1)
-                && dispatch["component"].as_i64() == Some(2006)
-                && dispatch["operation"].as_i64() == Some(4)
-                && dispatch["option"] == "Deposit All"
-                && dispatch["accepted"] == true
-                && dispatch["emitted_packets"].as_u64() == Some(1)
-        })
-    {
-        return false;
-    }
-    let Some(events) = receipt["no_movement_recovery_events"].as_array() else {
-        return false;
-    };
-    let [event] = events.as_slice() else {
-        return false;
-    };
-    let Some(event) = event.as_str() else {
-        return false;
-    };
-    let recovery_between_sends = number::<u64>(event, "tick").is_some_and(|tick| {
-        first["tick"].as_u64().is_some_and(|first| first < tick)
-            && retry["tick"].as_u64().is_some_and(|retry| tick < retry)
-    });
-    if !recovery_between_sends
-        || !event.contains("reason=bank deposit did not move inventory recovery=1/1")
-        || number::<i32>(event, "id") != Some(STRANGE_BOX)
-    {
-        return false;
-    }
-    let Some(frames) = receipt["facts"].as_array() else {
-        return false;
-    };
-    let mut observed = frames.iter().filter(|frame| {
-        frame["bank_session_generation"].as_u64() == Some(generation)
-            && frame["bank_component"]
-                .as_i64()
-                .is_some_and(|root| root >= 0)
-            && frame["bank_side_revision"]
-                .as_u64()
-                .is_some_and(|revision| revision > 0)
-            && frame["bank_revision"]
-                .as_u64()
-                .is_some_and(|revision| revision > 0)
-    });
-    let Some(before) = observed.next() else {
-        return false;
-    };
-    let conserved = |frame: &serde_json::Value| {
-        item_count(frame, "inventory", STRANGE_BOX) == 28
-            && item_count(frame, "bank_side", STRANGE_BOX) == 28
-            && item_count(frame, "bank", STRANGE_BOX) == 0
-            && item_count(frame, "inventory", SHARK) == 26
-            && item_count(frame, "bank", SHARK) == 0
-            && item_count(frame, "inventory", HARPOON) == 1
-    };
-    let Some(last) = observed.next_back() else {
-        return false;
-    };
-    conserved(before)
-        && conserved(last)
-        && observed.all(conserved)
-        && before["tick"]
-            .as_u64()
-            .zip(last["tick"].as_u64())
-            .is_some_and(|(before, last)| last > before)
-        && receipt["deposit_fault"]["armed"] == false
-        && receipt["return_fault"]["armed"] == false
-}
-
 fn receipt_has_exact_oyster_sequence(receipt: &serde_json::Value) -> bool {
     let Some(dispatches) = receipt["dispatches"].as_array() else {
         return false;
@@ -1020,39 +893,20 @@ fn valid_outcome(mode: Mode, receipt: &serde_json::Value) -> bool {
                 && message_has_full_stack(&receipt["failure"])
                 && saturated_stack_preflight(receipt)
         }
-        Mode::AcceptedNoMovement => {
-            receipt["result"] == "blocked-for-12s"
-                && receipt["random_events_enabled"] == false
-                && receipt["failure"]["code"] == "bank-deposit-failed"
-                && receipt["failure"]["message"] == "bank deposit did not move inventory"
-                && receipt["blocked_for_ms"]
-                    .as_u64()
-                    .is_some_and(|elapsed| elapsed >= FAILURE_RETENTION.as_millis() as u64)
-                && accepted_no_movement_observed(receipt)
-        }
     }
 }
 
 fn new_cell(mode: Mode, evidence_dir: PathBuf) -> Arc<Mutex<Cell>> {
-    let seed_ready: fn(&GameSnapshot) -> bool = match mode {
-        Mode::AcceptedNoMovement => accepted_no_movement_seed_ready,
-        mode if mode.uses_big_net() => big_net_seed_ready,
-        _ => normal_seed_ready,
+    let seed_ready: fn(&GameSnapshot) -> bool = if mode.uses_big_net() {
+        big_net_seed_ready
+    } else {
+        normal_seed_ready
     };
     Arc::new(Mutex::new(Cell::new(
         CELL_BOUND,
         mode.seed(),
         seed_ready,
-        &[
-            HARPOON,
-            SHARK,
-            BIG_NET,
-            MACKEREL,
-            COD,
-            OYSTER,
-            BASS,
-            STRANGE_BOX,
-        ],
+        &[HARPOON, SHARK, BIG_NET, MACKEREL, COD, OYSTER, BASS],
         serde_json::json!({
             "request": REQUEST,
             "mode": mode.name(),
@@ -1115,9 +969,6 @@ fn run_live(mode: Mode) {
     let last_tick = Mutex::new(None);
     let hook_snapshot = Mutex::new(GameSnapshot::new());
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
-    // Guardian must not solve the seeded boxes before their real bank refusal.
-    // Keep the ordinary profile setting unchanged for the four other cells.
-    let random_events = mode != Mode::AcceptedNoMovement;
     let play = super::run_with_template(
         template,
         true,
@@ -1125,10 +976,7 @@ fn run_live(mode: Mode) {
             username: account.clone(),
             password: account.clone().into(),
             uid: 274_279_231,
-            settings: ProfileSettings {
-                random_events,
-                ..ProfileSettings::default()
-            },
+            settings: ProfileSettings::default(),
         }],
         |_| (None, None),
         move |client, username, frame_result| {
@@ -1196,20 +1044,6 @@ fn run_live(mode: Mode) {
     let mut completion_status = None;
 
     loop {
-        if cell.lock().started.is_none() && preparation_started.elapsed() >= PREPARATION_BOUND {
-            let evidence = serde_json::json!({
-                "account": account,
-                "mode": mode.name(),
-                "phase": format!("{:?}", cell.lock().phase),
-                "seed": mode.seed(),
-                "facts": frame_recorder.lock().frames,
-            });
-            std::fs::write(
-                evidence_dir.join("preparation-failure.json"),
-                serde_json::to_vec_pretty(&evidence).expect("serialize failed preparation"),
-            )
-            .expect("retain failed-preparation observations");
-        }
         check_prerequisites(
             &play,
             &account,
@@ -1321,7 +1155,7 @@ fn run_live(mode: Mode) {
                             .and_then(ArmedDepositFault::evidence)
                             .is_some(),
                         Mode::OysterBaseline => true,
-                        Mode::SaturatedStack | Mode::AcceptedNoMovement => false,
+                        Mode::SaturatedStack => false,
                     };
                     if recorder.saw_bank_return
                         && recovery_ready
@@ -1347,14 +1181,9 @@ fn run_live(mode: Mode) {
                     }
                 }
 
-                if matches!(mode, Mode::SaturatedStack | Mode::AcceptedNoMovement) {
+                if mode == Mode::SaturatedStack {
                     if let Some(failure) = failure_json(&status) {
-                        let expected_reason = if mode == Mode::SaturatedStack {
-                            message_has_full_stack(&failure)
-                        } else {
-                            failure["message"] == "bank deposit did not move inventory"
-                        };
-                        if !expected_reason {
+                        if !message_has_full_stack(&failure) {
                             final_failure = Some(failure);
                             result = "blocked-with-wrong-reason";
                             break;
@@ -1457,7 +1286,6 @@ fn run_live(mode: Mode) {
         },
         "cell_elapsed_ms": elapsed_ms,
         "settings": mode_settings(mode),
-        "random_events_enabled": random_events,
         "seed": mode.seed(),
         "target_verified": record.target_verified,
         "result": result,
@@ -1469,9 +1297,6 @@ fn run_live(mode: Mode) {
             "same_item_retried": deposit_recovered,
             "transfer_settled": deposit_recovered,
         },
-        "no_movement_recovery_events": logs.iter().filter(|line| {
-            line.contains("bank-deposit-recover ")
-        }).collect::<Vec<_>>(),
         "oyster_sequence": {
             "settled": oyster_settled,
             "baseline_behavior_unchanged": mode == Mode::OysterBaseline,
@@ -1603,38 +1428,6 @@ fn oracle_receipt(mode: Mode) -> serde_json::Value {
             "bank": [{"id": OYSTER, "count": i32::MAX}]
         }]);
     }
-    if mode == Mode::AcceptedNoMovement {
-        receipt["random_events_enabled"] = serde_json::json!(false);
-        receipt["result"] = serde_json::json!("blocked-for-12s");
-        receipt["failure"] = serde_json::json!({
-            "code": "bank-deposit-failed",
-            "message": "bank deposit did not move inventory",
-        });
-        receipt["deposit_fault"] = serde_json::json!({"armed": false});
-        receipt["return_fault"] = serde_json::json!({"armed": false});
-        receipt["dispatches"] = serde_json::json!([
-            {"bank_generation":1,"transfer":1,"request_id":8,"click_tick":88,"tick":88,
-                "item_id":STRANGE_BOX,"slot":1,"component":2006,"operation":4,
-                "option":"Deposit All","accepted":true,"emitted_packets":1},
-            {"bank_generation":1,"transfer":1,"request_id":9,"click_tick":98,"tick":98,
-                "item_id":STRANGE_BOX,"slot":1,"component":2006,"operation":4,
-                "option":"Deposit All","accepted":true,"emitted_packets":1},
-        ]);
-        receipt["no_movement_recovery_events"] = serde_json::json!([
-            "bank-deposit-recover tick=97 id=3062 reason=bank deposit did not move inventory recovery=1/1",
-        ]);
-        let frame = serde_json::json!({
-            "tick": 80, "bank_session_generation": 1, "bank_component": 2006,
-            "bank_side_revision": 1, "bank_revision": 1,
-            "inventory": [{"id":STRANGE_BOX,"count":28},{"id":SHARK,"count":26},
-                {"id":HARPOON,"count":1}],
-            "bank_side": [{"id":STRANGE_BOX,"count":28}],
-            "bank": [],
-        });
-        let mut after = frame.clone();
-        after["tick"] = serde_json::json!(110);
-        receipt["facts"] = serde_json::json!([frame, after]);
-    }
     receipt
 }
 
@@ -1660,12 +1453,6 @@ fn live_gatherer_refused_deposit_recovers_and_catches_engine_a() {
 #[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, Engine A and Gatherer live evidence inputs"]
 fn live_gatherer_saturated_oyster_stack_reports_full_stack_engine_a() {
     run_live(Mode::SaturatedStack);
-}
-
-#[test]
-#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, Engine A and Gatherer live evidence inputs"]
-fn live_gatherer_accepted_no_movement_retries_once_engine_a() {
-    run_live(Mode::AcceptedNoMovement);
 }
 
 #[test]
@@ -1703,7 +1490,6 @@ fn gatherer_recovery_oracle_accepts_all_observed_outcomes() {
         Mode::OysterBaseline,
         Mode::RefusedDeposit,
         Mode::SaturatedStack,
-        Mode::AcceptedNoMovement,
     ] {
         let receipt = oracle_receipt(mode);
         assert!(valid_outcome(mode, &receipt), "rejects {mode:?}: {receipt}");
@@ -1717,7 +1503,6 @@ fn gatherer_recovery_oracle_rejects_deadlines_and_unactivated_fixtures() {
         Mode::OysterBaseline,
         Mode::RefusedDeposit,
         Mode::SaturatedStack,
-        Mode::AcceptedNoMovement,
     ] {
         let mut deadline = oracle_receipt(mode);
         deadline["result"] = serde_json::json!("cell-deadline");
@@ -1796,52 +1581,5 @@ fn gatherer_recovery_oracle_rejects_wrong_capacity_reason_and_inexact_oyster_seq
     assert!(!valid_outcome(
         Mode::RefusedDeposit,
         &different_deposit_action
-    ));
-}
-
-#[test]
-fn gatherer_recovery_no_movement_oracle_requires_real_bounded_dispatch_and_conservation() {
-    let good = oracle_receipt(Mode::AcceptedNoMovement);
-    assert!(valid_outcome(Mode::AcceptedNoMovement, &good));
-    for (pointer, value) in [
-        ("/dispatches/0/accepted", serde_json::json!(false)),
-        ("/dispatches/1/emitted_packets", serde_json::json!(0)),
-        ("/dispatches/1/request_id", serde_json::json!(8)),
-        ("/dispatches/1/item_id", serde_json::json!(SHARK)),
-        ("/dispatches/1/bank_generation", serde_json::json!(2)),
-        ("/facts/1/inventory/0/count", serde_json::json!(27)),
-        ("/facts/1/bank_side/0/count", serde_json::json!(27)),
-        (
-            "/facts/1/bank",
-            serde_json::json!([{"id":STRANGE_BOX,"count":1}]),
-        ),
-        ("/facts/1/tick", serde_json::json!(80)),
-        ("/deposit_fault/armed", serde_json::json!(true)),
-        ("/return_fault/armed", serde_json::json!(true)),
-        (
-            "/failure/message",
-            serde_json::json!("bank transfer did not settle"),
-        ),
-        ("/blocked_for_ms", serde_json::json!(11_999)),
-        ("/no_movement_recovery_events", serde_json::json!([])),
-    ] {
-        let mut bad = good.clone();
-        *bad.pointer_mut(pointer).expect("oracle field exists") = value;
-        assert!(!valid_outcome(Mode::AcceptedNoMovement, &bad), "{pointer}");
-    }
-    let mut third_send = good.clone();
-    let first = third_send["dispatches"][0].clone();
-    third_send["dispatches"].as_array_mut().unwrap().push(first);
-    assert!(!valid_outcome(Mode::AcceptedNoMovement, &third_send));
-
-    let mut duplicate_recovery = good;
-    let first = duplicate_recovery["no_movement_recovery_events"][0].clone();
-    duplicate_recovery["no_movement_recovery_events"]
-        .as_array_mut()
-        .unwrap()
-        .push(first);
-    assert!(!valid_outcome(
-        Mode::AcceptedNoMovement,
-        &duplicate_recovery
     ));
 }
