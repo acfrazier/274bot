@@ -50,8 +50,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   gathering site and reports routes that remain blocked.
 - Gatherer and Quester banking now check the current inventory and retry once
   after a refused or ineffective deposit. Items already deposited are not
-  counted twice, and protected items remain protected. Both scripts report a
-  full bank, full item stack or unbankable item instead of a generic timeout.
+  counted twice, and protected items remain protected. Gatherer keeps unbankable
+  items and continues gathering when the deposit frees enough space. Both scripts
+  report a full bank or full item stack. Quester still refuses unbankable deposits.
 
 ### Saved state
 

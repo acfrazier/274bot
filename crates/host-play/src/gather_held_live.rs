@@ -1,7 +1,8 @@
 //! Detect-only random events must not freeze Gatherer behind a held box.
 //! Uses only account cheats and Catherby's real bank and fishing content.
-//! Boxes cannot be banked (`bank.rs2:135-138`), so this seed must reach
-//! the bank and report its deposit failure, not silently wait for Guardian.
+//! Boxes cannot be banked (`bank.rs2:129-138`), so Gatherer must keep the 28
+//! held boxes, deposit the other items (26 raw sharks), and resume catching
+//! fish afterwards, with no terminal failure.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,6 +21,12 @@ use super::{run_with_template, SharedClientTemplate};
 const HARPOON: i32 = 311;
 const BOX: i32 = 3062;
 const SHARK: i32 = 383;
+// Raw bass (obj.pack `363=raw_bass`) is the big-net secondary at the same
+// Catherby memberfish spot (`memberfish.rs2:207-215`); the harpoon op3 path
+// rolls raw shark only (`memberfish.rs2:40-43,74-77`). Either inventory
+// increment after the shark deposit proves real fishing resumed, without
+// assuming which chance outcome the engine picks.
+const BASS: i32 = 363;
 const BOUND: Duration = Duration::from_secs(90);
 const SEED: &[&str] = &[
     "setstat fishing 99",
@@ -65,8 +72,23 @@ struct Observations {
     frames: Vec<serde_json::Value>,
     bank_opened: bool,
     sharks_banked: bool,
+    deposit_tick: Option<u32>,
+    deposit_elapsed_ms: Option<u128>,
+    deposit_sharks: i32,
+    deposit_bass: i32,
+    deposit_fishing_xp: Option<i32>,
+    catch_tick: Option<u32>,
+    catch_elapsed_ms: Option<u128>,
     box_changed: bool,
     harpoon_lost: bool,
+}
+
+fn fishing_xp(snapshot: &GameSnapshot) -> Option<i32> {
+    snapshot
+        .stats()
+        .iter()
+        .find(|stat| stat.name.eq_ignore_ascii_case("fishing"))
+        .map(|stat| stat.xp)
 }
 
 fn correct_outcome(
@@ -75,57 +97,103 @@ fn correct_outcome(
     failure: Option<(&str, &str)>,
 ) -> bool {
     observations.bank_opened
+        && observations.sharks_banked
+        && observations.deposit_tick.is_some()
+        && observations.catch_tick.is_some_and(|catch| {
+            observations
+                .deposit_tick
+                .is_some_and(|deposit| catch > deposit)
+        })
         && !observations.box_changed
         && !observations.harpoon_lost
-        && phase == NativePhase::Blocked
-        && failure.is_some_and(|(code, message)| {
-            code == "bank-deposit-failed" && message.contains("bank transfer did not settle")
-        })
+        && phase != NativePhase::Blocked
+        && failure.is_none()
 }
 
 #[test]
-fn held_box_oracle_requires_real_bank_progress_and_a_visible_failure() {
-    let mut observations = Observations {
+fn held_box_oracle_requires_sharks_deposit_then_fish_catch_with_boxes_held() {
+    let valid = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(10),
+        catch_tick: Some(20),
+        ..Observations::default()
+    };
+    assert!(correct_outcome(&valid, NativePhase::Working, None));
+    // Seeding alone never passes.
+    assert!(!correct_outcome(
+        &Observations::default(),
+        NativePhase::Working,
+        None
+    ));
+    // No deposit, even with the bank open.
+    let no_deposit = Observations {
         bank_opened: true,
         ..Observations::default()
     };
-    let failure = Some(("bank-deposit-failed", "bank transfer did not settle"));
-    assert!(correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        failure
-    ));
-    assert!(!correct_outcome(&observations, NativePhase::Waiting, None));
-    assert!(!correct_outcome(&observations, NativePhase::Blocked, None));
+    assert!(!correct_outcome(&no_deposit, NativePhase::Working, None));
+    // Deposit without any later catch.
+    let no_catch = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(10),
+        ..Observations::default()
+    };
+    assert!(!correct_outcome(&no_catch, NativePhase::Working, None));
+    // A catch at or before the deposit tick does not count: only a strictly
+    // later catch proves gathering resumed after the sharks were banked.
+    let catch_before_deposit = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(20),
+        catch_tick: Some(10),
+        ..Observations::default()
+    };
     assert!(!correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        Some(("unrelated", "bank transfer did not settle"))
+        &catch_before_deposit,
+        NativePhase::Working,
+        None
     ));
+    let catch_on_deposit_tick = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(20),
+        catch_tick: Some(20),
+        ..Observations::default()
+    };
     assert!(!correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        Some(("bank-deposit-failed", ""))
+        &catch_on_deposit_tick,
+        NativePhase::Working,
+        None
     ));
-    observations.bank_opened = false;
+    // Boxes must stay 28 and the harpoon must stay held throughout.
+    let boxes_changed = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(10),
+        catch_tick: Some(20),
+        box_changed: true,
+        ..Observations::default()
+    };
+    assert!(!correct_outcome(&boxes_changed, NativePhase::Working, None));
+    let harpoon_lost = Observations {
+        bank_opened: true,
+        sharks_banked: true,
+        deposit_tick: Some(10),
+        catch_tick: Some(20),
+        harpoon_lost: true,
+        ..Observations::default()
+    };
+    assert!(!correct_outcome(&harpoon_lost, NativePhase::Working, None));
+    // The old bank-deposit-failed terminal result no longer passes, nor does
+    // any failure or Blocked phase.
+    let old_failure = Some(("bank-deposit-failed", "bank transfer did not settle"));
+    assert!(!correct_outcome(&valid, NativePhase::Blocked, old_failure));
+    assert!(!correct_outcome(&valid, NativePhase::Blocked, None));
     assert!(!correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        failure
-    ));
-    observations.bank_opened = true;
-    observations.box_changed = true;
-    assert!(!correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        failure
-    ));
-    observations.box_changed = false;
-    observations.harpoon_lost = true;
-    assert!(!correct_outcome(
-        &observations,
-        NativePhase::Blocked,
-        failure
+        &valid,
+        NativePhase::Working,
+        Some(("gather-failed", "something broke"))
     ));
 }
 
@@ -161,8 +229,8 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
                 && count(snapshot.inventory(), BOX) == 28
                 && count(snapshot.inventory(), SHARK) == 26
         },
-        &[HARPOON, BOX, SHARK],
-        serde_json::json!({"request": "GATHERER-HELD-FOREVER", "seed": SEED, "settings": bag}),
+        &[HARPOON, BOX, SHARK, BASS],
+        serde_json::json!({"request": "GATHERER-HELD-FOREVER-R2", "seed": SEED, "settings": bag}),
         |_| true,
         evidence_dir.clone(),
     )));
@@ -203,16 +271,40 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
             let boxes = count(obs.snapshot.inventory(), BOX);
             let harpoons = count(obs.snapshot.inventory(), HARPOON);
             let sharks = count(obs.snapshot.inventory(), SHARK);
+            let bass = count(obs.snapshot.inventory(), BASS);
             let bank_sharks = count(obs.snapshot.bank(), SHARK);
+            let xp = fishing_xp(&obs.snapshot);
             let row = serde_json::json!({
                 "tick": tick, "tile": obs.snapshot.tile(), "host_hold": fr.hold,
                 "elapsed_ms": started.elapsed().as_millis(),
                 "bank_open": bank_open, "boxes": boxes, "harpoons": harpoons,
-                "sharks": sharks, "bank_sharks": bank_sharks,
+                "sharks": sharks, "bass": bass, "bank_sharks": bank_sharks,
+                "fishing_xp": xp,
             });
             obs.frames.push(row);
             obs.bank_opened |= bank_open;
-            obs.sharks_banked |= bank_sharks >= 26;
+            if obs.deposit_tick.is_none() && bank_sharks >= 26 {
+                obs.sharks_banked = true;
+                obs.deposit_tick = Some(tick);
+                obs.deposit_elapsed_ms = Some(started.elapsed().as_millis());
+                obs.deposit_sharks = sharks;
+                obs.deposit_bass = bass;
+                obs.deposit_fishing_xp = xp;
+            } else if obs.deposit_tick.is_some() && obs.catch_tick.is_none() {
+                // Only a strictly later tick counts: a real caught fish AFTER
+                // the sharks were deposited. Either engine chance outcome for
+                // the memberfish spot (raw shark 383, raw bass 363) is valid;
+                // an XP gain corroborated by a fish in hand covers the same
+                // ground when counts alone are ambiguous.
+                let xp_gain = matches!(
+                    (obs.deposit_fishing_xp, xp),
+                    (Some(before), Some(now)) if now > before
+                ) && (sharks > 0 || bass > 0);
+                if sharks > obs.deposit_sharks || bass > obs.deposit_bass || xp_gain {
+                    obs.catch_tick = Some(tick);
+                    obs.catch_elapsed_ms = Some(started.elapsed().as_millis());
+                }
+            }
             obs.box_changed |= boxes != 28;
             obs.harpoon_lost |= harpoons != 1;
         },
@@ -275,7 +367,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
         let mut cell = cell.lock();
         cell.trace.passed = passed;
         if !passed {
-            cell.fail("disabled event prevented real bank progress before the deadline".into());
+            cell.fail("Gatherer did not deposit sharks then catch a fish with boxes kept before the deadline".into());
         }
         cell.terminal = true;
     }
@@ -287,9 +379,11 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     std::fs::write(
         evidence_dir.join("receipt.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "request": "GATHERER-HELD-FOREVER", "account": account, "engine": "127.0.0.1:44594",
+            "request": "GATHERER-HELD-FOREVER-R2", "account": account, "engine": "127.0.0.1:44594",
             "seed": SEED, "settings": bag, "random_events_enabled": false,
             "passed": passed, "bank_opened": obs.bank_opened, "sharks_banked": obs.sharks_banked,
+            "deposit_tick": obs.deposit_tick, "deposit_elapsed_ms": obs.deposit_elapsed_ms,
+            "catch_tick": obs.catch_tick, "catch_elapsed_ms": obs.catch_elapsed_ms,
             "box_changed": obs.box_changed, "harpoon_lost": obs.harpoon_lost,
             "statuses": statuses, "frames": obs.frames,
         }))
@@ -300,7 +394,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     assert!(cell.lock().capture_error.is_none(), "final capture failed");
     assert!(
         passed,
-        "disabled event did not reach its visible bank failure; receipt={}",
+        "disabled event did not bank sharks then resume catching fish with boxes held; receipt={}",
         evidence_dir.display()
     );
 }

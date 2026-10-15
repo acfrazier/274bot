@@ -23,7 +23,28 @@ use std::sync::Arc;
 const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
 const MAX_PLAN_ITEMS: usize = 8;
-const MAX_PROTECTED_IDS: usize = 8;
+const MAX_PROTECTED_IDS: usize = 8 + UNBANKABLE_ALIASES.len();
+
+/// Items refused by the engine's `bank_check_allowed` content:
+/// `content/scripts/interface_bank/scripts/bank.rs2:129-149` names the box,
+/// anthems and monkey. Its `unbankable` parameter is true on the lamp in
+/// `content/scripts/general/configs/xplamp.obj:13` and the toad in
+/// `content/scripts/quests/quest_chompybird/configs/quest_chompybird.obj:74`.
+/// The box refusal is silent and calls `try_add_macro_cube` before returning
+/// false, so a missing transfer cannot distinguish it from an ordinary no-op.
+const UNBANKABLE_ALIASES: &[&str] = &[
+    "macro_cube",
+    "misc_awful_anthem",
+    "misc_good_anthem",
+    "mm_monkey_in_backpack",
+    "macro_genilamp",
+    "bloated_toad",
+];
+
+pub(super) fn unbankable_index(selected: &SelectedGameData, item: &ItemView) -> Option<usize> {
+    let alias = selected.item_by_id(item.def.id)?.alias.as_deref()?;
+    UNBANKABLE_ALIASES.iter().position(|known| *known == alias)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItemFact {
@@ -523,6 +544,15 @@ impl ProtectedIds {
     pub fn as_slice(&self) -> &[i32] {
         &self.ids[..usize::from(self.len)]
     }
+
+    /// Bank keeps also include content-refused items actually held this trip.
+    pub(super) fn keep_unbankable(&mut self, selected: &SelectedGameData, inventory: &[ItemView]) {
+        for item in inventory {
+            if item.count > 0 && unbankable_index(selected, item).is_some() {
+                self.push(item.def.id);
+            }
+        }
+    }
 }
 
 /// Rebuild the small per-boundary keep set from the current selected tool and
@@ -547,11 +577,12 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
     ids
 }
 
-/// Return every observed inventory item ID with a positive count except
-/// applicable gathering tools and prepared supplies. Incidental non-products
-/// are banked too, without special-casing individual drops.
+/// Return every observed positive-count inventory item ID except gathering
+/// tools, prepared supplies and content-defined unbankable items. Bankable
+/// incidental non-products are deposited too.
 pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
-    let protected = protected_ids(prepared, tool_id);
+    let mut protected = protected_ids(prepared, tool_id);
+    protected.keep_unbankable(&prepared.selected, inventory);
     let mut ids = Vec::with_capacity(inventory.len());
     for item in inventory {
         let id = item.def.id;
@@ -1392,6 +1423,121 @@ mod tests {
             .iter()
             .all(|rune| protected.as_slice().contains(&rune.id)));
         assert!(protected.as_slice().len() <= MAX_PROTECTED_IDS);
+    }
+
+    #[test]
+    fn bank_unbankable_aliases_resolve_and_stay_out_of_the_deposit_plan() {
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let mut inventory = Vec::new();
+        for (index, alias) in UNBANKABLE_ALIASES.iter().enumerate() {
+            let fact = prepared.selected.item_by_alias(alias).unwrap();
+            inventory.push(item(
+                fact.id,
+                fact.name.as_deref().unwrap(),
+                1,
+                ItemContainer::Inventory,
+            ));
+            assert_eq!(
+                unbankable_index(&prepared.selected, inventory.last().unwrap()),
+                Some(index)
+            );
+        }
+        inventory.push(item(383, "Raw shark", 1, ItemContainer::Inventory));
+        assert_eq!(bank_deposit_ids(&prepared, -1, &inventory).as_ref(), &[383]);
+        let mut kept = protected_ids(&prepared, -1);
+        kept.keep_unbankable(&prepared.selected, &inventory);
+        assert!(inventory[..UNBANKABLE_ALIASES.len()]
+            .iter()
+            .all(|item| kept.as_slice().contains(&item.def.id)));
+        assert_eq!(
+            unbankable_index(&prepared.selected, inventory.last().unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn bank_unbankable_set_covers_engine_content_refusals() {
+        let Some(engine) = crate::ctx::test_support::local_asset_path(
+            "ENGINE_DIR",
+            "/srv/dev/experiments/lostcity-289/engine",
+            "289 engine content",
+        ) else {
+            return;
+        };
+        let scripts = engine.parent().unwrap().join("content/scripts");
+        let bank =
+            std::fs::read_to_string(scripts.join("interface_bank/scripts/bank.rs2")).unwrap();
+        let allowed = bank
+            .split_once("[proc,bank_check_allowed]")
+            .expect("bank_check_allowed content")
+            .1
+            .split_once("[label,")
+            .expect("end of bank_check_allowed")
+            .0;
+        for clause in allowed.split("$obj = ").skip(1) {
+            let alias = clause
+                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                .next()
+                .unwrap();
+            assert!(
+                UNBANKABLE_ALIASES.contains(&alias),
+                "bank_check_allowed refuses {alias}; update the Gatherer kept set"
+            );
+        }
+        let mut directories = vec![scripts];
+        let mut parameter_items = Vec::new();
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    directories.push(entry.path());
+                    continue;
+                }
+                let path = entry.path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("obj") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let mut alias = None;
+                for line in source.lines() {
+                    let line = line.split("//").next().unwrap().trim();
+                    if let Some(section) = line
+                        .strip_prefix('[')
+                        .and_then(|line| line.strip_suffix(']'))
+                    {
+                        alias = Some(section);
+                        continue;
+                    }
+                    let Some((key, value)) = line.split_once('=') else {
+                        continue;
+                    };
+                    let Some((parameter, value)) = value.split_once(',') else {
+                        continue;
+                    };
+                    if key.trim() != "param" || parameter.trim() != "unbankable" {
+                        continue;
+                    }
+                    match value.trim() {
+                        "^false" | "0" => continue,
+                        "^true" | "1" => {}
+                        other => {
+                            panic!("unknown unbankable parameter {other} in {}", path.display())
+                        }
+                    }
+                    let alias = alias.expect("an object parameter has a section");
+                    assert!(
+                        UNBANKABLE_ALIASES.contains(&alias),
+                        "{} marks {alias} unbankable; update the Gatherer kept set",
+                        path.display()
+                    );
+                    parameter_items.push(alias.to_owned());
+                }
+            }
+        }
+        assert!(
+            !parameter_items.is_empty(),
+            "the content scan must find parameters"
+        );
     }
 
     #[test]
