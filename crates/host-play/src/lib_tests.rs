@@ -3492,12 +3492,19 @@ fn uid_save_on_running_slot_connects_without_requeue_spin() {
     use std::sync::mpsc;
 
     #[cfg(target_os = "linux")]
-    fn worker_cpu_ticks() -> u64 {
-        let task = std::fs::read_dir("/proc/self/task")
+    fn worker_task() -> Option<std::path::PathBuf> {
+        std::fs::read_dir("/proc/self/task")
             .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| std::fs::read_to_string(path.join("comm")).unwrap() == "uid-r3\n")
-            .expect("named slot worker");
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                std::fs::read_to_string(path.join("comm")).is_ok_and(|name| name == "uid-r3\n")
+            })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn worker_cpu_ticks() -> u64 {
+        let task = worker_task().expect("named slot worker");
         let stat = std::fs::read_to_string(task.join("stat")).unwrap();
         let fields: Vec<_> = stat[stat.rfind(')').unwrap() + 2..]
             .split_whitespace()
@@ -3530,6 +3537,9 @@ fn uid_save_on_running_slot_connects_without_requeue_spin() {
     arm.set_lowmem_handshake(false);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("uid-r3", 42), None, None, Some(Arc::clone(&arm)));
+    #[cfg(target_os = "linux")]
+    assert!(wait_until(2_000, || worker_task().is_some()));
+    #[cfg(not(target_os = "linux"))]
     assert!(wait_until(2_000, || arm.latest_lifecycle_event().is_some()));
     play.remember_profile(profile("uid-r3", 43));
     assert_eq!(arm.uid.load(Ordering::Relaxed), 43);
