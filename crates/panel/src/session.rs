@@ -3544,9 +3544,9 @@ impl Session {
             return;
         }
         profile.settings.tutorial_skipped = Some(skipped);
-        if let Err(e) = self
-            .core
-            .save_profile(profile, frontend_core::ArmMirror::none(), "tutorial")
+        if let Err(e) =
+            self.core
+                .save_profile(profile, frontend_core::ArmMirror::none(), "tutorial")
         {
             self.error = Some(e);
         }

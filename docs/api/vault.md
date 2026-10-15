@@ -234,6 +234,13 @@ value that a repeated key in the same object replaced, serde_json's own
 scratch buffer for strings with escapes, a buffer the read had to grow
 because the file grew meanwhile, or the log-redaction list described below.
 
+The importer keeps owning data behind private fields. Catalog adapters use
+`CatalogCard::new` and its accessors. Consumers read skipped items through
+`Skipped::item` and `Skipped::reason`. `ImportRun::results` returns borrowed
+`AccountResult` views, so reading a settled failure does not copy its text.
+`ImportError` is opaque. Its display message is unchanged, and
+`std::error::Error::source` exposes the original I/O cause.
+
 ## Secrets in memory
 
 `Profile.password` is a `vault::Secret` (also the panel's passphrase and

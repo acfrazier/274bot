@@ -2482,7 +2482,9 @@ impl<Io> OperatorSession<Io> {
                 }
                 return deliver_settings(play, name, live);
             }
-            ArmMirrorKind::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
+            ArmMirrorKind::ScriptSettings { live, .. } => {
+                return deliver_settings(play, name, live)
+            }
             ArmMirrorKind::NativeSettings { .. } => {
                 return LiveDelivery::Rejected("native settings were not prepared".into())
             }

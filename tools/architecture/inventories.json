@@ -370,6 +370,150 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|AccountPlan",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "AccountPlan",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 importer preview owns the planned profile and redacted detail lines behind accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|AccountResult",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "AccountResult",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "0.2.3 importer result view borrows failure text from the run's private settled-result cache."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|AccountStatus",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "AccountStatus",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 importer preview status is a Copy discriminator without an owning payload."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|BoxStorage",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "BoxStorage",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 parsed export exposes a borrowed map whose BoxStorage alias owns string keys and values."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|CatalogCard",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "CatalogCard",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 import catalog adapter owns its assignment and borrows schema and unloadable text behind accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ConflictPolicy",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ConflictPolicy",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 import conflict choice is a Copy discriminator without a payload."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|CredentialProblem",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "CredentialProblem",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 importer credential problem is a Copy discriminator without secret text."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ExportAccount",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ExportAccount",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 parsed account owns credentials and tab text with private fields and redacted Debug."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ExportFile",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ExportFile",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 parsed export owns accounts, tabs and storage behind borrowed accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ImportChoices",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ImportChoices",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 importer choices contain only a Copy conflict policy and boolean."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ImportError",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ImportError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 opaque typed import error keeps paths and boxed I/O causes in private error details."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ImportPlan",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ImportPlan",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 importer preview owns account plans and file-level skipped items behind accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ImportRun",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ImportRun",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 confirmed import owns writes, skipped items and its private settled-result cache."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|JsonType",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "JsonType",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 parser error category is a Copy JSON-kind discriminator without file text."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ProfileImport",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "ProfileImport",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 shared import flow owns its file, preview and run while panel and TUI use accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|Skipped",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "Skipped",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "0.2.3 skipped item owns redacted item and reason strings behind borrowed accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|Stage",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "Stage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 shared import stage is a Copy discriminator without a payload."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|StorageOwner",
+      "path": "crates/frontend-core/src/rs2b0t_import.rs",
+      "symbol": "StorageOwner",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "0.2.3 parser storage owner is a Copy account index or unlisted discriminator."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/scripts/mod.rs|BrowseCard",
       "path": "crates/frontend-core/src/scripts/mod.rs",
       "symbol": "BrowseCard",
@@ -1425,17 +1569,6 @@
       "category": "owning_derived_clone",
       "path": "crates/frontend-core/src/selection.rs",
       "symbol": "StopReport",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "derived_Clone_on_owning_view"
-    },
-    {
-      "id": "owning_derived_clone|crates/frontend-core/src/session.rs|production|ArmMirror|derived_Clone_on_owning_view",
-      "category": "owning_derived_clone",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror",
       "cfg_or_target": "production",
       "owner": "T3",
       "reason": "F0 baseline debt; remove at T3.1.",
@@ -3152,138 +3285,6 @@
       "category": "owning_public_field",
       "path": "crates/frontend-core/src/selection.rs",
       "symbol": "StopReport::stopped",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::AutoLogin::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::AutoLogin::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::Guardian::lamp_auto|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::Guardian::lamp_auto",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::Guardian::lamp_skill|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::Guardian::lamp_skill",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::Guardian::random_events|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::Guardian::random_events",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::Memory::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::Memory::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::NativeSettings::assign|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::NativeSettings::assign",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::NativeSettings::bag|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::NativeSettings::bag",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::NativeSettings::id|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::NativeSettings::id",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::NativeSettings::live|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::NativeSettings::live",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::Remember::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::Remember::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::ScriptSettings::card|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::ScriptSettings::card",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "F0 baseline debt; remove at T3.1.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/session.rs|production|ArmMirror::ScriptSettings::live|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/session.rs",
-      "symbol": "ArmMirror::ScriptSettings::live",
       "cfg_or_target": "production",
       "owner": "T3",
       "reason": "F0 baseline debt; remove at T3.1.",

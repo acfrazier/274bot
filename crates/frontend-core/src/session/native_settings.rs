@@ -104,15 +104,13 @@ impl ArmMirror {
 
     fn prepared(self, config: Arc<PreparedConfig>) -> Self {
         match self.0 {
-            ArmMirrorKind::NativeSettings { id, live, .. } => {
-                Self(ArmMirrorKind::ScriptSettings {
-                    card: script::compiled_identity_key(id),
-                    live: live.map(|mut live| {
-                        live.prepared = Some(config);
-                        live
-                    }),
-                })
-            }
+            ArmMirrorKind::NativeSettings { id, live, .. } => Self(ArmMirrorKind::ScriptSettings {
+                card: script::compiled_identity_key(id),
+                live: live.map(|mut live| {
+                    live.prepared = Some(config);
+                    live
+                }),
+            }),
             other => Self(other),
         }
     }
@@ -266,7 +264,10 @@ impl<Io> OperatorSession<Io> {
             return Err(format!("{label}: profile unavailable: {source}"));
         }
         let card = script::compiled_identity_key(id);
-        let assign = matches!(&mirror.0, ArmMirrorKind::NativeSettings { assign: true, .. });
+        let assign = matches!(
+            &mirror.0,
+            ArmMirrorKind::NativeSettings { assign: true, .. }
+        );
         let assignment_intent = if assign {
             self.vault
                 .as_ref()

@@ -746,7 +746,7 @@ export const SETTINGS: SettingsSchema = {
         Some(&serde_json::json!("")),
         "default bag must carry loadout='' so pre-Start loadout validation runs"
     );
-    let empty_loadouts: [crate::Loadout; 0] = [];
+    let empty_loadouts: [api::loadout::Loadout; 0] = [];
     let err = crate::loadouts_store::resolve_script_loadout_setting(
         &empty_loadouts,
         bag.get("loadout").and_then(|v| v.as_str()),

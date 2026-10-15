@@ -104,15 +104,17 @@ impl ImportCatalog for FakeCatalog {
         self.cards
             .iter()
             .find(|card| card.0 == name)
-            .map(|(name, schema, dim)| CatalogCard {
-                schema,
-                unloadable: dim.as_deref(),
-                assignment: ScriptAssignment {
-                    source_kind: "catalog".into(),
-                    identity: name.clone(),
-                    display_name: name.clone(),
-                    unavailable: None,
-                },
+            .map(|(name, schema, dim)| {
+                CatalogCard::new(
+                    schema,
+                    dim.as_deref(),
+                    ScriptAssignment {
+                        source_kind: "catalog".into(),
+                        identity: name.clone(),
+                        display_name: name.clone(),
+                        unavailable: None,
+                    },
+                )
             })
     }
 }
@@ -177,7 +179,7 @@ fn account<'a>(plan: &'a ImportPlan, name: &str) -> &'a AccountPlan {
 }
 
 fn skipped_items(account: &AccountPlan) -> Vec<&str> {
-    account.skipped().iter().map(|s| s.item.as_str()).collect()
+    account.skipped().iter().map(Skipped::item).collect()
 }
 
 fn assert_no_password(text: &str) {
@@ -211,15 +213,17 @@ impl ImportCatalog for ThieverCatalog {
     }
 
     fn card(&self, name: &str) -> Option<CatalogCard<'_>> {
-        (name == "Thiever").then(|| CatalogCard {
-            schema: &self.0,
-            unloadable: None,
-            assignment: ScriptAssignment {
-                source_kind: "catalog".into(),
-                identity: name.into(),
-                display_name: name.into(),
-                unavailable: None,
-            },
+        (name == "Thiever").then(|| {
+            CatalogCard::new(
+                &self.0,
+                None,
+                ScriptAssignment {
+                    source_kind: "catalog".into(),
+                    identity: name.into(),
+                    display_name: name.into(),
+                    unavailable: None,
+                },
+            )
         })
     }
 }
@@ -460,7 +464,9 @@ fn review_h1_an_evicted_failure_is_never_reported_saved() {
     let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
     let unseen = apply_import(&mut core, plan).unwrap();
     core.flush_writes();
-    assert!(matches!(run.results(&core)[0].1, AccountResult::Failed(_)));
+    let AccountResult::Failed(first_error) = run.results(&core)[0].1 else {
+        panic!("the write must fail");
+    };
     for _ in 0..65 {
         core.stop_scripts(&["not-loaded".into()]);
     }
@@ -469,6 +475,10 @@ fn review_h1_an_evicted_failure_is_never_reported_saved() {
         matches!(results[0].1, AccountResult::Failed(_)),
         "{results:?}"
     );
+    let AccountResult::Failed(cached_error) = results[0].1 else {
+        unreachable!();
+    };
+    assert!(std::ptr::eq(first_error, cached_error));
     assert!(!run.succeeded(&core));
     let results = unseen.results(&core);
     assert!(!durable(&results[0].1), "{results:?}");
@@ -493,7 +503,7 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
     let run = apply_import(&mut core, plan).unwrap();
     let row = core.vault().unwrap().get("rvimprobe").unwrap().clone();
     let later = core
-        .save_profile(row, ArmMirror::None, "review later write")
+        .save_profile(row, ArmMirror::none(), "review later write")
         .unwrap();
     drop(hold);
     core.flush_writes();
@@ -630,8 +640,8 @@ fn refuses_another_kind_or_version_by_the_type_found() {
     .unwrap_err();
     assert!(
         matches!(
-            error,
-            ImportError::Kind {
+            error.0,
+            ImportFailure::Kind {
                 found: JsonType::String
             }
         ),
@@ -645,8 +655,8 @@ fn refuses_another_kind_or_version_by_the_type_found() {
     .unwrap_err();
     assert!(
         matches!(
-            error,
-            ImportError::Kind {
+            error.0,
+            ImportFailure::Kind {
                 found: JsonType::Missing
             }
         ),
@@ -659,8 +669,8 @@ fn refuses_another_kind_or_version_by_the_type_found() {
     .unwrap_err();
     assert!(
         matches!(
-            error,
-            ImportError::Version {
+            error.0,
+            ImportFailure::Version {
                 found: JsonType::Number
             }
         ),
@@ -673,8 +683,8 @@ fn refuses_another_kind_or_version_by_the_type_found() {
     .unwrap_err();
     assert!(
         matches!(
-            error,
-            ImportError::Version {
+            error.0,
+            ImportFailure::Version {
                 found: JsonType::String
             }
         ),
@@ -686,16 +696,19 @@ fn refuses_another_kind_or_version_by_the_type_found() {
 fn refuses_malformed_shapes_without_quoting_a_password() {
     assert!(matches!(
         parse_profile_file("not json"),
-        Err(ImportError::NotJson)
+        Err(ImportError(ImportFailure::NotJson))
     ));
-    assert!(matches!(parse_profile_file("[1]"), Err(ImportError::Shape)));
+    assert!(matches!(
+        parse_profile_file("[1]"),
+        Err(ImportError(ImportFailure::Shape))
+    ));
     for missing in ["profiles", "tabs", "activeTab"] {
         let error = parse_profile_file(&with(|o| {
             o.remove(missing);
         }))
         .unwrap_err();
         assert!(
-            matches!(error, ImportError::MissingLists),
+            matches!(error.0, ImportFailure::MissingLists),
             "{missing}: {error}"
         );
     }
@@ -703,7 +716,7 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
         o.insert("tabs".into(), json!(["ok", 3]));
     }))
     .unwrap_err();
-    assert!(matches!(error, ImportError::TabsNotStrings));
+    assert!(matches!(error.0, ImportFailure::TabsNotStrings));
 
     let entry_cases = [
         json!("alice"),
@@ -717,7 +730,7 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
         }))
         .unwrap_err();
         assert!(
-            matches!(error, ImportError::Entry { index: 1, .. }),
+            matches!(error.0, ImportFailure::Entry { index: 1, .. }),
             "{error}"
         );
         assert_no_password(&error.to_string());
@@ -729,7 +742,10 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
         );
     }))
     .unwrap_err();
-    assert!(matches!(error, ImportError::World { index: 1 }), "{error}");
+    assert!(
+        matches!(error.0, ImportFailure::World { index: 1 }),
+        "{error}"
+    );
     assert_no_password(&error.to_string());
     let error = parse_profile_file(&with(|o| {
         o.insert(
@@ -738,23 +754,26 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
         );
     }))
     .unwrap_err();
-    assert!(matches!(error, ImportError::Tab { index: 1 }), "{error}");
+    assert!(
+        matches!(error.0, ImportFailure::Tab { index: 1 }),
+        "{error}"
+    );
 
     let alice = || StorageOwner::Listed(1);
     for (storage, want) in [
-        (json!([]), ImportError::Storage),
-        (json!({ "": {} }), ImportError::StorageUser),
+        (json!([]), ImportFailure::Storage),
+        (json!({ "": {} }), ImportFailure::StorageUser),
         (
             json!({ "alice": "x" }),
-            ImportError::StorageBox { owner: alice() },
+            ImportFailure::StorageBox { owner: alice() },
         ),
         (
             json!({ "alice": { "k": 1 } }),
-            ImportError::StorageValue { owner: alice() },
+            ImportFailure::StorageValue { owner: alice() },
         ),
         (
             json!({ "fake-pass-alice": "x" }),
-            ImportError::StorageBox {
+            ImportFailure::StorageBox {
                 owner: StorageOwner::Unlisted,
             },
         ),
@@ -763,7 +782,7 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
             o.insert("storage".into(), storage);
         }))
         .unwrap_err();
-        assert_eq!(format!("{error:?}"), format!("{want:?}"));
+        assert_eq!(format!("{:?}", error.0), format!("{want:?}"));
         assert_no_password(&error.to_string());
     }
 }
@@ -789,11 +808,16 @@ fn reads_the_file_from_disk() {
     std::fs::write(&path, FIXTURE).unwrap();
     assert_eq!(read_profile_file(&path).unwrap().accounts().len(), 2);
     let missing = read_profile_file(&dir.join("missing.json")).unwrap_err();
-    assert!(matches!(missing, ImportError::Read { .. }));
+    assert!(matches!(missing.0, ImportFailure::Read { .. }));
+    let cause = std::error::Error::source(&missing)
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
     std::fs::write(&path, [0xff, 0xfe]).unwrap();
     assert!(matches!(
         read_profile_file(&path),
-        Err(ImportError::NotJson)
+        Err(ImportError(ImportFailure::NotJson))
     ));
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -864,17 +888,16 @@ fn maps_every_item_or_reports_why_not() {
     );
     let unknown = &bob.skipped()[0];
     assert!(
-        unknown.reason.contains("no script of this name"),
+        unknown.reason().contains("no script of this name"),
         "{unknown:?}"
     );
     let future = &bob.skipped()[1];
-    assert!(future.reason.contains("not a Global setting"), "{future:?}");
+    assert!(
+        future.reason().contains("not a Global setting"),
+        "{future:?}"
+    );
 
-    let file_items: Vec<&str> = plan
-        .file_skipped()
-        .iter()
-        .map(|s| s.item.as_str())
-        .collect();
+    let file_items: Vec<&str> = plan.file_skipped().iter().map(Skipped::item).collect();
     assert_eq!(
         file_items,
         ["tabs (Combat)", "stored settings for 'carol' (1 items)"]
@@ -907,9 +930,9 @@ fn dimmed_scripts_keep_parameters_but_are_not_assigned() {
     let dimmed = alice
         .skipped()
         .iter()
-        .find(|s| s.item == "selected script 'CowKiller'")
+        .find(|s| s.item() == "selected script 'CowKiller'")
         .unwrap();
-    assert!(dimmed.reason.contains("dimmed"), "{dimmed:?}");
+    assert!(dimmed.reason().contains("dimmed"), "{dimmed:?}");
 }
 
 #[test]
@@ -926,8 +949,8 @@ fn without_the_catalog_scripts_are_reported_not_dropped() {
         "CowKiller.leashRadius",
         "CowKiller.buryBones",
     ] {
-        let skip = alice.skipped().iter().find(|s| s.item == item).unwrap();
-        assert!(skip.reason.contains("catalog is not loaded"), "{skip:?}");
+        let skip = alice.skipped().iter().find(|s| s.item() == item).unwrap();
+        assert!(skip.reason().contains("catalog is not loaded"), "{skip:?}");
     }
 }
 
@@ -1079,7 +1102,7 @@ fn a_profile_created_after_the_preview_is_never_replaced() {
                 uid: 1,
                 settings: ProfileSettings::default(),
             },
-            ArmMirror::None,
+            ArmMirror::none(),
             "credentials",
         )
         .unwrap();
@@ -1263,12 +1286,12 @@ fn the_file_is_read_only_up_to_the_limit() {
         .unwrap();
     assert!(matches!(
         read_profile_file(&big),
-        Err(ImportError::TooLarge { .. })
+        Err(ImportError(ImportFailure::TooLarge { .. }))
     ));
     // A directory is not a file.
     assert!(matches!(
         read_profile_file(&dir),
-        Err(ImportError::NotAFile { .. })
+        Err(ImportError(ImportFailure::NotAFile { .. }))
     ));
     // A FIFO with no writer is refused at once, never waited on.
     #[cfg(unix)]
@@ -1280,7 +1303,7 @@ fn the_file_is_read_only_up_to_the_limit() {
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
         assert!(matches!(
             read_profile_file(&fifo),
-            Err(ImportError::NotAFile { .. })
+            Err(ImportError(ImportFailure::NotAFile { .. }))
         ));
     }
     let _ = std::fs::remove_dir_all(dir);
@@ -1314,9 +1337,9 @@ fn overwrite_says_per_parameter_what_happens_and_what_stays() {
     let refused = account
         .skipped()
         .iter()
-        .find(|s| s.item == "Thiever.foodWithdraw")
+        .find(|s| s.item() == "Thiever.foodWithdraw")
         .unwrap();
-    assert!(refused.reason.contains("27"), "{refused:?}");
+    assert!(refused.reason().contains("27"), "{refused:?}");
 
     // The report carries the same per-parameter lines.
     let mut core = session(vault);
@@ -1468,7 +1491,7 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
     let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
     let run = apply_import(&mut core, plan).unwrap();
     let row = core.vault().unwrap().get("rvimlater").unwrap().clone();
-    core.save_profile(row, ArmMirror::Remember(None), "later edit")
+    core.save_profile(row, ArmMirror::remember(None), "later edit")
         .unwrap();
     drop(hold);
     core.flush_writes();

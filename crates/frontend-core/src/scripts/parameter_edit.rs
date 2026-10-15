@@ -1824,11 +1824,11 @@ export const SETTINGS: SettingsSchema = {
             std::env::temp_dir().join(format!("parameter-spread-loadouts-{}", std::process::id())),
         );
         loadouts.upsert(
-            script::Loadout::new("Scenario Rock Crab food")
+            api::loadout::Loadout::new("Scenario Rock Crab food")
                 .with_slot("righthand", "Adamant scimitar")
                 .with_carry("Lobster", 12),
         );
-        loadouts.upsert(script::Loadout::new("Backup melee"));
+        loadouts.upsert(api::loadout::Loadout::new("Backup melee"));
 
         let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
@@ -1901,8 +1901,8 @@ export const SETTINGS: SettingsSchema = {
             names.len()
         );
         let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
-        loadouts.upsert(script::Loadout::new("First choice"));
-        loadouts.upsert(script::Loadout::new("Second choice"));
+        loadouts.upsert(api::loadout::Loadout::new("First choice"));
+        loadouts.upsert(api::loadout::Loadout::new("Second choice"));
 
         for name in names {
             let initial = library
