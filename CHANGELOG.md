@@ -41,6 +41,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Saved state
 
+- A vault file cut short after its header is now reported as a corrupt vault
+  file, not a wrong passphrase.
+
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
   read (a bank hint from another version or for another account, a file
   larger than its limit or writable by other users, or a damaged bank hint

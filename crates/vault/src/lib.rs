@@ -313,7 +313,7 @@ impl Vault {
         let plaintext =
             Zeroizing::new(decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?);
         let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
-            .map_err(|e| VaultError::Corrupt(format!("deserialize profiles: {e}")))?;
+            .map_err(|error| serde_corruption("deserialize profiles", error))?;
         Ok(Self {
             path: path.to_path_buf(),
             salt,
@@ -518,8 +518,17 @@ fn serialize_profiles(
 ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
     let mut out = SecretBuf(Zeroizing::new(Vec::with_capacity(4096)));
     serde_json::to_writer(&mut out, profiles)
-        .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
+        .map_err(|error| serde_corruption("serialize profiles", error))?;
     Ok(out.0)
+}
+
+fn serde_corruption(context: &'static str, error: serde_json::Error) -> VaultError {
+    VaultError::Corrupt(format!(
+        "{context}: {:?} at line {} column {}",
+        error.classify(),
+        error.line(),
+        error.column()
+    ))
 }
 
 /// A `Vec` writer that grows by hand: `Vec`'s own doubling would free the old
@@ -562,7 +571,7 @@ fn build_blob(
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(&nonce, plaintext)
-        .map_err(|e| VaultError::Corrupt(format!("aes-gcm encrypt: {e}")))?;
+        .map_err(|_| VaultError::Corrupt("aes-gcm encrypt failed".into()))?;
     let mut blob = Vec::with_capacity(HEADER_LEN + ciphertext.len());
     blob.extend_from_slice(MAGIC);
     blob.push(FORMAT_VERSION);
@@ -589,9 +598,7 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
         .map_err(|_| VaultError::Corrupt("short rounds field".into()))?;
     let rounds = u32::from_le_bytes(rounds_bytes);
     if rounds == 0 || rounds > MAX_PBKDF2_ROUNDS {
-        return Err(VaultError::Corrupt(format!(
-            "pbkdf2 rounds {rounds} outside the accepted range 1..={MAX_PBKDF2_ROUNDS}"
-        )));
+        return Err(VaultError::Corrupt("invalid pbkdf2 rounds".into()));
     }
 
     if blob.len() < HEADER_LEN + TAG_LEN {
@@ -900,18 +907,76 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_errors_do_not_echo_decrypted_values() {
+        const SECRET: &str = "hunter2-secret-value";
+        let path = tmp_path("deserialize-secret.vault");
+        let salt = [0x5au8; SALT_LEN];
+        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+        let plaintext = serde_json::json!({
+            "alice": {
+                "username": "alice",
+                "password": "safe-password",
+                "uid": SECRET,
+                "settings": {"lowmem": false}
+            }
+        })
+        .to_string();
+        let blob = build_blob(&salt, &key, plaintext.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        std::fs::write(&path, blob).unwrap();
+
+        let error = match Vault::unlock(&path, PASS) {
+            Err(error) => error,
+            Ok(_) => panic!("malformed profiles unexpectedly opened"),
+        };
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+
+        assert!(
+            !display.contains(SECRET),
+            "Display leaked the decrypted value: {display}"
+        );
+        assert!(
+            !debug.contains(SECRET),
+            "Debug leaked the decrypted value: {debug}"
+        );
+        assert!(
+            display.contains("Data"),
+            "missing error category: {display}"
+        );
+        assert!(
+            display.contains("line 1 column"),
+            "missing error location: {display}"
+        );
+        assert!(debug.contains("Data"), "missing error category: {debug}");
+        assert!(
+            debug.contains("line 1 column"),
+            "missing error location: {debug}"
+        );
+    }
+
+    #[test]
     fn truncated_ciphertext_is_corrupt_not_a_wrong_passphrase() {
         let path = tmp_path("truncated-ciphertext.vault");
         Vault::create(&path, PASS).unwrap();
-        let mut blob = std::fs::read(&path).unwrap();
-        blob.truncate(super::HEADER_LEN);
-        std::fs::write(&path, &blob).unwrap();
+        let blob = std::fs::read(&path).unwrap();
 
-        assert!(matches!(
-            Vault::unlock(&path, PASS),
-            Err(VaultError::Corrupt(message)) if message == "ciphertext too short"
-        ));
-        assert_eq!(std::fs::read(&path).unwrap(), blob);
+        for length in super::HEADER_LEN..super::HEADER_LEN + 16 {
+            let truncated = &blob[..length];
+            std::fs::write(&path, truncated).unwrap();
+
+            assert!(
+                matches!(
+                    Vault::unlock(&path, PASS),
+                    Err(VaultError::Corrupt(message)) if message == "ciphertext too short"
+                ),
+                "length {length}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                truncated,
+                "length {length}: failed unlock must not alter the file"
+            );
+        }
     }
 
     #[test]
@@ -1063,11 +1128,9 @@ mod tests {
         }
         for rejected in [0, MAX_PBKDF2_ROUNDS + 1, u32::MAX] {
             match parse_header(&blob_with_rounds(rejected)) {
-                Err(VaultError::Corrupt(message)) => assert!(
-                    message.contains(&rejected.to_string())
-                        && message.contains(&MAX_PBKDF2_ROUNDS.to_string()),
-                    "the error names the value and the cap: {message}"
-                ),
+                Err(VaultError::Corrupt(message)) => {
+                    assert_eq!(message, "invalid pbkdf2 rounds")
+                }
                 other => panic!("{rejected} rounds: expected Corrupt, got {other:?}"),
             }
         }

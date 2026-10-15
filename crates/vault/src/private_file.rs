@@ -327,24 +327,39 @@ type TargetLocks = HashMap<PathBuf, Arc<Mutex<()>>>;
 static TARGET_LOCKS: Mutex<Option<TargetLocks>> = Mutex::new(None);
 
 /// Runs `work` while holding the lock for `key`, so writers to one target
-/// within this process take turns.
+/// within this process take turns. A poisoned registry or target lock fails
+/// closed and requires restarting 274bot; it is not recovered automatically.
 fn serialized<T>(key: PathBuf, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    let lock = TARGET_LOCKS
+    serialized_with_registry(&TARGET_LOCKS, key, work)
+}
+
+fn serialized_with_registry<T>(
+    registry: &Mutex<Option<TargetLocks>>,
+    key: PathBuf,
+    work: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let lock = registry
         .lock()
-        .map_err(|_| io::Error::other("private-file lock registry is poisoned"))?
+        .map_err(|_| {
+            io::Error::other(
+                "private-file lock registry is poisoned; restart 274bot before writing private files",
+            )
+        })?
         .get_or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_default()
         .clone();
     let result = {
-        let _turn = lock
-            .lock()
-            .map_err(|_| io::Error::other("private-file target lock is poisoned"))?;
+        let _turn = lock.lock().map_err(|_| {
+            io::Error::other(
+                "private-file target lock is poisoned; restart 274bot before writing this file",
+            )
+        })?;
         work()
     };
     // A registry failure after publication must not claim that the write failed.
-    if let Ok(mut locks) = TARGET_LOCKS.lock() {
-        // Only the map and this call hold the lock: nobody is waiting on it.
+    if let Ok(mut locks) = registry.lock() {
+        // Only the map and this call hold it: nobody is waiting on the target lock.
         if Arc::strong_count(&lock) == 2 {
             if let Some(map) = locks.as_mut() {
                 map.remove(&key);
@@ -614,8 +629,8 @@ fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict 
     Verdict::Accept
 }
 
-#[cfg(all(test, unix))]
-#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
@@ -705,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn a_poisoned_target_lock_is_reported_without_publishing() {
+    fn a_poisoned_target_lock_requires_restart_on_every_write() {
         let dir = scratch("poisoned-lock");
         let target = dir.join("state.json");
         let key = fs::canonicalize(&dir).unwrap().join("state.json");
@@ -717,11 +732,49 @@ mod tests {
         });
         assert!(panic.is_err(), "the test must poison its target lock");
 
-        let error = write_private_file(&target, b"must not publish").unwrap_err();
+        let mut messages = Vec::with_capacity(2);
+        for attempt in 1..=2 {
+            let error = write_private_file(&target, b"must not publish").unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            messages.push(error.to_string());
+            assert!(!target.exists(), "attempt {attempt} published the target");
+            assert!(names(&dir).is_empty(), "attempt {attempt} left a temp file");
+        }
+        assert_eq!(
+            messages,
+            vec![
+                "private-file target lock is poisoned; restart 274bot before writing this file"
+                    .to_owned(),
+                "private-file target lock is poisoned; restart 274bot before writing this file"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_poisoned_lock_registry_requires_restart() {
+        let registry = Mutex::new(None);
+        let panic = std::panic::catch_unwind(|| {
+            let _guard = registry.lock().unwrap();
+            panic!("poison the lock registry");
+        });
+        assert!(panic.is_err(), "the test must poison its lock registry");
+
+        let mut work_called = false;
+        let error = serialized_with_registry(&registry, PathBuf::from("unused"), || {
+            work_called = true;
+            Ok(())
+        })
+        .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Other);
-        assert_eq!(error.to_string(), "private-file target lock is poisoned");
-        assert!(!target.exists());
-        assert!(names(&dir).is_empty());
+        assert_eq!(
+            error.to_string(),
+            "private-file lock registry is poisoned; restart 274bot before writing private files"
+        );
+        assert!(
+            !work_called,
+            "poisoned registry must refuse without writing"
+        );
     }
 
     #[test]
@@ -1067,8 +1120,8 @@ mod tests {
     }
 }
 
-#[cfg(all(test, windows))]
-#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+#[cfg(windows)]
 mod windows_tests {
     use std::os::windows::fs::OpenOptionsExt;
     use std::time::Duration;
