@@ -10,20 +10,18 @@
   "families": [
     {
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "activation_unit": "I-family(acquisition)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "counts": {
         "declarations": 69,
@@ -225,20 +223,18 @@
     },
     {
       "family_id": "cooking",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "activation_unit": "I-family(cooking)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "counts": {
         "declarations": 0,
@@ -279,20 +275,18 @@
     },
     {
       "family_id": "dialogue",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "activation_unit": "I-family(dialogue)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "counts": {
         "declarations": 1,
@@ -919,20 +913,18 @@
     },
     {
       "family_id": "trade",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "activation_unit": "I-family(trade)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1",
-        "T5.1"
+        "T2.1"
       ],
       "counts": {
         "declarations": 2,

@@ -3697,7 +3697,7 @@
       "source_modules": [
         "api/ui/dialogue/ChatDialog.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "TradeItem",
@@ -3752,7 +3752,7 @@
       "source_modules": [
         "api/trade/Trade.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "Trade",
@@ -3924,7 +3924,7 @@
       "source_modules": [
         "api/trade/Trade.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "WalkOptions",
@@ -5226,7 +5226,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ItemNeed",
@@ -5279,7 +5279,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "held",
@@ -5297,7 +5297,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "hasAll",
@@ -5315,7 +5315,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "AcquireTask",
@@ -5370,7 +5370,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "TaskBot",
@@ -6161,7 +6161,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ToolReq",
@@ -6307,7 +6307,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "PICKAXES",
@@ -6322,7 +6322,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "AXES",
@@ -6337,7 +6337,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "TINDERBOX",
@@ -6352,7 +6352,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "HAMMER",
@@ -6367,7 +6367,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "KNIFE",
@@ -6382,7 +6382,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "CHISEL",
@@ -6397,7 +6397,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "NEEDLE",
@@ -6412,7 +6412,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "pickaxeReq",
@@ -6432,7 +6432,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "axeReq",
@@ -6452,7 +6452,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "exactTool",
@@ -6472,7 +6472,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "tinderboxReq",
@@ -6492,7 +6492,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "toolAttackLevel",
@@ -6512,7 +6512,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "canWieldTool",
@@ -6532,7 +6532,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestFromTiers",
@@ -6552,7 +6552,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestPickaxe",
@@ -6572,7 +6572,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestAxe",
@@ -6592,7 +6592,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "toolKeepNames",
@@ -6612,7 +6612,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "hasToolReq",
@@ -6632,7 +6632,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "hasAllTools",
@@ -6652,7 +6652,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "missingToolLabels",
@@ -6672,7 +6672,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "toolKitLabel",
@@ -6692,7 +6692,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ToolRestockStep",
@@ -6747,7 +6747,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "toolRestockPlan",
@@ -6767,7 +6767,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bankHasBetterGatherTool",
@@ -6787,7 +6787,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "toolsNeedingEquip",
@@ -6807,7 +6807,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestHeldToolNames",
@@ -6827,7 +6827,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "surplusHeldToolNames",
@@ -6847,7 +6847,7 @@
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "COINS",
@@ -6862,7 +6862,7 @@
       "source_modules": [
         "api/combat/hunting/supply.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "BROKEN_PICKAXE",
@@ -6877,7 +6877,7 @@
       "source_modules": [
         "data/miningRocks.js"
       ],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "BROKEN_AXE",
@@ -6890,7 +6890,7 @@
       "family_id": "acquisition",
       "declaration_type": "string",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ToolAcquireMode",
@@ -6903,7 +6903,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "parseToolAcquireMode",
@@ -6921,7 +6921,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "TOOL_ACQUIRE_OPTIONS",
@@ -6934,7 +6934,7 @@
       "family_id": "acquisition",
       "declaration_type": "readonly string[]",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "TOOL_ACQUIRE_SETTING",
@@ -6947,7 +6947,7 @@
       "family_id": "acquisition",
       "declaration_type": "SettingDef",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "FORGETFUL_BANK_ODDS",
@@ -6960,7 +6960,7 @@
       "family_id": "acquisition",
       "declaration_type": "number",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "FORGETFUL_BANK_SETTING",
@@ -6973,7 +6973,7 @@
       "family_id": "acquisition",
       "declaration_type": "SettingDef",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ToolVendor",
@@ -7065,7 +7065,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ShopOffer",
@@ -7118,7 +7118,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "BOB_VENDOR",
@@ -7131,7 +7131,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "NURMOF_VENDOR",
@@ -7144,7 +7144,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "GERRANT_VENDOR",
@@ -7157,7 +7157,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "HARRY_VENDOR",
@@ -7170,7 +7170,7 @@
       "family_id": "acquisition",
       "declaration_type": "ToolVendor",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "GERRANT_ONLY_FISHING",
@@ -7196,7 +7196,7 @@
       "family_id": "acquisition",
       "declaration_type": "Tile",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "VARROCK_ANVIL_BANK",
@@ -7209,7 +7209,7 @@
       "family_id": "acquisition",
       "declaration_type": "Tile",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "PICKAXE_SHOP_COSTS",
@@ -7222,7 +7222,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "AXE_SHOP_COSTS",
@@ -7235,7 +7235,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "FISHING_SHOP_COSTS",
@@ -7261,7 +7261,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, number>>",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "AXE_BAR_FOR",
@@ -7274,7 +7274,7 @@
       "family_id": "acquisition",
       "declaration_type": "Readonly<Record<string, string>>",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "ToolAcquirePlan",
@@ -7548,7 +7548,7 @@
       ],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "AcquireWorld",
@@ -7627,7 +7627,7 @@
       "bases": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestOwnedTier",
@@ -7645,7 +7645,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "pickaxeShopOffers",
@@ -7663,7 +7663,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "axeShopOffers",
@@ -7681,7 +7681,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestAffordableShopTier",
@@ -7699,7 +7699,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "bestSmithableAxe",
@@ -7717,7 +7717,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "planBrokenToolRepair",
@@ -7735,7 +7735,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "planPickaxeAcquire",
@@ -7753,7 +7753,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "planAxeAcquire",
@@ -7771,7 +7771,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "FishingVendorNear",
@@ -8026,7 +8026,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "coinsToWithdraw",
@@ -8044,7 +8044,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "canFundPlan",
@@ -8062,7 +8062,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "acquireKeepNames",
@@ -8080,7 +8080,7 @@
       "members": [],
       "family_id": "acquisition",
       "source_modules": [],
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "name": "shopableMissingFishingGear",
@@ -9850,7 +9850,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9863,7 +9863,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9876,7 +9876,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9889,7 +9889,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9902,7 +9902,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9915,7 +9915,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9928,7 +9928,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9941,7 +9941,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9954,7 +9954,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9967,7 +9967,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9980,7 +9980,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -9993,7 +9993,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10006,7 +10006,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10019,7 +10019,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10032,7 +10032,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10045,7 +10045,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10058,7 +10058,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10071,7 +10071,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10084,7 +10084,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10097,7 +10097,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10110,7 +10110,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10123,7 +10123,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10136,7 +10136,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10149,7 +10149,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10162,7 +10162,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10175,7 +10175,7 @@
       "module": "api/acquisition/Tools.js",
       "family_id": "acquisition",
       "shim": "tools.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/acquisition/Tools.js"
       ],
@@ -10266,7 +10266,7 @@
       "module": "api/ui/dialogue/ChatDialog.js",
       "family_id": "dialogue",
       "shim": "chat_dialog.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/ui/dialogue/ChatDialog.js"
       ],
@@ -10461,7 +10461,7 @@
       "module": "api/trade/Trade.js",
       "family_id": "trade",
       "shim": "trade.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "api/trade/Trade.js"
       ],
@@ -10708,7 +10708,7 @@
       "module": "data/miningRocks.js",
       "family_id": "acquisition",
       "shim": "mining_rocks.js",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "source_modules": [
         "data/miningRocks.js"
       ],
@@ -10902,7 +10902,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10913,7 +10913,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10924,7 +10924,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10935,7 +10935,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-class"
     },
@@ -10946,7 +10946,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10957,7 +10957,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -10983,7 +10983,7 @@
         "api/combat/hunting/supply.js"
       ],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11071,7 +11071,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11082,7 +11082,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11104,7 +11104,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11115,7 +11115,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11183,7 +11183,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11194,7 +11194,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11205,7 +11205,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11216,7 +11216,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11227,7 +11227,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11238,7 +11238,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11308,7 +11308,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11330,7 +11330,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11341,7 +11341,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11352,7 +11352,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11363,7 +11363,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11396,7 +11396,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11407,7 +11407,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11495,7 +11495,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11517,7 +11517,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11585,7 +11585,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11596,7 +11596,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11607,7 +11607,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11618,7 +11618,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11651,7 +11651,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11662,7 +11662,7 @@
       "shim": null,
       "source_modules": [],
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11879,7 +11879,7 @@
       "runtime": "crates/script/src/shim/cook_locations.js:7",
       "declaration": "export { CUSTOM_LOCATION } from '../../data/cookLocations.js';",
       "family_id": "cooking",
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "id": "execution-native-machine-park",
@@ -12501,7 +12501,7 @@
       "runtime": "crates/script/src/shim/cook_locations_data.js:11",
       "declaration": "export const COOK_LOCATIONS: CookLocation[];",
       "family_id": "cooking",
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "id": "cook-native-bound-build",
@@ -12514,7 +12514,7 @@
       "reason": "Host returns its prebuilt table and ignores the legacy banks argument.",
       "runtime": "crates/script/src/shim/cook_locations_data.js:29",
       "family_id": "cooking",
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "id": "navigator-native-default-export",
@@ -12983,7 +12983,7 @@
       "runtime": "crates/script/src/shim/chat_dialog.js:66",
       "async": true,
       "family_id": "dialogue",
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "id": "not-impl:api/ui/questlog/Quests.js:Quests.journal",
@@ -13170,7 +13170,7 @@
       "runtime": "crates/script/src/shim/drive_partner_trade.js:59",
       "async": false,
       "family_id": "trade",
-      "nav_consuming": true
+      "nav_consuming": false
     },
     {
       "id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank",
@@ -15045,7 +15045,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+      "evidence": "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
     },
     {
       "family_id": "bank",
@@ -15419,7 +15419,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15436,7 +15436,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15453,7 +15453,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15470,7 +15470,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15487,7 +15487,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15504,7 +15504,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15515,13 +15515,13 @@
       "value": "ignored",
       "promise": "opaque-empty-object",
       "thrown": "family-fails-with-thrown-value",
-      "order": "synchronous-at-call-site",
-      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "order": "queued-notifications-before-next-decision",
+      "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15532,13 +15532,13 @@
       "value": "ignored",
       "promise": "opaque-empty-object",
       "thrown": "family-fails-with-thrown-value",
-      "order": "synchronous-at-call-site",
-      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "order": "queued-notifications-before-next-decision",
+      "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15549,13 +15549,13 @@
       "value": "ignored",
       "promise": "opaque-empty-object",
       "thrown": "family-fails-with-thrown-value",
-      "order": "synchronous-at-call-site",
-      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "order": "queued-notifications-before-next-decision",
+      "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15568,11 +15568,11 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15585,11 +15585,11 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15602,11 +15602,11 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "tasks",
@@ -15619,11 +15619,11 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15636,11 +15636,11 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15670,7 +15670,7 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
@@ -15687,7 +15687,7 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
@@ -15721,7 +15721,7 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
@@ -15738,7 +15738,7 @@
       "thrown": "family-fails-with-thrown-value",
       "order": "queued-notifications-before-next-decision",
       "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
-      "cadence": "Once per queued notification; FIFO delivery precedes the next decision.",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
@@ -21984,721 +21984,721 @@
       "family_id": "hunt",
       "native_family": "hunt-fight",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-hold",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-retreat",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-walkspot",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-enter",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-leave",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-key",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-cell",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-bank",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-wait-fed",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-teleport-out",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-acquire",
       "member": "setStatus",
-      "call_site": "Hunt status progress notification",
+      "call_site": "Hunt queued status note and standalone status effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-fight",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-hold",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-retreat",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-walkspot",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-enter",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-leave",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-key",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-cell",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-bank",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-wait-fed",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-teleport-out",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-acquire",
       "member": "vlog",
-      "call_site": "Hunt verbose-log progress notification",
+      "call_site": "Hunt queued verbose-log note and standalone verbose-log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-fight",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-hold",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-retreat",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-walkspot",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-enter",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-leave",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-key",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-cell",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-bank",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-wait-fed",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-teleport-out",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "hunt",
       "native_family": "hunt-acquire",
       "member": "log",
-      "call_site": "Hunt log progress notification",
+      "call_site": "Hunt queued log note and standalone log effect",
       "path": "ask",
       "value": "ignored",
       "promise": "not-impl-failure",
       "thrown": "ask-fails-with-thrown-value",
-      "order": "hunt-notifications-before-decision",
-      "multiplicity": "per-queued-hunt-event; ASKS_PER_STEP=512 per step",
-      "cadence": "Once per queued Hunt note; notes are delivered in sequence before the decision.",
+      "order": "hunt-notifications-before-decision-and-effects-after-notes",
+      "multiplicity": "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step",
+      "cadence": "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied.",
       "frozen_path": {
         "status": "existing-discrepancy",
         "q5_row": 21,
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,798-821"
+      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
     },
     {
       "family_id": "duel",
@@ -24853,7 +24853,7 @@
   "family_counts": [
     {
       "family_id": "acquisition",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "declarations": 69,
       "members": 63,
       "overloads": 0,
@@ -24949,7 +24949,7 @@
     },
     {
       "family_id": "cooking",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "declarations": 0,
       "members": 0,
       "overloads": 0,
@@ -24973,7 +24973,7 @@
     },
     {
       "family_id": "dialogue",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "declarations": 1,
       "members": 15,
       "overloads": 0,
@@ -25261,7 +25261,7 @@
     },
     {
       "family_id": "trade",
-      "nav_consuming": true,
+      "nav_consuming": false,
       "declarations": 2,
       "members": 15,
       "overloads": 0,

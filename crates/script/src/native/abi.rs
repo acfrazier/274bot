@@ -17,12 +17,13 @@
 //!   the row with that same value.
 //!
 //! Current order is row-local: poll an existing pending callback, then step; synchronous asks
-//! execute in place; a Hunt effect's queued notes are called once each in note order before the
-//! effect is applied; the step's ops are placed at its queue position; then a `Step::Call` runs
-//! and a tick-step checkpoint can settle its Promise. A kick has no checkpoint and polls on the
-//! next drive. Current sources: `machine.rs:1293-1296,1313-1318,1357-1370`; `load/machine_v8.rs:257-307`;
-//! `hunt.rs:583-584,798-821`. This does not assert seat-side `last_seq`, lineage, Decide/carry, or
-//! child-before-parent scheduling: those are not active in this in-isolate machine host.
+//! execute in place. Hunt notes run in event order before the decision, while standalone
+//! `log`/`vlog`/`status` effect hooks run after notes and before the effect is applied; the step's
+//! ops are placed at their queue position, then a `Step::Call` runs and a tick-step checkpoint
+//! can settle its Promise. A kick has no checkpoint and polls on the next drive. Current sources:
+//! `machine.rs:1293-1296,1313-1318,1357-1370`; `load/machine_v8.rs:257-307`;
+//! `hunt.rs:583-584,610-612,798-821`. This does not assert seat-side `last_seq`, lineage,
+//! Decide/carry, or child-before-parent scheduling: those are not active in this in-isolate machine host.
 //!
 //! The `families` arrays below name concrete registered `Family::NAME` values that expose each
 //! callback key. In families which share one hook list (notably Hunt), an entry describes the
@@ -78,8 +79,10 @@ pub enum HookOrder {
     SynchronousAtCallSite,
     /// Deliver queued Hunt notes in event order before the decision.
     HuntNotificationsBeforeDecision,
-    /// Deliver FIFO log/partner notifications before the next decision.
+    /// Deliver queued notifications before the next decision.
     QueuedNotificationsBeforeDecision,
+    /// Deliver queued Hunt notes before the decision and standalone hooks after their notes.
+    HuntNotificationsAndEffects,
     /// Deliver an effect hook after its notes and before applying the effect.
     HuntEffectAfterNotes,
 }
@@ -91,8 +94,10 @@ pub enum HookMultiplicity {
     PerReachedCallSite,
     /// One invocation per queued Hunt note; notes are not coalesced.
     PerQueuedHuntEvent,
-    /// One invocation per queued FIFO notification.
+    /// One invocation per queued notification.
     PerQueuedNotification,
+    /// One invocation per queued Hunt note or standalone log/status effect.
+    PerHuntNotificationOrEffect,
     /// One invocation per occurrence of its Hunt effect.
     PerHuntEffect,
 }
@@ -149,6 +154,8 @@ impl HookCharacterization {
             HookOrder::QueuedNotificationsBeforeDecision
         } else if self.is_ordered_hunt_notification(family) {
             HookOrder::HuntNotificationsBeforeDecision
+        } else if self.is_hunt_notification_and_effect(family) {
+            HookOrder::HuntNotificationsAndEffects
         } else if self.is_hunt_effect(family) {
             HookOrder::HuntEffectAfterNotes
         } else {
@@ -161,6 +168,8 @@ impl HookCharacterization {
             HookMultiplicity::PerQueuedNotification
         } else if self.is_ordered_hunt_notification(family) {
             HookMultiplicity::PerQueuedHuntEvent
+        } else if self.is_hunt_notification_and_effect(family) {
+            HookMultiplicity::PerHuntNotificationOrEffect
         } else if self.is_hunt_effect(family) {
             HookMultiplicity::PerHuntEffect
         } else {
@@ -170,10 +179,12 @@ impl HookCharacterization {
 
     /// Source-backed frequency statement for this member's current call sites.
     pub fn cadence_note(&self, family: &str) -> &'static str {
-        if self.is_ordered_hunt_notification(family) {
+        if self.is_hunt_notification_and_effect(family) {
+            "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
+        } else if self.is_ordered_hunt_notification(family) {
             "Once per queued Hunt note; notes are delivered in sequence before the decision."
         } else if self.is_queued_notification(family) {
-            "Once per queued notification; FIFO delivery precedes the next decision."
+            "Once per queued notification; delivery precedes the next decision."
         } else if self.is_hunt_effect(family) {
             "Once per occurrence of this Hunt effect, after its notes and before applying it."
         } else if self.member == "sustain" && family == "hunt-fight" {
@@ -198,7 +209,10 @@ impl HookCharacterization {
                 || (self.member == "log"
                     && matches!(
                         family,
-                        "walk-resilient"
+                        "dialog"
+                            | "reach-npc-dialog"
+                            | "reach-entity-op"
+                            | "walk-resilient"
                             | "walk-opening"
                             | "walk-to"
                             | "return-to-anchor"
@@ -208,7 +222,12 @@ impl HookCharacterization {
     fn is_ordered_hunt_notification(&self, family: &str) -> bool {
         self.path == HookPath::Ask
             && family.starts_with("hunt-")
-            && matches!(self.member, "countKill" | "setStatus" | "vlog" | "log")
+            && matches!(self.member, "countKill")
+    }
+    fn is_hunt_notification_and_effect(&self, family: &str) -> bool {
+        self.path == HookPath::Ask
+            && family.starts_with("hunt-")
+            && matches!(self.member, "setStatus" | "vlog" | "log")
     }
     fn is_hunt_effect(&self, family: &str) -> bool {
         self.path == HookPath::Ask
@@ -421,7 +440,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462",
+        "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462",
     ),
     hook(
         &["bank_nearest", "periodic_bank"],
@@ -602,7 +621,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
@@ -960,29 +979,29 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "setStatus",
-        "Hunt status progress notification",
+        "Hunt queued status note and standalone status effect",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$S/hunt.rs:50-88,610-612,798-821",
     ),
     hook(
         HUNT_FAMILIES,
         "vlog",
-        "Hunt verbose-log progress notification",
+        "Hunt queued verbose-log note and standalone verbose-log effect",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,798-821",
+        "$S/hunt.rs:50-88,610-612,798-821",
     ),
     hook(
         HUNT_FAMILIES,
         "log",
-        "Hunt log progress notification",
+        "Hunt queued log note and standalone log effect",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,798-821",
+        "$S/hunt.rs:50-88,610-612,798-821",
     ),
     hook(
         &["clue_duel_travel"],
@@ -1082,6 +1101,9 @@ mod tests {
             HookOrder::QueuedNotificationsBeforeDecision => {
                 "queued-notifications-before-next-decision"
             }
+            HookOrder::HuntNotificationsAndEffects => {
+                "hunt-notifications-before-decision-and-effects-after-notes"
+            }
             HookOrder::HuntEffectAfterNotes => "hunt-effect-after-notes",
         }
     }
@@ -1093,6 +1115,9 @@ mod tests {
             }
             (HookMultiplicity::PerQueuedHuntEvent, _) => {
                 "per-queued-hunt-event; ASKS_PER_STEP=512 per step"
+            }
+            (HookMultiplicity::PerHuntNotificationOrEffect, _) => {
+                "per-queued-hunt-event-or-effect; ASKS_PER_STEP=512 per step"
             }
             (HookMultiplicity::PerHuntEffect, _) => "per-hunt-effect; ASKS_PER_STEP=512 per step",
             (HookMultiplicity::PerReachedCallSite, _) => {
@@ -1217,6 +1242,9 @@ mod tests {
         );
 
         for family in [
+            "dialog",
+            "reach-npc-dialog",
+            "reach-entity-op",
             "walk-resilient",
             "walk-opening",
             "walk-to",
@@ -1227,11 +1255,15 @@ mod tests {
             assert_eq!(
                 row.order(family),
                 HookOrder::QueuedNotificationsBeforeDecision,
-                "{family} drains walk log lines before the next decision"
+                "{family} drains queued log notifications before the next decision"
             );
             assert_eq!(
                 row.multiplicity(family),
                 HookMultiplicity::PerQueuedNotification
+            );
+            assert_eq!(
+                row.cadence_note(family),
+                "Once per queued notification; delivery precedes the next decision."
             );
         }
 
@@ -1250,15 +1282,28 @@ mod tests {
                 HookMultiplicity::PerHuntEffect
             );
         }
-        for member in ["countKill", "setStatus", "vlog", "log"] {
+        let count_kill = callback_for("hunt-fight", "countKill");
+        assert_eq!(
+            count_kill.order("hunt-fight"),
+            HookOrder::HuntNotificationsBeforeDecision
+        );
+        assert_eq!(
+            count_kill.multiplicity("hunt-fight"),
+            HookMultiplicity::PerQueuedHuntEvent
+        );
+        for member in ["setStatus", "vlog", "log"] {
             let row = callback_for("hunt-fight", member);
             assert_eq!(
                 row.order("hunt-fight"),
-                HookOrder::HuntNotificationsBeforeDecision
+                HookOrder::HuntNotificationsAndEffects
             );
             assert_eq!(
                 row.multiplicity("hunt-fight"),
-                HookMultiplicity::PerQueuedHuntEvent
+                HookMultiplicity::PerHuntNotificationOrEffect
+            );
+            assert_eq!(
+                row.cadence_note("hunt-fight"),
+                "Queued Hunt notes are delivered in sequence before the decision; standalone log, vlog and status effects run after notes and before the effect is applied."
             );
         }
     }

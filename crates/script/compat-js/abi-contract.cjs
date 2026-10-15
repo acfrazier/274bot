@@ -18,7 +18,7 @@ const SECTION_FAMILIES = new Map([
     ['movement', { id: 'walking', nav: true }],
     ['events', { id: 'events', nav: false }],
     ['bot base classes', { id: 'bot', nav: false }],
-    ['item acquisition', { id: 'acquisition', nav: true }],
+    ['item acquisition', { id: 'acquisition', nav: false }],
     ['manifest', { id: 'bot', nav: false }],
     ['world catalogs (data tables and pure helpers)', { id: 'world-catalogs', nav: false }],
 ]);
@@ -77,10 +77,10 @@ const MODULE_RULES = [
     ['api/duel/', { id: 'duel', nav: true }],
     ['api/tasks/', { id: 'tasks', nav: true }],
     ['api/bank/', { id: 'bank', nav: true }],
-    ['api/trade/', { id: 'trade', nav: true }],
+    ['api/trade/', { id: 'trade', nav: false }],
     ['api/shop/', { id: 'shop', nav: true }],
-    ['api/ui/dialogue/', { id: 'dialogue', nav: true }],
-    ['api/ui/widgets/', { id: 'dialogue', nav: true }],
+    ['api/ui/dialogue/', { id: 'dialogue', nav: false }],
+    ['api/ui/widgets/', { id: 'dialogue', nav: false }],
     ['api/ui/questlog/', { id: 'questlog', nav: false }],
     ['api/execution/', { id: 'execution', nav: false }],
     ['api/bot/', { id: 'bot', nav: false }],
@@ -94,10 +94,10 @@ const MODULE_RULES = [
     ['api/locs/', { id: 'entities', nav: false }],
     ['api/grounditems/', { id: 'entities', nav: false }],
     ['api/model/', { id: 'entities', nav: false }],
-    ['api/acquisition/', { id: 'acquisition', nav: true }],
+    ['api/acquisition/', { id: 'acquisition', nav: false }],
     ['api/thieving/', { id: 'thieving', nav: true }],
     ['api/firemaking/', { id: 'firemaking', nav: false }],
-    ['api/cooking/', { id: 'cooking', nav: true }],
+    ['api/cooking/', { id: 'cooking', nav: false }],
     ['api/prayer/', { id: 'prayer', nav: false }],
     ['api/magic/', { id: 'magic', nav: false }],
     ['api/sustain/', { id: 'combat', nav: false }],
@@ -111,7 +111,7 @@ const MODULE_RULES = [
     ['data/pickpocketTargets.js', { id: 'thieving', nav: true }],
     ['data/woodcuttingLocations.js', { id: 'woodcutting', nav: false }],
     ['data/runeCraftLocations.js', { id: 'runecrafting', nav: false }],
-    ['data/cookLocations.js', { id: 'cooking', nav: true }],
+    ['data/cookLocations.js', { id: 'cooking', nav: false }],
     ['data/spelldb.js', { id: 'catalog-data', nav: false }],
     ['data/itemdb.js', { id: 'catalog-data', nav: false }],
     ['data/herbs.js', { id: 'catalog-data', nav: false }],
@@ -233,12 +233,30 @@ function familyForDeclaration(name, section, navFamilies = null) {
     return familyPolicyById(policy.id, navFamilies);
 }
 
-// The module registry owns the served URL-to-shim relation. Resolve each
-// callback family from those shim callers; ambiguous reuse is resolved only
-// by same-module sibling families, otherwise generation fails closed.
+// The module registry owns the served URL-to-shim relation. Resolve callback
+// and directly called backend families from those shim callers; ambiguous reuse
+// is resolved only by same-module sibling families, otherwise generation fails closed.
 function deriveNativeFamilyFamilies(callbackSnapshot, registry, shimSources) {
     if (callbackSnapshot?.schema_version !== 2 || !Array.isArray(callbackSnapshot.rows)) fail('Missing native callback census schema version 2');
     const nativeFamilies = new Set(callbackSnapshot.rows.flatMap(row => row.families || []));
+    // Include every literal backend a registered shim calls, even if it has no callback rows.
+    for (const entry of registry) {
+        const text = shimSources[entry.shim];
+        if (typeof text !== 'string') fail(`Missing registered shim source ${entry.shim}`);
+        const source = parseSource(text, entry.shim);
+        const findCalledFamilies = node => {
+            if (
+                ts.isCallExpression(node) &&
+                ts.isIdentifier(node.expression) &&
+                node.expression.text === 'runMachine'
+            ) {
+                const family = node.arguments[0];
+                if (family && ts.isStringLiteralLike(family)) nativeFamilies.add(family.text);
+            }
+            ts.forEachChild(node, findCalledFamilies);
+        };
+        findCalledFamilies(source);
+    }
     const callers = new Map([...nativeFamilies].map(name => [name, []]));
     for (const entry of registry) {
         const text = shimSources[entry.shim];
@@ -328,33 +346,52 @@ function deriveNativeFamilyFamilies(callbackSnapshot, registry, shimSources) {
 }
 
 const NAV_IMPORT_NAMES = new Set([
-    'BankLocations', 'DirectNavigator', 'Navigator', 'PathFinder', 'Reach',
+    'DirectNavigator', 'Navigator', 'PathFinder', 'Reach',
     'Reachability', 'Traversal', 'Walk', 'WalkExecutor', 'Walker',
 ]);
 const NAV_RUST_USE = /\b(?:crate::walk::|native::walk::|walk::|crate::reach_entity::|reach_entity::|NpcReach\b|nav::|InteractReq::WalkTo\b)/;
-const NAV_RUST_SOURCE_FAMILIES = new Map([
-    // `dialog.rs` is the native dialogue backend; its `NpcReach` use is the
-    // route evidence for the public `dialogue` family even though the shared
-    // `dialog` callback is called by a quest shim.
-    ['dialogue', ['dialog.rs']],
-]);
+
+function hasRuntimeModuleBinding(node) {
+    if (ts.isImportDeclaration(node)) {
+        const clause = node.importClause;
+        if (!clause) return true;
+        if (clause.isTypeOnly) return false;
+        const bindings = clause.namedBindings;
+        return !bindings ||
+            !ts.isNamedImports(bindings) ||
+            bindings.elements.length === 0 ||
+            bindings.elements.some(element => !element.isTypeOnly);
+    }
+    if (ts.isExportDeclaration(node)) {
+        if (node.isTypeOnly) return false;
+        const clause = node.exportClause;
+        return !clause ||
+            !ts.isNamedExports(clause) ||
+            clause.elements.length === 0 ||
+            clause.elements.some(element => !element.isTypeOnly);
+    }
+    return false;
+}
 
 function hasNavigationImport(source) {
     let found = false;
     const visit = node => {
-        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+        if (
+            (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+            hasRuntimeModuleBinding(node)
+        ) {
             const specifier = node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)
                 ? node.moduleSpecifier.text
                 : '';
-            if (/(?:^|\/)(?:walking|webwalk)(?:\/|$)|(?:^|\/)BankLocations(?:\.js)?$/.test(specifier)) {
-                found = true;
-            }
-            const clause = ts.isImportDeclaration(node) ? node.importClause : node.exportClause;
-            if (clause && ts.isImportClause(clause) && clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-                if (clause.namedBindings.elements.some(element => NAV_IMPORT_NAMES.has((element.propertyName || element.name).text))) {
-                    found = true;
-                }
-            }
+            const pathUse = /(?:^|\/)(?:walking|webwalk)(?:\/|$)/.test(specifier);
+            const bindings = ts.isImportDeclaration(node)
+                ? node.importClause?.namedBindings
+                : node.exportClause;
+            const nameUse = bindings &&
+                (ts.isNamedImports(bindings) || ts.isNamedExports(bindings)) &&
+                bindings.elements.some(element =>
+                    !element.isTypeOnly && NAV_IMPORT_NAMES.has((element.propertyName || element.name).text));
+            if (pathUse || nameUse) found = true;
         }
         if (!found) ts.forEachChild(node, visit);
     };
@@ -362,26 +399,15 @@ function hasNavigationImport(source) {
     return found;
 }
 
-function frozenTypeScriptSources(root) {
-    const files = [];
-    const visit = directory => {
-        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-            if (entry.isDirectory()) {
-                if (!['test', 'tests', '__tests__'].includes(entry.name)) visit(path.join(directory, entry.name));
-            } else if (
-                entry.isFile() &&
-                entry.name.endsWith('.ts') &&
-                !entry.name.endsWith('.d.ts') &&
-                !/(?:\.test|\.spec)\.ts$/.test(entry.name)
-            ) files.push(path.join(directory, entry.name));
-        }
-    };
-    visit(path.join(root, 'bot'));
-    return files;
+function frozenSourceModuleFile(botRoot, module) {
+    if (typeof module !== 'string' || !module.endsWith('.js')) return null;
+    const file = path.resolve(botRoot, `${module.slice(0, -3)}.ts`);
+    if (!file.startsWith(`${botRoot}${path.sep}`)) fail(`Registered source module escapes frozen bot root: ${module}`);
+    return fs.existsSync(file) && fs.statSync(file).isFile() ? file : null;
 }
 
-function sourceModuleFamilyId(root, file) {
-    const module = path.relative(path.join(root, 'bot'), file)
+function sourceModuleFamilyId(botRoot, file) {
+    const module = path.relative(botRoot, file)
         .split(path.sep)
         .join('/')
         .replace(/\.ts$/, '.js');
@@ -391,12 +417,59 @@ function sourceModuleFamilyId(root, file) {
     return rule?.[1].id || null;
 }
 
-function frozenSourceNavFamilies(root) {
+function frozenSourceImportTargets(botRoot, file, source, familyId) {
+    const targets = new Set();
+    const visit = node => {
+        if (
+            (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+            hasRuntimeModuleBinding(node) &&
+            node.moduleSpecifier &&
+            ts.isStringLiteralLike(node.moduleSpecifier) &&
+            node.moduleSpecifier.text.startsWith('.')
+        ) {
+            const unresolved = path.resolve(path.dirname(file), node.moduleSpecifier.text);
+            const extension = path.extname(unresolved);
+            const candidates = extension === '.js'
+                ? [`${unresolved.slice(0, -3)}.ts`]
+                : extension === '.ts'
+                    ? [unresolved]
+                    : extension
+                        ? []
+                        : [`${unresolved}.ts`, path.join(unresolved, 'index.ts')];
+            for (const candidate of candidates) {
+                if (
+                    candidate.startsWith(`${botRoot}${path.sep}`) &&
+                    fs.existsSync(candidate) &&
+                    fs.statSync(candidate).isFile() &&
+                    sourceModuleFamilyId(botRoot, candidate) === familyId
+                ) targets.add(candidate);
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return targets;
+}
+
+// Registered modules.json entries are the served and declared ABI roots.
+// Follow reachable relative imports only within the root family; cross-family
+// dependencies remain classified by their own ABI, and unserved siblings are not roots.
+function frozenSourceNavFamilies(root, registry) {
+    const botRoot = path.resolve(root, 'bot');
     const navFamilies = new Set();
-    for (const file of frozenTypeScriptSources(root)) {
-        const familyId = sourceModuleFamilyId(root, file);
-        if (familyId && hasNavigationImport(parseSource(fs.readFileSync(file, 'utf8'), file))) {
-            navFamilies.add(familyId);
+    for (const entry of registry) {
+        const rootFile = frozenSourceModuleFile(botRoot, entry.module);
+        if (!rootFile) continue;
+        const familyId = moduleFamilyId(entry.module);
+        const pending = [rootFile];
+        const visited = new Set();
+        while (pending.length) {
+            const file = pending.pop();
+            if (visited.has(file)) continue;
+            visited.add(file);
+            const source = parseSource(fs.readFileSync(file, 'utf8'), file);
+            if (hasNavigationImport(source)) navFamilies.add(familyId);
+            for (const dependency of frozenSourceImportTargets(botRoot, file, source, familyId)) pending.push(dependency);
         }
     }
     return navFamilies;
@@ -437,19 +510,12 @@ function rustFamilySources(root, nativeFamilies) {
     return result;
 }
 
-function deriveNavFamilies({ frozenSourceRoot, nativeSourceRoot, nativeFamilyFamilies }) {
-    const navFamilies = frozenSourceNavFamilies(frozenSourceRoot);
+function deriveNavFamilies({ frozenSourceRoot, nativeSourceRoot, nativeFamilyFamilies, registry }) {
+    const navFamilies = frozenSourceNavFamilies(frozenSourceRoot, registry);
     const nativeFamilySources = rustFamilySources(nativeSourceRoot, new Set(nativeFamilyFamilies.keys()));
     for (const [nativeFamily, familyId] of nativeFamilyFamilies) {
         const sources = nativeFamilySources.get(nativeFamily) || [];
         if (sources.some(source => NAV_RUST_USE.test(source.source))) navFamilies.add(familyId);
-    }
-    for (const [familyId, files] of NAV_RUST_SOURCE_FAMILIES) {
-        for (const file of files) {
-            const source = rustProductionSource(fs.readFileSync(path.join(nativeSourceRoot, file), 'utf8'));
-            if (!NAV_RUST_USE.test(source)) fail(`Navigation source evidence disappeared for ${familyId}: ${file}`);
-            navFamilies.add(familyId);
-        }
     }
     return navFamilies;
 }

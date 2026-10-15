@@ -36,16 +36,17 @@ const navFamilies = frozenRoot ? deriveNavFamilies({
     frozenSourceRoot: path.join(frozenRoot, 'src'),
     nativeSourceRoot: path.join(crate, 'src'),
     nativeFamilyFamilies,
+    registry,
 }) : null;
 
 test('the generated ABI contract and family graph are complete', () => {
     validateArtifacts(contract, predecessors, navFamilies);
     const nav = new Set(predecessors.families.filter(row => row.nav_consuming).map(row => row.family_id));
-    for (const family of ['bank', 'shop', 'dialogue', 'thieving', 'trade', 'acquisition', 'runtime', 'cooking']) {
-        assert.ok(nav.has(family), `${family} reaches a walker or route service`);
-    }
-    assert.ok(nav.has('hunt'), 'hunt retains its own nav classification');
-    assert.ok(!nav.has('combat'), 'combat has no nav use outside the separately classified hunt family');
+    assert.deepEqual(
+        [...nav].sort(),
+        ['bank', 'clues', 'duel', 'hunt', 'quests', 'runtime', 'shop', 'tasks', 'thieving', 'walking'],
+        'nav families are exactly those reached from served ABI sources and called native backends',
+    );
 });
 
 test('code-derived nav evidence agrees with the family graph', { skip: !navFamilies }, () => {
@@ -71,6 +72,10 @@ test('native callback ownership follows the registered shim callers', () => {
     assert.equal(nativeFamilyFamilies.get('bank_nearest'), 'bank');
     assert.equal(nativeFamilyFamilies.get('bank_withdraw_to'), 'thieving');
     assert.equal(nativeFamilyFamilies.get('bank_close_confirm'), 'thieving');
+});
+test('registered callback-free backends participate in navigation classification', () => {
+    assert.ok(!callbackSnapshot.rows.some(row => row.families?.includes('light-fire')));
+    assert.equal(nativeFamilyFamilies.get('light-fire'), 'firemaking');
 });
 
 test('the contract callback rows equal the family-expanded native ABI census', () => {
@@ -222,6 +227,52 @@ test('the real generator rejects a seeded nav classification drift', { skip: !fr
                 const output = `${error.stdout || ''}${error.stderr || ''}`;
                 return error.status === 1
                     && /Navigation classification disagrees with code evidence for family combat/.test(output);
+            },
+        );
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+});
+test('the real generator rejects a walking backend without callback rows', { skip: !frozenRoot }, () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-no-callback-nav-seed-'));
+    const crateCopy = path.join(scratch, 'script');
+    try {
+        fs.cpSync(crate, crateCopy, {
+            recursive: true,
+            filter: sourcePath => {
+                const relative = path.relative(crate, sourcePath);
+                return relative === '' ||
+                    !relative.split(path.sep).some(part => part === 'node_modules' || part === 'target');
+            },
+        });
+        fs.symlinkSync(path.join(here, 'node_modules'), path.join(crateCopy, 'compat-js/node_modules'), 'dir');
+        const fire = path.join(crateCopy, 'src/fire.rs');
+        const source = fs.readFileSync(fire, 'utf8');
+        assert.doesNotMatch(source, /use crate::walk::Resilient;/);
+        const seeded = source.replace(
+            'use crate::machine::{Begin, Cx, Family, Step};',
+            'use crate::walk::Resilient;\nuse crate::machine::{Begin, Cx, Family, Step};',
+        );
+        assert.notEqual(seeded, source);
+        fs.writeFileSync(fire, seeded);
+        const nodePath = [path.join(here, 'node_modules'), process.env.NODE_PATH]
+            .filter(Boolean)
+            .join(path.delimiter);
+        assert.throws(
+            () => execFileSync(process.execPath, [path.join(crateCopy, 'compat-js/generate.cjs'), '--check'], {
+                cwd: path.join(crateCopy, 'compat-js'),
+                env: {
+                    ...process.env,
+                    NODE_PATH: nodePath,
+                    RS2B0T: frozenRoot,
+                    npm_config_offline: 'true',
+                },
+                stdio: 'pipe',
+            }),
+            error => {
+                const output = `${error.stdout || ''}${error.stderr || ''}`;
+                return error.status === 1
+                    && /Navigation classification disagrees with code evidence for family firemaking/.test(output);
             },
         );
     } finally {
