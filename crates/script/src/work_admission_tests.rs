@@ -355,7 +355,7 @@ fn a_healthy_busy_worker_does_not_time_out_a_queued_receipt_after_five_seconds()
     );
     let (wait_tx, wait_rx) = mpsc::sync_channel(1);
     let waiter_service = Arc::clone(&shared);
-    let waiter_ticket = last.clone();
+    let waiter_ticket = last;
     let waiter = std::thread::spawn(move || {
         wait_tx
             .send(WorkService::wait_terminal(&waiter_service, &waiter_ticket))
