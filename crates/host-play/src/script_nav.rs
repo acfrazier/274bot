@@ -2582,6 +2582,29 @@ impl NavBot {
         }
         use api::selected::Truth;
         let end = match outcome {
+            nav::traveller::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why,
+                tries,
+            } => Some(script::native::WalkEnd::Stalled(Arc::new(
+                script::native::WalkStall {
+                    at: *at,
+                    aiming: *aiming,
+                    why: match why {
+                        nav::traveller::HopFailure::Expired => {
+                            script::native::WalkStallReason::Expired
+                        }
+                        nav::traveller::HopFailure::Dropped => {
+                            script::native::WalkStallReason::Dropped
+                        }
+                        nav::traveller::HopFailure::EndBlocked => {
+                            script::native::WalkStallReason::EndBlocked
+                        }
+                    },
+                    tries: *tries,
+                },
+            ))),
             nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
             nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
             nav::traveller::TravelOutcome::EvidenceUnproven {
@@ -2602,8 +2625,10 @@ impl NavBot {
             .as_ref()
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
-            self.walk_outcome_detail =
-                Some(Arc::from(format!("native follow failed: {outcome:?}")));
+            self.walk_outcome_detail = match outcome {
+                nav::traveller::TravelOutcome::Stalled { .. } => None,
+                _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
+            };
         }
     }
 

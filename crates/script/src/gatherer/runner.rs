@@ -23,7 +23,7 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
     Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit, WalkEnd, WalkOptions,
-    WalkReceipt, WalkRequest,
+    WalkReceipt, WalkRequest, WalkStallReason,
 };
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
@@ -39,6 +39,10 @@ mod recover;
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
 const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
+// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
+// Traveller's 60-poll bound; §3 records the normal content-derived stand
+// succeeding. One fresh plan from observed position is the supported recovery.
+const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
@@ -242,6 +246,10 @@ struct GatherScratch {
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
     last_yield_tick: u64,
+    /// At most one admitted replan for a resource return; admission deferrals
+    /// do not consume this bound.
+    return_recovery_actions: u8,
+    return_recovery_pending: bool,
 }
 
 pub struct Gatherer {
@@ -388,6 +396,8 @@ impl Gatherer {
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
+        self.scratch.return_recovery_actions = 0;
+        self.scratch.return_recovery_pending = false;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
@@ -433,7 +443,7 @@ impl Gatherer {
         radius: u16,
         arrival: ArrivalKind,
         tick: &mut NativeTick<'_>,
-    ) {
+    ) -> bool {
         let request = WalkRequest {
             target,
             loc_id: None,
@@ -448,8 +458,14 @@ impl Gatherer {
             allow: Default::default(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-            Ok(handle) => self.active = Active::Walk(handle),
-            Err(error) => self.action_failure(error),
+            Ok(handle) => {
+                self.active = Active::Walk(handle);
+                true
+            }
+            Err(error) => {
+                self.action_failure(error);
+                false
+            }
         }
     }
 
@@ -498,8 +514,17 @@ impl Gatherer {
                 let stand = target.tile;
                 self.method = Arc::clone(&target.alias);
                 self.target = Some(target);
-                self.trip_walk(stand, RESOURCE_APPROACH_RADIUS, ArrivalKind::Area, tick);
-                self.set_event("returning to work area");
+                let recovery = self.scratch.return_recovery_pending;
+                let submitted =
+                    self.trip_walk(stand, RESOURCE_APPROACH_RADIUS, ArrivalKind::Area, tick);
+                if recovery && submitted {
+                    self.scratch.return_recovery_actions =
+                        self.scratch.return_recovery_actions.saturating_add(1);
+                    self.scratch.return_recovery_pending = false;
+                    self.set_event("return recovery action submitted after transient Stalled");
+                } else if !recovery {
+                    self.set_event("returning to work area");
+                }
                 self.dirty = true;
             }
             ResourceReturn::ExcludedUntil { until } => {
@@ -623,7 +648,7 @@ impl Gatherer {
                 };
                 match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Deposit(handle),
-                    Err(error) => self.action_failure(error),
+                    Err(error) => self.deposit_failure(error),
                 }
             }
             TripStep::Withdraw => {
@@ -1095,10 +1120,25 @@ impl Gatherer {
     }
 
     fn action_failure(&mut self, error: ActionError) {
-        if matches!(error, ActionError::Held | ActionError::BudgetExhausted) {
-            return;
+        match error {
+            ActionError::Held | ActionError::BudgetExhausted => {}
+            ActionError::BankDeposit(failure) => {
+                self.fail("bank-deposit-failed", failure.to_string());
+            }
+            error => self.fail("action-error", format!("native action failed: {error:?}")),
         }
-        self.fail("action-error", format!("native action failed: {error:?}"));
+    }
+
+    fn deposit_failure(&mut self, error: ActionError) {
+        match error {
+            ActionError::BankDeposit(failure) => {
+                self.fail("bank-deposit-failed", failure.to_string());
+            }
+            error => self.fail(
+                "bank-deposit-failed",
+                format!("bank deposit failed: {error:?}"),
+            ),
+        }
     }
 
     fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
@@ -1426,6 +1466,26 @@ impl Gatherer {
             self.fail("manual-movement", "cancelled by user input");
             return;
         }
+        if self.trip == TripStep::Return
+            && self.scratch.return_recovery_actions < MAX_RETURN_RECOVERY_ACTIONS
+            && !self.scratch.return_recovery_pending
+            && matches!(
+                &result.end,
+                WalkEnd::Stalled(stall)
+                    if matches!(
+                        stall.why,
+                        WalkStallReason::Expired | WalkStallReason::Dropped
+                    )
+            )
+        {
+            // The typed Traveller terminal includes its current server tile;
+            // rebuild the content-derived observation stand from the fresh
+            // snapshot, not from the route that stalled.
+            self.target = None;
+            self.scratch.return_recovery_pending = true;
+            self.return_to_resources(tick);
+            return;
+        }
         if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
             let snapshot = tick.cx.snapshot();
             if let Some(target) = self.target.as_ref().filter(|target| {
@@ -1488,6 +1548,8 @@ impl Gatherer {
                     self.fail("return-failed", "return receipt did not establish arrival at the resource observation stand");
                     return;
                 }
+                self.scratch.return_recovery_actions = 0;
+                self.scratch.return_recovery_pending = false;
                 self.trips = self.trips.saturating_add(1);
                 self.advance_trip(TripStep::Idle);
                 self.needs_validate = true;
@@ -1629,12 +1691,7 @@ impl Gatherer {
                     self.advance_trip(TripStep::Withdraw);
                     self.set_event("deposit confirmed");
                 }
-                Poll::Ready(Err(error)) => {
-                    self.fail(
-                        "bank-deposit-failed",
-                        format!("bank deposit failed: {error:?}"),
-                    );
-                }
+                Poll::Ready(Err(error)) => self.deposit_failure(error),
             },
             Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Withdraw(handle),
