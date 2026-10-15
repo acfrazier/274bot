@@ -1648,6 +1648,47 @@ mod tests {
         .unwrap()
     }
 
+    /// Timings for a full-size admitted document's individual registry
+    /// actions. Run in release with `--nocapture` when revisiting the worker
+    /// slice policy; every filesystem read and parse still runs off-pump.
+    #[test]
+    fn quester_registry_policy_timing() {
+        let folder = Folder::new();
+        folder.cook("cook", "release policy timing");
+        let document = folder.0.join("cook.json");
+        let mut bytes = std::fs::read(&document).unwrap();
+        bytes.resize(MAX_REGISTRY_FILE_BYTES, b' ');
+        std::fs::write(document, bytes).unwrap();
+        std::fs::write(
+            folder.0.join("index.json"),
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"}]}"#,
+        )
+        .unwrap();
+        with_data(move |selected, quests, worker| {
+            let mut preparation =
+                RegistryPreparation::from_source(folder.source(true), selected, Arc::new(quests))
+                    .unwrap();
+            let mut maximum = std::time::Duration::ZERO;
+            let mut phase = RegistryPreparationPhase::CheckPin;
+            loop {
+                let current = preparation.phase();
+                let started = std::time::Instant::now();
+                let completed = preparation.step(worker).unwrap().is_some();
+                let elapsed = started.elapsed();
+                if elapsed > maximum {
+                    maximum = elapsed;
+                    phase = current;
+                }
+                if completed {
+                    break;
+                }
+            }
+            eprintln!(
+                "QUESTER_REGISTRY_POLICY bytes={MAX_REGISTRY_FILE_BYTES} max_phase={phase:?} max_action={maximum:?}"
+            );
+        });
+    }
+
     #[test]
     fn cooperative_reload_matches_filesystem_after_edit_and_keeps_diagnostics() {
         with_data(|selected, quests, worker| {

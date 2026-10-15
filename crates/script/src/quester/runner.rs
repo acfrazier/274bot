@@ -3768,10 +3768,6 @@ impl Script for QueuedQuester {
                 None
             };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
-            tick.output.log(
-                api::hostlog::Level::Info,
-                &format!("quester queue: preparing next Path {id}"),
-            );
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
@@ -3819,7 +3815,21 @@ impl Script for QueuedQuester {
                 }
             };
             match worker {
-                Ok(worker) => self.preparing = Some(worker),
+                Ok(worker) => {
+                    tick.output.log(
+                        api::hostlog::Level::Info,
+                        &format!(
+                            "quester queue: preparing next Path {}",
+                            self.queue.id(index).expect("selected queue row")
+                        ),
+                    );
+                    self.preparing = Some(worker);
+                }
+                Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                    // No Path failed. The bounded queue retains this candidate
+                    // and the next game tick retries admission without blocking.
+                    self.active_index = None;
+                }
                 Err(error) => {
                     self.queue
                         .mark_blocked(index, Arc::from(format!("Path preparation: {error}")));

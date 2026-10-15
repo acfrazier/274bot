@@ -64,6 +64,10 @@ struct AssignmentIntent {
     next: Option<vault::ScriptAssignment>,
 }
 
+/// At most this many settings receipts may wait for the shared worker.
+/// This bounds retained drafts when an operator repeatedly saves while full.
+const MAX_PENDING_NATIVE_SETTINGS: usize = 64;
+
 type NativePreparation = PreparedTask<Result<host_play::PreparedScriptConfig, StartError>>;
 
 pub(super) struct PendingPreparation {
@@ -74,7 +78,9 @@ pub(super) struct PendingPreparation {
     renamed_from: Option<String>,
     mirror: ArmMirror,
     label: &'static str,
-    worker: NativePreparation,
+    worker: Option<NativePreparation>,
+    waiting: Option<(script::CompiledId, u64, Arc<SettingsBag>)>,
+    failure: Option<String>,
     #[cfg(test)]
     publication_gate: Option<Arc<AtomicBool>>,
     copy_start_hold: Option<NativeCopyHold>,
@@ -90,7 +96,7 @@ impl PendingPreparation {
         {
             return false;
         }
-        self.worker.is_finished()
+        self.failure.is_some() || self.worker.as_ref().is_some_and(PreparedTask::is_finished)
     }
 }
 
@@ -98,7 +104,8 @@ pub(super) struct PendingDelivery {
     op: OperationId,
     name: String,
     live: LiveSettings,
-    worker: NativePreparation,
+    worker: Option<NativePreparation>,
+    admission: Option<(script::CompiledId, u64)>,
 }
 
 impl ArmMirror {
@@ -154,6 +161,16 @@ impl<Io> OperatorSession<Io> {
             });
             return;
         }
+        if self.deliveries.len() >= MAX_PENDING_NATIVE_SETTINGS {
+            self.settings_writes.push(SettingsWrite {
+                op,
+                profile: name,
+                result: SettingsResult::Saved(LiveDelivery::Rejected(
+                    "too many pending native settings deliveries".into(),
+                )),
+            });
+            return;
+        }
         let result = self
             .play
             .as_ref()
@@ -165,15 +182,35 @@ impl<Io> OperatorSession<Io> {
                     op.0.max(play.script_native_settings_revision(&name).unwrap_or(1))
                         .checked_add(1)
                         .ok_or_else(|| "settings revision exhausted".to_string())?;
-                play.script_prepare_config(id, revision, Arc::clone(&live.bag))
+                Ok((id, revision))
             });
         match result {
-            Ok(worker) => self.deliveries.push(PendingDelivery {
-                op,
-                name,
-                live,
-                worker,
-            }),
+            Ok((id, revision)) => {
+                let play = self.play.as_ref().expect("checked play");
+                match play.script_prepare_config(id, revision, Arc::clone(&live.bag)) {
+                    Ok(worker) => self.deliveries.push(PendingDelivery {
+                        op,
+                        name,
+                        live,
+                        worker: Some(worker),
+                        admission: None,
+                    }),
+                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                        self.deliveries.push(PendingDelivery {
+                            op,
+                            name,
+                            live,
+                            worker: None,
+                            admission: Some((id, revision)),
+                        });
+                    }
+                    Err(error) => self.settings_writes.push(SettingsWrite {
+                        op,
+                        profile: name,
+                        result: SettingsResult::Saved(LiveDelivery::Rejected(error.to_string())),
+                    }),
+                }
+            }
             Err(error) => self.settings_writes.push(SettingsWrite {
                 op,
                 profile: name,
@@ -185,14 +222,50 @@ impl<Io> OperatorSession<Io> {
     pub(super) fn take_native_deliveries(&mut self, wait: bool) {
         let mut index = 0;
         while index < self.deliveries.len() {
-            if !wait && !self.deliveries[index].worker.is_finished() {
+            if let Some((id, revision)) = self.deliveries[index].admission {
+                let result = self
+                    .play
+                    .as_ref()
+                    .ok_or_else(|| script::preparation::PreparationError::Unavailable("no play".into()))
+                    .and_then(|play| {
+                        play.script_prepare_config(
+                            id,
+                            revision,
+                            Arc::clone(&self.deliveries[index].live.bag),
+                        )
+                    });
+                match result {
+                    Ok(worker) => {
+                        self.deliveries[index].worker = Some(worker);
+                        self.deliveries[index].admission = None;
+                    }
+                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                        if wait {
+                            std::thread::park_timeout(Duration::from_millis(5));
+                        } else {
+                            index += 1;
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        let pending = self.deliveries.remove(index);
+                        self.settings_writes.push(SettingsWrite {
+                            op: pending.op,
+                            profile: pending.name,
+                            result: SettingsResult::Saved(LiveDelivery::Rejected(error.to_string())),
+                        });
+                        continue;
+                    }
+                }
+            }
+            if !wait && !self.deliveries[index].worker.as_ref().is_some_and(PreparedTask::is_finished) {
                 index += 1;
                 continue;
             }
             let mut pending = self.deliveries.remove(index);
-            let identity = pending.worker.identity();
-            let prepared = pending
-                .worker
+            let worker = pending.worker.take().expect("admitted delivery has a worker");
+            let identity = worker.identity();
+            let prepared = worker
                 .join()
                 .map_err(|error| error.to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));
@@ -308,6 +381,9 @@ impl<Io> OperatorSession<Io> {
                 .and_then(|prior_op| self.preparations.get(prior_op))
                 .and_then(|pending| pending.assignment_intent.clone())
         };
+        if self.preparations.len() >= MAX_PENDING_NATIVE_SETTINGS {
+            return Err(format!("{label}: too many pending native settings saves"));
+        }
         let play = self
             .play
             .as_ref()
@@ -317,9 +393,13 @@ impl<Io> OperatorSession<Io> {
             op.0.max(play.script_native_settings_revision(source).unwrap_or(1))
                 .checked_add(1)
                 .ok_or("settings revision exhausted")?;
-        let worker = match play.script_prepare_config(id, revision, bag) {
-            Ok(worker) => worker,
+        let (worker, waiting) = match play.script_prepare_config(id, revision, Arc::clone(&bag)) {
+            Ok(worker) => (Some(worker), None),
+            Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                (None, Some((id, revision, bag)))
+            }
             Err(error) => {
+                let error = error.to_string();
                 self.operations
                     .set(op, &profile.username, Outcome::Failed(error.clone()));
                 return Err(error);
@@ -359,6 +439,8 @@ impl<Io> OperatorSession<Io> {
                 mirror,
                 label,
                 worker,
+                waiting,
+                failure: None,
                 #[cfg(test)]
                 publication_gate: None,
                 copy_start_hold,
@@ -371,6 +453,31 @@ impl<Io> OperatorSession<Io> {
         if self.preparations.is_empty() {
             return;
         }
+        loop {
+            if self.preparations.is_empty() {
+                return;
+            }
+            for pending in self.preparations.values_mut() {
+                let Some((id, revision, bag)) = pending.waiting.as_ref() else {
+                    continue;
+                };
+                let Some(play) = self.play.as_ref() else {
+                    pending.failure = Some("no play".into());
+                    pending.waiting = None;
+                    continue;
+                };
+                match play.script_prepare_config(*id, *revision, Arc::clone(bag)) {
+                    Ok(worker) => {
+                        pending.worker = Some(worker);
+                        pending.waiting = None;
+                    }
+                    Err(script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {}
+                    Err(error) => {
+                        pending.failure = Some(error.to_string());
+                        pending.waiting = None;
+                    }
+                }
+            }
         let now = Instant::now();
         let mut ready: Vec<_> = self
             .preparations
@@ -383,7 +490,7 @@ impl<Io> OperatorSession<Io> {
                     .is_some_and(|gate| !gate.load(Ordering::Acquire));
                 #[cfg(not(test))]
                 let gated = false;
-                if !gated && (wait || pending.is_finished()) {
+                if !gated && (pending.is_finished() || (wait && pending.worker.is_some())) {
                     return true;
                 }
                 pending.copy_start_hold.as_ref().is_some_and(|hold| {
@@ -397,16 +504,18 @@ impl<Io> OperatorSession<Io> {
             .map(|(op, _)| *op)
             .collect();
         ready.sort_unstable();
+        let nothing_ready = ready.is_empty();
         for op in ready {
             let mut pending = self.preparations.remove(&op).expect("ready preparation");
             let name = pending.profile.username.clone();
-            let identity = pending.worker.identity();
+            let worker = pending.worker.take();
+            let identity = worker.as_ref().map(PreparedTask::identity);
             let source = pending.renamed_from.as_deref().unwrap_or(&name);
             let result = if pending
                 .copy_start_hold
                 .as_ref()
                 .is_some_and(|hold| now >= hold.deadline)
-                && !pending.is_finished()
+                && !worker.as_ref().is_some_and(PreparedTask::is_finished)
             {
                 // Abandon the exact job; its worker and charge remain in
                 // custody until the shared WorkAdmission worker returns.
@@ -422,9 +531,11 @@ impl<Io> OperatorSession<Io> {
                 && (self.play.is_none() || self.vault.is_none() || !self.members().contains(&name))
             {
                 Err("settings copy cancelled: bot or vault unavailable".to_string())
+            } else if let Some(error) = pending.failure.take() {
+                Err(error)
             } else {
-                pending
-                    .worker
+                worker
+                    .expect("ready native preparation has a worker")
                     .join()
                     .map_err(|error| error.to_string())
                     .and_then(|result| result.map_err(|error| error.to_string()))
@@ -452,9 +563,11 @@ impl<Io> OperatorSession<Io> {
                 }
                 continue;
             }
-            let config = match result
-                .and_then(|config| config.commit(identity).map_err(|error| error.to_string()))
-            {
+            let config = match result.and_then(|config| {
+                config
+                    .commit(identity.expect("successful native preparation had an identity"))
+                    .map_err(|error| error.to_string())
+            }) {
                 Ok(config) => config,
                 Err(error) => {
                     self.operations
@@ -528,6 +641,15 @@ impl<Io> OperatorSession<Io> {
                 write.copy_start_hold = pending.copy_start_hold;
             }
         }
+            if !wait {
+                return;
+            }
+            // Synchronous flushes wait on the receipt, never fail on temporary
+            // WorkAdmission fullness. Frame polling above never parks the UI.
+            if nothing_ready {
+                std::thread::park_timeout(Duration::from_millis(5));
+            }
+    }
     }
 
     /// A disk write already submitted cannot be recalled. On a bounded-wait
@@ -797,16 +919,17 @@ mod tests {
         let mut f = preparing_copy("copy-preparation-failure");
         let op = *f.core.preparations.keys().next().unwrap();
         let mut pending = f.core.preparations.remove(&op).unwrap();
-        pending.worker.join().unwrap().unwrap();
+        pending.worker.take().unwrap().join().unwrap().unwrap();
         let id = script::CompiledId("Gatherer");
         let mut invalid = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
         invalid.insert("radius".into(), json!("not a radius"));
-        pending.worker = f
-            .core
-            .play()
-            .unwrap()
-            .script_prepare_config(id, op.0, Arc::new(invalid))
-            .unwrap();
+        pending.worker = Some(
+            f.core
+                .play()
+                .unwrap()
+                .script_prepare_config(id, op.0, Arc::new(invalid))
+                .unwrap(),
+        );
         f.core.preparations.insert(op, pending);
         f.core.take_preparations(true);
         f.scripts.poll(&mut f.core);

@@ -82,6 +82,42 @@ impl Drop for ScriptOwner {
     }
 }
 
+pub(super) enum PrepareRunError {
+    Full,
+    Other(StartError),
+}
+
+impl From<StartError> for PrepareRunError {
+    fn from(error: StartError) -> Self {
+        Self::Other(error)
+    }
+}
+
+/// One operator Start retained while the bounded work ledger is temporarily
+/// full. The slot owns exactly one demand and retries on an ordinary turn.
+pub(super) struct PendingCompiledStart {
+    card: &'static crate::native::CompiledCard,
+    run: RunKey,
+    bag: Arc<SettingsBag>,
+    selected: Arc<api::game_data::SelectedGameData>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+    retained: Arc<Mutex<RetainedMemory>>,
+    account: String,
+}
+
+impl PendingCompiledStart {
+    fn try_admit(&self) -> Result<Preparation, PrepareRunError> {
+        prepare_run(
+            self.card,
+            self.run,
+            Arc::clone(&self.bag),
+            Arc::clone(&self.selected),
+            Arc::clone(&self.banks),
+            Arc::clone(&self.retained),
+            self.account.clone(),
+        )
+    }
+}
 pub(super) struct Preparation {
     generation: u64,
     worker: PreparedTask<PreparationResult>,
@@ -619,12 +655,12 @@ pub(super) fn prepare_run(
     banks: Arc<api::named_banks::NamedBankFacts>,
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
-) -> Result<Preparation, StartError> {
+) -> Result<Preparation, PrepareRunError> {
     let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
         card.id == crate::CompiledId("Gatherer") && selected.try_gathering().is_none();
     let settings_input = PreparationInput::for_settings(run.run, &bag)
-        .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+        .map_err(StartError::WorkRefused)?;
     // Charge folder retention only for an enabled source. Keep that exact
     // source for the worker; a later settings change fails the publish fence.
     // The Quester-only state lives in its Stage variant. Other cards pay no
@@ -649,20 +685,13 @@ pub(super) fn prepare_run(
             actions: 0,
         })
     });
-    let input = if quester_state
-        .as_ref()
-        .is_some_and(|state| state.source.as_ref().is_some_and(|source| source.enabled))
-    {
-        PreparationInput::new(
+    let input = if let Some(state) = quester_state.as_ref() {
+        PreparationInput::for_quester_folder(
             run.run,
-            64 * 1024 * 1024,
-            32 * 1024 * 1024,
-            32 * 1024 * 1024,
+            settings_input,
+            state.source.as_ref().expect("Quester source captured"),
         )
-        .map_err(|error| StartError::Unavailable(error.to_string().into()))?
-        .with_quester_registry_actions()
-    } else if quester {
-        settings_input.with_quester_registry_actions()
+        .map_err(StartError::WorkRefused)?
     } else if cold_gathering {
         settings_input.with_gathering_family_decode()
     } else {
@@ -896,7 +925,15 @@ pub(super) fn prepare_run(
             }
         },
     )
-    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    .map_err(|error| match error {
+        preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+            PrepareRunError::Full
+        }
+        preparation::PreparationError::Refused(refusal) => {
+            PrepareRunError::Other(StartError::WorkRefused(refusal))
+        }
+        other => PrepareRunError::Other(StartError::Unavailable(other.to_string().into())),
+    })?;
     Ok(Preparation {
         generation: run.run,
         worker,
@@ -916,16 +953,16 @@ pub(super) fn prepare_native_run(
         ) -> Result<(Box<dyn Script>, Arc<PreparedConfig>), StartError>
         + Send
         + 'static,
-) -> Result<Preparation, StartError> {
+) -> Result<Preparation, PrepareRunError> {
     let slot = api::identity::SlotKey::from_incarnation(run.slot)
-        .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
+        .ok_or_else(|| PrepareRunError::Other(StartError::Unavailable("slot worker is not bound".into())))?;
     let input = PreparationInput::new(
         run.run,
         account.capacity(),
         2 * 1024 * 1024,
         2 * 1024 * 1024,
     )
-    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    .map_err(|error| PrepareRunError::Other(StartError::WorkRefused(error)))?;
     let worker = preparation::submit(
         PreparationKind::Card,
         api::identity::Scope::Slot(slot),
@@ -956,7 +993,15 @@ pub(super) fn prepare_native_run(
             })()))
         },
     )
-    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    .map_err(|error| match error {
+        preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+            PrepareRunError::Full
+        }
+        preparation::PreparationError::Refused(refusal) => {
+            PrepareRunError::Other(StartError::WorkRefused(refusal))
+        }
+        other => PrepareRunError::Other(StartError::Unavailable(other.to_string().into())),
+    })?;
     Ok(Preparation {
         generation: run.run,
         worker,
@@ -1025,14 +1070,28 @@ impl SlotScript {
         let job = prepare_run(
             card,
             run,
-            bag,
-            selected,
-            banks,
-            retained,
+            Arc::clone(&bag),
+            Arc::clone(&selected),
+            Arc::clone(&banks),
+            Arc::clone(&retained),
             account.to_owned(),
-        )?;
+        );
+        match job {
+            Ok(job) => self.preparing = Some(Box::new(job)),
+            Err(PrepareRunError::Full) => {
+                self.pending_compiled_start = Some(PendingCompiledStart {
+                    card,
+                    run,
+                    bag,
+                    selected,
+                    banks,
+                    retained,
+                    account: account.to_owned(),
+                });
+            }
+            Err(PrepareRunError::Other(error)) => return Err(error),
+        }
         self.control_generation = generation;
-        self.preparing = Some(Box::new(job));
         self.terminal_native_status = None;
         self.want_run = true;
         self.start_pending = true;
@@ -1072,8 +1131,8 @@ impl SlotScript {
             .map_err(|error| error.to_string())?;
         let slot =
             api::identity::SlotKey::from_incarnation(run.slot).ok_or("slot worker is not bound")?;
-        self.revoke_native_input();
-        self.teardown_compiled(StopReason::Replaced);
+        // Do not tear down the running identity until replacement admission
+        // actually succeeds. Full retains one retry demand on this slot.
         let worker = preparation::submit(
             PreparationKind::Card,
             api::identity::Scope::Slot(slot),
@@ -1112,6 +1171,11 @@ impl SlotScript {
         );
         let worker = match worker {
             Ok(worker) => worker,
+            Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                self.pending_compiled_restart = true;
+                self.revoke_native_input();
+                return Ok(());
+            }
             Err(error) => {
                 let message = error.to_string();
                 self.fail_compiled(ScriptFailure {
@@ -1121,6 +1185,9 @@ impl SlotScript {
                 return Err(message);
             }
         };
+        self.pending_compiled_restart = false;
+        self.revoke_native_input();
+        self.teardown_compiled(StopReason::Replaced);
         self.control_generation = generation;
         self.preparing = Some(Box::new(Preparation { generation, worker }));
         self.state = RunState::Starting;
@@ -1129,6 +1196,31 @@ impl SlotScript {
     }
 
     fn poll_compiled(&mut self) {
+        if let Some(pending) = self.pending_compiled_start.take() {
+            if pending.run.run != self.control_generation || !self.want_run {
+                return;
+            }
+            match pending.try_admit() {
+                Ok(job) => self.preparing = Some(Box::new(job)),
+                Err(PrepareRunError::Full) => {
+                    self.pending_compiled_start = Some(pending);
+                    return;
+                }
+                Err(PrepareRunError::Other(error)) => {
+                    self.last_error = Some(error.to_string());
+                    self.want_run = false;
+                    self.state = RunState::Idle;
+                    self.settle_start(StartOutcome::Rejected(error));
+                    return;
+                }
+            }
+        }
+        if self.pending_compiled_restart && self.compiled.is_some() {
+            if let Err(error) = self.restart_compiled(Instant::now()) {
+                self.last_error = Some(error);
+            }
+            return;
+        }
         if !self.preparing.as_ref().is_some_and(|job| job.is_finished()) {
             return;
         }

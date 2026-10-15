@@ -305,6 +305,74 @@ fn fifo_round_robin_runs_short_jobs_before_a_long_jobs_next_slice() {
 }
 
 #[test]
+fn maximal_catalogue_and_native_sized_start_both_complete() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let catalogue = submit(
+        &shared,
+        &TestInput {
+            charge: WorkCharge::new(64 << 20, 32 << 20, 32 << 20, 0),
+        },
+        QueueJob::new(1, Arc::clone(&trace), 0, Some((entered_tx, release_rx))),
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("catalogue is in flight");
+    let start = {
+        let mut service = shared.lock();
+        let identity = service.mint_identity(Scope::Process, None).unwrap();
+        service
+            .try_submit::<ProfileSpec, _>(
+                identity,
+                &TestInput {
+                    charge: WorkCharge::new(4096, 2 << 20, 2 << 20, 0),
+                },
+                QualifiedProfileJob {
+                    clock,
+                    stage: 0,
+                    last_duration: Duration::ZERO,
+                },
+                &conditions,
+            )
+            .expect("normal Start remains admissible beside maximal catalogue")
+    };
+    release_tx.send(()).expect("release catalogue");
+    WorkService::wait_terminal(&shared, &catalogue).expect("catalogue settles");
+    WorkService::wait_terminal(&shared, &start).expect("Start settles");
+    let mut service = shared.lock();
+    assert!(matches!(service.consume(&catalogue), Ok(Settlement::Completed(1))));
+    assert!(matches!(service.consume(&start), Ok(Settlement::Completed(5))));
+}
+
+#[test]
+fn progress_remains_latest_after_sixty_four_updates() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let conditions = conditions(&shared);
+    let ticket = submit(
+        &shared,
+        &TestInput {
+            charge: WorkCharge::new(0, 0, 0, 0),
+        },
+        QueueJob::new(8, Arc::new(Mutex::new(Vec::new())), 80, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &ticket).expect("long job settles");
+    let mut service = shared.lock();
+    assert_eq!(service.progress(&ticket).unwrap().sequence(), 81);
+    service.publications().progress().read(|_, value| {
+        let latest = value.as_ref().expect("latest progress is published");
+        assert_eq!(latest.identity(), ticket.identity());
+        assert_eq!(latest.sequence(), 81);
+    });
+    assert!(matches!(service.consume(&ticket), Ok(Settlement::Completed(8))));
+}
+
+#[test]
 fn admission_bounds_refuse_without_taking_job_custody() {
     let shared = new_service(Arc::new(ManualClock::new()));
     let conditions = conditions(&shared);
@@ -314,11 +382,11 @@ fn admission_bounds_refuse_without_taking_job_custody() {
     for (charge, expected) in [
         (
             WorkCharge::new(MAX_WORK_BYTES, 0, 0, 0),
-            SubmissionRefusal::Full,
+            SubmissionRefusal::InvalidArgument,
         ),
         (
             WorkCharge::new(0, 0, 0, MAX_OPERATION_HANDLES + 1),
-            SubmissionRefusal::Full,
+            SubmissionRefusal::InvalidArgument,
         ),
         (
             WorkCharge::new(usize::MAX, 1, 0, 0),
@@ -596,6 +664,50 @@ fn cooperation_violations_and_family_errors_are_typed_terminals() {
     wait_for_jobs(&shared, 0);
 }
 
+struct PanickingJob;
+
+impl CooperativeJob for PanickingJob {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = MapBakePhase;
+
+    fn step(&mut self, _context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        panic!("injected job panic")
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn panicking_job_fails_only_itself_and_worker_accepts_following_job() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let panicking = submit(&shared, &input, PanickingJob, &conditions);
+    WorkService::wait_terminal(&shared, &panicking).expect("panic is terminal");
+    assert!(matches!(
+        shared.lock().consume(&panicking),
+        Ok(Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice)))
+    ));
+    assert!(shared.lock().worker_available());
+    assert_eq!(shared.lock().health(), None);
+    let healthy = submit(
+        &shared,
+        &input,
+        QueueJob::new(7, Arc::new(Mutex::new(Vec::new())), 0, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &healthy).expect("following job completes");
+    assert!(matches!(
+        shared.lock().consume(&healthy),
+        Ok(Settlement::Completed(7))
+    ));
+}
+
 #[derive(Clone, Copy)]
 struct ProfileSpec;
 
@@ -661,7 +773,7 @@ impl CooperativeJob for QualifiedProfileJob {
 }
 
 #[test]
-fn a_declared_gather_decode_gets_only_its_first_prepare_allowance() {
+fn a_declared_gather_decode_gets_only_its_first_prepare_checkpoint() {
     let clock = Arc::new(ManualClock::new());
     let shared = new_service(Arc::clone(&clock));
     let conditions = conditions(&shared);
@@ -689,8 +801,9 @@ fn a_declared_gather_decode_gets_only_its_first_prepare_allowance() {
     WorkService::wait_terminal(&shared, &ticket).expect("qualified job settles");
     assert!(matches!(
         shared.lock().consume(&ticket).expect("consume profile"),
-        Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+        Settlement::Completed(5)
     ));
+    assert_eq!(shared.lock().slice_overruns(), 1);
     assert!(shared.lock().worker_available());
     assert_eq!(shared.lock().health(), None);
 }
@@ -738,16 +851,13 @@ fn a_qualified_family_unit_cannot_be_attached_to_an_unrelated_job() {
             .lock()
             .consume(&process_ticket)
             .expect("consume profile"),
-        Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+        Settlement::Completed(5)
     ));
 }
 
 #[test]
 fn pinned_quester_progress_compile_has_one_bounded_profile_prepare_unit() {
-    for (last_duration, succeeds) in [
-        (Duration::from_millis(1), true),
-        (Duration::from_millis(20), false),
-    ] {
+    for last_duration in [Duration::from_millis(1), Duration::from_millis(20)] {
         let clock = Arc::new(ManualClock::new());
         let shared = new_service(Arc::clone(&clock));
         let conditions = conditions(&shared);
@@ -772,15 +882,14 @@ fn pinned_quester_progress_compile_has_one_bounded_profile_prepare_unit() {
                 .expect("pinned profile compilation is admitted")
         };
         WorkService::wait_terminal(&shared, &ticket).expect("profile preparation settles");
-        let settlement = shared.lock().consume(&ticket).expect("consume profile");
-        if succeeds {
-            assert!(matches!(settlement, Settlement::Completed(5)));
-        } else {
-            assert!(matches!(
-                settlement,
-                Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
-            ));
-        }
+        assert!(matches!(
+            shared.lock().consume(&ticket).expect("consume profile"),
+            Settlement::Completed(5)
+        ));
+        assert_eq!(
+            shared.lock().slice_overruns(),
+            u64::from(last_duration >= WORK_SLICE)
+        );
         assert!(shared.lock().worker_available());
     }
 }
@@ -855,10 +964,7 @@ impl CooperativeJob for QuesterRegistryJob {
 
 #[test]
 fn bounded_quester_actions_each_qualify_but_seal_returns_to_ordinary_allowance() {
-    for (seal_duration, succeeds) in [
-        (Duration::from_millis(1), true),
-        (Duration::from_millis(20), false),
-    ] {
+    for seal_duration in [Duration::from_millis(1), Duration::from_millis(20)] {
         let clock = Arc::new(ManualClock::new());
         let shared = new_service(Arc::clone(&clock));
         let conditions = conditions(&shared);
@@ -882,15 +988,14 @@ fn bounded_quester_actions_each_qualify_but_seal_returns_to_ordinary_allowance()
                 .expect("catalogue Quester action is admitted")
         };
         WorkService::wait_terminal(&shared, &ticket).expect("registry preparation settles");
-        let settlement = shared.lock().consume(&ticket).expect("consume catalogue");
-        if succeeds {
-            assert!(matches!(settlement, Settlement::Completed(5)));
-        } else {
-            assert!(matches!(
-                settlement,
-                Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
-            ));
-        }
+        assert!(matches!(
+            shared.lock().consume(&ticket).expect("consume catalogue"),
+            Settlement::Completed(5)
+        ));
+        assert_eq!(
+            shared.lock().slice_overruns(),
+            u64::from(seal_duration >= WORK_SLICE)
+        );
         assert!(shared.lock().worker_available());
     }
 }

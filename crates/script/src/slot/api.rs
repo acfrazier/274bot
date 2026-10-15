@@ -42,6 +42,15 @@ pub(super) struct ApiSeat {
 enum GatherSeat {
     #[default]
     Idle,
+    AwaitingAdmission {
+        token: u64,
+        run: RunKey,
+        settings: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        retained: Arc<Mutex<RetainedMemory>>,
+        user_input: bool,
+    },
     Preparing {
         token: u64,
         job: Preparation,
@@ -58,7 +67,9 @@ impl GatherSeat {
     fn token(&self) -> Option<u64> {
         match self {
             Self::Idle => None,
-            Self::Preparing { token, .. } | Self::Running { token, .. } => Some(*token),
+            Self::AwaitingAdmission { token, .. }
+            | Self::Preparing { token, .. }
+            | Self::Running { token, .. } => Some(*token),
         }
     }
 }
@@ -102,6 +113,7 @@ pub(super) fn counts(status: Option<&ScriptStatus>) -> GatherCounts {
 fn refusal(error: StartError) -> String {
     match error {
         StartError::Busy => "busy".into(),
+        StartError::WorkRefused(refusal) => format!("work-refused:{refusal}"),
         StartError::Unavailable(reason) => format!("unavailable:{reason}"),
         StartError::Facts(error) => format!("facts:{error:?}"),
         StartError::Config(error) => crate::api_gather::settings_refusal(error),
@@ -172,7 +184,8 @@ impl SlotScript {
         };
         match &mut seat.gather {
             GatherSeat::Idle => {}
-            GatherSeat::Preparing { user_input, .. } => *user_input = true,
+            GatherSeat::AwaitingAdmission { user_input, .. }
+            | GatherSeat::Preparing { user_input, .. } => *user_input = true,
             GatherSeat::Running { .. } => {
                 // The Gatherer blocks `manual-movement`, as for a cancelled walk.
                 self.signal_api_gather(|script| script.user_input());
@@ -236,7 +249,9 @@ impl SlotScript {
         let seat = self.api.as_ref()?;
         match &seat.gather {
             GatherSeat::Running { run, .. } => Some(run.config.walk_permissions()),
-            GatherSeat::Idle | GatherSeat::Preparing { .. } => None,
+            GatherSeat::Idle
+            | GatherSeat::AwaitingAdmission { .. }
+            | GatherSeat::Preparing { .. } => None,
         }
     }
 
@@ -326,15 +341,14 @@ impl SlotScript {
             run: generation,
             session: self.work_epoch,
         };
-        let account = String::new();
         match compiled::prepare_run(
             &crate::gatherer::CARD,
             run,
             Arc::clone(settings),
-            selected,
-            banks,
-            retained,
-            account,
+            Arc::clone(&selected),
+            Arc::clone(&banks),
+            Arc::clone(&retained),
+            String::new(),
         ) {
             Ok(job) => {
                 self.control_generation = generation;
@@ -352,7 +366,24 @@ impl SlotScript {
                     user_input: false,
                 };
             }
-            Err(error) => {
+            Err(compiled::PrepareRunError::Full) => {
+                self.control_generation = generation;
+                seat.page = Some(Arc::new(GatherPage {
+                    token,
+                    phase: GatherPhase::Preparing,
+                    status: None,
+                }));
+                seat.gather = GatherSeat::AwaitingAdmission {
+                    token,
+                    run,
+                    settings: Arc::clone(settings),
+                    selected,
+                    banks,
+                    retained,
+                    user_input: false,
+                };
+            }
+            Err(compiled::PrepareRunError::Other(error)) => {
                 seat.terminal = Some(GatherEnd::Refused {
                     token,
                     reason: refusal(error).into(),
@@ -374,6 +405,7 @@ impl SlotScript {
         let counts = counts(seat.page.as_ref().and_then(|page| page.status.as_deref()));
         self.native_runtime.revoke();
         match state {
+            GatherSeat::AwaitingAdmission { .. } => {}
             GatherSeat::Preparing { job, .. } => seat.retiring.push(job),
             GatherSeat::Running { run, .. } => {
                 if let Some(error) = compiled::destroy_run(run, StopReason::Operator) {
@@ -397,6 +429,44 @@ impl SlotScript {
             return;
         };
         seat.reap();
+        if let GatherSeat::AwaitingAdmission {
+            token,
+            run,
+            settings,
+            selected,
+            banks,
+            retained,
+            user_input,
+        } = &seat.gather
+        {
+            match compiled::prepare_run(
+                &crate::gatherer::CARD,
+                *run,
+                Arc::clone(settings),
+                Arc::clone(selected),
+                Arc::clone(banks),
+                Arc::clone(retained),
+                String::new(),
+            ) {
+                Ok(job) => {
+                    seat.gather = GatherSeat::Preparing {
+                        token: *token,
+                        job,
+                        user_input: *user_input,
+                    };
+                }
+                Err(compiled::PrepareRunError::Full) => {}
+                Err(compiled::PrepareRunError::Other(error)) => {
+                    let token = *token;
+                    seat.gather = GatherSeat::Idle;
+                    seat.page = None;
+                    seat.terminal = Some(GatherEnd::Refused {
+                        token,
+                        reason: refusal(error).into(),
+                    });
+                }
+            }
+        }
         if matches!(&seat.gather, GatherSeat::Preparing { job, .. } if job.is_finished()) {
             let GatherSeat::Preparing {
                 token,
@@ -556,6 +626,7 @@ impl SlotScript {
             }
         } else if let Some(seat) = self.api.as_mut() {
             match std::mem::take(&mut seat.gather) {
+                GatherSeat::AwaitingAdmission { .. } => {}
                 GatherSeat::Preparing { job, .. } => seat.retiring.push(job),
                 GatherSeat::Running { run, .. } => {
                     if let Some(error) = compiled::destroy_run(run, StopReason::Replaced) {

@@ -478,30 +478,24 @@ impl Play {
         bag: Arc<script::native::SettingsBag>,
     ) -> Result<
         script::preparation::PreparedTask<Result<PreparedScriptConfig, script::native::StartError>>,
-        String,
+        script::preparation::PreparationError,
     > {
         let selected = self
             .game_data
             .clone()
-            .ok_or("selected game data unavailable")?;
+            .ok_or_else(|| script::preparation::PreparationError::Unavailable("selected game data unavailable".into()))?;
         let banks = Arc::clone(&self.named_banks);
         let quester = id == script::quester::card::CARD.id;
         let cold_gathering =
             id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
-        let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)
-            .map_err(|error| error.to_string())?;
+        let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)?;
         let mut folder_source = quester.then(script::quester::registry::source_for_preparation);
-        let input = if folder_source.as_ref().is_some_and(|source| source.enabled) {
-            script::preparation::PreparationInput::new(
+        let input = if let Some(source) = folder_source.as_ref() {
+            script::preparation::PreparationInput::for_quester_folder(
                 revision,
-                64 * 1024 * 1024,
-                32 * 1024 * 1024,
-                32 * 1024 * 1024,
-            )
-            .map_err(|error| error.to_string())?
-            .with_quester_registry_actions()
-        } else if quester {
-            settings_input.with_quester_registry_actions()
+                settings_input,
+                source,
+            )?
         } else if cold_gathering {
             settings_input.with_gathering_family_decode()
         } else {
@@ -664,7 +658,6 @@ impl Play {
                 Stage::Done => unreachable!("completed preparation is not dispatched"),
             },
         )
-        .map_err(|error| error.to_string())
     }
 
     pub fn script_configure_compiled(
