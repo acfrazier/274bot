@@ -754,18 +754,28 @@ crates keep their tests clean too.
 
 **Suppression-count ratchet.** `tools/lint-ratchet/lint_ratchet.py`
 (Python 3, stdlib only; run as `python3 -B`) counts `#[allow(...)]`,
-`#[expect(...)]`, crate-level `#![...]` and `#[cfg_attr(.., allow(..))]`
+`#[expect(...)]`, crate-level `#![...]` and `#[cfg_attr(.., ...)]`
 suppressions in `crates/**/*.rs` per crate × lint, with test files counted
 separately, and compares against the committed
 `tools/lint-ratchet/baseline.json`. Any count above its baseline fails, as
 does a suppression for a lint absent from that crate's baseline entry;
-lowering a count is free. `--update` rewrites the baseline. The parser
-handles `reason = "..."` strings containing commas and parentheses,
-multi-line attributes, and `cfg_attr`; the FlatBuffers output
-`crates/script/schema/generated/isolate_generated.rs` is explicitly exempt
-(regenerating it rewrites its own allows). The `lint-ratchet` lane in the
-admissions matrix runs the check, and `tools/lint-ratchet/ci-snippet.yml`
-is the step to fold into the single `architecture`/lint CI job.
+lowering a count is free. `--update` rewrites the baseline. The parser is
+fail-closed: anything suppression-like it cannot read (an unparseable lint
+path, an unbalanced attribute, a macro metavariable such as `$lint:meta` in
+suppression position) is an error with file:line, and `--update` refuses to
+write a baseline while such errors exist. It handles `reason = "..."`
+strings containing commas and parentheses, multi-line attributes, nested
+`cfg_attr` to any depth, whitespace around `::` and before the paren
+(`clippy :: needless_collect`, `allow (dead_code)`); suppressions written
+inside macro bodies or passed as macro arguments count, conservatively: a
+macro-emitted suppression is real, and over-counting hides nothing. The
+FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
+explicitly exempt (regenerating it rewrites its own allows). The
+`lint-ratchet` lane in the admissions matrix runs the check plus
+`lint_ratchet.py --self-test` (the permanent parser tests in
+`tools/lint-ratchet/test_lint_ratchet.py`), and
+`tools/lint-ratchet/ci-snippet.yml` is the step to fold into the single
+`architecture`/lint CI job.
 
 **Adding a justified suppression.** Write
 `#[expect(lint, reason = "...")]` with a reason that says why the code
