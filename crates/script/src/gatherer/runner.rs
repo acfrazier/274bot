@@ -30,6 +30,7 @@ use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
 use nav::contract::ArrivalKind;
+use std::num::NonZeroI32;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -250,6 +251,9 @@ struct GatherScratch {
     /// do not consume this bound.
     return_recovery_actions: u8,
     return_recovery_pending: bool,
+    /// Occupied slots before depositing around a kept item: necessarily nonzero.
+    /// A hold can restart the action without discarding this trip's baseline.
+    unbankable_occupied_before: Option<NonZeroI32>,
 }
 
 pub struct Gatherer {
@@ -281,6 +285,8 @@ pub struct Gatherer {
     proving_runs: u8,
     recovery_reprovisions: u8,
     proof_evidence: u8,
+    /// One bit per content-defined unbankable type, retained across trips.
+    unbankable_logged: u8,
     retained: GatherRetained,
     failure: Option<ScriptFailure>,
     paused: bool,
@@ -337,6 +343,7 @@ impl Gatherer {
             proving_runs: 0,
             recovery_reprovisions: 0,
             proof_evidence: 0,
+            unbankable_logged: 0,
             retained,
             failure: None,
             paused: false,
@@ -396,6 +403,7 @@ impl Gatherer {
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
+        self.scratch.unbankable_occupied_before = None;
         self.scratch.return_recovery_actions = 0;
         self.scratch.return_recovery_pending = false;
         self.supply_missing = None;
@@ -635,13 +643,36 @@ impl Gatherer {
                 let Some(inventory) = snapshot.inventory() else {
                     return;
                 };
+                let occupied_before = snapshot.stock().occupied().and_then(NonZeroI32::new);
+                for item in inventory.value.iter().filter(|item| item.count > 0) {
+                    let Some(index) = supply::unbankable_index(&self.prepared.selected, item)
+                    else {
+                        continue;
+                    };
+                    if self.scratch.unbankable_occupied_before.is_none() {
+                        self.scratch.unbankable_occupied_before = occupied_before;
+                    }
+                    let mask = 1_u8 << index;
+                    if self.unbankable_logged & mask == 0 {
+                        self.unbankable_logged |= mask;
+                        api::host_log!(
+                            api::hostlog::Category::BankOp,
+                            api::hostlog::Level::Info,
+                            "Gatherer keeps {} (id={}): engine content forbids banking this item",
+                            item.def.name.as_deref().unwrap_or("unnamed item"),
+                            item.def.id,
+                        );
+                    }
+                }
+                let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
+                keep.keep_unbankable(&self.prepared.selected, inventory.value);
                 let args = bank::DepositArgs {
                     products: supply::bank_deposit_ids(
                         &self.prepared,
                         self.tool.id,
                         inventory.value,
                     ),
-                    keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
+                    keep: Arc::from(keep.as_slice()),
                     // The stand this trip opened: a session lost mid-deposit
                     // is re-opened from it instead of blocking the run.
                     access: self.selected_access(),
@@ -701,6 +732,14 @@ impl Gatherer {
                 // V-resume derives the observed tool and, if possible, waits
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
+                    if self.scratch.unbankable_occupied_before.is_some()
+                        && tick.cx.snapshot().stock().pack_full() == Some(true)
+                    {
+                        self.deposit_failure(ActionError::BankDeposit(
+                            crate::bank::ops::DepositFailure::Unbankable,
+                        ));
+                        return;
+                    }
                     self.advance_trip(TripStep::Return);
                     self.set_event("returning to work area");
                     self.return_to_resources(tick);
@@ -1688,6 +1727,22 @@ impl Gatherer {
                         self.retained.haul_since_death = true;
                     }
                     self.sync_retained(tick);
+                    if self
+                        .scratch
+                        .unbankable_occupied_before
+                        .is_some_and(|before| {
+                            let stock = tick.cx.snapshot().stock();
+                            stock
+                                .occupied()
+                                .is_none_or(|occupied| occupied >= before.get())
+                                || stock.pack_full() != Some(false)
+                        })
+                    {
+                        self.deposit_failure(ActionError::BankDeposit(
+                            crate::bank::ops::DepositFailure::Unbankable,
+                        ));
+                        return;
+                    }
                     self.advance_trip(TripStep::Withdraw);
                     self.set_event("deposit confirmed");
                 }

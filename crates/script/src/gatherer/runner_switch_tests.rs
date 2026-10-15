@@ -1456,3 +1456,153 @@ fn typed_bank_deposit_failure_keeps_the_content_reason() {
         "bank deposit refused: full stack in bank"
     );
 }
+
+fn unbankable_bank_fixture(fish_count: i32) -> (Gatherer, GameSnapshot) {
+    let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
+    gatherer.tool = ToolState {
+        id: 303,
+        worn: false,
+    };
+    gatherer.trip = TripStep::Deposit;
+    let selected = &gatherer.prepared.selected;
+    let item = |alias: &str, slot, count, container| {
+        let fact = selected
+            .item_by_alias(alias)
+            .expect("selected content item");
+        let mut definition = def(fact.id, fact.name.as_deref().unwrap());
+        definition.stackable = fact.stackable;
+        ItemView {
+            def: definition,
+            container,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count,
+            actions: if container == ItemContainer::BankSide {
+                vec![Some("Deposit-All".into())]
+            } else {
+                Vec::new()
+            },
+            component_id: 3214,
+        }
+    };
+    let mut pack = vec![
+        item("net", 0, 1, ItemContainer::Inventory),
+        item("macro_cube", 1, 28, ItemContainer::Inventory),
+    ];
+    for slot in 2..28 {
+        pack.push(item(
+            if slot < 2 + fish_count {
+                "raw_shrimp"
+            } else {
+                "net"
+            },
+            slot,
+            1,
+            ItemContainer::Inventory,
+        ));
+    }
+    let side = pack
+        .iter()
+        .map(|row| ItemView {
+            container: ItemContainer::BankSide,
+            actions: vec![Some("Deposit-All".into())],
+            ..row.clone()
+        })
+        .collect();
+    snapshot.seed_inventory(pack, 28);
+    snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+    (gatherer, snapshot)
+}
+
+#[test]
+fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
+    for fish_count in [26, 1] {
+        let (mut gatherer, mut snapshot) = unbankable_bank_fixture(fish_count);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
+        let action = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(
+            matches!(
+                action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                    id: 317,
+                    ..
+                })
+            ),
+            "only the bankable fish may be sent"
+        );
+        ledger.as_mut().unwrap().complete_interaction(
+            &action.authority(),
+            crate::native::InteractionReceipt {
+                request_id: action.request_id.get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: action.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        let kept: Vec<_> = snapshot
+            .inventory()
+            .iter()
+            .filter(|row| row.def.id != 317)
+            .cloned()
+            .collect();
+        snapshot.seed_inventory(kept, 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        assert_eq!(gatherer.retained.deposited, fish_count as u32);
+        assert_eq!(
+            crate::bank::ops::count_id(snapshot.inventory(), 3062),
+            28,
+            "the Strange box stack is kept"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+}
+
+#[test]
+fn unbankable_items_stop_with_the_explicit_reason_when_no_slots_are_freed() {
+    for start_full in [true, false] {
+        let (mut gatherer, mut snapshot) = unbankable_bank_fixture(0);
+        if !start_full {
+            let rows = snapshot.inventory()[..2].to_vec();
+            snapshot.seed_inventory(rows, 28);
+        }
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
+        let failure = gatherer
+            .failure
+            .expect("keeping items without freeing a slot cannot start another gather trip");
+        assert_eq!(failure.code.as_ref(), "bank-deposit-failed");
+        assert_eq!(
+            failure.message.as_ref(),
+            crate::bank::ops::DepositFailure::Unbankable.message()
+        );
+        assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 3062), 28);
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+}
+
+#[test]
+fn unbankable_items_cannot_return_to_gathering_after_supplies_fill_the_pack() {
+    let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
+    gatherer.trip = TripStep::Validate;
+    gatherer.needs_validate = false;
+    gatherer.scratch.unbankable_occupied_before = NonZeroI32::new(28);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+    let failure = gatherer.failure.expect("the post-withdrawal pack is full");
+    assert_eq!(failure.code.as_ref(), "bank-deposit-failed");
+    assert_eq!(
+        failure.message.as_ref(),
+        crate::bank::ops::DepositFailure::Unbankable.message()
+    );
+    assert!(matches!(gatherer.active, Active::None));
+}
