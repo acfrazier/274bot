@@ -622,6 +622,7 @@ impl WorkFamilySpec for ProfileSpec {
 struct QualifiedProfileJob {
     clock: Arc<ManualClock>,
     stage: u8,
+    last_duration: Duration,
 }
 
 impl CooperativeJob for QualifiedProfileJob {
@@ -646,7 +647,7 @@ impl CooperativeJob for QualifiedProfileJob {
                 StepOutcome::Yielded
             }
             2 => {
-                self.clock.advance(Duration::from_millis(20));
+                self.clock.advance(self.last_duration);
                 StepOutcome::Completed(5)
             }
             _ => unreachable!("three bounded profile steps"),
@@ -674,7 +675,11 @@ fn a_declared_gather_decode_gets_only_its_first_prepare_allowance() {
             .try_submit_qualified::<ProfileSpec, _>(
                 identity,
                 &input,
-                QualifiedProfileJob { clock, stage: 0 },
+                QualifiedProfileJob {
+                    clock,
+                    stage: 0,
+                    last_duration: Duration::from_millis(20),
+                },
                 &conditions,
                 QualifiedUnit::GatheringFamilyDecode,
             )
@@ -706,6 +711,7 @@ fn a_qualified_family_unit_cannot_be_attached_to_an_unrelated_job() {
             QualifiedProfileJob {
                 clock: Arc::clone(&clock),
                 stage: 0,
+                last_duration: Duration::from_millis(20),
             },
             &conditions,
             QualifiedUnit::GatheringFamilyDecode,
@@ -730,6 +736,158 @@ fn a_qualified_family_unit_cannot_be_attached_to_an_unrelated_job() {
         shared.lock().consume(&process_ticket).expect("consume profile"),
         Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
     ));
+}
+
+#[test]
+fn pinned_quester_progress_compile_has_one_bounded_profile_prepare_unit() {
+    for (last_duration, succeeds) in [
+        (Duration::from_millis(1), true),
+        (Duration::from_millis(20), false),
+    ] {
+        let clock = Arc::new(ManualClock::new());
+        let shared = new_service(Arc::clone(&clock));
+        let conditions = conditions(&shared);
+        let ticket = {
+            let mut service = shared.lock();
+            let slot = api::identity::SlotKey::from_incarnation(3).unwrap();
+            let identity = service.mint_identity(Scope::Slot(slot), None).unwrap();
+            service
+                .try_submit_qualified::<ProfileSpec, _>(
+                    identity,
+                    &TestInput {
+                        charge: WorkCharge::new(0, 0, 0, 0),
+                    },
+                    QualifiedProfileJob {
+                        clock,
+                        stage: 0,
+                        last_duration,
+                    },
+                    &conditions,
+                    QualifiedUnit::QuesterProgressCompile,
+                )
+                .expect("pinned profile compilation is admitted")
+        };
+        WorkService::wait_terminal(&shared, &ticket).expect("profile preparation settles");
+        let settlement = shared.lock().consume(&ticket).expect("consume profile");
+        if succeeds {
+            assert!(matches!(settlement, Settlement::Ready(5)));
+        } else {
+            assert!(matches!(
+                settlement,
+                Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+            ));
+        }
+        assert!(shared.lock().worker_available());
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CatalogueSpec;
+
+impl WorkFamilySpec for CatalogueSpec {
+    const FAMILY: WorkFamily = WorkFamily::CataloguePreparation;
+    type Input = TestInput;
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn revision(_input: &Self::Input) -> InputRevision {
+        InputRevision::FIRST
+    }
+
+    fn charge(input: &Self::Input) -> WorkCharge {
+        input.charge
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+
+struct QuesterRegistryJob {
+    clock: Arc<ManualClock>,
+    stage: u8,
+    seal_duration: Duration,
+}
+
+impl CooperativeJob for QuesterRegistryJob {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        assert!(matches!(context.checkpoint(), Checkpoint::Continue));
+        match self.stage {
+            0 => {
+                context.publish_progress(PreparationPhase::Load, 1, Some(1));
+                self.stage = 1;
+                StepOutcome::Yielded
+            }
+            1 | 2 => {
+                self.clock.advance(Duration::from_millis(20));
+                let completed = self.stage as u32;
+                context.publish_progress(
+                    PreparationPhase::Prepare,
+                    completed,
+                    (self.stage == 2).then_some(completed),
+                );
+                self.stage += 1;
+                StepOutcome::Yielded
+            }
+            3 => {
+                self.clock.advance(self.seal_duration);
+                context.publish_progress(PreparationPhase::Seal, 1, Some(1));
+                StepOutcome::Completed(5)
+            }
+            _ => unreachable!("three preparation actions and a seal"),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+#[test]
+fn bounded_quester_actions_each_qualify_but_seal_returns_to_ordinary_allowance() {
+    for (seal_duration, succeeds) in [
+        (Duration::from_millis(1), true),
+        (Duration::from_millis(20), false),
+    ] {
+        let clock = Arc::new(ManualClock::new());
+        let shared = new_service(Arc::clone(&clock));
+        let conditions = conditions(&shared);
+        let ticket = {
+            let mut service = shared.lock();
+            let identity = service.mint_identity(Scope::Process, None).unwrap();
+            service
+                .try_submit_qualified::<CatalogueSpec, _>(
+                    identity,
+                    &TestInput {
+                        charge: WorkCharge::new(0, 0, 0, 0),
+                    },
+                    QuesterRegistryJob {
+                        clock,
+                        stage: 0,
+                        seal_duration,
+                    },
+                    &conditions,
+                    QualifiedUnit::QuesterRegistryAction,
+                )
+                .expect("catalogue Quester action is admitted")
+        };
+        WorkService::wait_terminal(&shared, &ticket).expect("registry preparation settles");
+        let settlement = shared.lock().consume(&ticket).expect("consume catalogue");
+        if succeeds {
+            assert!(matches!(settlement, Settlement::Ready(5)));
+        } else {
+            assert!(matches!(
+                settlement,
+                Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
+            ));
+        }
+        assert!(shared.lock().worker_available());
+    }
 }
 
 struct StrandedJob {

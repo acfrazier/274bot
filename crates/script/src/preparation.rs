@@ -89,6 +89,23 @@ impl PreparationInput {
         self
     }
 
+    /// Qualify successive bounded Quester folder-registry actions (at most
+    /// 1 MiB per document), after Load and before Seal. The adapter reports
+    /// no known total until its last Prepare action; WorkAdmission uses that
+    /// final completed total to restore the ordinary Seal allowance.
+    pub fn with_quester_registry_actions(mut self) -> Self {
+        self.qualified_unit = Some(QualifiedUnit::QuesterRegistryAction);
+        self
+    }
+
+    /// Qualify one pinned bundled Quester Path compilation, including its
+    /// selected quest facts, for the first Profile Prepare dispatch only.
+    /// Every later step, including Seal, uses the ordinary allowance.
+    pub fn with_quester_progress_compile(mut self) -> Self {
+        self.qualified_unit = Some(QualifiedUnit::QuesterProgressCompile);
+        self
+    }
+
     /// Count the actual retained settings tree before a native profile
     /// preparation. Shared selected data and bank facts remain charged in
     /// their own owner ledgers; this job charges its own bag and bounded

@@ -112,19 +112,20 @@ struct ReloadPaths {
 
 impl ReloadPaths {
     fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
-        self.start_with(move |worker| {
-            script::quester::registry::prepare_snapshot(&selected, worker)
-                .map(ReloadValue::Prepared)
-                .map_err(|error| compile_error_message(&error))
-        })
+        self.start_with(selected, None, ReloadValue::Prepared)
     }
 
     fn start_with(
         &mut self,
-        work: impl FnOnce(&mut api::selected::FamilyPreparation) -> Result<ReloadValue, String>
+        selected: Arc<api::game_data::SelectedGameData>,
+        mut source: Option<script::quester::registry::FolderSource>,
+        finish: impl FnOnce(script::quester::registry::PreparedRegistry) -> ReloadValue
             + Send
             + 'static,
     ) -> Result<(), String> {
+        use script::preparation::CooperativePreparationStep as Step;
+        use script::quester::registry::RegistryPreparation;
+
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
@@ -132,18 +133,64 @@ impl ReloadPaths {
             .revision
             .checked_add(1)
             .ok_or("Path reload revision exhausted")?;
+        // Folder files and compiled rows are retained across yields. Reserve
+        // the complete bounded registry rather than one document's bytes.
         let input = script::preparation::PreparationInput::new(
             revision,
-            4096,
-            4 * 1024 * 1024,
+            64 * 1024 * 1024,
+            32 * 1024 * 1024,
             32 * 1024 * 1024,
         )
-        .map_err(|error| format!("could not admit Path reload: {error}"))?;
-        let worker = script::preparation::submit(
+        .map_err(|error| format!("could not admit Path reload: {error}"))?
+        .with_quester_registry_actions();
+        let mut preparation = None;
+        let mut finish = Some(finish);
+        let mut actions = 0_u32;
+        let worker = script::preparation::submit_cooperative(
             script::preparation::PreparationKind::Catalogue,
             Scope::Process,
             input,
-            work,
+            move |context| {
+                actions = actions.checked_add(1).expect("bounded folder action count");
+                if preparation.is_none() {
+                    let candidate = match source.take() {
+                        Some(source) => RegistryPreparation::from_source_without_catalog(
+                            source,
+                            Arc::clone(&selected),
+                        ),
+                        None => RegistryPreparation::from_current(Arc::clone(&selected)),
+                    };
+                    match candidate {
+                        Ok(candidate) => preparation = Some(candidate),
+                        Err(error) => {
+                            return Step::Complete {
+                                output: Err(compile_error_message(&error)),
+                                completed: actions,
+                                total: Some(actions),
+                            };
+                        }
+                    }
+                }
+                let candidate = preparation.as_mut().expect("registry initialized");
+                let result = match candidate.step(context) {
+                    Ok(Some(candidate)) => Some(Ok(
+                        finish.take().expect("first registry completion")(candidate),
+                    )),
+                    Ok(None) => None,
+                    Err(error) => Some(Err(compile_error_message(&error))),
+                };
+                match result {
+                    Some(output) => Step::Complete {
+                        output,
+                        completed: actions,
+                        total: Some(actions),
+                    },
+                    None => Step::Continue {
+                        completed: actions,
+                        total: None,
+                    },
+                }
+            },
         )
         .map_err(|error| format!("could not start Path reload: {error}"))?;
         self.current = Some(worker.identity());
@@ -397,15 +444,7 @@ mod tests {
         .unwrap();
     }
 
-    fn registry_summary(
-        source: &FolderSource,
-        selected: &api::game_data::SelectedGameData,
-        worker: &mut api::selected::FamilyPreparation,
-    ) -> Arc<str> {
-        let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
-            .expect("quest facts");
-        let registry =
-            PathRegistry::load(source, selected, &quests, worker).expect("folder Path load");
+    fn registry_summary(registry: &PathRegistry) -> Arc<str> {
         let mut summary = registry
             .report()
             .map_or_else(|| "bundled Paths".to_owned(), ToString::to_string);
@@ -508,15 +547,9 @@ mod tests {
         };
 
         let mut reload = ReloadPaths::default();
-        let first_source = source.clone();
-        let first_selected = Arc::clone(&selected);
         reload
-            .start_with(move |worker| {
-                Ok(ReloadValue::Summary(registry_summary(
-                    &first_source,
-                    &first_selected,
-                    worker,
-                )))
+            .start_with(Arc::clone(&selected), Some(source.clone()), |candidate| {
+                ReloadValue::Summary(registry_summary(candidate.registry()))
             })
             .expect("start asynchronous reload");
         let summary = finish_reload(&mut reload).expect("folder reload report");
@@ -536,14 +569,9 @@ mod tests {
         }
 
         write_cook(&folder, "cook", "Edited Again", false);
-        let second_source = source.clone();
         reload
-            .start_with(move |worker| {
-                Ok(ReloadValue::Summary(registry_summary(
-                    &second_source,
-                    &selected,
-                    worker,
-                )))
+            .start_with(selected, Some(source), |candidate| {
+                ReloadValue::Summary(registry_summary(candidate.registry()))
             })
             .expect("restart asynchronous reload");
         let edited = finish_reload(&mut reload).expect("second folder reload report");
