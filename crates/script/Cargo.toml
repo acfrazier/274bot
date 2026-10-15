@@ -12,7 +12,8 @@ memory-profile = []
 # normal consumers. Debug test builds also use V8's unprotected platform because
 # libtest workers are pre-created siblings; release builds exclude that path
 # even with this feature enabled. Carries `api/test-hooks` for BankMemory seeds.
-test-hooks = ["api/test-hooks"]
+# It keeps checked-in JSON snapshots ordered when optional `load` is off.
+test-hooks = ["api/test-hooks", "serde_json/preserve_order"]
 # rustyscript pulls V8 into the build; `load` gates the JS isolate so
 # crates that only need compiled scripts stay V8-free. On for script tests
 # (they exercise Load) and for panel/host-play; nothing else depends on
@@ -60,7 +61,7 @@ seat-model = { path = "../../tools/seat-model" }
 # `api::bank_memory::login_identity`).
 client = { workspace = true }
 # Integration tests use isolate seams without exposing them in normal builds.
-script = { path = ".", features = ["test-hooks", "path-schema"] }
+script = { path = ".", default-features = false, features = ["test-hooks", "path-schema"] }
 
 [[test]]
 name = "v8_platform"
@@ -304,6 +305,7 @@ name = "line_of_sight"
 required-features = ["load"]
 [[test]]
 name = "load_picker"
+required-features = ["load"]
 [[test]]
 name = "load_shape"
 required-features = ["load"]
@@ -393,6 +395,43 @@ name = "fight_upkeep"
 required-features = ["load"]
 [[test]]
 name = "reconnect_hold"
+required-features = ["load"]
+
+[[test]]
+name = "api_combat_runtime"
+required-features = ["load"]
+[[test]]
+name = "api_gather_runtime"
+required-features = ["load"]
+[[test]]
+name = "api_gather_wire"
+required-features = ["load"]
+[[test]]
+name = "api_progress_runtime"
+required-features = ["load"]
+[[test]]
+name = "api_progress_wire"
+required-features = ["load"]
+[[test]]
+name = "broadcast_channel"
+required-features = ["load"]
+[[test]]
+name = "gather_gas_alloc"
+required-features = ["load"]
+[[test]]
+name = "gather_gas_set"
+required-features = ["load"]
+[[test]]
+name = "gather_lazy_ownership"
+required-features = ["load"]
+[[test]]
+name = "paired_catalog"
+required-features = ["load"]
+[[test]]
+name = "script_seam_engine"
+required-features = ["load"]
+[[test]]
+name = "upstream_tier1"
 required-features = ["load"]
 
 [[example]]

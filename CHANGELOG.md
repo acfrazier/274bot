@@ -39,6 +39,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+- The script crate's `--no-default-features` test lane no longer re-enables
+  Load and V8 through the test-only self-dependency; Load-only integration
+  targets are skipped unless their required feature is enabled.
+
 ### Gatherer and banking
 
 - A Gatherer that stalls on its return from the bank now replans once from
