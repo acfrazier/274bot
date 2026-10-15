@@ -247,6 +247,39 @@ pub mod test_support {
             true
         }
     }
+
+    /// Resolve a local-only test asset, skipping on GitHub-hosted CI when absent.
+    ///
+    /// Covers the real nav pack (`NAV_PACK`), a decoded cache snapshot
+    /// (`BOT_NAV_SNAPSHOT_ROOT`), and engine content (`ENGINE_DIR` and friends):
+    /// pass the env var, its local default, and a short asset label.
+    /// Returns the existing path. When the path is missing, prints
+    /// `skipped on hosted CI: needs <asset>` and returns `None` on hosted CI
+    /// (`GITHUB_ACTIONS=true`, caller returns early); elsewhere panics with
+    /// which env var or path to set so local runs and the nightly keep running.
+    pub fn local_asset_path(
+        env_var: &str,
+        default_path: &str,
+        asset: &str,
+    ) -> Option<std::path::PathBuf> {
+        let path = std::env::var_os(env_var)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(default_path));
+        if path.exists() {
+            return Some(path);
+        }
+        if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
+            eprintln!(
+                "skipped on hosted CI: needs {asset} (missing {}; set {env_var})",
+                path.display()
+            );
+            return None;
+        }
+        panic!(
+            "missing {asset} at {}: set {env_var} to a local {asset}",
+            path.display()
+        );
+    }
 }
 
 #[cfg(test)]
