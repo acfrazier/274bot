@@ -49,6 +49,43 @@ pub struct BankRow {
     pub ops: Vec<String>,
 }
 
+/// The hunt's cloned row behind the kernel's row interface, so its
+/// transfer label decisions scan the same way as every other caller's.
+impl crate::bank::ops::BankRow for BankRow {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn count(&self) -> i32 {
+        self.count
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some(&self.name)
+    }
+
+    fn slot(&self) -> Option<i32> {
+        self.has_slot.then_some(self.slot)
+    }
+
+    fn component_id(&self) -> Option<i32> {
+        None
+    }
+
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.ops.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        usize::try_from(one_based)
+            .ok()?
+            .checked_sub(1)
+            .and_then(|index| self.ops.get(index))
+            .map(String::as_str)
+            .filter(|label| !label.is_empty())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BankObservation {
     pub here: Option<Tile>,
@@ -668,11 +705,11 @@ fn emit_close(rt: &mut BankRuntime, kind: OpKind) -> Value {
 }
 
 fn quantity_label(have: i32, want: i32) -> Option<Quantity> {
-    match crate::bank_withdraw::next_chunk(f64::from(want) - f64::from(have))? {
-        crate::bank_withdraw::Chunk::X(count) => Some(Quantity::X {
+    match crate::bank::ops::next_chunk(f64::from(want) - f64::from(have))? {
+        crate::bank::ops::Chunk::X(count) => Some(Quantity::X {
             count: count.max(0.0) as i32,
         }),
-        crate::bank_withdraw::Chunk::Op(action) => Some(Quantity::Fixed {
+        crate::bank::ops::Chunk::Op(action) => Some(Quantity::Fixed {
             action: action.to_string(),
         }),
     }
@@ -684,14 +721,11 @@ enum Quantity {
 }
 
 fn x_action(row: &BankRow) -> Option<String> {
-    row.ops
-        .iter()
-        .find(|op| {
-            op.replace('-', " ")
-                .trim()
-                .eq_ignore_ascii_case("withdraw x")
-        })
-        .cloned()
+    use crate::bank::ops::BankRow as _;
+    (1..=row.op_len())
+        .filter_map(|op| row.op_label(op))
+        .find(|label| crate::bank::ops::dash_space_eq(label, "Withdraw X"))
+        .map(str::to_owned)
 }
 
 fn emit_withdraw(

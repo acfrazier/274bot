@@ -773,25 +773,12 @@ impl npc::Context for NpcContext<'_, '_> {
 
     fn banker(&self, name: &str, op: npc::NpcOp<'_>) -> Option<npc::Banker> {
         observed::with(|scene| {
-            scene
-                .since_login()
-                .npcs()?
-                .iter()
-                .filter(|banker| npc::name_matches(banker.name_or_empty(), name))
-                .filter_map(|banker| {
-                    banker
-                        .actions
-                        .iter()
-                        .enumerate()
-                        .find(|(index, action)| npc::action_matches(action, *index, op))
-                        .map(|(_, action)| (banker, action))
-                })
-                .min_by_key(|(banker, _)| banker.distance)
-                .map(|(banker, action)| npc::Banker {
-                    name: banker.name_or_empty().to_string(),
-                    action: action.to_string(),
-                    index: banker.index,
-                })
+            let (banker, action) = npc::banker_scan(scene.since_login().npcs()?, name, op)?;
+            Some(npc::Banker {
+                name: banker.name_or_empty().to_string(),
+                action: action.to_string(),
+                index: banker.index,
+            })
         })
     }
 

@@ -939,3 +939,161 @@ fn pack_full_counts_occupied_slots() {
     assert!(!pack_full(&pack[..27], 28));
     assert!(!pack_full(&pack, 0), "an unposted size is never full");
 }
+
+#[test]
+fn next_chunk_is_the_frozen_ladder() {
+    assert_eq!(next_chunk(0.0), None);
+    assert_eq!(next_chunk(-3.0), None);
+    assert_eq!(next_chunk(11.0), Some(Chunk::X(11.0)));
+    assert_eq!(next_chunk(10.0), Some(Chunk::Op("Withdraw-10")));
+    assert_eq!(next_chunk(7.0), Some(Chunk::Op("Withdraw-5")));
+    assert_eq!(next_chunk(4.0), Some(Chunk::Op("Withdraw-1")));
+}
+
+#[test]
+fn all_op_has_no_last_label_fallback() {
+    let row = native(
+        COINS,
+        "Coins",
+        10,
+        0,
+        5292,
+        &[Some("Deposit-1"), None, Some("Deposit-X")],
+    );
+    assert_eq!(all_op(&row), None);
+    assert_eq!(sweep_op(&row), Some(3), "the sweep alone falls back");
+    let row = native(
+        COINS,
+        "Coins",
+        10,
+        0,
+        5292,
+        &[Some("Deposit-1"), Some("Deposit-All"), Some("Deposit-X")],
+    );
+    assert_eq!(all_op(&row), Some(2));
+    assert_eq!(sweep_op(&row), Some(2));
+}
+
+#[test]
+fn dash_space_eq_is_the_hunt_spelling() {
+    assert!(dash_space_eq("Withdraw-X", "Withdraw X"));
+    assert!(dash_space_eq("withdraw x", "Withdraw X"));
+    assert!(dash_space_eq(" Withdraw-X ", "Withdraw X"));
+    assert!(dash_space_eq("-Withdraw-X-", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw_X", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw  X", "Withdraw X"));
+    assert!(!dash_space_eq("Withdraw-All", "Withdraw X"));
+}
+
+#[test]
+fn fill_click_in_matches_count_labels_of_any_spelling() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw 1".into()),
+        Some("Withdraw-5".into()),
+        Some("withdraw_10".into()),
+        Some("Withdraw All".into()),
+        Some("Withdraw X".into()),
+    ];
+    // The content's own spellings (bank_main.if options 1..5) and the
+    // compat dash spellings resolve to the same slots.
+    assert_eq!(fill_click_in(&actions, 1, 50), Some((1, false)));
+    assert_eq!(fill_click_in(&actions, 5, 50), Some((2, false)));
+    assert_eq!(fill_click_in(&actions, 10, 50), Some((3, false)));
+    assert_eq!(fill_click_in(&actions, 50, 50), Some((4, false)));
+    assert_eq!(fill_click_in(&actions, 7, 50), Some((5, true)));
+    // A negative count's minus normalizes away like a label's dash.
+    assert_eq!(fill_click_in(&actions, -5, 50), Some((2, false)));
+    assert_eq!(fill_click_in(&actions, 0, 0), Some((4, false)));
+    // An empty wanted label matches an empty (or separator-only) label.
+    assert_eq!(
+        action_op_in(&[Some(" ".into()), Some("Withdraw-1".into())], ""),
+        Some(1)
+    );
+}
+
+fn booth(id: i32, x: i32, z: i32, level: i32, distance: i32, actions: &[Option<&str>]) -> LocView {
+    LocView {
+        typecode: id,
+        info: 0,
+        id,
+        name: Some("Bank booth".into()),
+        description: None,
+        actions: actions.iter().map(|a| a.map(str::to_owned)).collect(),
+        tile: WorldTile { x, z, level },
+        distance,
+        layer: api::snapshot::LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+#[test]
+fn booth_picks_share_one_scan_over_loc_rows() {
+    let useq: &[Option<&str>] = &[None, Some("Use-quickly")];
+    let rows = [
+        booth(10, 3093, 3244, 0, 4, useq),
+        booth(11, 3092, 3243, 0, 2, useq),
+        booth(12, 3092, 3243, 1, 1, useq),
+        booth(-1, 3090, 3243, 0, 0, useq),
+    ];
+    // Named: live id, name and action, the player's plane, nearest.
+    assert_eq!(
+        booth_named(&rows, "bank booth", "use-quickly", Some(0)).map(|row| row.id),
+        Some(11)
+    );
+    assert_eq!(
+        booth_named(&rows, "Bank booth", "Use-quickly", None).map(|row| row.id),
+        Some(12),
+        "an unknown plane does not filter, so distance decides"
+    );
+    // Nearest by action on one plane, whatever the id.
+    assert_eq!(
+        booth_nearest_action(&rows, 0, "Use-quickly").map(|row| row.id),
+        Some(-1)
+    );
+    // Exact tile, first in row order, an optional name.
+    let tile = WorldTile {
+        x: 3092,
+        z: 3243,
+        level: 0,
+    };
+    assert_eq!(booth_at(&rows, tile, None).map(|row| row.id), Some(11));
+    assert!(booth_at(&rows, tile, Some("Chest")).is_none());
+    assert_eq!(
+        booth_exact(&rows, tile, 11, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    assert!(booth_exact(&rows, tile, 10, "Bank booth", "Use-quickly").is_none());
+    // Catalog: Chebyshev radius around the stand, id on a tie.
+    assert_eq!(
+        booth_catalog(&rows, tile, 1, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    assert_eq!(
+        booth_catalog(&rows, tile, 0, "Bank booth", "Use-quickly").map(|row| row.id),
+        Some(11)
+    );
+    // Op slots: folded matches the config spelling only, normalized any.
+    let row = booth(1, 0, 0, 0, 0, &[Some("Use quickly")]);
+    assert_eq!(op_slot(&row, "Use-quickly", LabelMatch::Folded), None);
+    assert_eq!(
+        op_slot(&row, "Use-quickly", LabelMatch::Normalized),
+        Some(1)
+    );
+    assert_eq!(packed_op(&row, 1), Some(1));
+    assert_eq!(packed_op(&row, 2), None);
+    assert_eq!(packed_op(&row, 0), None);
+    let hole = booth(1, 0, 0, 0, 0, &[None]);
+    assert_eq!(packed_op(&hole, 1), None);
+}

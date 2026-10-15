@@ -9729,10 +9729,19 @@ fn withdraw_load_selects_exact_then_all_then_x() {
         Some("Withdraw All".into()),
         Some("Withdraw X".into()),
     ];
-    assert_eq!(fill_withdraw_action(&actions, 5, 20), Some((2, false)));
-    assert_eq!(fill_withdraw_action(&actions, 20, 20), Some((3, false)));
-    assert_eq!(fill_withdraw_action(&actions, 7, 20), Some((4, true)));
-    assert_eq!(fill_withdraw_action(&[None], 7, 20), None);
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 5, 20),
+        Some((2, false))
+    );
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 20, 20),
+        Some((3, false))
+    );
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 7, 20),
+        Some((4, true))
+    );
+    assert_eq!(script::bank::ops::fill_click_in(&[None], 7, 20), None);
 }
 
 #[test]

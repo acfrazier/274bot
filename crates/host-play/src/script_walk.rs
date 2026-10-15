@@ -1608,13 +1608,13 @@ fn step_bank_action<D: Driver>(
 
 /// Whether the open bank's `id` stack gives exactly `count` only through the
 /// Withdraw-X amount dialog: no `Withdraw {count}` op and not the whole
-/// stack ([`super::fill_withdraw_action`]).
+/// stack (the kernel's host fill policy, `ops::fill_click_in`).
 fn withdraw_needs_amount_dialog(snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
     snapshot
         .bank()
         .iter()
         .find(|item| item.def.id == id)
-        .and_then(|item| super::fill_withdraw_action(&item.actions, count, item.count))
+        .and_then(|item| script::bank::ops::fill_click_in(&item.actions, count, item.count))
         .is_some_and(|(_, needs_amount_dialog)| needs_amount_dialog)
 }
 
@@ -1628,7 +1628,7 @@ fn withdraw_fixed_count<D: Driver>(
         return false;
     };
     let Some((op, needs_amount_dialog)) =
-        super::fill_withdraw_action(&item.actions, count, item.count)
+        script::bank::ops::fill_click_in(&item.actions, count, item.count)
     else {
         return false;
     };
@@ -1646,7 +1646,7 @@ fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) 
     let Some(item) = snapshot.bank().iter().find(|item| item.def.id == id) else {
         return false;
     };
-    let Some(op) = super::action_slot(&item.actions, "Withdraw X") else {
+    let Some(op) = script::bank::ops::action_op_in(&item.actions, "Withdraw X") else {
         return false;
     };
     matches!(
