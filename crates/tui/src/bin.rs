@@ -583,7 +583,7 @@ impl TuiSession {
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             script_category_order: Vec::new(),
-            loadouts: script::LoadoutsStore::with_default_path(),
+            loadouts: script::LoadoutsStore::at(script::bot_file("loadouts.json")),
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,

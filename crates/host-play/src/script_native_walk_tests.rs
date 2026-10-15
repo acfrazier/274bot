@@ -3678,6 +3678,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
                 &selected,
                 &quests,
                 cap,
+                &script::local_state::OperatorLoadouts::absent(),
             )
         }
     })

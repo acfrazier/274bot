@@ -7397,7 +7397,15 @@ fn run_case(case: Case) {
     let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
-        move |cap| compile_path(&compile_source, &selected, &quests, cap)
+        move |cap| {
+            compile_path(
+                &compile_source,
+                &selected,
+                &quests,
+                cap,
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        }
     })
     .unwrap_or_else(|error| panic!("compile {}: {error:?}", source_path.display()));
 

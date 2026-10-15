@@ -30,12 +30,11 @@ fn with_path_loadout_args<R>(
     mut args: serde_json::Value,
     f: impl FnOnce(&Arc<dyn StepPlan>, &Arc<dyn PredicatePlan>, &api::game_data::SelectedGameData) -> R,
 ) -> R {
-    let _home = crate::IsolatedEnv::enter("quester-family-header-loadout");
-    let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
-    for row in store_rows {
-        store.upsert(row);
-    }
-    store.save().unwrap();
+    let data_rows: Arc<[api::loadout::Loadout]> = Arc::from(store_rows);
+    let operator = crate::local_state::OperatorLoadouts::from_rows(
+        data_rows,
+        api::local_state::StoreVersion::INITIAL,
+    );
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let mut document: serde_json::Value =
@@ -57,8 +56,10 @@ fn with_path_loadout_args<R>(
         "settle": {"All": []}
     }]);
     let document = serde_json::from_value(document).unwrap();
-    let path =
-        crate::quester::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let path = crate::quester::compile::compile_uncached_for_test_with_loadouts(
+        &document, &data, &quests, &operator,
+    )
+    .unwrap();
     f(&path.prelude[0].plan, &path.prelude[0].skip_if, &data)
 }
 
