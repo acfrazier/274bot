@@ -457,7 +457,7 @@ libtest exception.
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
-| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake |
+| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8 only; producer `IHDR`/`IDAT`/`IEND` chunks, 512 KiB input, 1.25 MiB scratch plus 266,256-byte result) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
@@ -508,6 +508,7 @@ libtest exception.
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
+| `map_decode.rs` | cooperative WalkTo image decode | one accepted shared-work ticket, one replaceable pending demand, and generation/image/key-fenced terminal custody |
 | `operations.rs` | operation results | ids, per-member outcomes, bounded book, outcome journal the poll logs as `op#<id>` lines |
 | `views.rs`, `progress.rs` | fleet and detail projections; run-progress wording | one row per member (phase, queue place, login-error retry wait vs operator hold, script state, walking, retained error, newest operation, narrow label), fleet counts, and the selected slot's detail; rows re-derived only when their facts change; runtime, time since progress and levels gained |
 | `resources.rs` | process resource meter | one probe thread sampling at 1 Hz (never on the UI frame); CPU, current and peak process RSS (peak never below current), summed traffic with per-slot-lifetime baselines; measuring / unavailable / error values, plus one narrow line for a header |
@@ -550,7 +551,7 @@ has released it.
 | `game_view.rs` | game image texture | mailbox frames to texture |
 | `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
 | `picker.rs` | WalkTo picker chrome | pan/zoom/plane/search; Walk/Teleport/selection via `host_play::walk_map` |
-| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), label ranking, small PNG/POI fixtures |
+| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
 | `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | identity-keyed marks, action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands |

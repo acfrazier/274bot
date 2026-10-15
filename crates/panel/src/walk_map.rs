@@ -12,9 +12,7 @@ mod labels;
 mod overlay;
 
 use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{TextureId, Ui};
@@ -24,21 +22,23 @@ use nav::map::spatial::{
     select_lod, snap_walkable, GameTile, TileKey, View, VisibleTiles, INTERIOR_UV, TEXTURE_CAP,
     TILE_PIXELS, TILE_RGBA_BYTES,
 };
-use nav::map::MapError;
 use nav::tile::Tile;
 use nav::transport::WildernessZone;
 use nav::world::NavWorld;
 
+use frontend_core::WalkMapDecodeController;
 use host_play::map_cache::ReadyImages;
 use host_play::walk_map::{display_name_into, Catalogue, ObservedService, Search};
+
+#[cfg(test)]
+use nav::map::MapError;
 
 use crate::game_view::FrameGpu;
 use crate::nav_settings::{parse_html_color, NavSettings};
 use crate::theme::{ACCENT, TEXT, TEXT_DIM};
 
 #[cfg(test)]
-pub use fixtures::encode_tile;
-pub use fixtures::{decode_tile, Store as FixtureStore};
+pub use fixtures::{decode_tile, encode_tile, Store as FixtureStore};
 pub(crate) use labels::{
     content_priority, dist2_to_centre, kind_rank, place_map_labels, LabelRect, MapLabelCandidate,
     LABEL_OFFSET,
@@ -55,8 +55,9 @@ pub const MAX_IDX_LAYERS: i32 = 24_000;
 pub const MAX_UPLOADS_PER_FRAME: usize = 2;
 pub const MAX_SYMBOLS: usize = 256;
 pub const MAX_LABELS: usize = 32;
+#[cfg(test)]
 const DECODE_LIMIT_BYTES: usize = 512 * 1024;
-const DECODE_STAGING_CAP: usize = 1024 * 1024;
+const DECODE_STAGING_CAP: usize = 2 * 1024 * 1024;
 const MAX_ROUTE_SEGMENTS: usize = 512;
 pub const CACHE_UNBOUND: &str = "map imagery unavailable — cache not bound";
 pub const REACH_UNAVAILABLE: &str = "reach unavailable";
@@ -106,24 +107,6 @@ struct OverlayGpu {
     h: u32,
 }
 
-struct DecodeJob {
-    generation: u64,
-    identity: ImageIdentity,
-    key: TileKey,
-    png: Vec<u8>,
-}
-
-struct DecodeDone {
-    generation: u64,
-    identity: ImageIdentity,
-    key: TileKey,
-    result: Result<Vec<u8>, String>,
-}
-
-enum WorkerCmd {
-    Job(DecodeJob),
-    Stop,
-}
 
 /// One map renderer owned by the panel app, shared across every bot slot.
 pub struct WalkMapRenderer {
@@ -140,14 +123,12 @@ pub struct WalkMapRenderer {
     overlay_key: Option<OverlayKey>,
     last_vis: Option<VisibleTiles>,
     pending_upload: Option<(u64, ImageIdentity, TileKey, Vec<u8>)>,
-    in_flight: Option<(u64, TileKey)>,
-    in_flight_bytes: usize,
+    decode: WalkMapDecodeController,
     tex_pool: Vec<GpuTex>,
-    compressed: Vec<u8>,
-    worker_tx: Option<Sender<WorkerCmd>>,
-    worker_rx: Option<Receiver<DecodeDone>>,
-    worker: Option<JoinHandle<()>>,
-    sync_decode: bool,
+    #[cfg(test)]
+    test_sync_decode: bool,
+    #[cfg(test)]
+    test_staging_bytes: usize,
     pub show_basemap: bool,
     pub show_grid: bool,
     pub show_reach: bool,
@@ -200,10 +181,6 @@ impl Default for WalkMapRenderer {
 
 impl WalkMapRenderer {
     pub fn new() -> Self {
-        Self::with_sync(cfg!(test))
-    }
-
-    pub fn with_sync(sync_decode: bool) -> Self {
         Self {
             generation: 1,
             open: false,
@@ -218,14 +195,12 @@ impl WalkMapRenderer {
             overlay_key: None,
             last_vis: None,
             pending_upload: None,
-            in_flight: None,
-            in_flight_bytes: 0,
+            decode: WalkMapDecodeController::new(),
             tex_pool: Vec::new(),
-            compressed: Vec::new(),
-            worker_tx: None,
-            worker_rx: None,
-            worker: None,
-            sync_decode,
+            #[cfg(test)]
+            test_sync_decode: true,
+            #[cfg(test)]
+            test_staging_bytes: 0,
             show_basemap: true,
             show_grid: false,
             show_reach: false,
@@ -280,8 +255,7 @@ impl WalkMapRenderer {
         if changed {
             self.slots.clear();
             self.pending_upload = None;
-            self.in_flight = None;
-            self.in_flight_bytes = 0;
+            self.decode.invalidate();
         }
     }
 
@@ -348,11 +322,7 @@ impl WalkMapRenderer {
     fn invalidate_buffers(&mut self, mut gpu: Option<&mut dyn FrameGpu>) {
         self.generation = self.generation.wrapping_add(1);
         self.pending_upload = None;
-        self.in_flight = None;
-        self.in_flight_bytes = 0;
-        self.compressed.clear();
-        self.compressed.shrink_to_fit();
-        self.stop_worker();
+        self.decode.invalidate();
         drop_pool(&mut self.tex_pool, &mut gpu);
         drop_slots(&mut self.slots, &mut gpu);
         drop_overlay(&mut self.overlay_gpu, &mut gpu);
@@ -370,17 +340,6 @@ impl WalkMapRenderer {
         self.placed_label_ids.shrink_to_fit();
     }
 
-    fn stop_worker(&mut self) {
-        if let Some(tx) = self.worker_tx.take() {
-            let _ = tx.send(WorkerCmd::Stop);
-        }
-        if let Some(thread) = self.worker.take() {
-            let _ = thread.join();
-        }
-        self.worker_rx = None;
-        self.in_flight = None;
-        self.in_flight_bytes = 0;
-    }
 
     pub fn counters(&self) -> LiveCounters {
         let overlay_gpu_bytes = self
@@ -396,10 +355,19 @@ impl WalkMapRenderer {
             terrain_cpu_bytes: self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
             overlay_cpu_bytes: self.overlay_cpu.as_ref().map(Vec::len).unwrap_or(0),
             overlay_gpu_bytes,
-            decode_staging_bytes: self.compressed.len()
-                + self.in_flight_bytes
-                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
-            in_flight: usize::from(self.in_flight.is_some()),
+            decode_staging_bytes: self.decode.staging_bytes()
+                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0)
+                + {
+                    #[cfg(test)]
+                    {
+                        self.test_staging_bytes
+                    }
+                    #[cfg(not(test))]
+                    {
+                        0
+                    }
+                },
+            in_flight: usize::from(self.decode.has_active()),
             pending_upload: usize::from(self.pending_upload.is_some()),
             vtx: self.last_vtx,
             idx: self.last_idx,
@@ -408,23 +376,7 @@ impl WalkMapRenderer {
 
     #[cfg(test)]
     pub fn force_staging_bytes(&mut self, compressed: usize, in_flight: usize, pending: usize) {
-        self.compressed.resize(compressed, 0);
-        self.in_flight_bytes = in_flight;
-        if pending == 0 {
-            self.pending_upload = None;
-        } else {
-            self.pending_upload = Some((
-                self.generation,
-                self.identity(),
-                TileKey {
-                    plane: 0,
-                    lod: 0,
-                    x: 0,
-                    z: 0,
-                },
-                vec![0; pending],
-            ));
-        }
+        self.test_staging_bytes = compressed.saturating_add(in_flight).saturating_add(pending);
     }
 
     pub fn record_geometry(&mut self, vtx: i32, idx: i32) {
@@ -562,10 +514,7 @@ impl WalkMapRenderer {
         } else if !self.show_basemap {
             self.phase = MapPhase::Ready;
             parts.push(String::from("basemap off"));
-        } else if !self.slots.is_empty()
-            && self.in_flight.is_none()
-            && self.pending_upload.is_none()
-        {
+        } else if !self.slots.is_empty() && !self.decode.is_busy() && self.pending_upload.is_none() {
             self.phase = MapPhase::Ready;
             parts.push(format!("ready · {} tiles", self.slots.len()));
         } else {
@@ -595,8 +544,9 @@ impl WalkMapRenderer {
         reach: Option<&[u64]>,
         overlay_zoom_in: &mut bool,
     ) {
-        self.pump_decode();
         self.sync_terrain(view, gpu);
+        self.pump_decode();
+        self.upload_pending(gpu);
         *overlay_zoom_in = false;
         if layers.raster_any() {
             match overlay::overlay_fit(view) {
@@ -803,10 +753,16 @@ impl WalkMapRenderer {
         }
         let Some(vis) = vis else {
             self.last_vis = None;
+            self.pending_upload = None;
+            self.decode.discard_pending();
+            self.decode.cancel_active();
             return;
         };
         self.last_vis = Some(vis);
         if !self.show_basemap || !self.has_terrain() {
+            self.pending_upload = None;
+            self.decode.discard_pending();
+            self.decode.cancel_active();
             return;
         }
         retain_visible(&mut self.slots, vis, &mut self.tex_pool, gpu);
@@ -816,98 +772,110 @@ impl WalkMapRenderer {
             }
         }
         self.request_missing(vis);
-        self.upload_pending(gpu);
     }
 
     fn request_missing(&mut self, vis: VisibleTiles) {
-        if self.pending_upload.is_some() || self.in_flight.is_some() {
+        if self.pending_upload.is_some() {
+            return;
+        }
+        let generation = self.generation;
+        let identity = self.identity();
+        if self.decode.pending_request().is_some_and(|(gen, image, key)| {
+            gen != generation || image != identity || !vis_contains(vis, key)
+        }) {
+            self.decode.discard_pending();
+        }
+        if let Some((gen, image, key)) = self.decode.active_request() {
+            if self.decode.is_requested(gen, image, key)
+                && (gen != generation || image != identity || !vis_contains(vis, key))
+            {
+                self.decode.cancel_active();
+            }
+        }
+        if let Some((gen, image, key)) = self.decode.pending_request() {
+            if gen == generation && image == identity && vis_contains(vis, key) {
+                if let Err(error) = self.decode.retry_pending(true) {
+                    self.phase = MapPhase::Error;
+                    self.status = format!("tile decode failed: {error}");
+                }
+                return;
+            }
+        }
+        if self.decode.active_request().is_some_and(|(gen, image, key)| {
+            self.decode.is_requested(gen, image, key)
+                && gen == generation
+                && image == identity
+                && vis_contains(vis, key)
+        }) {
             return;
         }
         if self.slots.len() >= TEXTURE_CAP {
             return;
         }
         for key in vis.keys() {
-            if self.slots.iter().any(|s| s.key == key) {
+            if self.slots.iter().any(|slot| slot.key == key) {
                 continue;
             }
-            self.compressed.clear();
-            if take_png(
-                self.ready.as_deref(),
-                &self.fixtures,
-                key,
-                &mut self.compressed,
-            )
-            .is_none()
+            let png = if let Some(ready) = self.ready.as_deref() {
+                ready.read_tile_arc(key).ok().flatten()
+            } else {
+                self.fixtures.get_arc(key)
+            };
+            let Some(png) = png else {
+                continue;
+            };
+            if self
+                .decode
+                .staging_bytes()
+                .saturating_add(png.len())
+                > DECODE_STAGING_CAP
             {
                 continue;
             }
-            if self.compressed.len() + TILE_RGBA_BYTES > DECODE_STAGING_CAP {
-                self.compressed.clear();
-                continue;
-            }
-            let gen = self.generation;
-            let identity = self.identity();
-            if self.sync_decode {
-                match decode_checked(&self.compressed) {
-                    Ok(rgba) => {
-                        self.compressed.clear();
-                        self.pending_upload = Some((gen, identity, key, rgba));
-                    }
-                    Err(e) => {
-                        self.compressed.clear();
+            #[cfg(test)]
+            if self.test_sync_decode {
+                match decode_checked(&png) {
+                    Ok(rgba) => self.pending_upload = Some((generation, identity, key, rgba)),
+                    Err(error) => {
                         self.phase = MapPhase::Error;
-                        self.status = format!("tile decode failed: {e}");
+                        self.status = format!("tile decode failed: {error}");
                     }
                 }
                 return;
             }
-            self.ensure_worker();
-            let png = std::mem::take(&mut self.compressed);
-            let staging = png.len() + TILE_RGBA_BYTES;
-            if let Some(tx) = &self.worker_tx {
-                if tx
-                    .send(WorkerCmd::Job(DecodeJob {
-                        generation: gen,
-                        identity,
-                        key,
-                        png,
-                    }))
-                    .is_ok()
-                {
-                    self.in_flight = Some((gen, key));
-                    self.in_flight_bytes = staging;
-                }
+            if let Err(error) = self.decode.request(generation, identity, key, png) {
+                self.phase = MapPhase::Error;
+                self.status = format!("tile decode failed: {error}");
             }
             return;
         }
     }
-
     fn pump_decode(&mut self) {
-        let Some(rx) = &self.worker_rx else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(done) => {
-                self.in_flight = None;
-                self.in_flight_bytes = 0;
-                if done.generation != self.generation || !self.open {
+        let request = self
+            .decode
+            .pending_request()
+            .or_else(|| self.decode.active_request());
+        match self.decode.poll() {
+            None => {}
+            Some(Ok(result)) => {
+                let generation = result.generation();
+                let identity = result.image_identity();
+                let key = result.key();
+                if generation != self.generation || !self.open || identity != self.identity() {
                     return;
                 }
-                if done.identity != self.identity() {
-                    return;
-                }
-                match done.result {
-                    Ok(rgba) => {
-                        self.pending_upload =
-                            Some((done.generation, done.identity, done.key, rgba));
-                    }
-                    Err(e) => {
-                        self.phase = MapPhase::Error;
-                        self.status = format!("tile decode failed: {e}");
-                    }
-                }
+                self.pending_upload = Some((generation, identity, key, result.into_rgba()));
             }
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+            Some(Err(error)) => {
+                let Some((generation, identity, _key)) = request else {
+                    return;
+                };
+                if generation != self.generation || !self.open || identity != self.identity() {
+                    return;
+                }
+                self.phase = MapPhase::Error;
+                self.status = format!("tile decode failed: {error}");
+            }
         }
     }
 
@@ -1023,20 +991,6 @@ impl WalkMapRenderer {
         self.overlay_key = Some(key);
     }
 
-    fn ensure_worker(&mut self) {
-        if self.worker_tx.is_some() {
-            return;
-        }
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (done_tx, done_rx) = mpsc::channel();
-        let thread = std::thread::Builder::new()
-            .name("274-walk-map-decode".into())
-            .spawn(move || decode_loop(cmd_rx, done_tx))
-            .expect("walk-map decode worker");
-        self.worker_tx = Some(cmd_tx);
-        self.worker_rx = Some(done_rx);
-        self.worker = Some(thread);
-    }
 
     #[cfg(test)]
     pub fn overlay_cpu(&self) -> Option<&[u8]> {
@@ -1091,29 +1045,6 @@ impl WalkMapRenderer {
     }
 }
 
-impl Drop for WalkMapRenderer {
-    fn drop(&mut self) {
-        self.stop_worker();
-    }
-}
-
-fn take_png(
-    ready: Option<&ReadyImages>,
-    fixtures: &fixtures::Store,
-    key: TileKey,
-    buffer: &mut Vec<u8>,
-) -> Option<()> {
-    if let Some(ready) = ready {
-        return match ready.read_tile_into(key, buffer) {
-            Ok(Some(_)) => Some(()),
-            _ => None,
-        };
-    }
-    let png = fixtures.get(key)?;
-    buffer.clear();
-    buffer.extend_from_slice(png);
-    Some(())
-}
 
 fn vis_contains(vis: VisibleTiles, key: TileKey) -> bool {
     key.plane == vis.plane
@@ -1162,28 +1093,12 @@ fn flood_ident(set: Option<&HashSet<WorldTile>>) -> usize {
     set.len().wrapping_shl(24) ^ sample
 }
 
+#[cfg(test)]
 fn decode_checked(png: &[u8]) -> Result<Vec<u8>, MapError> {
     if png.len() > DECODE_LIMIT_BYTES {
         return Err(MapError::Limit("png bytes"));
     }
     fixtures::decode_tile(png)
-}
-
-fn decode_loop(cmd: Receiver<WorkerCmd>, done: Sender<DecodeDone>) {
-    while let Ok(cmd) = cmd.recv() {
-        match cmd {
-            WorkerCmd::Stop => break,
-            WorkerCmd::Job(job) => {
-                let result = decode_checked(&job.png).map_err(|e| e.to_string());
-                let _ = done.send(DecodeDone {
-                    generation: job.generation,
-                    identity: job.identity,
-                    key: job.key,
-                    result,
-                });
-            }
-        }
-    }
 }
 
 fn upload_tile(gpu: &mut dyn FrameGpu, pool: &mut Vec<GpuTex>, rgba: &[u8]) -> Option<GpuTex> {
