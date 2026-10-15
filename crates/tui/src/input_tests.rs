@@ -984,6 +984,92 @@ fn restart_confirm_with_twenty_running_still_shows_the_idle_list() {
     }
 }
 
+/// Inner rows of the drawn modal popup (borders stripped).
+fn popup_rows(app: &TuiApp, rows: &[String]) -> Vec<String> {
+    let m = app.regions.modal;
+    ((m.y + 1)..(m.y + m.height - 1))
+        .map(|y| {
+            rows[usize::from(y)]
+                .chars()
+                .skip(usize::from(m.x + 1))
+                .take(usize::from(m.width - 2))
+                .collect()
+        })
+        .collect()
+}
+
+/// The popup's text with wrapping undone: rows join with a space,
+/// except a row filled to its last cell whose next row starts
+/// mid-word (a word wider than the row, split by the wrap), which
+/// joins with nothing. Whitespace runs collapse to one space.
+fn popup_text(app: &TuiApp, rows: &[String]) -> String {
+    let popup = popup_rows(app, rows);
+    let mut joined = String::new();
+    for (index, row) in popup.iter().enumerate() {
+        if index > 0 {
+            let prev = &popup[index - 1];
+            let split_word = !prev.ends_with(' ') && !row.starts_with(' ');
+            if !split_word {
+                joined.push(' ');
+            }
+        }
+        joined.push_str(row);
+    }
+    joined.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// L1: at 40x20 the popup's text area is 38 cells, so an email-style
+/// name wider than that is split across rows by ratatui from a fresh
+/// row. The popup must be sized for those rows: both lists show in
+/// full and the slack row above the buttons stays blank.
+#[test]
+fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_popup() {
+    let names: Vec<String> = (0..6)
+        .map(|i| format!("bot{i:02}-with-a-very-long-email-name@example.com"))
+        .collect();
+    assert!(
+        names.iter().all(|name| name.len() > 38),
+        "every name is wider than the 40-wide popup's 38-cell text area: {names:?}"
+    );
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = fleet_app(&refs);
+    for row in app.fleet.iter_mut().take(3) {
+        row.set_script(script::RunState::Running);
+    }
+    for name in &names {
+        let id = app.profile_id_for_name(name);
+        app.table.selection.set(id, true);
+    }
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    assert_eq!(
+        app.run_command(Command::ScriptRestartMarked),
+        AppAction::None
+    );
+    let rows = draw(&mut app, 40, 20);
+    let popup = popup_rows(&app, &rows);
+    let all = popup_text(&app, &rows);
+    assert!(
+        all.contains(&format!(
+            "Stop and restart 3 running bots: {}, {}, {}",
+            names[0], names[1], names[2]
+        )),
+        "the interrupted list shows in full: {all}"
+    );
+    assert!(
+        all.contains(&format!(
+            "Start the card on 3 idle bots: {}, {}, {}",
+            names[3], names[4], names[5]
+        )),
+        "the idle list shows in full: {all}"
+    );
+    let slack = &popup[popup.len() - 2];
+    assert!(
+        slack.trim().is_empty(),
+        "the row above the buttons is slack, not text the popup barely fit: {slack:?}\n{}",
+        popup.join("\n")
+    );
+}
+
 /// The palette scope text of the combined all/marked commands follows
 /// the core scope resolver: everyone with no marks, the marked bots
 /// once anything is marked.

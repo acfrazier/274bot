@@ -55,10 +55,10 @@ pub use map_bake::{
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use marked::{
-    assign_and_restart_marked, assign_marked, combined_bulk_scope, login_marked, logout_marked,
-    marked_availability, prepare_apply_settings_marked, restart_scope, run_marked_command,
-    BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope, ASSIGN_NO_CARD,
-    ASSIGN_RESTART_NO_CARD,
+    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope, login_marked,
+    logout_marked, marked_availability, prepare_apply_settings_marked, restart_scope,
+    run_marked_command, BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope,
+    ASSIGN_NO_CARD, ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
 };
 pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};

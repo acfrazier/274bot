@@ -286,13 +286,16 @@ pub struct RestartScope {
     starting: Vec<String>,
 }
 
-/// How many names one [`RestartScope::prompt_lines`] line spells out
-/// before the rest are counted as "+N more".
-const PROMPT_NAMES_SHOWN: usize = 6;
+/// How many names one confirmation line spells out before the rest
+/// are counted as "+N more" (the [`RestartScope::prompt_lines`]
+/// lines and every surface list built with [`bounded_names`]).
+pub const PROMPT_NAMES_SHOWN: usize = 6;
 
 /// `names` joined for one confirmation line: at most
 /// [`PROMPT_NAMES_SHOWN`] names, then "+N more" for the remainder.
-fn bounded_names(names: &[String]) -> String {
+/// The one bounded-names list every surface renders, so the cap
+/// cannot drift between them.
+pub fn bounded_names(names: &[String]) -> String {
     let mut text = String::new();
     for (index, name) in names.iter().take(PROMPT_NAMES_SHOWN).enumerate() {
         if index > 0 {
