@@ -1260,13 +1260,16 @@ pub enum CooperativeViolation {
     ChargeExceeded,
 }
 
-/// Error side of a job terminal: family error, cooperation, or the
-/// process-unavailable failure of an already-accepted job.
+/// Error side of a job terminal: family error, a contained internal failure,
+/// cooperation, or the process-unavailable failure of an accepted job.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum JobError<E: fmt::Debug + std::error::Error> {
     /// Family-typed error.
     #[error(transparent)]
     Family(E),
+    /// A returned job panic was caught and contained by its worker.
+    #[error("background work job failed internally")]
+    FailedInternally,
     /// The step violated the cooperative bound.
     #[error(transparent)]
     Cooperation(CooperativeViolation),
