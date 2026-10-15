@@ -13,8 +13,8 @@ use nav::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
 use std::sync::Arc;
 
 /// A synthetic zone table and wilderness served through the contract views,
-/// as the host serves the real pack. The world is built by the one script
-/// test site allowed to construct one (`gatherer::select::tests`); the
+/// as the host serves the real pack. The lease comes from the one script
+/// test site allowed to construct a world (`gatherer::select::tests`); the
 /// fixture keeps a copy of the raw table only to name rows by index.
 struct Fixture {
     lease: NavLease,
@@ -23,14 +23,11 @@ struct Fixture {
 impl Fixture {
     fn new(table: ZoneTable, wilderness: WildernessRules) -> Self {
         let zones = table.clone();
-        let world = crate::gatherer::select::tests::test_nav_world(move |world| {
+        let lease = crate::gatherer::select::tests::test_nav_lease(move |world| {
             world.graph.zones = Some(zones);
             world.graph.wilderness = wilderness;
         });
-        Self {
-            lease: nav::producer::lease(&world).expect("lease ids are not exhausted in tests"),
-            table,
-        }
+        Self { lease, table }
     }
     /// No zones at all: route geometry alone.
     fn empty() -> Self {
@@ -55,22 +52,6 @@ impl Fixture {
     }
     fn path<'a>(&self, route: &'a Route) -> RoutePath<'a> {
         RoutePath::new(self.route(route)).unwrap()
-    }
-    /// Script's risk tables for this table, built from the same kind facts
-    /// the host reads at its owner boundary (no hazard kinds in these fixtures).
-    fn risk_tables(&self, combat: &CombatTables) -> RiskTables {
-        RiskTables::build(
-            self.table.kinds().iter().map(|kind| KindSource {
-                npc_id: (kind.npc_id != -1).then_some(kind.npc_id),
-                hazard_damage: None,
-            }),
-            self.table.zones().iter().map(|zone| zone.kind),
-            combat,
-        )
-    }
-    /// The kind index of zone row `zone`.
-    fn kind_of(&self, zone: u16) -> u16 {
-        self.table.zones()[usize::from(zone)].kind
     }
     /// Bind a raw key the way the pack would: a zone row is found through
     /// the tiles it contains, a group through its catalog id.
@@ -195,7 +176,6 @@ fn corridor_plan(fx: &Fixture, tables: &CombatTables, prefix: u16) -> RoutePlan 
         pack: Some(fx.pack()),
         intervals: vec![ZoneInterval::new(
             fx.bound(ZoneKey::Zone(0)),
-            fx.kind_of(0),
             ident,
             tile(120),
             prefix,
@@ -207,7 +187,7 @@ fn corridor_plan(fx: &Fixture, tables: &CombatTables, prefix: u16) -> RoutePlan 
             6,
             4,
             Style::Melee,
-            false,
+            None,
             false,
             false,
         )
@@ -271,6 +251,9 @@ fn synthetic_zone_table(kinds: Vec<ZoneKind>) -> ZoneTable {
     )
 }
 
+/// The wizard's selected class: unknown (mixed attack style) in any world.
+const MIXED: Option<UnknownKind> = Some(UnknownKind::Mixed);
+
 #[allow(clippy::too_many_arguments)]
 fn synthetic_interval(
     fx: &Fixture,
@@ -280,11 +263,10 @@ fn synthetic_interval(
     (first, last): (u16, u16),
     max_hit: u8,
     rate: u8,
-    unknown: bool,
+    unknown: Option<UnknownKind>,
 ) -> ZoneInterval {
     ZoneInterval::new(
         fx.bound(ZoneKey::Zone(zone)),
-        fx.kind_of(zone),
         ident,
         spawn,
         first,
@@ -295,7 +277,7 @@ fn synthetic_interval(
         1,
         max_hit,
         rate,
-        if unknown {
+        if unknown.is_some() {
             Style::Unknown
         } else {
             Style::Melee
@@ -397,15 +379,15 @@ fn u2_admission_omits_fully_granted_unknown_physics_and_preserves_assessment() {
         &fx,
         value,
         vec![
-            synthetic_interval(&fx, 0, wizard_id, tile(5), (5, 5), 6, 0, true),
-            synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, false),
+            synthetic_interval(&fx, 0, wizard_id, tile(5), (5, 5), 6, 0, MIXED),
+            synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, None),
         ],
         vec![
             synthetic_crossing(5, 5, (0, 1), true),
             synthetic_crossing(20, 20, (1, 2), true),
         ],
         2,
-        Verdict::Unknown(UnknownWhy::Kind(0)),
+        Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Mixed)),
     );
     let grants = fx.exempt(&[ZoneKey::Zone(0)]);
 
@@ -442,12 +424,12 @@ fn u2_admission_rejects_a_mixed_granted_unknown_crossing() {
         &fx,
         input(90, 90, 0, &tables),
         vec![
-            synthetic_interval(&fx, 0, wizard_id, tile(5), (5, 5), 6, 0, true),
-            synthetic_interval(&fx, 1, known_id, tile(5), (5, 5), 6, 4, false),
+            synthetic_interval(&fx, 0, wizard_id, tile(5), (5, 5), 6, 0, MIXED),
+            synthetic_interval(&fx, 1, known_id, tile(5), (5, 5), 6, 4, None),
         ],
         vec![synthetic_crossing(5, 5, (0, 2), true)],
         1,
-        Verdict::Unknown(UnknownWhy::Kind(0)),
+        Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Mixed)),
     );
     let grants = fx.exempt(&[ZoneKey::Zone(0)]);
 
@@ -460,7 +442,7 @@ fn u2_admission_rejects_a_mixed_granted_unknown_crossing() {
             WalkAllow::default(),
             Grants::named(grants)
         ),
-        Err(UnknownWhy::Kind(0))
+        Err(UnknownWhy::Kind(UnknownKind::Mixed))
     );
 }
 
@@ -473,7 +455,7 @@ fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
         WildernessRules::default(),
     );
     let walk = route(0, 40);
-    let later = synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, false);
+    let later = synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, None);
     let later_only = synthetic_assessment(
         &fx,
         input(20, 20, 0, &tables),
@@ -499,7 +481,7 @@ fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
         &fx,
         input(20, 20, 0, &tables),
         vec![
-            synthetic_interval(&fx, 0, known_id, tile(5), (5, 5), 6, 4, false),
+            synthetic_interval(&fx, 0, known_id, tile(5), (5, 5), 6, 4, None),
             later,
         ],
         vec![
@@ -546,7 +528,7 @@ fn u2_admission_checks_ninth_crossing_beyond_display_bound() {
                 (index, index),
                 6,
                 4,
-                false,
+                None,
             )
         })
         .collect::<Vec<_>>();
@@ -604,7 +586,7 @@ fn u2_admission_grants_a_fully_granted_no_way_out_crossing() {
             (0, 20),
             6,
             4,
-            false,
+            None,
         )],
         vec![synthetic_crossing(0, 20, (0, 1), false)],
         1,
@@ -640,8 +622,8 @@ fn u2_admission_scopes_unknown_poison_and_exempts_safe_only_walks() {
         &fx,
         value,
         vec![
-            synthetic_interval(&fx, 0, known_id, tile(5), (5, 5), 6, 4, false),
-            synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, false),
+            synthetic_interval(&fx, 0, known_id, tile(5), (5, 5), 6, 4, None),
+            synthetic_interval(&fx, 1, known_id, tile(20), (20, 20), 6, 4, None),
         ],
         vec![
             synthetic_crossing(5, 5, (0, 1), true),
@@ -719,8 +701,8 @@ fn u2_named_request_grants_zones_engaged_at_the_route_endpoint() {
             &fx,
             value,
             vec![
-                synthetic_interval(&fx, 0, known_id, tile(10), (10, 10), 6, 4, false),
-                synthetic_interval(&fx, 1, known_id, tile(30), (30, 30), 6, 4, false),
+                synthetic_interval(&fx, 0, known_id, tile(10), (10, 10), 6, 4, None),
+                synthetic_interval(&fx, 1, known_id, tile(30), (30, 30), 6, 4, None),
             ],
             vec![
                 synthetic_crossing(10, 10, (0, 1), true),
@@ -775,7 +757,7 @@ fn u2_named_request_grants_zones_engaged_at_the_route_endpoint() {
 pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<RouteAssessment> {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let mut value = input(90, 90, 0, &tables);
     value.poison = poison;
     let walk = if crossing {
@@ -791,8 +773,8 @@ fn u9_compact_layout_and_limit_round_trips() {
     assert!(std::mem::size_of::<RiskInput>() <= 128);
     assert!(std::mem::size_of::<PoisonState>() <= 8);
     assert!(std::mem::size_of::<KindRisk>() <= 8);
-    // T5.1: the retained zone identity is a pack-bound key (16 bytes) plus
-    // the risk-table kind index, so a row is 40 bytes, up from 24.
+    // T5.1: the retained zone identity is a pack-bound key (16 bytes), so a
+    // row is 40 bytes, up from 24.
     assert!(std::mem::size_of::<ZoneInterval>() <= 40);
     assert!(std::mem::size_of::<Crossing>() <= 32);
     let fx = Fixture::new(one_zone(&tables(), 100, 1), WildernessRules::default());
@@ -805,7 +787,6 @@ fn u9_compact_layout_and_limit_round_trips() {
                 for ident in [-1, i32::from(i16::MAX)] {
                     let row = ZoneInterval::new(
                         zone,
-                        u16::MAX,
                         ident,
                         point,
                         u16::MAX,
@@ -817,7 +798,7 @@ fn u9_compact_layout_and_limit_round_trips() {
                         255,
                         255,
                         Style::Unknown,
-                        true,
+                        Some(UnknownKind::Overflow),
                         true,
                         true,
                     )
@@ -856,7 +837,6 @@ fn u9_compact_layout_and_limit_round_trips() {
     assert_eq!(
         ZoneInterval::new(
             zone,
-            0,
             32768,
             tile(1),
             0,
@@ -868,7 +848,7 @@ fn u9_compact_layout_and_limit_round_trips() {
             1,
             1,
             Style::Melee,
-            false,
+            None,
             false,
             false
         ),
@@ -877,7 +857,6 @@ fn u9_compact_layout_and_limit_round_trips() {
     assert_eq!(
         ZoneInterval::new(
             zone,
-            0,
             -2,
             tile(1),
             0,
@@ -889,7 +868,7 @@ fn u9_compact_layout_and_limit_round_trips() {
             1,
             1,
             Style::Melee,
-            false,
+            None,
             false,
             false
         ),
@@ -898,7 +877,6 @@ fn u9_compact_layout_and_limit_round_trips() {
     assert_eq!(
         ZoneInterval::new(
             zone,
-            0,
             1,
             tile(1),
             2,
@@ -910,7 +888,7 @@ fn u9_compact_layout_and_limit_round_trips() {
             1,
             1,
             Style::Melee,
-            false,
+            None,
             false,
             false
         ),
@@ -961,7 +939,7 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             ),
             wilderness.clone(),
         );
-        let risks = fx.risk_tables(&tables);
+        let risks = RiskTables::build(&tables);
         let mut value = input(90, 90, 10, &tables);
         value.map_members = members;
         let assessment = assess(
@@ -971,7 +949,7 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
         );
         assert_eq!(
             assessment.verdict,
-            Verdict::Unknown(UnknownWhy::Kind(0)),
+            Verdict::Unknown(UnknownWhy::Kind(class)),
             "{config}"
         );
         assert!(assessment.reason.contains(config), "{config}");
@@ -980,6 +958,156 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             "{config}"
         );
     }
+}
+
+/// T5.1 representation closure: risk reads each zone's facts through that
+/// zone's facade kind view, keyed by NPC id, never through the pack's kind
+/// rows or their order. Here kind rows are stored in an order unrelated to
+/// their zones, one kind serves three zones, and NPC, poison, mixed,
+/// curated-hazard, uncurated-hazard and missing-facts kinds all appear, so a
+/// lookup by any other row or kind index misclassifies some zone.
+#[test]
+fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
+    let tables = tables();
+    let npc = |config: &str| tables.selected().npc_by_config(config).unwrap();
+    let kind = |id: &str, npc_id: i32| ZoneKind::new(id, id, npc_id, 1, false, false);
+    let hazard = |max_hit, unknown| {
+        KindRisk::new(
+            max_hit,
+            1,
+            0,
+            0,
+            Style::Unknown,
+            unknown,
+            0,
+            false,
+            false,
+            false,
+            true,
+        )
+    };
+    let ice = KindRisk::from_npc(npc("icewarrior"), &tables);
+    let spider = KindRisk::from_npc(npc("poisonspider"), &tables);
+    let wizard = KindRisk::from_npc(npc("wizard"), &tables);
+    let missing = KindRisk::new(
+        0,
+        0,
+        0,
+        0,
+        Style::Unknown,
+        UnknownKind::MissingFacts,
+        0,
+        false,
+        false,
+        false,
+        false,
+    );
+    let kinds = vec![
+        kind("poisonspider", npc("poisonspider").id),
+        kind("ikov-lava-bridge", -1),
+        kind("uncurated-hazard", -1),
+        kind("wizard", npc("wizard").id),
+        kind("missing-facts", i32::from(i16::MAX)),
+        known_kind(&tables),
+    ];
+    // (kind row of zone row i, its class on a members world, its facts)
+    let rows = [
+        (5, None, ice),
+        (0, Some(UnknownKind::Poison), spider),
+        (5, None, ice),
+        (3, Some(UnknownKind::Mixed), wizard),
+        (1, None, hazard(20, UnknownKind::Known)),
+        (
+            2,
+            Some(UnknownKind::HazardDamage),
+            hazard(0, UnknownKind::HazardDamage),
+        ),
+        (4, Some(UnknownKind::MissingFacts), missing),
+        (5, None, ice),
+    ];
+    let w = WildernessRules::default();
+    let fx = Fixture::new(
+        zone_table(
+            rows.iter()
+                .enumerate()
+                .map(|(row, (kind, _, _))| {
+                    Zone::npc(
+                        tile(10 + 30 * row as i32),
+                        1,
+                        ZoneClass::Always,
+                        u16::MAX,
+                        *kind,
+                    )
+                })
+                .collect(),
+            kinds,
+            vec![],
+            vec![],
+            &w,
+        ),
+        w,
+    );
+    let risks = RiskTables::build(&tables);
+    let zones = fx.zones();
+    for (row, (kind, class, facts)) in rows.iter().enumerate() {
+        let view = zones.zone(fx.bound(ZoneKey::Zone(row as u16))).unwrap();
+        assert_eq!(
+            view.kind().id(),
+            fx.table.kinds()[usize::from(*kind)].id.as_ref()
+        );
+        let read = risks.zone_kind(view.kind());
+        assert_eq!(read, *facts, "zone row {row}");
+        assert_eq!(read.unknown_for(true), *class, "zone row {row}");
+    }
+
+    let walk = route(0, 10 + 30 * rows.len() as i32);
+    let mut value = input(99, 99, 0, &tables);
+    value.map_members = true;
+    let plan = build_plan(fx.path(&walk), zones, &risks, fx.wilderness(), &value).unwrap();
+    let mut seen = [false; 8];
+    for interval in plan.intervals.iter() {
+        let ZoneKey::Zone(row) = interval.zone.key() else {
+            panic!("an interval names a zone row");
+        };
+        let (_, class, facts) = rows[usize::from(row)];
+        assert_eq!(interval.unknown_kind(), class, "zone row {row}");
+        assert_eq!(
+            (
+                interval.max_hit,
+                interval.rate,
+                interval.r,
+                interval.reach,
+                interval.style,
+                interval.ap(),
+                interval.hazard(),
+            ),
+            (
+                facts.max_hit,
+                facts.rate,
+                facts.r,
+                facts.reach,
+                facts.style,
+                facts.ap(),
+                facts.hazard(),
+            ),
+            "zone row {row}"
+        );
+        seen[usize::from(row)] = true;
+    }
+    assert!(seen.iter().all(|seen| *seen), "every zone is crossed");
+
+    let cx = context(&fx, &risks, &tables);
+    let assessment = assess(fx.route(&walk), &cx, value);
+    assert_eq!(
+        assessment.verdict,
+        Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Poison)),
+        "the first unsupported zone on the walk is the poison spider"
+    );
+    assert!(
+        assessment.reason.contains("poisonspider: Some(Poison)"),
+        "{}",
+        assessment.reason
+    );
 }
 
 #[test]
@@ -1024,11 +1152,11 @@ fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
             ),
             wilderness.clone(),
         );
-        let mut risks = fx.risk_tables(&tables);
+        let mut risks = RiskTables::build(&tables);
         if estimated > 255 {
             // A synthetic broad tether makes all 300 distinct spawns persist
             // beyond the 255-row view, without invalid acquisition geometry.
-            risks.kinds[0].r = 64;
+            risks.npc_mut(known_kind(&tables).npc_id).unwrap().r = 64;
         }
         let mut value = input(255, 255, 0, &tables);
         value.free_slots = 0;
@@ -1259,7 +1387,7 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
 fn u4_prayer_credit_all_conditions_and_one_raw_volley() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let route = route(88, 112);
     let cx = context(&fx, &risk, &tables);
     let mut good = input(90, 90, 0, &tables);
@@ -1302,7 +1430,7 @@ fn u4_prayer_credit_all_conditions_and_one_raw_volley() {
 fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let cx = context(&fx, &risk, &tables);
     let route = route(80, 145);
     let path = fx.path(&route);
@@ -1374,7 +1502,7 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
 fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let cx = context(&fx, &risks, &tables);
     let safe = route(10, 30);
     let mut poisoned = input(10, 40, 0, &tables);
@@ -1403,7 +1531,7 @@ fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
 fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let cx = context(&fx, &risks, &tables);
     let short = route(10, 10);
     let mut value = input(90, 90, 0, &tables);
@@ -1492,7 +1620,7 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
 fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let walk = Route {
         legs: vec![
             Leg::Walk {
@@ -1547,7 +1675,7 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
 fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 500, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let walk = Route {
         legs: vec![
             Leg::Walk {
@@ -1621,7 +1749,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
         zone_table(vec![zone], kinds, vec![(0, carve)], vec![], &wilderness),
         wilderness,
     );
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let mut value = input(90, 90, 0, &tables);
     value.combat = Some(126);
     let route = route(90, 115);
@@ -1656,7 +1784,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
     );
     assert!(plan.intervals.iter().any(|row| row.escaping()));
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let r = fx.risk_tables(&tables);
+    let r = RiskTables::build(&tables);
     let ladder = Route {
         legs: vec![
             Leg::Transport {
@@ -1704,7 +1832,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
         ),
         WildernessRules::default(),
     );
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let route = self::route(80, 450);
     let mut value = input(255, 255, 0, &tables);
     value.prayer_base = 99;
@@ -1743,9 +1871,9 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
         ),
         w.clone(),
     );
-    let mut risk = fx.risk_tables(&tables);
+    let mut risk = RiskTables::build(&tables);
     for (i, (hit, rate)) in [(2, 1), (3, 4), (4, 5), (5, 5)].into_iter().enumerate() {
-        risk.kinds[i] = KindRisk::new(
+        *risk.npc_mut(fx.table.kinds()[i].npc_id).unwrap() = KindRisk::new(
             hit,
             rate,
             6 + i as u8,
@@ -1836,7 +1964,7 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
 fn u5_witnesses_unknown_overflow_and_multi_burst() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let w = WildernessRules::default();
     let cx = context(&fx, &risk, &tables);
     let route = route(88, 112);
@@ -1874,7 +2002,7 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         ),
         w.clone(),
     );
-    let risk = burst.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let burst_assessment = assess(
         burst.route(&route),
         &context(&burst, &risk, &tables),
@@ -1910,7 +2038,7 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         ),
         w,
     );
-    let risk = overflow.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     assert_eq!(
         assess(
             overflow.route(&route),
@@ -1927,7 +2055,7 @@ fn u9_assessment_allocation_and_cpu_measurement() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let start = std::time::Instant::now();
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     eprintln!("S2a RiskTables warm-combat build {:?}, KindRisk={} RiskInput={} Poison={} ZoneInterval={} Crossing={} Assessment={}",start.elapsed(),std::mem::size_of::<KindRisk>(),std::mem::size_of::<RiskInput>(),std::mem::size_of::<PoisonState>(),std::mem::size_of::<ZoneInterval>(),std::mem::size_of::<Crossing>(),std::mem::size_of::<RouteAssessment>());
     let cx = context(&fx, &risks, &tables);
     let mut timings = Vec::new();
@@ -1979,9 +2107,10 @@ fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
         ),
         w.clone(),
     );
-    let mut risk = fx.risk_tables(&tables);
-    let fact = risk.kinds[0];
-    risk.kinds[0] = KindRisk::new(
+    let mut risk = RiskTables::build(&tables);
+    let npc = fx.table.kinds()[0].npc_id;
+    let fact = *risk.npc(npc).unwrap();
+    *risk.npc_mut(npc).unwrap() = KindRisk::new(
         fact.max_hit,
         fact.rate,
         fact.r,
@@ -2074,7 +2203,7 @@ fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
 fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let cx = context(&fx, &risks, &tables);
     let shrimp = tables.selected().item_by_alias("shrimp").unwrap().id;
     let lobster = tables.selected().item_by_alias("lobster").unwrap().id;
@@ -2252,7 +2381,7 @@ fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
 fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risks = fx.risk_tables(&tables);
+    let risks = RiskTables::build(&tables);
     let cx = context(&fx, &risks, &tables);
     let walk = route(88, 112);
     let mut locked = input(90, 90, 0, &tables);
@@ -2296,7 +2425,6 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
         pack: Some(fx.pack()),
         intervals: vec![ZoneInterval::new(
             fx.bound(ZoneKey::Zone(0)),
-            fx.kind_of(0),
             ident,
             tile(100),
             1,
@@ -2308,7 +2436,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
             3,
             5,
             Style::Melee,
-            false,
+            None,
             false,
             false,
         )
@@ -2373,7 +2501,6 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
             .map(|_| {
                 ZoneInterval::new(
                     fx.bound(ZoneKey::Zone(0)),
-                    fx.kind_of(0),
                     ident,
                     tile(100),
                     1,
@@ -2385,7 +2512,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
                     6,
                     4,
                     Style::Melee,
-                    false,
+                    None,
                     false,
                     false,
                 )
@@ -2504,11 +2631,14 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
     );
     let start = std::time::Instant::now();
     let mut payload = None;
-    let allocations = allocation_counter::measure(|| payload = Some(fx.risk_tables(&combat)));
+    let allocations = allocation_counter::measure(|| payload = Some(RiskTables::build(&combat)));
     let elapsed = start.elapsed();
-    eprintln!("S2a first build selected={selected_elapsed:?} combat={combat_elapsed:?} risk250={elapsed:?}; RiskTables allocations={} payload={}B retained={}B; kinds={}",
-        allocations.count_total,allocations.bytes_total,allocations.bytes_current,fx.table.kinds().len());
-    assert!(payload.unwrap().kind(249).is_some());
+    eprintln!("S2a first build selected={selected_elapsed:?} combat={combat_elapsed:?} risk={elapsed:?}; RiskTables allocations={} payload={}B retained={}B; npcs={} zoned kinds={}",
+        allocations.count_total,allocations.bytes_total,allocations.bytes_current,combat.selected().npc_names().unwrap().rows.len(),fx.table.kinds().len());
+    let payload = payload.unwrap();
+    for kind in fx.table.kinds() {
+        assert!(payload.npc(kind.npc_id).is_some(), "{}", kind.id);
+    }
 }
 
 #[cfg(feature = "load")]
@@ -2544,7 +2674,7 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
     assert_eq!(slot.state(), crate::slot::RunState::Idle);
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     assert_eq!(facts::build_count_for_test(), 1);
     assess(
         fx.route(&route(88, 112)),
@@ -2562,9 +2692,8 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
 fn u5_hand_examples_typed_verdict_and_least_additional_reference_food() {
     let tables = tables();
     let kind = known_kind(&tables);
-    let risk =
-        Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default()).risk_tables(&tables);
-    let r = i32::from(risk.kind(0).unwrap().r);
+    let risk = RiskTables::build(&tables);
+    let r = i32::from(risk.npc(kind.npc_id).unwrap().r);
     assert_eq!(r, 6, "selected icewarrior has maxrange=5 and attackrange=0");
     let w = WildernessRules::default();
     let fx = Fixture::new(
@@ -2583,7 +2712,7 @@ fn u5_hand_examples_typed_verdict_and_least_additional_reference_food() {
         ),
         w.clone(),
     );
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let mut tiles: Vec<_> = (100 - r - 20..100 - r).map(tile).collect();
     tiles.extend((100 - r..=100 + r).map(tile));
     tiles.extend((1..=r).map(|dz| WorldTile {
@@ -2645,7 +2774,7 @@ fn u5_hand_examples_typed_verdict_and_least_additional_reference_food() {
 fn u5_origin_volley_and_raw_pending_launch_are_not_prayer_credited() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let cx = context(&fx, &risk, &tables);
     let walk = route(88, 112);
     let mut value = input(90, 90, 0, &tables);
@@ -2713,13 +2842,11 @@ fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
         ),
         w.clone(),
     );
-    let mut risk = fx.risk_tables(&tables);
-    assert!(
-        !risk.kinds[0].ap(),
-        "selected NPC facts override the zone ap hint"
-    );
-    let fact = risk.kinds[0];
-    risk.kinds[0] = KindRisk::new(
+    let mut risk = RiskTables::build(&tables);
+    let npc = fx.table.kinds()[0].npc_id;
+    let fact = *risk.npc(npc).unwrap();
+    assert!(!fact.ap(), "selected NPC facts override the zone ap hint");
+    *risk.npc_mut(npc).unwrap() = KindRisk::new(
         fact.max_hit,
         fact.rate,
         fact.r,
@@ -2771,7 +2898,7 @@ fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
 fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let mut teleport = edge(tile(100), tile(200), 5);
     teleport.kind = TransportKind::Teleport;
     let walk = Route {
@@ -2864,8 +2991,8 @@ fn u1_transport_input_hold_boundaries_cover_attached_and_standalone_legs() {
 fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 0), WildernessRules::default());
-    let risk = fx.risk_tables(&tables);
-    let r = i32::from(risk.kind(0).unwrap().r);
+    let risk = RiskTables::build(&tables);
+    let r = i32::from(risk.npc(known_kind(&tables).npc_id).unwrap().r);
     assert!(r > 0, "the envelope must be wider than the radius-0 rect");
     let value = input(99, 99, 0, &tables);
     let plan_from = |first: i32| {
@@ -2893,9 +3020,8 @@ fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
 fn r3_engaged_origin_outside_its_envelope_fails_closed() {
     let tables = tables();
     let r = i32::from(
-        Fixture::new(one_zone(&tables, 100, 0), WildernessRules::default())
-            .risk_tables(&tables)
-            .kind(0)
+        RiskTables::build(&tables)
+            .npc(known_kind(&tables).npc_id)
             .unwrap()
             .r,
     );
@@ -2920,7 +3046,7 @@ fn r3_engaged_origin_outside_its_envelope_fails_closed() {
         ),
         WildernessRules::default(),
     );
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let mut tiles = vec![origin, at(300, 299), origin];
     tiles.extend((301..=300 + r + 3).map(|x| at(x, 300)));
     let walk = Route {
@@ -2968,7 +3094,7 @@ fn r3_admission_never_passes_an_incomplete_plan() {
         ),
         WildernessRules::default(),
     );
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let walk = route(80, 170);
     assert!(build_plan(
         fx.path(&walk),
@@ -3009,7 +3135,7 @@ fn t5_1_assessment_and_admission_refuse_another_pack() {
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let other = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     assert_ne!(fx.pack(), other.pack(), "two worlds, two identities");
-    let risk = fx.risk_tables(&tables);
+    let risk = RiskTables::build(&tables);
     let walk = route(88, 112);
     let value = input(90, 90, 0, &tables);
 
@@ -3036,7 +3162,17 @@ fn t5_1_assessment_and_admission_refuse_another_pack() {
     assert_eq!(assessment.plan.pack, Some(fx.pack()));
     assert_eq!(assessment.plan.intervals.len(), 1);
     assert_eq!(assessment.plan.intervals[0].zone.pack(), fx.pack());
-    assert_eq!(assessment.plan.intervals[0].kind, 0);
+    assert_eq!(
+        fx.zones()
+            .kind(assessment.plan.intervals[0].zone)
+            .unwrap()
+            .npc_id(),
+        Some(fx.table.kinds()[0].npc_id)
+    );
+    assert_eq!(
+        other.zones().kind(assessment.plan.intervals[0].zone).err(),
+        Some(nav::contract::ContractError::PackMismatch)
+    );
     assert_eq!(
         assessment.plan.intervals[0].key(fx.zones()),
         Ok(ZoneKey::Zone(0))

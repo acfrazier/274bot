@@ -3,8 +3,8 @@
 //!
 //! This is the owner boundary for script's risk module (T5.1): the route,
 //! zone table, wilderness and exemptions it judges are served here as
-//! `nav::contract` views over the storage host-play retains, and the risk
-//! tables are built from the pack's kind rows read here.
+//! `nav::contract` views over the storage host-play retains. Script's risk
+//! facts are keyed by NPC id, never by the pack's kind rows.
 use std::sync::Arc;
 
 use api::quest_progress::EvidenceStamp;
@@ -12,7 +12,7 @@ use api::snapshot::{GameSnapshot, SnapshotView};
 use nav::producer;
 use nav::router::{AvoidRect, FindOptions, Route};
 use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneKey, ZoneTable};
+use nav::zones::{ZoneExempt, ZoneKey};
 use script::combat::frame::Frame;
 use script::combat::risk::{
     self, Estimate, KindSource, RiskTables, RouteAssessment, UnknownWhy, Verdict,
@@ -178,28 +178,10 @@ fn tables(world: &NavWorld) -> Option<&Tables> {
     world
         .risk_facts(|| {
             let combat = script::combat::guard::shared_tables().ok()?;
-            let risks = match world.graph.zones.as_ref() {
-                Some(zones) => risk_tables(zones, &combat),
-                None => RiskTables::without_zones(&combat),
-            };
+            let risks = RiskTables::build(&combat);
             Some(Tables { combat, risks })
         })
         .as_ref()
-}
-
-/// Script's per-kind risk facts from the pack's kind rows and each zone
-/// row's kind, read here at the owner boundary with the facade's kind
-/// semantics (`ZoneKindView::npc_id` / `hazard_damage`); script never reads
-/// zone storage.
-pub fn risk_tables(zones: &ZoneTable, combat: &CombatTables) -> RiskTables {
-    RiskTables::build(
-        zones.kinds().iter().map(|kind| KindSource {
-            npc_id: (kind.npc_id != -1).then_some(kind.npc_id),
-            hazard_damage: nav::zones::curated::hazard_damage(kind.id.as_ref()),
-        }),
-        zones.zones().iter().map(|zone| zone.kind),
-        combat,
-    )
 }
 
 fn unknown_assessment(
@@ -354,7 +336,16 @@ pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey])
         zones
             .zones()
             .get(usize::from(index))
-            .and_then(|zone| tables.risks.kind(zone.kind))
+            .and_then(|zone| zones.kinds().get(usize::from(zone.kind)))
+            .map(|kind| {
+                let hazard = kind.npc_id == -1;
+                tables.risks.facts(KindSource {
+                    npc_id: (!hazard).then_some(kind.npc_id),
+                    hazard_damage: hazard
+                        .then(|| nav::zones::curated::hazard_damage(kind.id.as_ref()))
+                        .flatten(),
+                })
+            })
             .is_some_and(|kind| {
                 kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
             })

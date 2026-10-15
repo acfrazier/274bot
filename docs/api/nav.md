@@ -607,9 +607,12 @@ creation does not construct it. Host admission initializes combat/risk facts
 lazily once per bound `NavWorld`; its retained route assessments share `Arc`s
 rather than rebuilding facts for each bot.
 
-The estimate builds a compact `KindRisk` for each packed zone kind from the
-selected `NpcNameRow` and `CombatTables`; it does not change routing or pack
-format. Maximum hits reuse the shared `npc_max_hit` helper, and attack intervals
+The estimate builds a compact `KindRisk` for each selected NPC from its
+`NpcNameRow` and `CombatTables`, keyed by NPC id, and reads a zone's facts
+through the zone's `nav::contract::ZoneKindView` (NPC id or curated hazard
+damage); no pack kind-row index reaches the estimate, and it does not change
+routing or pack format. Maximum hits reuse the shared `npc_max_hit` helper,
+and attack intervals
 use `CombatTables::npc_rate` (the selected combat parameter defaults to four
 ticks). Missing NPC rows or stats, unsupported styles, and values outside the
 compact model stay explicitly unknown rather than becoming zero-risk facts.

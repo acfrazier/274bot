@@ -16,7 +16,8 @@ pub enum Verdict {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnknownWhy {
-    Kind(u16),
+    /// An engaged zone's kind is outside the bounded risk model, for this class.
+    Kind(super::UnknownKind),
     AlreadyEngaged,
     NoZoneTable,
     MissingFacts,
