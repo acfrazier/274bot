@@ -237,7 +237,8 @@ fn walk_ticks(tiles: usize) -> Result<i32, UnknownWhy> {
 }
 
 /// The pack row index behind a zone view (its bound key is always a zone
-/// row, never a group). `RiskTables` keys its row map by it.
+/// row, never a group): a dense per-pack key for deduplicating the zones of
+/// one table view, never a lookup into any other table.
 pub(super) fn zone_index(zone: ZoneView<'_>) -> Result<u16, UnknownWhy> {
     match zone.key().key() {
         ZoneKey::Zone(index) => Ok(index),
@@ -276,17 +277,14 @@ fn interval(
     start: u16,
 ) -> Result<ZoneInterval, UnknownWhy> {
     let kind = zone.kind();
-    let kind_index = risks
-        .row_kind(zone_index(zone)?)
-        .ok_or(UnknownWhy::MissingFacts)?;
-    let risk = risks.kind(kind_index).ok_or(UnknownWhy::MissingFacts)?;
+    let risk = risks.zone_kind(kind);
     let mut envelope_first = None;
     let mut envelope_last = None;
     let mut last_after = None;
     for i in usize::from(start)..path.len() {
         let i = i as u16;
         let tile = path.point(i).ok_or(UnknownWhy::Overflow)?.tile;
-        if in_envelope(tile, zone, risk, input) {
+        if in_envelope(tile, zone, &risk, input) {
             envelope_first.get_or_insert(i);
             envelope_last = Some(i);
             if i >= a {
@@ -304,7 +302,6 @@ fn interval(
     let (spawn_x, spawn_z) = zone.spawn();
     ZoneInterval::new(
         zone.key(),
-        kind_index,
         kind.npc_id().unwrap_or(-1),
         WorldTile {
             x: spawn_x,
@@ -320,7 +317,7 @@ fn interval(
         risk.max_hit,
         risk.rate,
         risk.style,
-        risk.unknown_for(input.map_members).is_some(),
+        risk.unknown_for(input.map_members),
         risk.ap(),
         kind.npc_id().is_none_or(|id| id < 0),
     )

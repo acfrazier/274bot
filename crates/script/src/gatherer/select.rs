@@ -1446,19 +1446,7 @@ pub(crate) mod tests {
     pub(crate) fn test_nav_lease(
         configure: impl FnOnce(&mut nav::world::NavWorld),
     ) -> nav::contract::NavLease {
-        nav::contract::NavLease::wrap(
-            test_nav_world(configure),
-            nav::contract::PackDigest::of(b"script test fixture"),
-        )
-        .expect("lease ids are not exhausted in tests")
-    }
-
-    /// The fixture world itself, for a test that needs the same world behind
-    /// several views (the risk tests serve route views from it).
-    pub(crate) fn test_nav_world(
-        configure: impl FnOnce(&mut nav::world::NavWorld),
-    ) -> std::sync::Arc<nav::world::NavWorld> {
-        test_nav_world_over(empty_collision_fixture(), configure)
+        test_nav_lease_over(empty_collision_fixture(), configure)
     }
 
     pub(crate) fn test_nav_world_over(
