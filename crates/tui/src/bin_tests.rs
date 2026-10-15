@@ -1397,10 +1397,12 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let root = fake_rs2b0t_tree(&iso.dir, false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
-    let n = session
-        .import_rs2b0t_catalog(&mut app, &root)
+    session
+        .import_rs2b0t_catalog(&root)
         .expect("import");
-    assert_eq!(n, 1);
+    assert!(session.scripts.catalog_work_pending());
+    assert!(!iso.home.join(".274bot/rs2b0t-path").exists());
+    settle_catalog_work(&mut session, &mut app);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
@@ -1433,6 +1435,21 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     assert!(
         !session.scripts.starts_pending(),
         "script Start did not settle"
+    );
+}
+
+fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts(app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    session.core.poll();
+    session.poll_scripts(app);
+    assert!(
+        !session.scripts.catalog_work_pending(),
+        "catalog work did not settle"
     );
 }
 
@@ -4361,4 +4378,45 @@ fn import_overlay_debug_holds_no_export_password() {
     );
     let shown = format!("{view:?}");
     assert!(!shown.contains(SECRET), "{shown}");
+}
+
+#[test]
+fn profile_import_preview_waits_for_first_catalog_scan() {
+    let iso = IsolatedEnv::enter("tui-import-catalog-pending");
+    let root = fake_rs2b0t_tree(&iso.dir, false);
+    iso.set_rs2b0t(&root);
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    let path = iso.dir.join("profiles.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "kind": frontend_core::rs2b0t_import::PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    session.profile_import(
+        &mut app,
+        ImportAction::Preview(path.display().to_string()),
+    );
+    assert!(session.scripts.catalog_work_pending());
+    assert!(session.profile_import_preview_pending);
+    assert_eq!(
+        session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Path
+    );
+
+    settle_catalog_work(&mut session, &mut app);
+    assert!(!session.profile_import_preview_pending);
+    assert_eq!(
+        session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview
+    );
 }

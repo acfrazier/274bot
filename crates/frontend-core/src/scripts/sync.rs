@@ -971,7 +971,11 @@ impl Scripts {
             .then(|| NativeCopyCancellation::new(op));
         let mut failed = Vec::new();
         let mut pending = Vec::new();
-        let resolved_assignment = self.assignment_for(&selection, None);
+        let resolved_assignment = match self.assignment_for(&selection, None) {
+            Ok(Some(assignment)) => Ok(assignment),
+            Ok(None) => Err("catalog preparation pending".into()),
+            Err(error) => Err(error),
+        };
         for target in targets {
             let row = core.vault().and_then(|v| v.get(&target)).cloned();
             let Some(mut row) = row else {

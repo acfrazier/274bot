@@ -282,6 +282,8 @@ pub struct Scripts {
     catalog_filled: bool,
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
+    /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
+    async_work: reload::ScriptWorkState,
     reload: reload::ReloadState,
     sync: sync::SyncState,
     notice: Option<Notice>,
@@ -314,6 +316,7 @@ impl Scripts {
             last_bulk_report: None,
             catalog_filled: false,
             catalog_root: None,
+            async_work: reload::ScriptWorkState::default(),
             reload: reload::ReloadState::default(),
             sync: sync::SyncState::default(),
             notice: None,
@@ -489,7 +492,7 @@ impl Scripts {
         Ok((run_identity, generation))
     }
 
-    fn show(&mut self, text: impl Into<String>) {
+    pub(crate) fn show(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.shown = Some(text.clone());
         self.notice = Some(Notice::Show(text));
@@ -528,27 +531,19 @@ impl Scripts {
         self.catalog_filled = true;
     }
 
-    /// Register the catalog and remember its root only after registration succeeds.
-    pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
-        let registered = self.js.register_rs2b0t(root, path_file)?;
-        self.catalog_root = Some(root.to_path_buf());
-        self.catalog_filled = true;
-        Ok(registered)
-    }
-
-    /// Register the catalog at `root` once per session. Without a root the
-    /// catalog stays unfilled so a later Browse can still prompt.
+    /// Queue the catalog's first source-only scan once per root. The shared
+    /// WorkAdmission worker performs all registry and source-file reads.
     pub fn fill_catalog_once(&mut self, root: Option<&Path>) {
-        if self.catalog_filled {
-            return;
-        }
         let Some(root) = root else {
             return;
         };
-        if let Err(error) = self.register_catalog(root, &script::default_rs2b0t_path_file()) {
-            if host::debug_enabled() {
-                eprintln!("[scripts] $RS2B0T registry: {error}");
-            }
+        if self.catalog_filled && self.catalog_root.as_deref() == Some(root) {
+            return;
+        }
+        if let Err(error) =
+            self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
+        {
+            self.show(format!("$RS2B0T registry: {error}"));
         }
     }
 
@@ -957,7 +952,9 @@ impl Scripts {
     /// Whether any Load Start has not settled, including paced Starts still
     /// waiting for a permit.
     pub fn starts_pending(&self) -> bool {
-        !self.starts.is_empty() || !self.admit.is_empty()
+        !self.starts.is_empty()
+            || !self.admit.is_empty()
+            || self.start_preparation_pending()
     }
 
     /// k-of-n place while `profile` waits for a Start-all (or marked) permit.
@@ -973,11 +970,25 @@ impl Scripts {
 
     /// Drop a waiting Start and record `reason` in the running Start tally.
     pub fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
-        if self.admit.leave(profile).is_none() {
-            return false;
+        let pending_marked = self
+            .cancel_pending_catalog_assignment(Some(profile))
+            .is_some();
+        if pending_marked {
+            self.credit_skipped(profile, reason);
         }
-        self.credit_skipped(profile, reason);
-        true
+        if self.admit.leave(profile).is_some() {
+            self.credit_skipped(profile, reason);
+            return true;
+        }
+        if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
+            if tallied {
+                self.credit_skipped(profile, reason);
+            } else if kind == StartKind::RestartSettings {
+                self.show(format!("Restart cancelled for {profile}: {reason}"));
+            }
+            return true;
+        }
+        pending_marked
     }
 
     /// Open the running tally for a Start click. While a bot it holds still
@@ -985,7 +996,8 @@ impl Scripts {
     /// names it); otherwise the finished tally is replaced.
     pub(crate) fn open_tally(&mut self, label: &'static str) {
         let open = self.tally.as_ref().is_some_and(StartTally::waiting)
-            || self.starts.values().any(|pending| pending.tallied);
+            || self.starts.values().any(|pending| pending.tallied)
+            || self.tallied_start_preparation_pending();
         match self.tally.as_mut() {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
@@ -1005,6 +1017,14 @@ impl Scripts {
     pub(crate) fn tally_fail(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Failed(reason.to_string()), LogTo::Slot);
     }
+    pub(crate) fn tally_queued_pending(&mut self, profile: &str) {
+        self.tally_record(
+            profile,
+            Outcome::Held("catalog scan pending".into()),
+            LogTo::Slot,
+        );
+    }
+
 
     /// Record `profile`'s outcome in the running tally. A new skip or
     /// failure also goes to the log (`log`), so it survives a later banner.
@@ -1167,72 +1187,9 @@ impl Scripts {
                 Ok(())
             }
             script::ScriptSel::Loaded(source, lookup) => {
-                // A saved catalog assignment restored at launch names a card
-                // before any Browse/Load has filled the catalog.
-                if *source == script::ScriptSource::Catalog {
-                    self.fill_catalog_once(catalog_root);
-                }
-                let card = self
-                    .startable_card(*source, lookup)
-                    .map_err(script::StartLoadError::Refused)?;
-                if let Some(reason) = &card.unloadable {
-                    return Err(script::StartLoadError::Refused(format!(
-                        "unloadable import: {reason}"
-                    )));
-                }
-                self.js
-                    .ensure_js(*source, lookup)
-                    .map_err(script::StartLoadError::Refused)?;
-                let card = self.js.get(*source, lookup).cloned().ok_or_else(|| {
-                    script::StartLoadError::Refused(format!("no loaded script: {lookup}"))
-                })?;
-                let bag = self.merged_profile_bag(
-                    core,
-                    profile,
-                    *source,
-                    &card.name,
-                    &card.path,
-                    &card.settings_schema,
-                );
-                let bag = (!bag.is_empty()).then_some(bag);
-                let siblings = script::resolve_sibling_modules(
-                    &card.path,
-                    &card.origin,
-                    self.js.cache(),
-                    script::CacheMeta {
-                        kind: card.kind,
-                        source: card.source,
-                        shape: None,
-                        api_family: Some(card.api_family.as_str().into()),
-                    },
-                )
-                .map_err(script::StartLoadError::Refused)?;
-                let start = ScriptStart::Load {
-                    js: card.js.clone(),
-                    shape: card.shape,
-                    bag,
-                    siblings,
-                };
-                if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
-                    if matches!(e, script::StartLoadError::Waiting(_)) {
-                        return Err(e);
-                    }
-                    return self
-                        .js
-                        .record_start_result(&card, Err(e))
-                        .map_err(script::StartLoadError::Refused);
-                }
-                self.starts.insert(
-                    profile.to_string(),
-                    PendingStart {
-                        card: PendingCard::Loaded(Box::new(card)),
-                        kind,
-                        tallied,
-                    },
-                );
-                Ok(())
+                self.queue_loaded_start(profile, *source, lookup, catalog_root, kind, tallied)
             }
-        }
+    }
     }
 
     /// Start every wall member idle on its last successful assignment.
@@ -1330,7 +1287,29 @@ impl Scripts {
                 LogTo::Slot,
             );
         }
-        if !cancelled.is_empty() {
+        let preparing = self.cancel_all_start_preparations();
+        for (profile, _, tallied) in &preparing {
+            if *tallied {
+                self.tally_record(
+                    profile,
+                    Outcome::Skipped("cancelled".into()),
+                    LogTo::Slot,
+                );
+            }
+        }
+        let pending_marked = self
+            .cancel_pending_catalog_assignment(None)
+            .unwrap_or_default();
+        for profile in &pending_marked {
+            self.tally_record(
+                profile,
+                Outcome::Skipped("cancelled".into()),
+                LogTo::Slot,
+            );
+        }
+        let cancelled_any =
+            !cancelled.is_empty() || !preparing.is_empty() || !pending_marked.is_empty();
+        if cancelled_any {
             self.publish_bulk();
         }
         self.publish_start_places(core);
@@ -1345,7 +1324,7 @@ impl Scripts {
             return stopped;
         }
         self.last_bulk_report = Some(report);
-        if stopped > 0 || !cancelled.is_empty() {
+        if stopped > 0 || cancelled_any {
             self.clear_notice();
         }
         stopped
@@ -1365,6 +1344,7 @@ impl Scripts {
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.settle_parameter_edits(core);
+        self.poll_script_work(core);
         self.poll_reload_preparation(core);
         self.poll_reload_validation(core);
         self.release_stopped_restarts(core);

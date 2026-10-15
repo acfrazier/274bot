@@ -129,6 +129,124 @@ enum PreparationJob {
     },
 }
 
+const MAX_PENDING_STARTS: usize = 64;
+
+/// Operator preparations that share the process WorkAdmission worker. Pending
+/// variants retain one bounded snapshot for retry when admission is Full.
+#[derive(Default)]
+pub(super) struct ScriptWorkState {
+    next_generation: u64,
+    catalog_generation: u64,
+    catalog: Option<CatalogJob>,
+    catalog_fill_result: Option<Result<(), String>>,
+    catalog_import_result: Option<(PathBuf, Result<usize, String>)>,
+    starts: std::collections::HashMap<String, StartPreparation>,
+    transpile_generation: u64,
+    transpile: Option<TranspileJob>,
+    transpile_result: Option<TranspileResult>,
+    pending_marked_action: Option<crate::marked::PendingCatalogAssignment>,
+}
+
+enum CatalogJob {
+    FillPending {
+        generation: u64,
+        root: PathBuf,
+        path_file: PathBuf,
+        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+    },
+    FillRunning {
+        generation: u64,
+        root: PathBuf,
+        path_file: PathBuf,
+        task: script::preparation::PreparedTask<Result<script::CatalogDiff, String>>,
+    },
+    ImportPending {
+        generation: u64,
+        root: PathBuf,
+        path_file: PathBuf,
+        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+    },
+    ImportRunning {
+        generation: u64,
+        root: PathBuf,
+        path_file: PathBuf,
+        task: script::preparation::PreparedTask<
+            Result<script::load::CatalogPreparationResult, String>,
+        >,
+    },
+}
+
+struct StartDemand {
+    selection: script::ScriptSel,
+    kind: StartKind,
+    tallied: bool,
+    catalog_root: Option<PathBuf>,
+}
+
+struct StartPreparation {
+    generation: u64,
+    demand: StartDemand,
+    stage: StartStage,
+}
+
+enum StartStage {
+    WaitingCatalog,
+    Pending {
+        snapshot: Arc<script::load::CardPreparationSnapshot>,
+    },
+    Running {
+        task: script::preparation::PreparedTask<
+            Result<script::load::CardPreparationOutcome, String>,
+        >,
+    },
+    Ready {
+        card: script::JsCard,
+        siblings: Vec<(String, String)>,
+        bag: Option<serde_json::Map<String, serde_json::Value>>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TranspileClient {
+    PanelQueue,
+    ExternalLoader,
+    LiveSetup,
+}
+
+enum TranspileJob {
+    Pending {
+        generation: u64,
+        client: TranspileClient,
+        source: script::ScriptSource,
+        lookup: String,
+        snapshot: Arc<script::load::CardPreparationSnapshot>,
+    },
+    Running {
+        generation: u64,
+        client: TranspileClient,
+        source: script::ScriptSource,
+        lookup: String,
+        task: script::preparation::PreparedTask<
+            Result<script::load::CardPreparationOutcome, String>,
+        >,
+    },
+}
+
+struct TranspileResult {
+    generation: u64,
+    client: TranspileClient,
+    source: script::ScriptSource,
+    lookup: String,
+    result: Result<(), String>,
+}
+
+impl ScriptWorkState {
+    fn next_generation(&mut self) -> u64 {
+        self.next_generation = self.next_generation.wrapping_add(1);
+        self.next_generation
+    }
+}
+
 /// Reload transaction state. `generation` fences every prepared candidate
 /// and validation result: Cancel and Stop all bump it.
 #[derive(Default)]
@@ -162,6 +280,1140 @@ impl ReloadState {
         self.preparation = None;
         self.validation = None;
         self.clear_pending();
+    }
+}
+
+impl Scripts {
+    /// Whether a catalog fill or import has been submitted or retained for a
+    /// bounded WorkAdmission retry.
+    pub fn catalog_work_pending(&self) -> bool {
+        self.async_work.catalog.is_some()
+    }
+
+    /// Queue the first source-only catalog scan. The caller may retry this
+    /// method after a hard refusal; Full is retained internally.
+    pub fn request_catalog_fill(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
+        if self.catalog_root.as_deref() == Some(root) && self.catalog_filled {
+            return Ok(());
+        }
+        let active_root = self.async_work.catalog.as_ref().map(|job| match job {
+            CatalogJob::FillPending { root, .. }
+            | CatalogJob::FillRunning { root, .. }
+            | CatalogJob::ImportPending { root, .. }
+            | CatalogJob::ImportRunning { root, .. } => root.as_path(),
+        });
+        match active_root {
+            Some(active_root) if active_root == root => return Ok(()),
+            Some(_) => return Err("catalog preparation is already pending for another root".into()),
+            None => {}
+        }
+        if self.async_work.catalog_import_result.is_some() {
+            return Err("the previous catalog import result has not been collected".into());
+        }
+        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
+        let generation = self.async_work.next_generation();
+        self.async_work.catalog_generation = generation;
+        self.async_work.catalog_fill_result = None;
+        self.async_work.catalog = Some(CatalogJob::FillPending {
+            generation,
+            root: root.to_path_buf(),
+            path_file: path_file.to_path_buf(),
+            snapshot,
+        });
+        self.submit_catalog_job()
+    }
+
+    /// Queue an explicit catalog import and its bounded preparation. Unlike
+    /// the first Browse scan, the import also prepares changed cards.
+    pub fn request_catalog_import(&mut self, root: &Path, path_file: &Path) -> Result<(), String> {
+        if self.async_work.catalog.is_some() {
+            return Err("catalog preparation is already pending".into());
+        }
+        if self.async_work.catalog_import_result.is_some() {
+            return Err("the previous catalog import result has not been collected".into());
+        }
+        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
+        let generation = self.async_work.next_generation();
+        self.async_work.catalog_generation = generation;
+        self.async_work.catalog_fill_result = None;
+        self.async_work.catalog = Some(CatalogJob::ImportPending {
+            generation,
+            root: root.to_path_buf(),
+            path_file: path_file.to_path_buf(),
+            snapshot,
+        });
+        self.submit_catalog_job()
+    }
+
+    pub fn take_catalog_import_result(
+        &mut self,
+    ) -> Option<(PathBuf, Result<usize, String>)> {
+        self.async_work.catalog_import_result.take()
+    }
+
+    /// Request one card's preparation through WorkAdmission for the panel
+    /// warmup queue. Full is retained as one bounded demand.
+    pub fn request_transpile(
+        &mut self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<(), String> {
+        self.request_transpile_for(TranspileClient::PanelQueue, source, lookup)
+            .map(|_| ())
+    }
+
+    /// Request one card's preparation for the panel's external file loader.
+    /// `Ok(false)` means the single worker slot belongs to another client;
+    /// the loader should retain its request and retry on a later dispatch.
+    pub fn request_external_loader_transpile(
+        &mut self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<bool, String> {
+        self.request_transpile_for(TranspileClient::ExternalLoader, source, lookup)
+    }
+
+    pub fn external_loader_transpile_pending(&self) -> bool {
+        self.transpile_pending_for(TranspileClient::ExternalLoader)
+    }
+
+    pub fn take_external_loader_transpile_result(
+        &mut self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Option<Result<(), String>> {
+        self.take_transpile_result_for(TranspileClient::ExternalLoader, source, lookup)
+    }
+
+    fn request_transpile_for(
+        &mut self,
+        client: TranspileClient,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<bool, String> {
+        if let Some(job) = self.async_work.transpile.as_ref() {
+            let (active_client, active_source, active_lookup) = match job {
+                TranspileJob::Pending {
+                    client,
+                    source,
+                    lookup,
+                    ..
+                }
+                | TranspileJob::Running {
+                    client,
+                    source,
+                    lookup,
+                    ..
+                } => (*client, *source, lookup.as_str()),
+            };
+            return Ok(active_client == client && active_source == source && active_lookup == lookup);
+        }
+        if let Some(result) = self.async_work.transpile_result.as_ref() {
+            return Ok(result.client == client && result.source == source && result.lookup == lookup);
+        }
+        if self.js.js_is_ready(source, lookup) {
+            let generation = self.async_work.next_generation();
+            self.async_work.transpile_generation = generation;
+            self.async_work.transpile_result = Some(TranspileResult {
+                generation,
+                client,
+                source,
+                lookup: lookup.to_string(),
+                result: Ok(()),
+            });
+            return Ok(true);
+        }
+        let snapshot = Arc::new(
+            self.js
+                .card_preparation_snapshot(source, lookup, None)?
+                .force_prepare(),
+        );
+        let generation = self.async_work.next_generation();
+        self.async_work.transpile_generation = generation;
+        self.async_work.transpile = Some(TranspileJob::Pending {
+            generation,
+            client,
+            source,
+            lookup: lookup.to_string(),
+            snapshot,
+        });
+        if let Err(error) = self.submit_transpile_job() {
+            self.async_work.transpile_result = None;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    pub fn transpile_pending(&self) -> bool {
+        self.transpile_pending_for(TranspileClient::PanelQueue)
+    }
+
+    fn transpile_pending_for(&self, client: TranspileClient) -> bool {
+        self.async_work.transpile.as_ref().is_some_and(|job| match job {
+            TranspileJob::Pending {
+                client: active, ..
+            }
+            | TranspileJob::Running {
+                client: active, ..
+            } => *active == client,
+        })
+    }
+
+    pub fn take_transpile_result(
+        &mut self,
+    ) -> Option<(script::ScriptSource, String, Result<(), String>)> {
+        let result = self.async_work.transpile_result.as_ref()?;
+        if result.generation != self.async_work.transpile_generation
+            || result.client != TranspileClient::PanelQueue
+        {
+            return None;
+        }
+        let result = self.async_work.transpile_result.take().unwrap();
+        Some((result.source, result.lookup, result.result))
+    }
+
+    fn take_transpile_result_for(
+        &mut self,
+        client: TranspileClient,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Option<Result<(), String>> {
+        let matches = self.async_work.transpile_result.as_ref().is_some_and(|result| {
+            result.generation == self.async_work.transpile_generation
+                && result.client == client
+                && result.source == source
+                && result.lookup == lookup
+        });
+        matches.then(|| self.async_work.transpile_result.take().unwrap().result)
+    }
+
+    /// Synchronous receipt for non-interactive live setup before its session
+    /// begins pumping. Interactive callers use `request_catalog_fill` and
+    /// advance it from `Scripts::poll`.
+    pub fn fill_catalog_blocking(
+        &mut self,
+        root: &Path,
+        path_file: &Path,
+    ) -> Result<(), String> {
+        self.request_catalog_fill(root, path_file)?;
+        while self.catalog_work_pending() {
+            self.poll_catalog_job();
+            if self.catalog_work_pending() {
+                std::thread::yield_now();
+            }
+        }
+        self.async_work
+            .catalog_fill_result
+            .take()
+            .unwrap_or(Ok(()))
+    }
+
+    /// Synchronous receipt for non-interactive live setup before its session
+    /// begins pumping. Interactive callers use `request_transpile`.
+    pub fn transpile_blocking(
+        &mut self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<(), String> {
+        loop {
+            if self.request_transpile_for(TranspileClient::LiveSetup, source, lookup)? {
+                break;
+            }
+            self.poll_transpile_job();
+            if self.async_work.transpile_result.is_some()
+                && !self.transpile_pending_for(TranspileClient::LiveSetup)
+            {
+                return Err("another client has an uncollected card preparation result".into());
+            }
+            std::thread::yield_now();
+        }
+        loop {
+            self.poll_transpile_job();
+            if let Some(result) = self.take_transpile_result_for(
+                TranspileClient::LiveSetup,
+                source,
+                lookup,
+            ) {
+                return result;
+            }
+            if !self.transpile_pending_for(TranspileClient::LiveSetup) {
+                return Err("card preparation finished without a result".into());
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    fn submit_catalog_job(&mut self) -> Result<(), String> {
+        let Some(job) = self.async_work.catalog.take() else {
+            return Ok(());
+        };
+        match job {
+            CatalogJob::FillPending {
+                generation,
+                root,
+                path_file,
+                snapshot,
+            } => {
+                let input = match script::preparation::PreparationInput::new(
+                    generation,
+                    snapshot.input_bytes(),
+                    snapshot.scratch_bytes(),
+                    snapshot.result_bytes(),
+                ) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        let error = error.to_string();
+                        self.async_work.catalog_fill_result = Some(Err(error.clone()));
+                        self.show(format!("$RS2B0T registry: {error}"));
+                        return Err(error);
+                    }
+                };
+                let work = Arc::clone(&snapshot).cooperative_diff();
+                match script::preparation::submit_cooperative(
+                    script::preparation::PreparationKind::Catalogue,
+                    api::identity::Scope::Process,
+                    input,
+                    work,
+                ) {
+                    Ok(task) => {
+                        self.async_work.catalog = Some(CatalogJob::FillRunning {
+                            generation,
+                            root,
+                            path_file,
+                            task,
+                        });
+                        Ok(())
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.async_work.catalog = Some(CatalogJob::FillPending {
+                            generation,
+                            root,
+                            path_file,
+                            snapshot,
+                        });
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        self.async_work.catalog_fill_result = Some(Err(error.clone()));
+                        self.show(format!("$RS2B0T registry: {error}"));
+                        Err(error)
+                    }
+                }
+            }
+            CatalogJob::ImportPending {
+                generation,
+                root,
+                path_file,
+                snapshot,
+            } => {
+                let input = match script::preparation::PreparationInput::new(
+                    generation,
+                    snapshot.input_bytes(),
+                    snapshot.scratch_bytes(),
+                    snapshot.result_bytes(),
+                ) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        let error = error.to_string();
+                        self.async_work.catalog_import_result =
+                            Some((root, Err(error.clone())));
+                        self.show(format!("Import catalog: {error}"));
+                        return Err(error);
+                    }
+                };
+                let work = Arc::clone(&snapshot).cooperative_prepare();
+                match script::preparation::submit_cooperative(
+                    script::preparation::PreparationKind::Catalogue,
+                    api::identity::Scope::Process,
+                    input,
+                    work,
+                ) {
+                    Ok(task) => {
+                        self.async_work.catalog = Some(CatalogJob::ImportRunning {
+                            generation,
+                            root,
+                            path_file,
+                            task,
+                        });
+                        Ok(())
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.async_work.catalog = Some(CatalogJob::ImportPending {
+                            generation,
+                            root,
+                            path_file,
+                            snapshot,
+                        });
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        self.async_work.catalog_import_result =
+                            Some((root, Err(error.clone())));
+                        self.show(format!("Import catalog: {error}"));
+                        Err(error)
+                    }
+                }
+            }
+            CatalogJob::FillRunning {
+                generation,
+                root,
+                path_file,
+                task,
+            } => {
+                self.async_work.catalog = Some(CatalogJob::FillRunning {
+                    generation,
+                    root,
+                    path_file,
+                    task,
+                });
+                Ok(())
+            }
+            CatalogJob::ImportRunning {
+                generation,
+                root,
+                path_file,
+                task,
+            } => {
+                self.async_work.catalog = Some(CatalogJob::ImportRunning {
+                    generation,
+                    root,
+                    path_file,
+                    task,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    fn poll_catalog_job(&mut self) {
+        let finished = match self.async_work.catalog.as_ref() {
+            Some(CatalogJob::FillRunning { task, .. }) => task.is_finished(),
+            Some(CatalogJob::ImportRunning { task, .. }) => task.is_finished(),
+            None => return,
+        };
+        if !finished {
+            if matches!(
+                self.async_work.catalog.as_ref(),
+                Some(CatalogJob::FillPending { .. } | CatalogJob::ImportPending { .. })
+            ) {
+                let _ = self.submit_catalog_job();
+            }
+            return;
+        }
+        let Some(job) = self.async_work.catalog.take() else {
+            return;
+        };
+        match job {
+            CatalogJob::FillRunning {
+                generation,
+                root,
+                path_file,
+                task,
+            } if generation == self.async_work.catalog_generation => match task.join() {
+                Ok(Ok(diff)) => {
+                    self.js.apply_catalog_diff(diff);
+                    self.js.set_catalog_root(&root);
+                    self.catalog_root = Some(root.clone());
+                    self.catalog_filled = true;
+                    let _ = script::persist_rs2b0t_root_at(&root, &path_file);
+                    self.async_work.catalog_fill_result = Some(Ok(()));
+                }
+                Ok(Err(error)) => self.fail_catalog_fill(error),
+                Err(error) => self.fail_catalog_fill(error.to_string()),
+            },
+            CatalogJob::ImportRunning {
+                generation,
+                root,
+                path_file,
+                task,
+            } if generation == self.async_work.catalog_generation => match task.join() {
+                Ok(Ok(result)) => match self.apply_catalog_import(root.clone(), path_file, result) {
+                    Ok(count) => {
+                        self.async_work.catalog_import_result = Some((root, Ok(count)));
+                        self.show(format!("Catalog imported: {count} cards"));
+                    }
+                    Err(error) => {
+                        self.async_work.catalog_import_result =
+                            Some((root, Err(error.clone())));
+                        self.show(format!("Import catalog: {error}"));
+                    }
+                },
+                Ok(Err(error)) => {
+                    self.async_work.catalog_import_result =
+                        Some((root, Err(error.clone())));
+                    self.show(format!("Import catalog: {error}"));
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    self.async_work.catalog_import_result =
+                        Some((root, Err(error.clone())));
+                    self.show(format!("Import catalog: {error}"));
+                }
+            },
+            CatalogJob::FillRunning { .. }
+            | CatalogJob::ImportRunning { .. }
+            | CatalogJob::FillPending { .. }
+            | CatalogJob::ImportPending { .. } => {}
+        }
+    }
+
+    fn fail_catalog_fill(&mut self, error: String) {
+        self.async_work.catalog_fill_result = Some(Err(error.clone()));
+        self.show(format!("$RS2B0T registry: {error}"));
+    }
+
+    fn apply_catalog_import(
+        &mut self,
+        root: PathBuf,
+        path_file: PathBuf,
+        result: script::load::CatalogPreparationResult,
+    ) -> Result<usize, String> {
+        let script::load::CatalogPreparationResult {
+            diff,
+            prepared,
+            warmed,
+            prepare_failed,
+        } = result;
+        for failure in prepare_failed {
+            self.js.record_failure(failure);
+        }
+        self.js.apply_catalog_diff(diff);
+        for item in prepared.into_iter().chain(warmed) {
+            self.js.commit_prepared(item)?;
+        }
+        self.js.set_catalog_root(&root);
+        self.catalog_root = Some(root.clone());
+        self.catalog_filled = true;
+        let _ = script::persist_rs2b0t_root_at(&root, &path_file);
+        Ok(self
+            .js
+            .cards()
+            .iter()
+            .filter(|card| card.source == script::ScriptSource::Catalog)
+            .count())
+    }
+
+    fn submit_transpile_job(&mut self) -> Result<(), String> {
+        let Some(job) = self.async_work.transpile.take() else {
+            return Ok(());
+        };
+        let TranspileJob::Pending {
+            generation,
+            client,
+            source,
+            lookup,
+            snapshot,
+        } = job
+        else {
+            self.async_work.transpile = Some(job);
+            return Ok(());
+        };
+        let input = match script::preparation::PreparationInput::new(
+            generation,
+            snapshot.input_bytes(),
+            snapshot.scratch_bytes(),
+            snapshot.result_bytes(),
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                self.async_work.transpile_result = Some(TranspileResult {
+                    generation,
+                    client,
+                    source,
+                    lookup,
+                    result: Err(error.to_string()),
+                });
+                return Err(error.to_string());
+            }
+        };
+        let work = Arc::clone(&snapshot).cooperative_prepare();
+        match script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Card,
+            api::identity::Scope::Process,
+            input,
+            work,
+        ) {
+            Ok(task) => {
+                self.async_work.transpile = Some(TranspileJob::Running {
+                    generation,
+                    client,
+                    source,
+                    lookup,
+                    task,
+                });
+                Ok(())
+            }
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => {
+                self.async_work.transpile = Some(TranspileJob::Pending {
+                    generation,
+                    client,
+                    source,
+                    lookup,
+                    snapshot,
+                });
+                Ok(())
+            }
+            Err(error) => {
+                let error = error.to_string();
+                self.async_work.transpile_result = Some(TranspileResult {
+                    generation,
+                    client,
+                    source,
+                    lookup,
+                    result: Err(error.clone()),
+                });
+                Err(error)
+            }
+        }
+    }
+
+    fn poll_transpile_job(&mut self) {
+        let finished = match self.async_work.transpile.as_ref() {
+            Some(TranspileJob::Running { task, .. }) => task.is_finished(),
+            Some(TranspileJob::Pending { .. }) => false,
+            None => return,
+        };
+        if !finished {
+            if matches!(
+                self.async_work.transpile.as_ref(),
+                Some(TranspileJob::Pending { .. })
+            ) {
+                if let Err(error) = self.submit_transpile_job() {
+                    if let Some(result) = self.async_work.transpile_result.as_ref() {
+                        self.show(format!("transpile {}: {error}", result.lookup));
+                    }
+                }
+            }
+            return;
+        }
+        let Some(job) = self.async_work.transpile.take() else {
+            return;
+        };
+        let TranspileJob::Running {
+            generation,
+            client,
+            source,
+            lookup,
+            task,
+        } = job
+        else {
+            self.async_work.transpile = Some(job);
+            return;
+        };
+        if generation != self.async_work.transpile_generation {
+            return;
+        }
+        let result = match task.join() {
+            Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
+                let current = self.js.get(source, &lookup);
+                if !current.is_some_and(|card| card.origin == prepared.card.origin) {
+                    Err("card changed while it was being prepared".into())
+                } else {
+                    self.js.commit_prepared(prepared).map(|_| ())
+                }
+            }
+            Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
+                if self.js.js_is_ready(source, &lookup) {
+                    Ok(())
+                } else {
+                    Err("card preparation produced no JavaScript".into())
+                }
+            }
+            Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
+                self.js.record_failure(failure);
+                Err(error)
+            }
+            Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
+                Err("unexpected confirmation result".into())
+            }
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(error.to_string()),
+        };
+        if let Err(error) = &result {
+            self.show(format!("transpile {lookup}: {error}"));
+        }
+        self.async_work.transpile_result = Some(TranspileResult {
+            generation,
+            client,
+            source,
+            lookup,
+            result,
+        });
+    }
+}
+
+impl Scripts {
+    pub(super) fn queue_loaded_start(
+        &mut self,
+        profile: &str,
+        source: script::ScriptSource,
+        lookup: &str,
+        catalog_root: Option<&Path>,
+        kind: StartKind,
+        tallied: bool,
+    ) -> Result<(), script::StartLoadError> {
+        if self.async_work.starts.contains_key(profile) {
+            return Err(script::StartLoadError::Waiting(
+                "script Start preparation already pending".into(),
+            ));
+        }
+        if self.async_work.starts.len() >= MAX_PENDING_STARTS {
+            return Err(script::StartLoadError::Refused(format!(
+                "script Start preparation limit reached ({MAX_PENDING_STARTS})"
+            )));
+        }
+        let wait_for_catalog = source == script::ScriptSource::Catalog
+            && (self.async_work.catalog.is_some()
+                || !self.catalog_filled
+                || self.catalog_root.is_none());
+        if wait_for_catalog && self.async_work.catalog.is_none() {
+            let root = catalog_root.ok_or_else(|| {
+                script::StartLoadError::Refused("catalog root is not available".into())
+            })?;
+            self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
+                .map_err(script::StartLoadError::Refused)?;
+        }
+        let stage = if wait_for_catalog {
+            StartStage::WaitingCatalog
+        } else {
+            StartStage::Pending {
+                snapshot: self
+                    .start_snapshot(source, lookup)
+                    .map_err(script::StartLoadError::Refused)?,
+            }
+        };
+        let generation = self.async_work.next_generation();
+        self.async_work.starts.insert(
+            profile.to_string(),
+            StartPreparation {
+                generation,
+                demand: StartDemand {
+                    selection: script::ScriptSel::Loaded(source, lookup.to_string()),
+                    kind,
+                    tallied,
+                    catalog_root: catalog_root.map(Path::to_path_buf),
+                },
+                stage,
+            },
+        );
+        if !wait_for_catalog {
+            if let Err(error) = self.submit_start_preparation(profile) {
+                self.async_work.starts.remove(profile);
+                return Err(script::StartLoadError::Refused(error));
+            }
+        }
+        Ok(())
+    }
+
+    fn start_snapshot(
+        &self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<Arc<script::load::CardPreparationSnapshot>, String> {
+        let card = self.startable_card(source, lookup)?;
+        if let Some(reason) = &card.unloadable {
+            return Err(format!("unloadable import: {reason}"));
+        }
+        Ok(Arc::new(
+            self.js
+                .card_preparation_snapshot(source, lookup, None)?
+                .force_prepare(),
+        ))
+    }
+
+    fn submit_start_preparation(&mut self, profile: &str) -> Result<(), String> {
+        let Some(preparation) = self.async_work.starts.get(profile) else {
+            return Ok(());
+        };
+        let StartStage::Pending { snapshot } = &preparation.stage else {
+            return Ok(());
+        };
+        let generation = preparation.generation;
+        let snapshot = Arc::clone(snapshot);
+        let input = script::preparation::PreparationInput::new(
+            generation,
+            snapshot.input_bytes(),
+            snapshot.scratch_bytes(),
+            snapshot.result_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+        let work = Arc::clone(&snapshot).cooperative_prepare();
+        match script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Card,
+            api::identity::Scope::Process,
+            input,
+            work,
+        ) {
+            Ok(task) => {
+                if let Some(preparation) = self.async_work.starts.get_mut(profile) {
+                    if preparation.generation == generation {
+                        preparation.stage = StartStage::Running { task };
+                    }
+                }
+                Ok(())
+            }
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    pub(super) fn poll_script_work<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        self.poll_catalog_job();
+        crate::marked::poll_pending_catalog_assignment(core, self);
+        self.poll_transpile_job();
+        self.poll_start_preparation(core);
+    }
+
+    fn poll_start_preparation<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        let ready_profile = self
+            .async_work
+            .starts
+            .iter()
+            .find_map(|(profile, preparation)| {
+                let ready = match &preparation.stage {
+                    StartStage::WaitingCatalog => self.async_work.catalog.is_none(),
+                    StartStage::Pending { .. } | StartStage::Ready { .. } => true,
+                    StartStage::Running { task } => task.is_finished(),
+                };
+                ready.then(|| profile.clone())
+            });
+        let Some(profile) = ready_profile else {
+            return;
+        };
+        let Some(mut preparation) = self.async_work.starts.remove(&profile) else {
+            return;
+        };
+        match preparation.stage {
+            StartStage::WaitingCatalog => {
+                if let Some(Err(error)) = self.async_work.catalog_fill_result.as_ref() {
+                    self.report_start_failure(
+                        &profile,
+                        preparation.demand.kind,
+                        preparation.demand.tallied,
+                        error.clone(),
+                    );
+                    return;
+                }
+                if !self.catalog_filled || self.catalog_root.is_none() {
+                    let Some(root) = preparation.demand.catalog_root.as_deref() else {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            "catalog root is not available".into(),
+                        );
+                        return;
+                    };
+                    if let Err(error) =
+                        self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
+                    {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error,
+                        );
+                        return;
+                    }
+                    self.async_work.starts.insert(profile, preparation);
+                    return;
+                }
+                let script::ScriptSel::Loaded(source, lookup) =
+                    preparation.demand.selection.clone()
+                else {
+                    unreachable!("only loaded Starts use preparation work")
+                };
+                match self.start_snapshot(source, &lookup) {
+                    Ok(snapshot) => preparation.stage = StartStage::Pending { snapshot },
+                    Err(error) => {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error,
+                        );
+                        return;
+                    }
+                }
+            }
+            StartStage::Pending { snapshot } => {
+                preparation.stage = StartStage::Pending { snapshot };
+                self.async_work.starts.insert(profile.clone(), preparation);
+                if let Err(error) = self.submit_start_preparation(&profile) {
+                    if let Some(preparation) = self.async_work.starts.remove(&profile) {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error,
+                        );
+                    }
+                }
+                return;
+            }
+            StartStage::Running { task } => {
+                let script::ScriptSel::Loaded(source, lookup) =
+                    preparation.demand.selection.clone()
+                else {
+                    unreachable!("only loaded Starts use preparation work")
+                };
+                let result = match task.join() {
+                    Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
+                        let current = self.js.get(source, &lookup);
+                        if !current.is_some_and(|card| card.origin == prepared.card.origin) {
+                            Err("card changed while it was being prepared".into())
+                        } else {
+                            self.js.commit_prepared(prepared).map_err(|error| error)
+                        }
+                    }
+                    Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => self
+                        .js
+                        .get(source, &lookup)
+                        .cloned()
+                        .ok_or_else(|| format!("no loaded script: {lookup}")),
+                    Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
+                        self.js.record_failure(failure);
+                        Err(error)
+                    }
+                    Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
+                        Err("unexpected confirmation result".into())
+                    }
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(error.to_string()),
+                };
+                let card = match result {
+                    Ok(card) => card,
+                    Err(error) => {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error,
+                        );
+                        return;
+                    }
+                };
+                let bag = self.merged_profile_bag(
+                    core,
+                    &profile,
+                    source,
+                    &card.name,
+                    &card.path,
+                    &card.settings_schema,
+                );
+                let bag = (!bag.is_empty()).then_some(bag);
+                let siblings = match script::resolve_sibling_modules(
+                    &card.path,
+                    &card.origin,
+                    self.js.cache(),
+                    script::CacheMeta {
+                        kind: card.kind,
+                        source: card.source,
+                        shape: None,
+                        api_family: Some(card.api_family.as_str().into()),
+                    },
+                ) {
+                    Ok(siblings) => siblings,
+                    Err(error) => {
+                        let diagnostic = self
+                            .js
+                            .record_start_result(
+                                &card,
+                                Err(script::StartLoadError::Refused(error.clone())),
+                            )
+                            .err()
+                            .unwrap_or(error);
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            diagnostic,
+                        );
+                        return;
+                    }
+                };
+                preparation.stage = StartStage::Ready {
+                    card,
+                    siblings,
+                    bag,
+                };
+            }
+            StartStage::Ready {
+                card,
+                siblings,
+                bag,
+            } => {
+                if !super::wall_member(core, &profile) || core.removal_pending(&profile) {
+                    self.report_start_failure(
+                        &profile,
+                        preparation.demand.kind,
+                        preparation.demand.tallied,
+                        "profile is no longer loaded".into(),
+                    );
+                    return;
+                }
+                if super::script_active(core, &profile) {
+                    self.report_start_failure(
+                        &profile,
+                        preparation.demand.kind,
+                        preparation.demand.tallied,
+                        "script already active".into(),
+                    );
+                    return;
+                }
+                let start = ScriptStart::Load {
+                    js: card.js.clone(),
+                    shape: card.shape,
+                    bag: bag.clone(),
+                    siblings: siblings.clone(),
+                };
+                match core.start_script(&profile, start, Some(card.identity_key())) {
+                    Ok(()) => {
+                        self.starts.insert(
+                            profile,
+                            PendingStart {
+                                card: PendingCard::Loaded(Box::new(card)),
+                                kind: preparation.demand.kind,
+                                tallied: preparation.demand.tallied,
+                            },
+                        );
+                    }
+                    Err(error) if matches!(error, script::StartLoadError::Waiting(_)) => {
+                        preparation.stage = StartStage::Ready {
+                            card,
+                            siblings,
+                            bag,
+                        };
+                        self.async_work.starts.insert(profile, preparation);
+                    }
+                    Err(error) => {
+                        let diagnostic = self
+                            .js
+                            .record_start_result(&card, Err(error))
+                            .err()
+                            .unwrap_or_else(|| "script Start refused".into());
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            diagnostic,
+                        );
+                    }
+                }
+                return;
+            }
+        }
+        let stage = std::mem::replace(&mut preparation.stage, StartStage::WaitingCatalog);
+        preparation.stage = stage;
+        self.async_work.starts.insert(profile.clone(), preparation);
+        if let Err(error) = self.submit_start_preparation(&profile) {
+            if let Some(preparation) = self.async_work.starts.remove(&profile) {
+                self.report_start_failure(
+                    &profile,
+                    preparation.demand.kind,
+                    preparation.demand.tallied,
+                    error,
+                );
+            }
+        }
+    }
+    pub(super) fn start_preparation_pending(&self) -> bool {
+        !self.async_work.starts.is_empty()
+            || self
+                .async_work
+                .pending_marked_action
+                .as_ref()
+                .is_some_and(|action| action.restart)
+    }
+
+    pub(super) fn tallied_start_preparation_pending(&self) -> bool {
+        self.async_work
+            .starts
+            .values()
+            .any(|preparation| preparation.demand.tallied)
+            || self
+                .async_work
+                .pending_marked_action
+                .as_ref()
+                .is_some_and(|action| action.restart)
+    }
+
+    pub(super) fn cancel_start_preparation(
+        &mut self,
+        profile: &str,
+    ) -> Option<(StartKind, bool)> {
+        self.async_work
+            .starts
+            .remove(profile)
+            .map(|preparation| (preparation.demand.kind, preparation.demand.tallied))
+    }
+
+    pub(super) fn cancel_all_start_preparations(&mut self) -> Vec<(String, StartKind, bool)> {
+        self.async_work
+            .starts
+            .drain()
+            .map(|(profile, preparation)| {
+                (
+                    profile,
+                    preparation.demand.kind,
+                    preparation.demand.tallied,
+                )
+            })
+            .collect()
+    }
+    pub(crate) fn defer_pending_catalog_assignment(
+        &mut self,
+        action: crate::marked::PendingCatalogAssignment,
+    ) -> Result<(), String> {
+        if self.async_work.pending_marked_action.is_some() {
+            return Err("an assignment is already waiting for catalog preparation".into());
+        }
+        self.async_work.pending_marked_action = Some(action);
+        Ok(())
+    }
+
+    pub(crate) fn take_pending_catalog_assignment(
+        &mut self,
+    ) -> Option<crate::marked::PendingCatalogAssignment> {
+        self.async_work.pending_marked_action.take()
+    }
+    pub(super) fn cancel_pending_catalog_assignment(
+        &mut self,
+        profile: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let mut action = self.async_work.pending_marked_action.take()?;
+        if !action.restart {
+            self.async_work.pending_marked_action = Some(action);
+            return None;
+        }
+        let cancelled = if let Some(profile) = profile {
+            let Some(index) = action.profiles.iter().position(|name| name == profile) else {
+                self.async_work.pending_marked_action = Some(action);
+                return None;
+            };
+            vec![action.profiles.remove(index)]
+        } else {
+            std::mem::take(&mut action.profiles)
+        };
+        if !action.profiles.is_empty() {
+            self.async_work.pending_marked_action = Some(action);
+        }
+        Some(cancelled)
+    }
+
+
+    pub(crate) fn catalog_scan_root(&self) -> Option<&Path> {
+        self.catalog_root.as_deref()
     }
 }
 

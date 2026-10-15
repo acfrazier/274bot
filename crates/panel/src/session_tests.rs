@@ -706,6 +706,37 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
     root
 }
 
+fn settle_catalog_work(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    session.core.poll();
+    session.poll_scripts();
+    session.pump_script_transpile();
+    assert!(
+        !session.scripts.catalog_work_pending(),
+        "catalog preparation did not settle"
+    );
+}
+
+fn settle_transpile_queue(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !session.transpile_queue.is_empty() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session.transpile_queue.is_empty(),
+        "transpile queue did not settle"
+    );
+}
+
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let iso = IsolatedEnv::enter("prebind-catalog");
@@ -732,6 +763,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         .unwrap();
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js
@@ -751,6 +783,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     .unwrap();
     session.scripts.js.load(&custom).unwrap();
     session.import_rs2b0t_catalog(&ambient).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js
@@ -793,6 +826,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         )
         .unwrap();
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     session
         .scripts
         .js
@@ -813,6 +847,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     session.bind_profile_with_env(&env).unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js
@@ -7947,6 +7982,18 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         "Session::new must not rewrite the persisted root"
     );
     s.fill_rs2b0t_cards_once();
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "first browse queues catalog work"
+    );
+    assert!(
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .is_none(),
+        "catalog cards are not parsed on the browse frame"
+    );
+    settle_catalog_work(&mut s);
     let card = s
         .scripts
         .js
@@ -8038,8 +8085,16 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let iso = IsolatedEnv::enter("import");
     let root = fake_rs2b0t_tree(&iso.dir);
     let mut s = Session::new();
-    let n = s.import_rs2b0t_catalog(&root).expect("import");
-    assert_eq!(n, 1);
+    s.import_rs2b0t_catalog(&root).expect("import");
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "catalog import is admitted as worker work"
+    );
+    assert!(
+        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        "root is persisted only after preparation settles"
+    );
+    settle_catalog_work(&mut s);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = s
         .scripts
@@ -8058,6 +8113,8 @@ fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     iso.set_rs2b0t(&root);
     let mut s = Session::new();
     s.on_script_browse_open();
+    assert!(s.scripts.catalog_work_pending());
+    settle_catalog_work(&mut s);
     assert!(
         s.scripts
             .js
@@ -8076,7 +8133,7 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
+fn select_script_card_queues_only_that_card_through_worker() {
     let iso = IsolatedEnv::enter("transpile-click");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8128,10 +8185,20 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
             .unwrap()
             .js
             .is_empty(),
-        "first pump only arms so the UI can paint transpiling…"
+        "first pump only arms so the UI can paint transpiling"
     );
-
     s.pump_script_transpile();
+    assert!(
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .js
+            .is_empty(),
+        "second pump submits worker work; it does not compile inline"
+    );
+    assert!(s.scripts.transpile_pending());
+    settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
         .js
@@ -8146,11 +8213,10 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
         .unwrap()
         .js
         .is_empty());
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn queue_transpile_all_warms_one_card_per_armed_frame() {
+fn queue_transpile_all_uses_the_shared_worker_slot() {
     let iso = IsolatedEnv::enter("transpile-all");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8165,52 +8231,102 @@ fn queue_transpile_all_warms_one_card_per_armed_frame() {
     s.queue_transpile_all();
     assert_eq!(s.transpile_queue.len(), 2);
     assert_eq!(s.transpile_total, 2);
-
     s.pump_script_transpile();
     s.pump_script_transpile();
-    let warmed = s
-        .scripts
-        .js
-        .cards()
-        .iter()
-        .filter(|c| !c.js.is_empty())
-        .count();
-    assert_eq!(warmed, 1, "all-at-once still one file per armed frame");
-    assert_eq!(s.transpile_queue.len(), 1);
-
-    s.pump_script_transpile();
-    s.pump_script_transpile();
+    assert!(
+        s.scripts.transpile_pending(),
+        "the first request is queued on WorkAdmission"
+    );
     assert_eq!(
         s.scripts
             .js
             .cards()
             .iter()
-            .filter(|c| !c.js.is_empty())
+            .filter(|card| !card.js.is_empty())
+            .count(),
+        0,
+        "the click frame does not compile any card"
+    );
+    assert_eq!(s.transpile_queue.len(), 2);
+
+    settle_transpile_queue(&mut s);
+    assert_eq!(
+        s.scripts
+            .js
+            .cards()
+            .iter()
+            .filter(|card| !card.js.is_empty())
             .count(),
         2
     );
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn select_script_card_skips_queue_on_cache_hit() {
+fn select_script_card_queues_cached_output_through_worker() {
     let iso = IsolatedEnv::enter("transpile-hit");
     let root = write_two_card_catalog(&iso.dir);
+    let store = iso.dir.join("js-scripts.json");
+    let cache = iso.dir.join("js-cache");
+    let mut warm = script::JsLibrary::with_cache(&store, &cache);
+    warm.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .expect("catalog");
+    warm.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap();
+    drop(warm);
+
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.js = script::JsLibrary::with_cache(&store, &cache);
     s.scripts
         .js
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
-    s.scripts
+    assert!(s
+        .scripts
         .js
-        .ensure_js(script::ScriptSource::Catalog, "BoneBurier")
-        .unwrap();
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    assert!(s
+        .scripts
+        .js
+        .cache()
+        .is_cached(
+            s.scripts
+                .js
+                .get(script::ScriptSource::Catalog, "BoneBurier")
+                .unwrap()
+                .origin
+                .as_bytes()
+        ));
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
-    assert!(s.transpile_queue.is_empty());
+    assert_eq!(s.transpile_queue.len(), 1);
+    assert!(s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    s.pump_script_transpile();
+    s.pump_script_transpile();
+    assert!(s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    settle_transpile_queue(&mut s);
+    assert!(!s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
 }
 
 fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
