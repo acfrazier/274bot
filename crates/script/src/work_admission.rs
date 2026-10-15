@@ -1252,7 +1252,7 @@ fn process_step(
                             api::host_log!(
                                 api::hostlog::Category::Lifecycle,
                                 api::hostlog::Level::Warn,
-                                "background work job {:?} coalesced progress after immutable snapshot custody filled",
+                                "background work job {:?} dropped progress after immutable snapshot custody filled",
                                 entry.identity.job(),
                             );
                         }
