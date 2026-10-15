@@ -1,4 +1,5 @@
 //! Versioned compiled-card settings in the existing per-account settings map.
+use super::VaultError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -12,23 +13,23 @@ pub struct CompiledSettingsRecord {
 impl CompiledSettingsRecord {
     /// An empty pre-envelope native entry is the schema-1 legacy form.
     /// Malformed envelopes are never interpreted as an empty settings bag.
-    pub fn view(entry: &Map<String, Value>) -> Result<(u16, &Map<String, Value>), &'static str> {
+    pub fn view(entry: &Map<String, Value>) -> Result<(u16, &Map<String, Value>), VaultError> {
         if entry.is_empty() {
             return Ok((1, entry));
         }
         if entry.len() != 2 {
-            return Err("invalid compiled settings envelope");
+            return Err(VaultError::InvalidCompiledSettingsEnvelope);
         }
         let version = entry
             .get("schema_version")
             .and_then(Value::as_u64)
             .and_then(|value| u16::try_from(value).ok())
             .filter(|version| *version != 0)
-            .ok_or("invalid compiled settings schema version")?;
+            .ok_or(VaultError::InvalidCompiledSettingsSchemaVersion)?;
         let values = entry
             .get("values")
             .and_then(Value::as_object)
-            .ok_or("compiled settings values must be an object")?;
+            .ok_or(VaultError::CompiledSettingsValuesNotObject)?;
         Ok((version, values))
     }
 
@@ -58,7 +59,7 @@ mod tests {
     #[test]
     fn envelope_view_preserves_versions_and_rejects_lossy_fallbacks() {
         let legacy = Map::new();
-        assert_eq!(CompiledSettingsRecord::view(&legacy), Ok((1, &legacy)));
+        assert_eq!(CompiledSettingsRecord::view(&legacy).unwrap(), (1, &legacy));
         let future = serde_json::json!({"schema_version": 2, "values": {"partner": ""}});
         let (version, values) = CompiledSettingsRecord::view(future.as_object().unwrap()).unwrap();
         assert_eq!(version, 2);
@@ -75,5 +76,30 @@ mod tests {
                 "{malformed}"
             );
         }
+
+        assert!(matches!(
+            CompiledSettingsRecord::view(
+                serde_json::json!({"schema_version": 0, "values": {}})
+                    .as_object()
+                    .unwrap()
+            ),
+            Err(VaultError::InvalidCompiledSettingsSchemaVersion)
+        ));
+        assert!(matches!(
+            CompiledSettingsRecord::view(
+                serde_json::json!({"schema_version": 1, "values": null})
+                    .as_object()
+                    .unwrap()
+            ),
+            Err(VaultError::CompiledSettingsValuesNotObject)
+        ));
+        assert!(matches!(
+            CompiledSettingsRecord::view(
+                serde_json::json!({"schema_version": 1, "values": {}, "extra": true})
+                    .as_object()
+                    .unwrap()
+            ),
+            Err(VaultError::InvalidCompiledSettingsEnvelope)
+        ));
     }
 }
