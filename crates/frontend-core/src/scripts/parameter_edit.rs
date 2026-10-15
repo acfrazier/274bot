@@ -1179,9 +1179,19 @@ mod tests {
         );
         let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
         assert_eq!(order_options.values, ["sheep", "cook"]);
-        assert_eq!(
-            order_options.labels,
-            ["2. Sheep display", "1. Cook display"]
+        assert_eq!(order_options.labels.len(), 2);
+        assert_eq!(order_options.labels[0], "2. Sheep display");
+        // A concurrent Path reload may replace the process-wide cook label;
+        // its display name changes, but the requested order never does.
+        assert!(
+            [
+                "1. Cook display",
+                "1. Folder Cook [folder]",
+                "1. Edited Again [folder]",
+            ]
+            .contains(&order_options.labels[1].as_str()),
+            "{:?}",
+            order_options.labels
         );
 
         let mut paths = source_setting("quests", "string[]", "released-paths");

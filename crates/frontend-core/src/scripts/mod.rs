@@ -978,7 +978,7 @@ impl Scripts {
         }
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
             if tallied {
-                self.credit_skipped(profile, reason);
+                self.skip_unstarted_tally(profile, reason);
             } else if kind == StartKind::RestartSettings {
                 self.show(format!("Restart cancelled for {profile}: {reason}"));
             }
@@ -1181,13 +1181,21 @@ impl Scripts {
                 );
                 Ok(())
             }
-            script::ScriptSel::Loaded(source, lookup) => {
+            script::ScriptSel::Loaded(..) => {
                 if !wall_member(core, profile) {
                     return Err(script::StartLoadError::Refused(format!(
                         "no slot: {profile}"
                     )));
                 }
-                self.queue_loaded_start(profile, *source, lookup, catalog_root, kind, tallied)
+                if let Some(reason) = core
+                    .play()
+                    .and_then(host_play::Play::script_start_wait_reason)
+                {
+                    return Err(script::StartLoadError::Waiting(format!(
+                        "{profile}: blocked, {reason}"
+                    )));
+                }
+                self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
             }
         }
     }
@@ -1247,6 +1255,10 @@ impl Scripts {
         if self.admit.contains(profile) {
             return Ok(());
         }
+        if self.has_start_preparation(profile) {
+            self.tally_skip(profile, "already starting");
+            return Ok(());
+        }
         let (had_arm, latched) = arm_flags(core, profile);
         self.admit.enqueue(QueuedStart {
             profile: profile.to_string(),
@@ -1290,7 +1302,7 @@ impl Scripts {
         let preparing = self.cancel_all_start_preparations();
         for (profile, _, tallied) in &preparing {
             if *tallied {
-                self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
+                self.skip_unstarted_tally(profile, "cancelled");
             }
         }
         let pending_marked = self
@@ -1609,6 +1621,13 @@ impl Scripts {
     fn credit_skipped(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
         self.publish_bulk();
+    }
+    /// The permit was credited, but the worker had not dispatched a script.
+    fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
+        if let Some(tally) = &mut self.tally {
+            tally.retract_unstarted(profile);
+        }
+        self.credit_skipped(profile, reason);
     }
 
     /// Show the running tally when its text changed.

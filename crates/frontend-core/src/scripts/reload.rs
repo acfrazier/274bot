@@ -181,6 +181,9 @@ struct StartDemand {
     kind: StartKind,
     tallied: bool,
     catalog_root: Option<PathBuf>,
+    assignment: Option<script::ScriptSel>,
+    had_arm: bool,
+    latched: bool,
 }
 
 struct StartPreparation {
@@ -200,9 +203,10 @@ enum StartStage {
             script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
     },
     Ready {
-        card: script::JsCard,
+        card: Box<script::JsCard>,
         siblings: Vec<(String, String)>,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
+        fingerprint: Option<String>,
     },
 }
 
@@ -950,16 +954,30 @@ impl Scripts {
 }
 
 impl Scripts {
-    pub(super) fn queue_loaded_start(
+    pub(super) fn queue_loaded_start<Io>(
         &mut self,
+        core: &OperatorSession<Io>,
         profile: &str,
-        source: script::ScriptSource,
-        lookup: &str,
+        selection: &script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
     ) -> Result<(), script::StartLoadError> {
-        if self.async_work.starts.contains_key(profile) {
+        let script::ScriptSel::Loaded(source, lookup) = selection else {
+            unreachable!("only loaded Starts use preparation work")
+        };
+        let source = *source;
+        let lookup = lookup.as_str();
+        if let Some(preparing) = self.async_work.starts.get(profile) {
+            if preparing.demand.kind == kind
+                && matches!(
+                    &preparing.demand.selection,
+                    script::ScriptSel::Loaded(existing_source, existing_lookup)
+                        if *existing_source == source && existing_lookup == lookup
+                )
+            {
+                return Ok(());
+            }
             return Err(script::StartLoadError::Waiting(
                 "script Start preparation already pending".into(),
             ));
@@ -990,15 +1008,20 @@ impl Scripts {
             }
         };
         let generation = self.async_work.next_generation();
+        let (had_arm, latched) = super::arm_flags(core, profile);
         self.async_work.starts.insert(
             profile.to_string(),
             StartPreparation {
                 generation,
                 demand: StartDemand {
-                    selection: script::ScriptSel::Loaded(source, lookup.to_string()),
+                    selection: selection.clone(),
                     kind,
                     tallied,
                     catalog_root: catalog_root.map(Path::to_path_buf),
+                    assignment: Self::assignment(core, profile)
+                        .and_then(|assignment| super::sel_from_assignment(&assignment)),
+                    had_arm,
+                    latched,
                 },
                 stage,
             },
@@ -1179,18 +1202,19 @@ impl Scripts {
                     unreachable!("only loaded Starts use preparation work")
                 };
                 let result = match task.join() {
-                    Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
+                    Ok(Ok(script::load::CardPreparationOutcome::Prepared(mut prepared))) => {
                         if !self.card_snapshot_current(source, &lookup, &snapshot) {
                             Err("card changed while it was being prepared".into())
                         } else {
-                            self.js.commit_prepared_for_start(prepared)
+                            let siblings = std::mem::take(&mut prepared.siblings);
+                            self.js
+                                .commit_prepared_for_start(prepared)
+                                .map(|card| (card, siblings))
                         }
                     }
-                    Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => self
-                        .js
-                        .get(source, &lookup)
-                        .cloned()
-                        .ok_or_else(|| format!("no loaded script: {lookup}")),
+                    Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
+                        Err("forced Start preparation returned unchanged".into())
+                    }
                     Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
                         self.js.record_failure(failure);
                         Err(error)
@@ -1201,8 +1225,8 @@ impl Scripts {
                     Ok(Err(error)) => Err(error),
                     Err(error) => Err(error.to_string()),
                 };
-                let card = match result {
-                    Ok(card) => card,
+                let (card, siblings) = match result {
+                    Ok(prepared) => prepared,
                     Err(error) => {
                         self.report_start_failure(
                             &profile,
@@ -1222,62 +1246,59 @@ impl Scripts {
                     &card.settings_schema,
                 );
                 let bag = (!bag.is_empty()).then_some(bag);
-                let siblings = match script::resolve_sibling_modules(
-                    &card.path,
-                    &card.origin,
-                    self.js.cache(),
-                    script::CacheMeta {
-                        kind: card.kind,
-                        source: card.source,
-                        shape: None,
-                        api_family: Some(card.api_family.as_str().into()),
-                    },
-                ) {
-                    Ok(siblings) => siblings,
-                    Err(error) => {
-                        let diagnostic = self
-                            .js
-                            .record_start_result(
-                                &card,
-                                Err(script::StartLoadError::Refused(error.clone())),
-                            )
-                            .err()
-                            .unwrap_or(error);
-                        self.report_start_failure(
-                            &profile,
-                            preparation.demand.kind,
-                            preparation.demand.tallied,
-                            diagnostic,
-                        );
-                        return;
-                    }
-                };
+                let fingerprint = self
+                    .js
+                    .stored_fingerprint(&card.identity_key())
+                    .map(str::to_owned);
                 preparation.stage = StartStage::Ready {
-                    card,
+                    card: Box::new(card),
                     siblings,
                     bag,
+                    fingerprint,
                 };
             }
             StartStage::Ready {
                 card,
                 siblings,
                 bag,
+                fingerprint,
             } => {
                 if !super::wall_member(core, &profile) || core.removal_pending(&profile) {
-                    self.report_start_failure(
-                        &profile,
-                        preparation.demand.kind,
-                        preparation.demand.tallied,
-                        "profile is no longer loaded".into(),
-                    );
+                    self.skip_preparing_start(&profile, &preparation.demand, "removed");
+                    return;
+                }
+                let assigned = Self::assignment(core, &profile)
+                    .and_then(|assignment| super::sel_from_assignment(&assignment));
+                if assigned != preparation.demand.assignment {
+                    self.skip_preparing_start(&profile, &preparation.demand, "reassigned");
+                    return;
+                }
+                let (has_arm, latched_now) = super::arm_flags(core, &profile);
+                if preparation.demand.had_arm && !has_arm {
+                    self.skip_preparing_start(&profile, &preparation.demand, "disconnected");
+                    return;
+                }
+                if !preparation.demand.latched && latched_now {
+                    self.skip_preparing_start(&profile, &preparation.demand, "logged out");
+                    return;
+                }
+                let script::ScriptSel::Loaded(source, lookup) = &preparation.demand.selection
+                else {
+                    unreachable!("only loaded Starts use preparation work")
+                };
+                let identity = card.identity_key();
+                if self.js.get(*source, lookup).is_none_or(|current| {
+                    current.identity_key() != identity
+                        || self.js.stored_fingerprint(&identity) != fingerprint.as_deref()
+                }) {
+                    self.skip_preparing_start(&profile, &preparation.demand, "card changed");
                     return;
                 }
                 if super::script_active(core, &profile) {
-                    self.report_start_failure(
+                    self.skip_preparing_start(
                         &profile,
-                        preparation.demand.kind,
-                        preparation.demand.tallied,
-                        "script already active".into(),
+                        &preparation.demand,
+                        "script already active",
                     );
                     return;
                 }
@@ -1292,17 +1313,18 @@ impl Scripts {
                         self.starts.insert(
                             profile,
                             PendingStart {
-                                card: PendingCard::Loaded(Box::new(card)),
+                                card: PendingCard::Loaded(card),
                                 kind: preparation.demand.kind,
                                 tallied: preparation.demand.tallied,
                             },
                         );
                     }
-                    Err(error) if matches!(error, script::StartLoadError::Waiting(_)) => {
+                    Err(script::StartLoadError::Waiting(_)) => {
                         preparation.stage = StartStage::Ready {
                             card,
                             siblings,
                             bag,
+                            fingerprint,
                         };
                         self.async_work.starts.insert(profile, preparation);
                     }
@@ -1337,6 +1359,24 @@ impl Scripts {
             }
         }
     }
+
+    fn skip_preparing_start(&mut self, profile: &str, demand: &StartDemand, reason: &str) {
+        if demand.tallied {
+            self.skip_unstarted_tally(profile, reason);
+        } else {
+            match demand.kind {
+                StartKind::Start => self.show(format!("script: {reason}")),
+                StartKind::Reload => self.show(format!("reload: {profile}: {reason}")),
+                StartKind::RestartSettings => {
+                    self.show(format!("Restart skipped for {profile}: {reason}"))
+                }
+            }
+        }
+    }
+    pub(super) fn has_start_preparation(&self, profile: &str) -> bool {
+        self.async_work.starts.contains_key(profile)
+    }
+
     pub(super) fn start_preparation_pending(&self) -> bool {
         !self.async_work.starts.is_empty()
             || self
