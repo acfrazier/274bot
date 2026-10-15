@@ -810,7 +810,7 @@ mod tests {
                 target: tile(2610, 3200),
                 loc_id: None,
                 radius: 1,
-                arrival: nav::arrival::ArrivalKind::Reach,
+                arrival: nav::contract::ArrivalKind::Reach,
                 options: crate::native::WalkOptions::default(),
                 required_after: dummy_stamp(0),
                 evidence: None,

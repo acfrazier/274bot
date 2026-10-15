@@ -20,6 +20,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
+use crate::contract::{NavIdentity, PackDigest};
 use crate::grid::StepGrid;
 use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -38,6 +39,14 @@ pub struct NavWorld {
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<HashMap<i32, String>>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
+    /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
+    /// loader from the verified manifest (`crate::producer::bind`). Unset on
+    /// a synthetic world until a view is first served.
+    pub(crate) content: OnceLock<PackDigest>,
+    /// The one facade identity of this loaded world, minted on first use
+    /// (`crate::producer`). [`crate::contract::NavLease::wrap`] mints its
+    /// own and never reads this.
+    pub(crate) lease_identity: OnceLock<NavIdentity>,
 }
 
 impl NavWorld {
@@ -120,13 +129,16 @@ impl NavWorld {
     /// legacy 274N grid packs fall back to [`Self::from_grid`] on the same
     /// buffer. The fallback triggers on bad magic only — a `274V` pack with
     /// a stale version stays [`PackError::BadVersion`] so the operator
-    /// rebakes. This never rereads a pathname.
+    /// rebakes. This never rereads a pathname. The bytes' SHA-256 becomes
+    /// the world's facade content identity (`crate::producer`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackError> {
-        match decode(bytes) {
-            Ok((collision, graph, banks)) => Ok(Self::from_parts(collision, graph, banks)),
-            Err(PackError::BadMagic) => Ok(Self::from_grid(&decode_grid(bytes)?)),
-            Err(e) => Err(e),
-        }
+        let world = match decode(bytes) {
+            Ok((collision, graph, banks)) => Self::from_parts(collision, graph, banks),
+            Err(PackError::BadMagic) => Self::from_grid(&decode_grid(bytes)?),
+            Err(e) => return Err(e),
+        };
+        let _ = world.content.set(PackDigest::of(bytes));
+        Ok(world)
     }
 
     /// Stream a bounded pack or legacy 274N grid into the router's world.
@@ -161,6 +173,8 @@ impl NavWorld {
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
+            content: OnceLock::new(),
+            lease_identity: OnceLock::new(),
         }
     }
 
@@ -272,14 +286,7 @@ impl NavWorld {
             });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
-        NavWorld {
-            collision,
-            graph,
-            banks: Vec::new(),
-            named_banks: OnceLock::new(),
-            transport_item_names: OnceLock::new(),
-            risk_facts: OnceLock::new(),
-        }
+        Self::from_parts(collision, graph, Vec::new())
     }
 }
 

@@ -146,6 +146,18 @@ impl ZoneExempt {
     fn keys(&self) -> &[u16] {
         &self.keys[..usize::from(self.len)]
     }
+
+    /// The named keys, decoded. Empty for [`Self::NONE`] and for `all()`
+    /// (which names nothing and covers everything).
+    pub(crate) fn zone_keys(&self) -> impl Iterator<Item = ZoneKey> + '_ {
+        self.keys().iter().map(|&key| {
+            if key & 0x8000 == 0 {
+                ZoneKey::Zone(key)
+            } else {
+                ZoneKey::Group(key & 0x7fff)
+            }
+        })
+    }
 }
 
 impl Default for ZoneExempt {

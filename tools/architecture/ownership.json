@@ -1743,6 +1743,14 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/src/producer.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/producer_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/src/quest_gates.rs",
       "owner": "T5"
     },

@@ -16,13 +16,17 @@ pub enum Verdict {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnknownWhy {
-    Kind(u16),
+    /// An engaged zone's kind is outside the bounded risk model, for this class.
+    Kind(super::UnknownKind),
     AlreadyEngaged,
     NoZoneTable,
     MissingFacts,
     InputLock,
     Poison,
     Overflow,
+    /// The route, plan, zone key or exemption belongs to another nav pack,
+    /// or names a row this pack does not have (`nav::contract` refused it).
+    NavIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

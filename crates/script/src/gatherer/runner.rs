@@ -29,7 +29,7 @@ use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
-use nav::arrival::ArrivalKind;
+use nav::contract::ArrivalKind;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -141,7 +141,7 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
-    collision: Option<&nav::collision::WorldCollision>,
+    collision: Option<nav::contract::CollisionView<'_>>,
 ) -> Option<WorldTile> {
     const SPAN: usize = (HAZARD_RETREAT_RADIUS as usize) * 2 + 1;
     let mut dx = here.x.saturating_sub(hazard.x).signum();
@@ -185,7 +185,14 @@ fn hazard_retreat_stand(
                 if reachable[index_x][index_z] {
                     continue;
                 }
-                if !nav::router::step_ok(collision, cur, (step_x, step_z)) {
+                if !collision.step_ok(
+                    cur,
+                    WorldTile {
+                        x: cur.x + step_x,
+                        z: cur.z + step_z,
+                        level: cur.level,
+                    },
+                ) {
                     continue;
                 }
                 reachable[index_x][index_z] = true;
@@ -1988,7 +1995,7 @@ impl Gatherer {
     fn retreat_from_hazard(
         &mut self,
         tick: &mut NativeTick<'_>,
-        collision: Option<&nav::collision::WorldCollision>,
+        collision: Option<nav::contract::CollisionView<'_>>,
     ) {
         let now = tick.cx.evidence().tick;
         if self
@@ -3505,8 +3512,9 @@ mod tests {
             level: 0,
         };
         let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| tile == away);
-        let stand =
-            hazard_retreat_stand(here, hazard, Some(&collision)).expect("another reachable stand");
+        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+        let stand = hazard_retreat_stand(here, hazard, Some(lease.collision()))
+            .expect("another reachable stand");
         assert_ne!(stand, away);
         assert_ne!(stand, here);
         assert_ne!(stand, hazard);
@@ -3520,7 +3528,7 @@ mod tests {
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |tick| {
-            gatherer.retreat_from_hazard(tick, Some(&collision));
+            gatherer.retreat_from_hazard(tick, Some(lease.collision()));
         });
         assert!(gatherer.failure.is_none());
         let action = &ledger.as_ref().expect("hazard retreat walk").outbox[0];
@@ -3555,7 +3563,8 @@ mod tests {
             level: 0,
         };
         let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| tile != here);
-        assert!(hazard_retreat_stand(here, hazard, Some(&collision)).is_none());
+        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+        assert!(hazard_retreat_stand(here, hazard, Some(lease.collision())).is_none());
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
@@ -3566,7 +3575,7 @@ mod tests {
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {
-            gatherer.retreat_from_hazard(tick, Some(&collision));
+            gatherer.retreat_from_hazard(tick, Some(lease.collision()));
         });
         assert!(
             gatherer.failure.is_none(),
@@ -3588,7 +3597,7 @@ mod tests {
 
         with_tick(&snapshot, &mut ledger, 121, |tick| {
             let allocations = allocation_counter::measure(|| {
-                gatherer.retreat_from_hazard(tick, Some(&collision));
+                gatherer.retreat_from_hazard(tick, Some(lease.collision()));
             });
             assert_eq!(
                 allocations.count_total, 0,
@@ -3618,13 +3627,14 @@ mod tests {
             let dz = (tile.z - here.z).abs();
             (dx == 1 && dz == 0) || (dx == 0 && dz == 1)
         });
+        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
         assert_eq!(
             nav::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS).len(),
             1,
             "the router cannot leave a four-neighbour cage"
         );
         assert!(
-            hazard_retreat_stand(here, hazard, Some(&collision)).is_none(),
+            hazard_retreat_stand(here, hazard, Some(lease.collision())).is_none(),
             "a diagonal-only stand is not a router step"
         );
 
@@ -3637,7 +3647,7 @@ mod tests {
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {
-            gatherer.retreat_from_hazard(tick, Some(&collision));
+            gatherer.retreat_from_hazard(tick, Some(lease.collision()));
         });
         assert!(
             gatherer.failure.is_none(),
@@ -3692,6 +3702,7 @@ mod tests {
                 || tile == north
                 || tile == south
         });
+        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
         assert!(collision.walkable(island));
         assert!(!collision.walkable(WorldTile {
             x: 3088,
@@ -3703,7 +3714,7 @@ mod tests {
             None
         );
         let stand =
-            hazard_retreat_stand(here, hazard, Some(&collision)).expect("a reachable stand");
+            hazard_retreat_stand(here, hazard, Some(lease.collision())).expect("a reachable stand");
         assert_ne!(stand, island);
         assert_eq!(
             nav::paint::flood_component_id(&collision, &[here], stand),
@@ -3736,12 +3747,13 @@ mod tests {
             level: 0,
         };
         let world = crate::gatherer::select::test_real_nav_world();
+        let lease = crate::gatherer::select::tests::test_real_nav_lease();
         assert!(
             !world.collision.walkable(blocked_away),
             "S10 away tile must stay blocked on the reference pack"
         );
         assert!(!world.collision.walkable(blocked_north));
-        let stand = hazard_retreat_stand(here, hazard, Some(&world.collision))
+        let stand = hazard_retreat_stand(here, hazard, Some(lease.collision()))
             .expect("Draynor S10 must have a reachable stand");
         assert_ne!(stand, blocked_away);
         assert_ne!(stand, blocked_north);
@@ -3761,7 +3773,7 @@ mod tests {
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |tick| {
-            gatherer.retreat_from_hazard(tick, Some(&world.collision));
+            gatherer.retreat_from_hazard(tick, Some(lease.collision()));
         });
         assert!(gatherer.failure.is_none());
         let action = &ledger.as_ref().expect("hazard retreat walk").outbox[0];
