@@ -85,6 +85,12 @@ fn input_handles(bytes: usize, handles: u32) -> TestInput {
 #[error("{0}")]
 struct TestJobError(&'static str);
 
+#[test]
+fn contained_job_panic_has_honest_operator_text() {
+    let error: JobError<TestJobError> = JobError::FailedInternally;
+    assert_eq!(error.to_string(), "background work job failed internally");
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestPhase {
     Search,
