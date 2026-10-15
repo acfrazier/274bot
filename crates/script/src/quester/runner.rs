@@ -3787,18 +3787,18 @@ impl Script for QueuedQuester {
                 (Ok(input), Some(slot)) => preparation::submit(
                     PreparationKind::Profile,
                     Scope::Slot(slot),
-                    input,
+                    input.with_quester_progress_compile(),
                     move |cap| {
                         let bytes = bytes
                             .ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
-                        super::compile::compile_path_for_gang(
+                        let compiled = super::compile::compile_path_for_gang(
                             bytes.as_ref(),
                             &selected,
                             &quests,
                             cap,
                             gang,
-                        )
-                        .map_err(|error| {
+                        );
+                        compiled.map_err(|error| {
                             let detail =
                                 error.detail.as_deref().unwrap_or("Path compilation failed");
                             Arc::from(match &error.step {

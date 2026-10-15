@@ -699,9 +699,10 @@ impl JobEntry {
         let mut control = self.control.lock();
         let phase = self.progress.latest().map(|progress| progress.phase());
         match control.qualified_unit {
-            Some(unit @ (QualifiedUnit::GatheringFamilyDecode | QualifiedUnit::QuesterProgressCompile))
-                if phase == Some(PreparationPhase::Load.index()) =>
-            {
+            Some(
+                unit @ (QualifiedUnit::GatheringFamilyDecode
+                | QualifiedUnit::QuesterProgressCompile),
+            ) if phase == Some(PreparationPhase::Load.index()) => {
                 control.qualified_unit = None;
                 let allowance = match unit {
                     QualifiedUnit::GatheringFamilyDecode => GATHERING_DECODE_SLICE,
@@ -1046,27 +1047,35 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
                 job,
                 outcome,
                 report,
-                started,
-                returned_at,
-                allowance,
-                qualified,
+                StepTiming {
+                    started,
+                    returned_at,
+                    allowance,
+                    qualified,
+                },
             );
             *shared.active.lock() = None;
         }
     }
 }
+
+struct StepTiming {
+    started: Instant,
+    returned_at: Instant,
+    allowance: Duration,
+    qualified: Option<QualifiedUnit>,
+}
+
 fn process_step(
     shared: &Arc<WorkerShared>,
     entry: &Arc<JobEntry>,
     job: Box<dyn ErasedJob>,
     outcome: ErasedStep,
     report: SliceReport,
-    started: Instant,
-    returned_at: Instant,
-    allowance: Duration,
-    qualified: Option<QualifiedUnit>,
+    timing: StepTiming,
 ) {
-    let over_time = returned_at.saturating_duration_since(started) >= allowance;
+    let over_time =
+        timing.returned_at.saturating_duration_since(timing.started) >= timing.allowance;
     let violation = if report.continued {
         Some(CooperativeViolation::IgnoredYield)
     } else if report.exceeded || over_time {
@@ -1074,7 +1083,7 @@ fn process_step(
     } else {
         None
     };
-    let restore_qualification = qualified.is_some()
+    let restore_qualification = timing.qualified.is_some()
         && matches!(&outcome, ErasedStep::Yielded)
         && report.progress.is_none()
         && !report.exceeded;
@@ -1084,7 +1093,7 @@ fn process_step(
         let mut control = entry.control.lock();
         if restore_qualification && control.qualified_unit.is_none() {
             // A pre-work checkpoint yielded without using its one-shot unit.
-            control.qualified_unit = qualified;
+            control.qualified_unit = timing.qualified;
         }
         if shared.shutdown_requested.load(Ordering::Acquire) {
             let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
@@ -1389,7 +1398,7 @@ impl WorkService {
                     WorkFamily::ProfilePreparation
                 ) | (
                     QualifiedUnit::QuesterRegistryAction,
-                    WorkFamily::CataloguePreparation
+                    WorkFamily::CataloguePreparation | WorkFamily::ProfilePreparation
                 )
             )
         }) {

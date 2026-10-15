@@ -5,8 +5,8 @@ use super::compile::CompiledPath;
 use super::compile::{self, CompileError};
 use super::path::PathDocument;
 use super::queue::{ReleaseIndex, ReleasePath, ReleasePathStatus};
-use api::gather_methods::GatherCatalog;
 use api::game_data::SelectedGameData;
+use api::gather_methods::GatherCatalog;
 use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FamilyPreparation};
@@ -228,6 +228,18 @@ pub fn source() -> FolderSource {
         .source
         .clone()
 }
+
+/// Capture the setting a worker will prepare. A disabled folder needs no
+/// path clone; publication still rejects a later enable or source change.
+pub fn source_for_preparation() -> FolderSource {
+    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    if state.source.enabled {
+        state.source.clone()
+    } else {
+        FolderSource::default()
+    }
+}
+
 pub fn snapshot() -> PathRegistry {
     STATE
         .lock()
@@ -418,8 +430,7 @@ impl PathRegistry {
         quests: &QuestCatalog,
         worker: &mut FamilyPreparation,
     ) -> Result<Self, CompileError> {
-        let mut preparation =
-            RegistryPreparation::from_refs(source.clone(), selected, quests)?;
+        let mut preparation = RegistryPreparation::from_refs(source.clone(), selected, quests)?;
         loop {
             if let Some(prepared) = preparation.step(worker)? {
                 return Ok(prepared.registry);
@@ -429,7 +440,7 @@ impl PathRegistry {
 }
 
 /// The bounded unit that the next cooperative registry call will perform.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegistryPreparationPhase {
     BuildQuestCatalog,
     CheckPin,
@@ -611,11 +622,7 @@ impl<'a> RegistryPreparation<'a> {
         ))
     }
 
-    fn new(
-        source: FolderSource,
-        selected: SelectedOwner<'a>,
-        quests: QuestOwner<'a>,
-    ) -> Self {
+    fn new(source: FolderSource, selected: SelectedOwner<'a>, quests: QuestOwner<'a>) -> Self {
         let source = if source.enabled {
             source
         } else {
@@ -741,9 +748,8 @@ impl<'a> RegistryPreparation<'a> {
                         Ok(entries) => self.entries = Some(entries),
                         Err(error) => {
                             let folder = self.source.folder.clone();
-                            self.diagnostics.push(|| {
-                                diagnostic(&folder, "read-folder", error.to_string())
-                            });
+                            self.diagnostics
+                                .push(|| diagnostic(&folder, "read-folder", error.to_string()));
                             self.finish_scan();
                         }
                     }
@@ -772,11 +778,7 @@ impl<'a> RegistryPreparation<'a> {
                             .map(str::to_owned)
                         else {
                             self.diagnostics.push(|| {
-                                diagnostic(
-                                    &path,
-                                    "invalid-filename",
-                                    "Path filename must be UTF-8",
-                                )
+                                diagnostic(&path, "invalid-filename", "Path filename must be UTF-8")
                             });
                             return Ok(None);
                         };
@@ -799,9 +801,8 @@ impl<'a> RegistryPreparation<'a> {
                     }
                     Some(Err(error)) => {
                         let folder = self.source.folder.clone();
-                        self.diagnostics.push(|| {
-                            diagnostic(&folder, "read-folder", error.to_string())
-                        });
+                        self.diagnostics
+                            .push(|| diagnostic(&folder, "read-folder", error.to_string()));
                     }
                     None => self.finish_scan(),
                 }
@@ -842,18 +843,15 @@ impl<'a> RegistryPreparation<'a> {
                 }
             }
             Phase::ParseIndex => {
-                let path = self.source.folder.join("index.json");
                 let bytes = self.index_bytes.take().expect("index bytes were read");
                 let parsed = serde_json::from_slice::<ReleaseIndex>(&bytes)
                     .map_err(|error| {
                         CompileError::code("invalid-index").with_detail(error.to_string())
                     })
                     .and_then(|index| {
-                        super::queue::validate_index(&index)
-                            .map_err(|error| {
-                                CompileError::code("invalid-index")
-                                    .with_detail(error.to_string())
-                            })?;
+                        super::queue::validate_index(&index).map_err(|error| {
+                            CompileError::code("invalid-index").with_detail(error.to_string())
+                        })?;
                         Ok(index)
                     });
                 match parsed {
@@ -1060,10 +1058,8 @@ impl<'a> RegistryPreparation<'a> {
                         .clone();
                     match open_bounded(&path) {
                         Ok(reader) => {
-                            self.pending
-                                .as_mut()
-                                .expect("document is selected")
-                                .reader = Some(reader);
+                            self.pending.as_mut().expect("document is selected").reader =
+                                Some(reader);
                         }
                         Err(error) => self.finish_document(Err(error))?,
                     }
@@ -1230,9 +1226,7 @@ impl<'a> RegistryPreparation<'a> {
                 if let Some(reason) = &entry.unavailable {
                     label.push_str(&format!(" — {reason}"));
                 }
-                if entry.status == Some(ReleasePathStatus::Draft)
-                    && source != PathSource::Draft
-                {
+                if entry.status == Some(ReleasePathStatus::Draft) && source != PathSource::Draft {
                     label.push_str(" [draft]");
                 }
                 let row = PathRow {
@@ -1258,6 +1252,7 @@ impl<'a> RegistryPreparation<'a> {
                     self.registry = Some(PathRegistry::Folder(Arc::new(FolderPaths {
                         index,
                         documents: std::mem::take(&mut self.documents),
+                        rows: std::mem::take(&mut self.rows),
                         diagnostics: std::mem::take(&mut self.final_diagnostics),
                         report: Some(std::mem::take(&mut self.report).into()),
                     })));
@@ -1298,7 +1293,8 @@ impl<'a> RegistryPreparation<'a> {
 
     fn push_index_diagnostic(&mut self, error: CompileError) {
         let path = self.source.folder.join("index.json");
-        self.diagnostics.push(|| PathDiagnostic { file: path, error });
+        self.diagnostics
+            .push(|| PathDiagnostic { file: path, error });
     }
 
     fn finish_document(
@@ -1482,18 +1478,17 @@ impl BoundedRead {
     fn read_chunk(&mut self) -> Result<Option<Vec<u8>>, CompileError> {
         let mut chunk = [0_u8; FILE_READ_CHUNK_BYTES];
         let remaining = MAX_REGISTRY_FILE_BYTES + 1 - self.bytes.len();
+        let limit = remaining.min(FILE_READ_CHUNK_BYTES);
         let count = self
             .file
-            .read(&mut chunk[..remaining.min(chunk.len())])
+            .read(&mut chunk[..limit])
             .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
         if count == 0 {
             return Ok(Some(std::mem::take(&mut self.bytes)));
         }
         self.bytes.extend_from_slice(&chunk[..count]);
         if self.bytes.len() > MAX_REGISTRY_FILE_BYTES {
-            return Err(
-                CompileError::code("file-too-large").with_detail("Path file exceeds 1 MiB")
-            );
+            return Err(CompileError::code("file-too-large").with_detail("Path file exceeds 1 MiB"));
         }
         Ok(None)
     }
@@ -1606,14 +1601,51 @@ mod tests {
 
     fn prepare_current_registry(
         selected: Arc<SelectedGameData>,
-        worker: &mut FamilyPreparation,
-    ) -> PreparedRegistry {
+        revision: u64,
+        barriers: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
+    ) -> crate::preparation::PreparedTask<Result<PreparedRegistry, CompileError>> {
+        use crate::preparation::CooperativePreparationStep as Step;
         let mut preparation = RegistryPreparation::from_current(selected).unwrap();
-        loop {
-            if let Some(prepared) = preparation.step(worker).unwrap() {
-                return prepared;
-            }
-        }
+        let mut completed = 0_u32;
+        let input = crate::preparation::PreparationInput::new(
+            revision,
+            4096,
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+        )
+        .unwrap()
+        .with_quester_registry_actions();
+        crate::preparation::submit_cooperative(
+            crate::preparation::PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            input,
+            move |worker| {
+                completed += 1;
+                match preparation.step(worker) {
+                    Ok(None) => Step::Continue {
+                        completed,
+                        total: None,
+                    },
+                    Ok(Some(candidate)) => {
+                        if let Some((checkpoint, proceed)) = &barriers {
+                            checkpoint.wait();
+                            proceed.wait();
+                        }
+                        Step::Complete {
+                            output: Ok(candidate),
+                            completed,
+                            total: Some(completed),
+                        }
+                    }
+                    Err(error) => Step::Complete {
+                        output: Err(error),
+                        completed,
+                        total: Some(completed),
+                    },
+                }
+            },
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1641,8 +1673,7 @@ mod tests {
             // The source path is captured, while files are read by the staged
             // worker. An edit after construction is therefore observed.
             folder.cook("cook", "edited after cooperative preparation began");
-            let synchronous =
-                PathRegistry::load(&source, &selected, &quests, worker).unwrap();
+            let synchronous = PathRegistry::load(&source, &selected, &quests, worker).unwrap();
             let mut phases = std::collections::HashSet::new();
             let prepared = cooperative_registry(&mut preparation, worker, &mut phases);
             let cooperative = prepared.registry();
@@ -1692,13 +1723,21 @@ mod tests {
                 .find(|row| row.id == "invalid-draft")
                 .unwrap();
             assert_eq!(invalid.source, PathSource::Draft);
-            assert!(invalid.unavailable.as_deref().unwrap().contains("invalid-json"));
+            assert!(invalid
+                .unavailable
+                .as_deref()
+                .unwrap()
+                .contains("invalid-json"));
             let missing = cooperative
                 .rows()
                 .iter()
                 .find(|row| row.id == "missing-draft")
                 .unwrap();
-            assert!(missing.unavailable.as_deref().unwrap().contains("read-file"));
+            assert!(missing
+                .unavailable
+                .as_deref()
+                .unwrap()
+                .contains("read-file"));
             let offline = cooperative
                 .rows()
                 .iter()
@@ -1716,12 +1755,8 @@ mod tests {
     fn cooperative_reload_fails_closed_at_retained_document_limit() {
         with_data(|selected, quests, _worker| {
             let folder = Folder::new();
-            let mut preparation = RegistryPreparation::from_refs(
-                folder.source(true),
-                &selected,
-                &quests,
-            )
-            .unwrap();
+            let mut preparation =
+                RegistryPreparation::from_refs(folder.source(true), &selected, &quests).unwrap();
             preparation.index = Some(BUNDLED_INDEX.clone());
             preparation.retained_document_bytes = MAX_RETAINED_FOLDER_DOCUMENT_BYTES;
             preparation.pending = Some(PendingDocument {
@@ -2151,19 +2186,9 @@ mod tests {
         folder.cook("stale-publish-draft", "unpublished");
         set_source(folder.source(true));
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-        let input =
-            crate::preparation::PreparationInput::new(1, 4096, 4 * 1024 * 1024, 32 * 1024 * 1024)
-                .unwrap();
-        let data = Arc::clone(&selected);
-        let stale = crate::preparation::submit(
-            crate::preparation::PreparationKind::Catalogue,
-            Scope::Process,
-            input,
-            move |worker| prepare_current_registry(data, worker),
-        )
-        .unwrap();
+        let stale = prepare_current_registry(Arc::clone(&selected), 1, None);
         let completed = stale.identity();
-        let prepared = stale.join().unwrap();
+        let prepared = stale.join().unwrap().unwrap();
         let wrong_current = crate::work_admission::WorkService::shared()
             .unwrap()
             .lock()
@@ -2178,22 +2203,11 @@ mod tests {
 
         let checkpoint = Arc::new(Barrier::new(2));
         let proceed = Arc::new(Barrier::new(2));
-        let data = Arc::clone(&selected);
-        let worker_checkpoint = Arc::clone(&checkpoint);
-        let worker_proceed = Arc::clone(&proceed);
-        let mut cancelled = crate::preparation::submit(
-            crate::preparation::PreparationKind::Catalogue,
-            Scope::Process,
-            crate::preparation::PreparationInput::new(2, 4096, 4 * 1024 * 1024, 32 * 1024 * 1024)
-                .unwrap(),
-            move |worker| {
-                let prepared = prepare_current_registry(data, worker);
-                worker_checkpoint.wait();
-                worker_proceed.wait();
-                prepared
-            },
-        )
-        .unwrap();
+        let mut cancelled = prepare_current_registry(
+            Arc::clone(&selected),
+            2,
+            Some((Arc::clone(&checkpoint), Arc::clone(&proceed))),
+        );
         checkpoint.wait();
         cancelled.cancel(Cancellation::Superseded);
         proceed.wait();

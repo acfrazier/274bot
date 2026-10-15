@@ -21,6 +21,7 @@ pub(super) struct CompiledRun {
     pub pin: Arc<SelectedPin>,
     pub output: Output,
     pub actions: NativeActions,
+    pending_registry: Option<Box<crate::quester::registry::PreparedRegistry>>,
 }
 
 pub(super) struct PendingConfig {
@@ -129,7 +130,7 @@ pub(super) struct Output {
     pub status: Option<Arc<ScriptStatus>>,
     pub paint: Option<Arc<crate::shim::ScriptPaint>>,
     pub applied: Option<std::num::NonZeroU64>,
-    pub account: String,
+    pub account: Option<Box<str>>,
 }
 struct StatusDetails<'a> {
     failure_message: Option<&'a str>,
@@ -302,7 +303,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
 impl NativeOutput for Output {
     fn status(&mut self, status: ScriptStatus) {
         let previous = self.status.as_deref();
-        log_status_change(&self.account, previous, &status);
+        log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
         if previous != Some(&status) {
             self.status = Some(Arc::new(status));
         }
@@ -313,7 +314,8 @@ impl NativeOutput for Output {
         }
     }
     fn log(&mut self, level: api::hostlog::Level, message: &str) {
-        if self.account.is_empty() {
+        let account = self.account.as_deref().unwrap_or("");
+        if account.is_empty() {
             api::hostlog::emit(
                 api::hostlog::Emit {
                     category: api::hostlog::Category::ScriptLifecycle,
@@ -326,8 +328,8 @@ impl NativeOutput for Output {
             return;
         }
         api::hostlog::record(&api::hostlog::Record {
-            slot: Some(&self.account),
-            tick: api::hostlog::slot_tick(&self.account),
+            slot: Some(account),
+            tick: api::hostlog::slot_tick(account),
             source: api::hostlog::Source::Script,
             level,
             message,
@@ -552,6 +554,7 @@ pub fn prepare_config(
     bag: Arc<SettingsBag>,
     selected: Arc<api::game_data::SelectedGameData>,
     banks: Arc<api::named_banks::NamedBankFacts>,
+    quester: Option<crate::quester::card::QuesterRegistryReady>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
@@ -562,12 +565,23 @@ pub fn prepare_config(
         banks,
         families: worker,
     };
-    let config = catch_unwind(AssertUnwindSafe(|| (card.prepare)(&mut cx, revision, bag)))
-        .map_err(|payload| {
-            StartError::Unavailable(
-                format!("preparation panic: {}", panic_message(&payload)).into(),
-            )
-        })??;
+    let config = catch_unwind(AssertUnwindSafe(|| {
+        if card.id == crate::quester::card::CARD.id {
+            let ready = quester.ok_or_else(|| {
+                StartError::Unavailable("Quester registry preparation is missing".into())
+            })?;
+            crate::quester::card::prepare_with_registry(&mut cx, revision, bag, ready)
+        } else if quester.is_some() {
+            Err(StartError::Unavailable(
+                "unexpected Quester registry for another card".into(),
+            ))
+        } else {
+            (card.prepare)(&mut cx, revision, bag)
+        }
+    }))
+    .map_err(|payload| {
+        StartError::Unavailable(format!("preparation panic: {}", panic_message(&payload)).into())
+    })??;
     if config.card() != card.id
         || config.schema_version() != card.schema_version
         || config.revision() != revision
@@ -606,18 +620,61 @@ pub(super) fn prepare_run(
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
 ) -> Result<Preparation, StartError> {
+    let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
         card.id == crate::CompiledId("Gatherer") && selected.try_gathering().is_none();
-    let input = PreparationInput::for_settings(run.run, &bag)
+    let settings_input = PreparationInput::for_settings(run.run, &bag)
         .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
-    let input = if cold_gathering {
-        input.with_gathering_family_decode()
+    // Charge folder retention only for an enabled source. Keep that exact
+    // source for the worker; a later settings change fails the publish fence.
+    // The Quester-only state lives in its Stage variant. Other cards pay no
+    // per-profile registry allocation or pointer in their admission closure.
+    struct QuesterState {
+        bag: Option<Arc<SettingsBag>>,
+        banks: Option<Arc<api::named_banks::NamedBankFacts>>,
+        source: Option<crate::quester::registry::FolderSource>,
+        preparation: Option<Box<crate::quester::registry::RegistryPreparation<'static>>>,
+        quests: Option<Arc<api::quest_facts::QuestCatalog>>,
+        pending: Option<Box<crate::quester::registry::PreparedRegistry>>,
+        actions: u32,
+    }
+    let quester_state = quester.then(|| {
+        Box::new(QuesterState {
+            bag: Some(Arc::clone(&bag)),
+            banks: Some(Arc::clone(&banks)),
+            source: Some(crate::quester::registry::source_for_preparation()),
+            preparation: None,
+            quests: None,
+            pending: None,
+            actions: 0,
+        })
+    });
+    let input = if quester_state
+        .as_ref()
+        .is_some_and(|state| state.source.as_ref().is_some_and(|source| source.enabled))
+    {
+        PreparationInput::new(
+            run.run,
+            64 * 1024 * 1024,
+            32 * 1024 * 1024,
+            32 * 1024 * 1024,
+        )
+        .map_err(|error| StartError::Unavailable(error.to_string().into()))?
+        .with_quester_registry_actions()
+    } else if quester {
+        settings_input.with_quester_registry_actions()
+    } else if cold_gathering {
+        settings_input.with_gathering_family_decode()
     } else {
-        input
+        settings_input
     };
     let slot = api::identity::SlotKey::from_incarnation(run.slot)
         .ok_or_else(|| StartError::Unavailable("slot worker is not bound".into()))?;
     enum Stage {
+        Quester {
+            state: Box<QuesterState>,
+            configuring: bool,
+        },
         Decode {
             bag: Arc<SettingsBag>,
             banks: Arc<api::named_banks::NamedBankFacts>,
@@ -626,10 +683,18 @@ pub(super) fn prepare_run(
             bag: Arc<SettingsBag>,
             banks: Arc<api::named_banks::NamedBankFacts>,
         },
-        Construct(Arc<PreparedConfig>),
+        Construct {
+            config: Arc<PreparedConfig>,
+            quester: Option<Box<QuesterState>>,
+        },
         Done,
     }
-    let mut stage = if cold_gathering {
+    let mut stage = if let Some(state) = quester_state {
+        Stage::Quester {
+            state,
+            configuring: false,
+        }
+    } else if cold_gathering {
         Stage::Decode { bag, banks }
     } else {
         Stage::Configure { bag, banks }
@@ -640,15 +705,123 @@ pub(super) fn prepare_run(
         api::identity::Scope::Slot(slot),
         input,
         move |worker| {
-            let total = if cold_gathering { 3 } else { 2 };
-            let mut completed = match &stage {
-                Stage::Decode { .. } => 0,
-                Stage::Configure { .. } => u32::from(cold_gathering),
-                Stage::Construct(_) => total - 1,
+            let regular_total = if cold_gathering { 3 } else { 2 };
+            let (mut completed, mut total) = match &stage {
+                Stage::Quester {
+                    state,
+                    configuring: false,
+                } => (state.actions, None),
+                Stage::Quester {
+                    state,
+                    configuring: true,
+                } => (state.actions + 1, Some(state.actions + 2)),
+                Stage::Decode { .. } => (0, Some(regular_total)),
+                Stage::Configure { .. } => (u32::from(cold_gathering), Some(regular_total)),
+                Stage::Construct {
+                    quester: Some(state),
+                    ..
+                } => (state.actions + 1, Some(state.actions + 2)),
+                Stage::Construct { quester: None, .. } => (regular_total - 1, Some(regular_total)),
                 Stage::Done => unreachable!("terminal preparation step is not dispatched"),
             };
             let result = (|| -> Result<Option<CompiledRun>, StartError> {
                 match std::mem::replace(&mut stage, Stage::Done) {
+                    Stage::Quester {
+                        mut state,
+                        configuring: false,
+                    } => {
+                        state.actions = state
+                            .actions
+                            .checked_add(1)
+                            .expect("bounded Quester registry action count");
+                        completed = state.actions;
+                        if state.preparation.is_none() {
+                            let quests = Arc::new(
+                                api::quest_facts::QuestCatalog::from_identity(
+                                    selected.quest_identity(),
+                                )
+                                .map_err(StartError::Facts)?,
+                            );
+                            state.preparation = Some(Box::new(
+                                crate::quester::registry::RegistryPreparation::from_source(
+                                    state.source.take().expect("Quester folder source captured"),
+                                    Arc::clone(&selected),
+                                    Arc::clone(&quests),
+                                )
+                                .map_err(|error| {
+                                    StartError::Unavailable(
+                                        format!(
+                                            "{}: {}",
+                                            error.code,
+                                            error.detail.as_deref().unwrap_or("Path reload failed")
+                                        )
+                                        .into(),
+                                    )
+                                })?,
+                            ));
+                            state.quests = Some(quests);
+                        }
+                        let preparation = state
+                            .preparation
+                            .as_mut()
+                            .expect("registry preparation initialized");
+                        match preparation.step(worker).map_err(|error| {
+                            StartError::Unavailable(
+                                format!(
+                                    "{}: {}",
+                                    error.code,
+                                    error.detail.as_deref().unwrap_or("Path reload failed")
+                                )
+                                .into(),
+                            )
+                        })? {
+                            Some(candidate) => {
+                                state.preparation = None;
+                                state.pending = Some(Box::new(candidate));
+                                total = Some(state.actions);
+                                stage = Stage::Quester {
+                                    state,
+                                    configuring: true,
+                                };
+                            }
+                            None => {
+                                stage = Stage::Quester {
+                                    state,
+                                    configuring: false,
+                                };
+                            }
+                        }
+                        Ok(None)
+                    }
+                    Stage::Quester {
+                        mut state,
+                        configuring: true,
+                    } => {
+                        let ready = crate::quester::card::QuesterRegistryReady::new(
+                            state
+                                .pending
+                                .as_ref()
+                                .expect("Quester registry prepared")
+                                .registry()
+                                .clone(),
+                            state.quests.take().expect("Quester quest facts prepared"),
+                        );
+                        let config = prepare_config(
+                            worker,
+                            card.id,
+                            1,
+                            state.bag.take().expect("Quester settings retained"),
+                            Arc::clone(&selected),
+                            state.banks.take().expect("Quester banks retained"),
+                            Some(ready),
+                        )?;
+                        completed = state.actions + 1;
+                        stage = Stage::Construct {
+                            config,
+                            quester: Some(state),
+                        };
+                        Ok(None)
+                    }
                     Stage::Decode { bag, banks } => {
                         selected
                             .prepare_gathering(worker)
@@ -658,13 +831,26 @@ pub(super) fn prepare_run(
                         Ok(None)
                     }
                     Stage::Configure { bag, banks } => {
-                        let config =
-                            prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
-                        completed = total - 1;
-                        stage = Stage::Construct(config);
+                        let config = prepare_config(
+                            worker,
+                            card.id,
+                            1,
+                            bag,
+                            Arc::clone(&selected),
+                            banks,
+                            None,
+                        )?;
+                        completed = regular_total - 1;
+                        stage = Stage::Construct {
+                            config,
+                            quester: None,
+                        };
                         Ok(None)
                     }
-                    Stage::Construct(config) => {
+                    Stage::Construct {
+                        config,
+                        mut quester,
+                    } => {
                         let pin = selected.selected_pin().map_err(StartError::Facts)?;
                         let mut retained = try_retained(&retained)?;
                         let script = catch_unwind(AssertUnwindSafe(|| {
@@ -679,14 +865,14 @@ pub(super) fn prepare_run(
                             script: ScriptOwner(Some(script)),
                             config,
                             pending: None,
+                            pending_registry: quester
+                                .as_mut()
+                                .and_then(|state| state.pending.take()),
                             run,
                             selected: Arc::clone(&selected),
                             pin,
                             output: Output {
-                                account: account
-                                    .take()
-                                    .expect("construction owns the account")
-                                    .into_string(),
+                                account: account.take(),
                                 ..Default::default()
                             },
                             actions: NativeActions { _private: () },
@@ -696,19 +882,16 @@ pub(super) fn prepare_run(
                 }
             })();
             match result {
-                Ok(None) => preparation::CooperativePreparationStep::Continue {
-                    completed,
-                    total: Some(total),
-                },
+                Ok(None) => preparation::CooperativePreparationStep::Continue { completed, total },
                 Ok(Some(run)) => preparation::CooperativePreparationStep::Complete {
                     output: PreparationResult(Some(Ok(run))),
-                    completed: total,
-                    total: Some(total),
+                    completed: total.expect("completed preparation has a known total"),
+                    total,
                 },
                 Err(error) => preparation::CooperativePreparationStep::Complete {
                     output: PreparationResult(Some(Err(error))),
                     completed,
-                    total: Some(total),
+                    total,
                 },
             }
         },
@@ -760,11 +943,12 @@ pub(super) fn prepare_native_run(
                     script: ScriptOwner(Some(script)),
                     config,
                     pending: None,
+                    pending_registry: None,
                     run,
                     selected,
                     pin,
                     output: Output {
-                        account,
+                        account: Some(account.into_boxed_str()),
                         ..Default::default()
                     },
                     actions: NativeActions { _private: () },
@@ -916,6 +1100,7 @@ impl SlotScript {
                         script,
                         config,
                         pending,
+                        pending_registry: None,
                         run,
                         selected,
                         pin,
@@ -953,7 +1138,25 @@ impl SlotScript {
             let _ = job.join();
             return;
         }
-        match job.join() {
+        let identity = job.worker.identity();
+        let result = job.join().and_then(|mut run| {
+            if let Some(candidate) = run.pending_registry.take() {
+                crate::quester::registry::commit_snapshot(*candidate, identity, identity).map_err(
+                    |error| {
+                        StartError::Unavailable(
+                            format!(
+                                "{}: {}",
+                                error.code,
+                                error.detail.as_deref().unwrap_or("Path reload failed")
+                            )
+                            .into(),
+                        )
+                    },
+                )?;
+            }
+            Ok(run)
+        });
+        match result {
             Ok(run) => {
                 self.install_compiled(run);
                 self.settle_start(StartOutcome::Ready);
@@ -1222,6 +1425,7 @@ impl SlotScript {
                 (),
             ),
             pending: None,
+            pending_registry: None,
             run: RunKey {
                 slot: self.incarnation,
                 run: self.control_generation,

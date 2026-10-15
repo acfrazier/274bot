@@ -111,7 +111,6 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     assert_eq!(candidate.fingerprint, reference.fingerprint);
 }
 
-
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
@@ -415,7 +414,11 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
     .expect("worker completes")
     .expect("bounded catalogue preparation completes");
     assert_eq!(prepared.diff.changed, reference.changed);
-    assert!(prepared.prepare_failed.is_empty(), "{:?}", prepared.prepare_failed);
+    assert!(
+        prepared.prepare_failed.is_empty(),
+        "{:?}",
+        prepared.prepare_failed
+    );
     assert_eq!(prepared.prepared.len(), 1);
     assert_eq!(prepared.prepared[0].card.name, "GoodBot");
 }

@@ -64,7 +64,7 @@ struct AssignmentIntent {
     next: Option<vault::ScriptAssignment>,
 }
 
-type NativePreparation = PreparedTask<Result<Arc<PreparedConfig>, StartError>>;
+type NativePreparation = PreparedTask<Result<host_play::PreparedScriptConfig, StartError>>;
 
 pub(super) struct PendingPreparation {
     profile: Profile,
@@ -190,6 +190,7 @@ impl<Io> OperatorSession<Io> {
                 continue;
             }
             let mut pending = self.deliveries.remove(index);
+            let identity = pending.worker.identity();
             let prepared = pending
                 .worker
                 .join()
@@ -202,7 +203,9 @@ impl<Io> OperatorSession<Io> {
                     if play.script_native_run(&pending.name) != pending.live.run {
                         LiveDelivery::Stale
                     } else {
-                        match prepared {
+                        match prepared.and_then(|config| {
+                            config.commit(identity).map_err(|error| error.to_string())
+                        }) {
                             Ok(config) => {
                                 pending.live.prepared = Some(config);
                                 deliver_settings(play, &pending.name, Some(pending.live))
@@ -397,6 +400,7 @@ impl<Io> OperatorSession<Io> {
         for op in ready {
             let mut pending = self.preparations.remove(&op).expect("ready preparation");
             let name = pending.profile.username.clone();
+            let identity = pending.worker.identity();
             let source = pending.renamed_from.as_deref().unwrap_or(&name);
             let result = if pending
                 .copy_start_hold
@@ -437,7 +441,20 @@ impl<Io> OperatorSession<Io> {
                 });
             // Invalid drafts remain failed even if an unrelated durable write
             // overtook them. They were never eligible for persistence.
-            let config = match result {
+            if !current && result.is_ok() {
+                self.operations.set(op, &name, Outcome::Cancelled);
+                if pending.mirror.is_native_settings() {
+                    self.settings_writes.push(SettingsWrite {
+                        op,
+                        profile: name.clone(),
+                        result: SettingsResult::Superseded,
+                    });
+                }
+                continue;
+            }
+            let config = match result
+                .and_then(|config| config.commit(identity).map_err(|error| error.to_string()))
+            {
                 Ok(config) => config,
                 Err(error) => {
                     self.operations
@@ -459,17 +476,6 @@ impl<Io> OperatorSession<Io> {
                     continue;
                 }
             };
-            if !current {
-                self.operations.set(op, &name, Outcome::Cancelled);
-                if pending.mirror.is_native_settings() {
-                    self.settings_writes.push(SettingsWrite {
-                        op,
-                        profile: name.clone(),
-                        result: SettingsResult::Superseded,
-                    });
-                }
-                continue;
-            }
             let assignment_action = if pending.assignment_intent.is_some() {
                 "native sync assignment"
             } else {
@@ -655,12 +661,11 @@ mod tests {
                 .expect("native settings revision")
                 .checked_add(1)
                 .expect("settings revision");
-            let prepared = play
+            let worker = play
                 .script_prepare_config(id, revision, Arc::new(bag))
-                .unwrap()
-                .join()
-                .unwrap()
                 .unwrap();
+            let identity = worker.identity();
+            let prepared = worker.join().unwrap().unwrap().commit(identity).unwrap();
             play.script_configure_compiled(name, prepared, run)
         }
     }

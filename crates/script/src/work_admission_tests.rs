@@ -619,6 +619,7 @@ impl WorkFamilySpec for ProfileSpec {
     }
 }
 
+#[derive(Debug)]
 struct QualifiedProfileJob {
     clock: Arc<ManualClock>,
     stage: u8,
@@ -733,7 +734,10 @@ fn a_qualified_family_unit_cannot_be_attached_to_an_unrelated_job() {
     drop(service);
     WorkService::wait_terminal(&shared, &process_ticket).expect("process profile settles");
     assert!(matches!(
-        shared.lock().consume(&process_ticket).expect("consume profile"),
+        shared
+            .lock()
+            .consume(&process_ticket)
+            .expect("consume profile"),
         Settlement::Failed(JobError::Cooperation(CooperativeViolation::UnboundedSlice))
     ));
 }
@@ -770,7 +774,7 @@ fn pinned_quester_progress_compile_has_one_bounded_profile_prepare_unit() {
         WorkService::wait_terminal(&shared, &ticket).expect("profile preparation settles");
         let settlement = shared.lock().consume(&ticket).expect("consume profile");
         if succeeds {
-            assert!(matches!(settlement, Settlement::Ready(5)));
+            assert!(matches!(settlement, Settlement::Completed(5)));
         } else {
             assert!(matches!(
                 settlement,
@@ -804,6 +808,7 @@ impl WorkFamilySpec for CatalogueSpec {
     }
 }
 
+#[derive(Debug)]
 struct QuesterRegistryJob {
     clock: Arc<ManualClock>,
     stage: u8,
@@ -879,7 +884,7 @@ fn bounded_quester_actions_each_qualify_but_seal_returns_to_ordinary_allowance()
         WorkService::wait_terminal(&shared, &ticket).expect("registry preparation settles");
         let settlement = shared.lock().consume(&ticket).expect("consume catalogue");
         if succeeds {
-            assert!(matches!(settlement, Settlement::Ready(5)));
+            assert!(matches!(settlement, Settlement::Completed(5)));
         } else {
             assert!(matches!(
                 settlement,

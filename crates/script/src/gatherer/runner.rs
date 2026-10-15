@@ -2425,6 +2425,7 @@ mod tests {
                 Arc::new(settings),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -2537,6 +2538,7 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -2671,6 +2673,7 @@ mod tests {
                 Arc::new(crate::native::SettingsBag::new()),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -2735,6 +2738,7 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -2829,6 +2833,7 @@ mod tests {
                     Arc::new(bag),
                     selected,
                     Arc::default(),
+                    None,
                 )
             })
             .unwrap()
@@ -3230,6 +3235,7 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()

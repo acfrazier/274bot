@@ -488,6 +488,57 @@ fn alias_tier_fallback_resolves_real_candidates_and_keeps_stat_gates() {
 }
 
 #[test]
+fn real_loadout_candidates_match_canonical_first_with_fewer_name_lookups() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let helm = selected.item_by_alias("rune_full_helm").unwrap();
+    let lobster = selected.item_by_alias("lobster").unwrap();
+    let helm_name = helm.name.as_deref().unwrap();
+    let mut canonical_first = Vec::new();
+    let mut relevance_first = Vec::new();
+    let mut all_named = 0;
+    let mut relevant_named = 0;
+
+    for candidate in selected.items() {
+        if candidate.is_certificate() {
+            continue;
+        }
+        let Some(name) = candidate.name.as_deref() else {
+            continue;
+        };
+        all_named += 1;
+        // This is the real hat + carry loadout used above, including its
+        // lower-metal tier fallback. Compare the old and new lookup order over
+        // every selected item, not a hand-picked table of names.
+        let relevant = candidate.id == lobster.id
+            || candidate.id == helm.id
+            || crate::melee_weapons::same_or_lower_metal_item(name, helm_name);
+        if selected
+            .resolve_item_name(name)
+            .is_some_and(|item| item.id == candidate.id)
+            && relevant
+        {
+            canonical_first.push(candidate.id);
+        }
+        if relevant {
+            relevant_named += 1;
+            if selected
+                .resolve_item_name(name)
+                .is_some_and(|item| item.id == candidate.id)
+            {
+                relevance_first.push(candidate.id);
+            }
+        }
+    }
+    assert!(canonical_first.contains(&helm.id));
+    assert!(canonical_first.contains(&lobster.id));
+    assert_eq!(canonical_first, relevance_first);
+    assert!(
+        relevant_named * 8 < all_named,
+        "irrelevant selected names must not consume canonical lookups"
+    );
+}
+
+#[test]
 fn loadout_ready_uses_alias_ids_and_excludes_same_display_certificates() {
     with_path_loadout(vec![], path_loadout(), true, |_, ready, data| {
         let lobster = data.item_by_alias("lobster").unwrap();
