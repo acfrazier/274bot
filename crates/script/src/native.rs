@@ -384,8 +384,27 @@ pub struct NativeTick<'a> {
     pub cx: ActionContext<'a>,
     pub output: &'a mut dyn NativeOutput,
     pub pairs: Option<&'a dyn QuestPairPort>,
+    /// The slot's local-state capability (T5.2): operator loadouts and
+    /// the account's durable identity. `None` when the composition bound
+    /// no state service to this slot.
+    pub state: Option<&'a crate::local_state::SlotState>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
+}
+
+impl NativeTick<'_> {
+    /// The operator's loadout rows this tick may plan with: the bound
+    /// service's current lease, or explicitly absent rows when no service
+    /// is bound. `NotReady` while the domain is cold: the card retries on
+    /// a later tick, never plans with fabricated empty rows.
+    pub fn operator_loadouts(
+        &self,
+    ) -> Result<crate::local_state::OperatorLoadouts, api::local_state::ErrorCode> {
+        match self.state {
+            Some(state) => state.operator_loadouts(),
+            None => Ok(crate::local_state::OperatorLoadouts::absent()),
+        }
+    }
 }
 
 #[cfg(all(feature = "load", feature = "test-hooks"))]

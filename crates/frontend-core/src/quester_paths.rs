@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 
+use host_play::local_state::Preferences;
+
 /// Shared settings label used by panel and TUI.
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
 /// Shared explicit reload label used by panel and TUI.
@@ -57,8 +59,8 @@ impl QuesterPathsView {
     }
 
     /// Read the host-wide settings object without touching any Path files.
-    fn read_at(prefs_path: &Path) -> Self {
-        let Some(value) = host_play::panel_ui_value_at(prefs_path, "quester_paths") else {
+    fn read(preferences: &Preferences) -> Self {
+        let Some(value) = preferences.value("quester_paths") else {
             return Self::default();
         };
         let Some(settings) = value.as_object() else {
@@ -77,19 +79,17 @@ impl QuesterPathsView {
         }
     }
 
-    /// Write only fields changed by this editor through the shared panel-ui transaction.
-    fn persist_changed_at(prefs_path: &Path, before: &Self, after: &Self) -> io::Result<()> {
+    /// Write only fields changed by this editor through the shared
+    /// preferences.
+    fn persist_changed(preferences: &Preferences, before: &Self, after: &Self) -> io::Result<()> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
             return Ok(());
         }
 
-        host_play::update_panel_ui_at(prefs_path, |document, _, _| {
-            let root = document.as_object_mut().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "panel-ui.json is not an object")
-            })?;
-            let settings = root
+        preferences.update(|document| {
+            let settings = document
                 .entry("quester_paths")
                 .or_insert_with(|| serde_json::json!({}));
             if !settings.is_object() {
@@ -107,7 +107,7 @@ impl QuesterPathsView {
                     serde_json::Value::String(after.folder.to_string_lossy().into_owned()),
                 );
             }
-            Ok(None)
+            Ok(())
         })
     }
 
@@ -195,8 +195,8 @@ pub struct QuesterPathsController {
 impl QuesterPathsController {
     /// Restore and apply saved settings. An enabled source is reloaded the
     /// first time selected game data is supplied to [`Self::advance`].
-    pub fn restore_at(&mut self, prefs_path: &Path) {
-        self.settings = QuesterPathsView::read_at(prefs_path);
+    pub fn restore(&mut self, preferences: &Preferences) {
+        self.settings = QuesterPathsView::read(preferences);
         self.settings.apply();
         self.reload_when_ready = self.settings.enabled;
         self.notice = None;
@@ -207,9 +207,9 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source.
-    pub fn apply_changed_at(
+    pub fn apply_changed(
         &mut self,
-        prefs_path: &Path,
+        preferences: &Preferences,
         after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
@@ -219,7 +219,7 @@ impl QuesterPathsController {
         }
         if persist {
             if let Err(error) =
-                QuesterPathsView::persist_changed_at(prefs_path, &self.settings, after)
+                QuesterPathsView::persist_changed(preferences, &self.settings, after)
             {
                 let message = format!("Quest Paths settings were not saved: {error}");
                 self.set_notice(Err(Arc::from(message.clone())));
@@ -331,6 +331,7 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
 mod tests {
     use super::{QuesterPathsView, ReloadPaths};
     use api::selected::{ClientRevision, FamilyPreparation};
+    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
     use script::quester::registry::{FolderSource, PathRegistry};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -339,7 +340,7 @@ mod tests {
 
     struct TempStore {
         dir: PathBuf,
-        prefs: PathBuf,
+        preferences: Preferences,
     }
 
     impl TempStore {
@@ -352,13 +353,14 @@ mod tests {
             ));
             std::fs::create_dir_all(&dir).unwrap();
             Self {
-                prefs: dir.join("panel-ui.json"),
+                preferences: LocalStateService::open_process(StateRoot::new(dir.clone()))
+                    .preferences(),
                 dir,
             }
         }
 
-        fn prefs(&self) -> &Path {
-            &self.prefs
+        fn prefs(&self) -> &Preferences {
+            &self.preferences
         }
 
         fn dir(&self) -> &Path {
@@ -435,7 +437,7 @@ mod tests {
     #[test]
     fn missing_preferences_disable_folder_paths_and_use_product_data_directory() {
         let store = TempStore::new();
-        let view = QuesterPathsView::read_at(store.prefs());
+        let view = QuesterPathsView::read(store.prefs());
         assert!(!view.enabled);
         assert_eq!(view.folder, script::bot_file("quester/paths/289"));
     }
@@ -443,21 +445,23 @@ mod tests {
     #[test]
     fn changed_preferences_round_trip_without_replacing_unrelated_values() {
         let store = TempStore::new();
+        let path = store.prefs().path();
         std::fs::write(
-            store.prefs(),
+            &path,
             r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"custom":"preserve"},"quester_paths":{"enabled":false,"folder":"old","future":"preserve"}}"#,
         )
         .unwrap();
-        let before = QuesterPathsView::read_at(store.prefs());
+        store.prefs().reload().unwrap();
+        let before = QuesterPathsView::read(store.prefs());
         let after = QuesterPathsView {
             enabled: true,
             folder: store.dir().join("checkout").join("quest-paths"),
         };
 
-        QuesterPathsView::persist_changed_at(store.prefs(), &before, &after).unwrap();
+        QuesterPathsView::persist_changed(store.prefs(), &before, &after).unwrap();
 
         let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(store.prefs()).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["unrelated"]["keep"], true);
         assert_eq!(saved["nav"]["show_nav_path"], true);
         assert_eq!(saved["nav"]["custom"], "preserve");
@@ -467,7 +471,7 @@ mod tests {
             after.folder.to_string_lossy().as_ref()
         );
         assert_eq!(saved["quester_paths"]["future"], "preserve");
-        assert_eq!(QuesterPathsView::read_at(store.prefs()), after);
+        assert_eq!(QuesterPathsView::read(store.prefs()), after);
     }
 
     #[test]

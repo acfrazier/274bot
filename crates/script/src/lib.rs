@@ -52,6 +52,7 @@ mod keep_list;
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
+pub mod local_state;
 mod module_imports;
 pub mod native;
 pub mod native_bank;
@@ -95,9 +96,9 @@ pub use load::{
 #[cfg(feature = "load")]
 pub use load::{resolve_sibling_modules, JsLibrary};
 pub use loadouts_store::{
-    copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
-    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsStore,
-    ResolvedSettingOptions, WORN_SLOT_LAYOUT,
+    copy_equipment_preserving_supplies, resolve_setting_options,
+    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsBacking,
+    LoadoutsBaseline, LoadoutsSaveError, LoadoutsStore, ResolvedSettingOptions, WORN_SLOT_LAYOUT,
 };
 pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
 pub use rs2b0t_registry::{

@@ -951,6 +951,19 @@ pub enum LoadoutOp {
         /// The row to remove.
         name: String,
     },
+    /// Replace the row called `from`, in place at its position, with
+    /// `loadout` under its new name, as one write (F0 amendment 2, ADR 0007
+    /// note of 2026-10-15). Refused when no row is called `from`
+    /// ([`ErrorCode::Conflict`]: the row the edit was written against is
+    /// gone; nothing is inserted) or when another row is already called
+    /// `loadout.name` ([`ErrorCode::Validation`] with
+    /// [`ValidationReason::DuplicateId`]: names key the rows).
+    Rename {
+        /// The row to replace.
+        from: String,
+        /// The row that takes its place.
+        loadout: Loadout,
+    },
 }
 
 /// One operator loadout write in the `loadouts-references` domain.
@@ -1011,6 +1024,44 @@ impl LoadoutEdit {
             expected,
             op: LoadoutOp::Remove {
                 name: trimmed.to_string(),
+            },
+        })
+    }
+
+    /// Replace the row called `from` with `loadout` (renamed) for
+    /// `identity`, expecting `expected`: one write that keeps the row's
+    /// position ([`LoadoutOp::Rename`]). `from` is the row's exact name,
+    /// under the removal bounds; `loadout.name` must not be empty and must
+    /// differ from `from` (an unchanged name is an upsert).
+    pub fn rename(
+        identity: DomainIdentity,
+        expected: Option<StoreVersion>,
+        from: &str,
+        loadout: Loadout,
+    ) -> Result<Self, ErrorCode> {
+        let domain = LocalStateDomain::LoadoutsReferences;
+        if identity.domain() != domain {
+            return Err(ErrorCode::Validation {
+                domain: identity.domain(),
+                reason: ValidationReason::Identity,
+            });
+        }
+        let refuse = |reason| Err(ErrorCode::Validation { domain, reason });
+        if from.trim().is_empty() || loadout.name.trim().is_empty() {
+            return refuse(ValidationReason::Empty);
+        }
+        if from.trim().len() > MAX_PREF_KEY_CHARS {
+            return refuse(ValidationReason::TooLong);
+        }
+        if loadout.name == from {
+            return refuse(ValidationReason::DuplicateId);
+        }
+        Ok(Self {
+            identity,
+            expected,
+            op: LoadoutOp::Rename {
+                from: from.to_string(),
+                loadout,
             },
         })
     }

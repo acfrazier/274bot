@@ -25,7 +25,7 @@ mod secret;
 
 pub use private_file::{
     create_private_dir, create_private_file, read_private_file, read_regular_file, valid_component,
-    write_private_file,
+    write_private_file, write_private_file_checked,
 };
 pub use secret::Secret;
 

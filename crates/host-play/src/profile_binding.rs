@@ -215,6 +215,9 @@ impl ProfileSelection {
     pub fn vault_path(&self) -> &Path {
         &self.vault_path
     }
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
     pub fn catalog_root(&self) -> Option<&Path> {
         self.catalog_root.as_deref()
     }
@@ -631,6 +634,7 @@ impl ProfileSelection {
             #[cfg(feature = "debug-catalog")]
             debug_engine_dir: self.engine_dir.clone(),
             vault_path: self.vault_path.clone(),
+            state_root: self.state_root.clone(),
             catalog_root: self.catalog_root.clone(),
             world_members: self.world_members.clone(),
             public_worlds: self.public_worlds.clone(),

@@ -224,7 +224,16 @@ fn paired_path(
     script::quester::compile::prepare_for_test({
         let selected = Arc::clone(selected);
         let quests = Arc::clone(quests);
-        move |worker| compile_path_for_gang(&bytes, &selected, &quests, worker, Some(gang))
+        move |worker| {
+            compile_path_for_gang(
+                &bytes,
+                &selected,
+                &quests,
+                worker,
+                Some(gang),
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        }
     })
     .unwrap_or_else(|error| panic!("compile synthetic paired {path_id} Path: {error:?}"))
 }
@@ -943,7 +952,16 @@ fn phase_path(
     script::quester::compile::prepare_for_test({
         let selected = Arc::clone(selected);
         let quests = Arc::clone(quests);
-        move |worker| compile_path_for_gang(&bytes, &selected, &quests, worker, Some(gang))
+        move |worker| {
+            compile_path_for_gang(
+                &bytes,
+                &selected,
+                &quests,
+                worker,
+                Some(gang),
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        }
     })
     .unwrap()
 }

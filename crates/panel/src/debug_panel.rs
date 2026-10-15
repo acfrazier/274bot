@@ -1098,7 +1098,7 @@ fn send_wires<'a, I>(
 
 fn save_prefs(session: &Session) {
     if session.persist_ui {
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 

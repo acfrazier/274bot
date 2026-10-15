@@ -464,6 +464,20 @@ impl Play {
                 self.connection.game_host(),
                 self.connection.game_port(),
             ));
+        // The slot's local-state capability (T5.2): the process service
+        // plus the account identity, resolved here on the spawning thread
+        // from the composition's explicit root and namespace. A name the
+        // server would refuse at login gets none, with one warning line.
+        let slot_state = self
+            .local_state
+            .as_ref()
+            .and_then(|state| state.slot_state(&username));
+        if let Some(state) = &slot_state {
+            slot_script
+                .lock()
+                .unwrap()
+                .bind_local_state(Arc::clone(state));
+        }
         self.cheats
             .lock()
             .unwrap()
@@ -481,32 +495,30 @@ impl Play {
             bot.walk_globals_store = self.walk_globals_store.clone();
         }
         // The account's bank memory, keyed by the login identity every
-        // spelling of the name shares (its hint path's identity), and its
-        // hint file, both resolved here on the spawning thread
-        // (design-bank-snapshot §1.2, §1.4): the slot thread never resolves
-        // `HOME`, so a test's thread-local `IsolatedEnv` pin covers every
-        // save.
+        // spelling of the name shares (its hint identity), and its hint
+        // port on the process state service, both resolved here on the
+        // spawning thread (design-bank-snapshot §1.2, §1.4): the slot
+        // thread never resolves a root.
         let bank_memory = Arc::clone(
             self.bank_memories
                 .entry(super::slot_bank_memory::memory_key(&username).into_owned())
                 .or_default(),
         );
-        let bank_hint = match self.connection.profile() {
-            Some(profile) => {
-                match script::bank_hints::HintFile::for_account(profile.name(), &username) {
-                    Ok(hint) => Some(hint),
-                    Err(error) => {
-                        host_log!(
-                            Category::BankOp,
-                            Level::Warn,
-                            slot = &username,
-                            "bank hints: {error}; the memory lives for this process only"
-                        );
-                        None
-                    }
-                }
+        let bank_hint = match (&self.local_state, &slot_state) {
+            (Some(composition), Some(state)) => Some(super::slot_bank_memory::SlotHintPort::new(
+                Arc::clone(composition.service()),
+                state.identity(api::local_state::LocalStateDomain::BankHints),
+            )),
+            (Some(_), None) => {
+                host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    slot = &username,
+                    "bank hints: the memory lives for this process only"
+                );
+                None
             }
-            None => None,
+            (None, _) => None,
         };
         let slot_bank = super::slot_bank_memory::SlotBankMemory::new(bank_memory, bank_hint);
         let world = world_round.as_ref().and_then(|round| {
