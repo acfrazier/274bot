@@ -16,6 +16,14 @@ const MAX_CATALOG_INDEX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CATALOG_CARDS: usize = 4096;
 #[cfg(feature = "load")]
 const MAX_CATALOG_FILES: usize = 8192;
+#[cfg(feature = "load")]
+const MIN_CATALOG_SOURCE_BUDGET_BYTES: usize = MAX_PREPARATION_SOURCE_BYTES + 1024 * 1024;
+#[cfg(feature = "load")]
+const CATALOG_SOURCE_GROWTH_FACTOR: usize = 2;
+#[cfg(feature = "load")]
+const CATALOG_SCRATCH_GROWTH_FACTOR: usize = 4;
+#[cfg(feature = "load")]
+const CATALOG_RESULT_GROWTH_FACTOR: usize = 2;
 
 /// Immutable catalog owner snapshot for the one admitted catalogue demand.
 /// It contains card metadata and stored hashes only, never the live library,
@@ -28,6 +36,10 @@ pub struct CatalogPreparationSnapshot {
     existing: HashMap<String, CardPreparationTemplate>,
     fingerprints: HashMap<String, String>,
     snapshot_bytes: usize,
+    source_limit_bytes: usize,
+    input_bytes: usize,
+    scratch_bytes: usize,
+    result_bytes: usize,
 }
 
 #[cfg(feature = "load")]
@@ -58,6 +70,11 @@ struct CatalogAddedCard {
 }
 #[cfg(feature = "load")]
 impl JsLibrary {
+    /// Publish the root whose catalogue was successfully filled or refreshed.
+    pub fn set_catalog_root(&mut self, root: &Path) {
+        self.catalog_root = Some(root.to_path_buf());
+    }
+
     /// Capture bounded metadata needed to diff and prepare the current
     /// catalogue without carrying the live library into WorkAdmission.
     pub fn catalog_preparation_snapshot(
@@ -71,11 +88,22 @@ impl JsLibrary {
             .ok_or_else(|| "catalog snapshot is too large".to_string())?;
         add_capacity(&mut snapshot_bytes, self.cache.root().as_os_str().len())
             .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let mut measured_source_bytes = match std::fs::metadata(&index) {
+            Ok(metadata) if metadata.is_file() => {
+                usize::try_from(metadata.len())
+                    .map_err(|_| "catalog registry index size overflow".to_string())?
+                    .min(MAX_CATALOG_INDEX_BYTES)
+            }
+            _ => 0,
+        };
         for card in self
             .cards
             .iter()
             .filter(|card| card.source == ScriptSource::Catalog)
         {
+            add_catalog_bytes(&mut measured_source_bytes, card.origin.capacity())
+                .map_err(|_| "catalog source estimate is too large".to_string())?;
             let template = CardPreparationTemplate::from_card(card);
             add_capacity(
                 &mut snapshot_bytes,
@@ -121,422 +149,80 @@ impl JsLibrary {
         if snapshot_bytes > MAX_CATALOG_SNAPSHOT_BYTES {
             return Err("catalog card metadata exceeds the 8 MiB snapshot bound".into());
         }
+        let source_limit_bytes = catalog_source_budget(measured_source_bytes, snapshot_bytes)?;
+        let input_bytes = snapshot_bytes
+            .checked_add(source_limit_bytes)
+            .ok_or_else(|| "catalog input charge overflow".to_string())?;
+        let scratch_bytes = catalog_scratch_budget(source_limit_bytes)?;
+        let result_bytes = catalog_result_budget(source_limit_bytes)?;
         Ok(CatalogPreparationSnapshot {
             root: root.to_path_buf(),
             cache_root: self.cache.root().to_path_buf(),
             existing,
             fingerprints,
             snapshot_bytes,
+            source_limit_bytes,
+            input_bytes,
+            scratch_bytes,
+            result_bytes,
         })
     }
 }
 
 #[cfg(feature = "load")]
+// Keep one maximum-size bounded card source plus metadata room for a first
+// fill, then scale with measured index and retained origins.
+fn catalog_source_budget(measured: usize, snapshot: usize) -> Result<usize, String> {
+    let growth = measured
+        .checked_mul(CATALOG_SOURCE_GROWTH_FACTOR)
+        .and_then(|bytes| bytes.checked_add(MIN_CATALOG_SOURCE_BUDGET_BYTES))
+        .ok_or_else(|| "catalog source charge overflow".to_string())?;
+    let available = MAX_CATALOG_INPUT_BYTES
+        .checked_sub(snapshot)
+        .ok_or_else(|| "catalog snapshot exceeds the input charge bound".to_string())?;
+    Ok(growth.min(MAX_CATALOG_SOURCE_BYTES).min(available))
+}
+
+#[cfg(feature = "load")]
+// A single card preparation needs the same minimum scratch as its bounded
+// result; larger catalog input scales scratch up to the catalogue hard cap.
+fn catalog_scratch_budget(source_limit: usize) -> Result<usize, String> {
+    let derived = source_limit
+        .checked_mul(CATALOG_SCRATCH_GROWTH_FACTOR)
+        .ok_or_else(|| "catalog scratch charge overflow".to_string())?;
+    Ok(derived
+        .max(MAX_PREPARATION_RESULT_BYTES)
+        .min(MAX_CATALOG_SCRATCH_BYTES))
+}
+
+#[cfg(feature = "load")]
+// Keep one card result possible for a small catalog and scale room for more
+// output with measured source input, never past the catalog result ceiling.
+fn catalog_result_budget(source_limit: usize) -> Result<usize, String> {
+    let derived = source_limit
+        .checked_mul(CATALOG_RESULT_GROWTH_FACTOR)
+        .ok_or_else(|| "catalog result charge overflow".to_string())?;
+    Ok(derived
+        .max(MAX_PREPARATION_RESULT_BYTES)
+        .min(MAX_CATALOG_RESULT_BYTES))
+}
+
+#[cfg(feature = "load")]
 impl CatalogPreparationSnapshot {
     pub const fn input_bytes(&self) -> usize {
-        MAX_CATALOG_INPUT_BYTES
+        self.input_bytes
     }
 
     pub const fn scratch_bytes(&self) -> usize {
-        MAX_CATALOG_SCRATCH_BYTES
+        self.scratch_bytes
     }
 
     pub const fn result_bytes(&self) -> usize {
-        MAX_CATALOG_RESULT_BYTES
+        self.result_bytes
     }
 
     fn source_limit(&self) -> usize {
-        MAX_CATALOG_SOURCE_BYTES.min(MAX_CATALOG_INPUT_BYTES.saturating_sub(self.snapshot_bytes))
-    }
-
-    pub fn diff(&self) -> Result<CatalogDiff, String> {
-        let source_limit = self.source_limit();
-        let index = crate::rs2b0t_registry::registry_index_path(&self.root);
-        let index_limit = source_limit.min(MAX_CATALOG_INDEX_BYTES);
-        let index_ts = vault::read_regular_file(&index, index_limit as u64)
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
-        let mut used = index_ts.capacity();
-        let registry_index = crate::rs2b0t_registry::RegistryIndex::parse(&index_ts)
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
-        let registrations = registry_index
-            .registrations()
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
-        if registrations.len() > MAX_CATALOG_CARDS {
-            return Err("catalog has more than 4096 registrations".into());
-        }
-        for card in &registrations {
-            add_catalog_bytes(
-                &mut used,
-                registry_card_bytes(card).ok_or("catalog registry size overflow")?,
-            )
-            .map_err(|_| "catalog registry metadata exceeds its 56 MiB bound")?;
-        }
-        if used > source_limit {
-            return Err("catalog inputs exceed the WorkAdmission byte bound".into());
-        }
-
-        let mut sources = HashMap::new();
-        let mut failed = Vec::new();
-        let mut failed_names = HashSet::new();
-        let mut source_files = 0usize;
-        for card in &registrations {
-            source_files += 1;
-            if source_files > MAX_CATALOG_FILES {
-                return Err("catalog source graph exceeds 8192 files".into());
-            }
-            let Some(path) = script_file_path(&self.root, &card.rel_path) else {
-                failed.push(LoadFailure::capture(
-                    ScriptSource::Catalog,
-                    Path::new(&card.rel_path),
-                    &card.name,
-                    &format!("missing {}", card.rel_path),
-                    None,
-                    None,
-                ));
-                failed_names.insert(card.name.clone());
-                continue;
-            };
-            match read_catalog_source(&path, &mut used, source_limit) {
-                Ok(text) => {
-                    add_catalog_source(&mut sources, &card.rel_path, text, &mut used, source_limit)
-                        .map_err(|error| error.message())?
-                }
-                Err(CatalogSourceError::Aggregate) => {
-                    return Err("catalog sources exceed the 56 MiB WorkAdmission bound".into());
-                }
-                Err(CatalogSourceError::File(error)) => {
-                    failed.push(LoadFailure::capture(
-                        ScriptSource::Catalog,
-                        &path,
-                        &card.name,
-                        &error,
-                        None,
-                        None,
-                    ));
-                    failed_names.insert(card.name.clone());
-                }
-            }
-        }
-        self.complete_catalog_sources(&mut sources, &mut used, source_limit, &mut source_files)?;
-        let mut diff = CatalogDiff {
-            added: Vec::new(),
-            changed: Vec::new(),
-            removed: Vec::new(),
-            failed,
-            current_fingerprints: HashMap::new(),
-            incoming: HashMap::new(),
-        };
-        ensure_catalog_diff_bound(&diff)?;
-        for registration in registrations {
-            if is_reserved(&registration.name) {
-                continue;
-            }
-            let Some(path) = script_file_path(&self.root, &registration.rel_path) else {
-                diff.failed.push(LoadFailure::capture(
-                    ScriptSource::Catalog,
-                    Path::new(&registration.rel_path),
-                    &registration.name,
-                    &format!("missing {}", registration.rel_path),
-                    None,
-                    None,
-                ));
-                failed_names.insert(registration.name.clone());
-                ensure_catalog_diff_bound(&diff)?;
-                continue;
-            };
-            let Some(origin) = sources.get(&registration.rel_path) else {
-                diff.failed.push(LoadFailure::capture(
-                    ScriptSource::Catalog,
-                    &path,
-                    &registration.name,
-                    &format!("unreadable {}", path.display()),
-                    None,
-                    None,
-                ));
-                failed_names.insert(registration.name.clone());
-                ensure_catalog_diff_bound(&diff)?;
-                continue;
-            };
-            let (shape, api_family) = match resolve_api_family(origin) {
-                Err(error) => {
-                    diff.failed.push(LoadFailure::capture_bounded(
-                        ScriptSource::Catalog,
-                        &path,
-                        &registration.name,
-                        &error,
-                        origin,
-                        None,
-                        MAX_PREPARATION_SOURCE_BYTES,
-                    ));
-                    failed_names.insert(registration.name.clone());
-                    ensure_catalog_diff_bound(&diff)?;
-                    continue;
-                }
-                Ok((LoadShape::Reject, _)) => continue,
-                Ok(resolved) => resolved,
-            };
-            let fingerprint = match raw_content_fingerprint_bounded(
-                &path,
-                origin,
-                MAX_PREPARATION_SOURCE_BYTES,
-            ) {
-                Ok(fingerprint) => fingerprint,
-                Err(error) => {
-                    diff.failed.push(LoadFailure::capture_bounded(
-                        ScriptSource::Catalog,
-                        &path,
-                        &registration.name,
-                        &error,
-                        origin,
-                        Some(api_family),
-                        MAX_PREPARATION_SOURCE_BYTES,
-                    ));
-                    failed_names.insert(registration.name.clone());
-                    ensure_catalog_diff_bound(&diff)?;
-                    continue;
-                }
-            };
-            let identity_key = crate::identity::card_identity_key(
-                ScriptSource::Catalog,
-                &path,
-                &registration.name,
-            );
-            let is_added = !self.existing.contains_key(&registration.name);
-            let is_changed = !is_added
-                && self.fingerprints.get(&identity_key).map(String::as_str)
-                    != Some(fingerprint.as_str());
-            diff.current_fingerprints
-                .insert(registration.name.clone(), fingerprint);
-            ensure_catalog_diff_bound(&diff)?;
-            if !is_added && !is_changed {
-                continue;
-            }
-            let addition = if is_added {
-                let sha256 = JsCache::origin_sha(origin.as_bytes());
-                let first_unloadable = match first_unloadable_for_card_bounded(
-                    origin,
-                    &path,
-                    MAX_PREPARATION_SOURCE_BYTES,
-                ) {
-                    Ok(first) => first,
-                    Err(error) => {
-                        diff.failed.push(LoadFailure::capture_bounded(
-                            ScriptSource::Catalog,
-                            &path,
-                            &registration.name,
-                            &error,
-                            origin,
-                            Some(api_family),
-                            MAX_PREPARATION_SOURCE_BYTES,
-                        ));
-                        failed_names.insert(registration.name.clone());
-                        ensure_catalog_diff_bound(&diff)?;
-                        continue;
-                    }
-                };
-                let unloadable = catalog_unloadable(
-                    &registration.name,
-                    ScriptSource::Catalog,
-                    &sha256,
-                    &path,
-                    first_unloadable,
-                );
-                Some(CatalogAddedCard {
-                    shape,
-                    api_family,
-                    sha256,
-                    unloadable,
-                })
-            } else {
-                None
-            };
-            let card = registry_index
-                .card_with_sources_bounded(
-                    &sources,
-                    &registration.name,
-                    MAX_PREPARATION_SOURCE_BYTES,
-                )
-                .map_err(|error| format!("catalog {}: {error}", registration.name))?;
-            if is_added {
-                diff.added.push(registration.name.clone());
-            } else {
-                diff.changed.push(registration.name.clone());
-            }
-            diff.incoming.insert(
-                registration.name.clone(),
-                CatalogIncoming {
-                    card,
-                    path,
-                    origin: is_added.then(|| origin.clone()),
-                    addition,
-                },
-            );
-            ensure_catalog_diff_bound(&diff)?;
-        }
-        for name in self.existing.keys() {
-            if !diff.current_fingerprints.contains_key(name) && !failed_names.contains(name) {
-                diff.removed.push(name.clone());
-                ensure_catalog_diff_bound(&diff)?;
-            }
-        }
-        diff.added.sort();
-        diff.changed.sort();
-        diff.removed.sort();
-        ensure_catalog_diff_bound(&diff)?;
-        Ok(diff)
-    }
-
-    pub fn prepare(&self) -> Result<CatalogPreparationResult, String> {
-        let mut diff = self.diff()?;
-        let changed_len = diff.changed.len();
-        let added_len = diff.added.len();
-        let candidate_count = changed_len + added_len;
-        let mut prepared = Vec::with_capacity(diff.changed.len());
-        let mut warmed = Vec::with_capacity(diff.added.len());
-        let mut prepare_failed = Vec::with_capacity(candidate_count);
-        let mut unchanged_changed = Vec::new();
-        let mut result_bytes = catalog_preparation_result_bytes(
-            &diff,
-            &prepared,
-            prepared.capacity(),
-            &warmed,
-            warmed.capacity(),
-            &prepare_failed,
-            prepare_failed.capacity(),
-        )
-        .ok_or_else(|| "catalog result size overflow".to_string())?;
-        if result_bytes > MAX_CATALOG_RESULT_BYTES {
-            return Err("prepared catalog result exceeds the 32 MiB result bound".into());
-        }
-        for index in 0..candidate_count {
-            let is_added = index >= changed_len;
-            let name = if is_added {
-                &diff.added[index - changed_len]
-            } else {
-                &diff.changed[index]
-            };
-            let incoming = diff
-                .incoming
-                .get(name)
-                .ok_or_else(|| format!("catalog {name}: parsed registration is missing"))?;
-            let template = if is_added {
-                CardPreparationTemplate::from_registry_card(&incoming.card, incoming.path.clone())
-            } else {
-                self.existing
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| format!("catalog {name}: existing card snapshot is missing"))?
-            };
-            let identity_key =
-                crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, name);
-            let snapshot = CardPreparationSnapshot {
-                template,
-                cache_root: self.cache_root.clone(),
-                catalog_root: Some(self.root.clone()),
-                stored_fingerprint: self.fingerprints.get(&identity_key).cloned(),
-                confirmation_fingerprint: None,
-                catalog_settings_schema: Some(incoming.card.settings_schema.clone()),
-                allow_unloadable: false,
-            };
-            match snapshot.prepare() {
-                Ok(CardPreparationOutcome::Prepared(card)) => {
-                    let bytes = prepared_card_retained_bytes(&card)
-                        .ok_or_else(|| "prepared catalog card size overflow".to_string())?;
-                    add_catalog_bytes(&mut result_bytes, bytes)
-                        .map_err(|_| "prepared catalog result size overflow")?;
-                    if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err(
-                            "prepared catalog result exceeds the 32 MiB result bound".into()
-                        );
-                    }
-                    if is_added {
-                        warmed.push(card);
-                    } else {
-                        prepared.push(card);
-                    }
-                }
-                Ok(CardPreparationOutcome::Failed { failure, .. }) => {
-                    let bytes = load_failure_retained_bytes(&failure)
-                        .ok_or_else(|| "catalog failure size overflow".to_string())?;
-                    add_catalog_bytes(&mut result_bytes, bytes)
-                        .map_err(|_| "catalog failure size overflow")?;
-                    if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err(
-                            "prepared catalog result exceeds the 32 MiB result bound".into()
-                        );
-                    }
-                    prepare_failed.push(failure);
-                }
-                Ok(CardPreparationOutcome::Unchanged) if !is_added => {
-                    unchanged_changed.push(index);
-                }
-                Ok(CardPreparationOutcome::Unchanged | CardPreparationOutcome::Confirmed) => {}
-                Err(error) => {
-                    let failure = LoadFailure::capture(
-                        ScriptSource::Catalog,
-                        &incoming.path,
-                        name,
-                        &error,
-                        None,
-                        None,
-                    );
-                    let bytes = load_failure_retained_bytes(&failure)
-                        .ok_or_else(|| "catalog failure size overflow".to_string())?;
-                    add_catalog_bytes(&mut result_bytes, bytes)
-                        .map_err(|_| "catalog failure size overflow")?;
-                    if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err(
-                            "prepared catalog result exceeds the 32 MiB result bound".into()
-                        );
-                    }
-                    prepare_failed.push(failure);
-                }
-            }
-        }
-        for index in unchanged_changed.iter().copied() {
-            let name = &diff.changed[index];
-            if let Some(incoming) = diff.incoming.get(name) {
-                let identity_key =
-                    crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, name);
-                if let Some(fingerprint) = self.fingerprints.get(&identity_key) {
-                    if let Some(current) = diff.current_fingerprints.get_mut(name) {
-                        *current = fingerprint.clone();
-                    }
-                } else {
-                    diff.current_fingerprints.remove(name);
-                }
-            }
-            diff.incoming.remove(name);
-        }
-        let mut unchanged_pos = 0;
-        let mut changed_pos = 0;
-        diff.changed.retain(|_| {
-            let unchanged = unchanged_changed.get(unchanged_pos).copied() == Some(changed_pos);
-            if unchanged {
-                unchanged_pos += 1;
-            }
-            changed_pos += 1;
-            !unchanged
-        });
-        let result_bytes = catalog_preparation_result_bytes(
-            &diff,
-            &prepared,
-            prepared.capacity(),
-            &warmed,
-            warmed.capacity(),
-            &prepare_failed,
-            prepare_failed.capacity(),
-        )
-        .ok_or_else(|| "catalog result size overflow".to_string())?;
-        if result_bytes > MAX_CATALOG_RESULT_BYTES {
-            return Err("prepared catalog result exceeds the 32 MiB result bound".into());
-        }
-        Ok(CatalogPreparationResult {
-            diff,
-            prepared,
-            warmed,
-            prepare_failed,
-        })
+        self.source_limit_bytes
     }
 
     /// Build a catalogue diff incrementally on the shared WorkAdmission
@@ -594,15 +280,6 @@ impl CatalogPreparationSnapshot {
             },
         }
     }
-    fn complete_catalog_sources(
-        &self,
-        sources: &mut HashMap<String, String>,
-        used: &mut usize,
-        source_limit: usize,
-        source_files: &mut usize,
-    ) -> Result<(), String> {
-        complete_catalog_sources_bounded(&self.root, sources, used, source_limit, source_files)
-    }
 }
 
 #[cfg(feature = "load")]
@@ -616,7 +293,7 @@ impl CatalogSourceError {
     fn message(self) -> String {
         match self {
             Self::File(error) => error,
-            Self::Aggregate => "catalog sources exceed the WorkAdmission byte bound".into(),
+            Self::Aggregate => "catalog sources exceed the bounded input limit".into(),
         }
     }
 }
@@ -631,13 +308,15 @@ struct CatalogDiffUsage {
     failed_capacity: usize,
     fingerprints_capacity: usize,
     incoming_capacity: usize,
+    result_limit: usize,
 }
 
 #[cfg(feature = "load")]
 impl CatalogDiffUsage {
-    fn new(diff: &CatalogDiff) -> Result<Self, String> {
+    fn new(diff: &CatalogDiff, result_limit: usize) -> Result<Self, String> {
         let mut usage = Self {
             bytes: std::mem::size_of::<CatalogDiff>(),
+            result_limit,
             ..Self::default()
         };
         usage.sync_capacities(diff)?;
@@ -733,8 +412,8 @@ impl CatalogDiffUsage {
     }
 
     fn ensure_bound(&self) -> Result<(), String> {
-        if self.bytes > MAX_CATALOG_RESULT_BYTES {
-            Err("catalog diff exceeds the 32 MiB result bound".into())
+        if self.bytes > self.result_limit {
+            Err("catalog diff exceeds its charged result bound".into())
         } else {
             Ok(())
         }
@@ -985,11 +664,11 @@ impl CatalogDiffWork {
         match self.phase {
             CatalogDiffPhase::Registry => self.read_registry(snapshot)?,
             CatalogDiffPhase::RootSources => self.read_root_source(snapshot)?,
-            CatalogDiffPhase::SiblingScan => self.scan_siblings()?,
+            CatalogDiffPhase::SiblingScan => self.scan_siblings(snapshot.scratch_bytes())?,
             CatalogDiffPhase::SiblingSources => self.read_sibling_source(snapshot)?,
             CatalogDiffPhase::ShopDb => self.read_shop_db(snapshot)?,
             CatalogDiffPhase::Analyze => self.analyze_registration(snapshot)?,
-            CatalogDiffPhase::FailedIndex => self.index_failures()?,
+            CatalogDiffPhase::FailedIndex => self.index_failures(snapshot.scratch_bytes())?,
             CatalogDiffPhase::Removed => self.add_removed(snapshot)?,
             CatalogDiffPhase::SortAdded => {
                 self.diff
@@ -1018,7 +697,7 @@ impl CatalogDiffWork {
             CatalogDiffPhase::Finish => {
                 let diff = self.diff.take().expect("diff exists at finish");
                 let usage = self.usage.take().expect("diff usage exists at finish");
-                ensure_catalog_diff_bound(&diff)?;
+                ensure_catalog_diff_bound(&diff, usage.result_limit)?;
                 self.phase = CatalogDiffPhase::Complete;
                 return Ok(Some((diff, usage)));
             }
@@ -1049,10 +728,10 @@ impl CatalogDiffWork {
                 &mut self.used,
                 registry_card_bytes(card).ok_or("catalog registry size overflow")?,
             )
-            .map_err(|_| "catalog registry metadata exceeds its 56 MiB bound")?;
+            .map_err(|_| "catalog registry metadata exceeds its charged input bound")?;
         }
         if self.used > self.source_limit {
-            return Err("catalog inputs exceed the WorkAdmission byte bound".into());
+            return Err("catalog inputs exceed the charged input bound".into());
         }
         self.registry_index = Some(registry_index);
         self.registrations = registrations;
@@ -1064,7 +743,7 @@ impl CatalogDiffWork {
             current_fingerprints: HashMap::new(),
             incoming: HashMap::new(),
         };
-        self.usage = Some(CatalogDiffUsage::new(&diff)?);
+        self.usage = Some(CatalogDiffUsage::new(&diff, snapshot.result_bytes())?);
         self.diff = Some(diff);
         self.phase = CatalogDiffPhase::RootSources;
         Ok(())
@@ -1104,7 +783,7 @@ impl CatalogDiffWork {
             )
             .map_err(|error| error.message()),
             Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the 56 MiB WorkAdmission bound".into())
+                Err("catalog sources exceed the charged input bound".into())
             }
             Err(CatalogSourceError::File(error)) => {
                 let failure = LoadFailure::capture(
@@ -1120,7 +799,7 @@ impl CatalogDiffWork {
         }
     }
 
-    fn scan_siblings(&mut self) -> Result<(), String> {
+    fn scan_siblings(&mut self, scratch_limit: usize) -> Result<(), String> {
         let next_source = self.source_iter.as_mut().and_then(|iter| iter.next());
         let Some((relative, text)) = next_source else {
             self.source_iter = None;
@@ -1153,8 +832,8 @@ impl CatalogDiffWork {
                 .checked_add(self.sibling_values_bytes)
                 .and_then(|bytes| bytes.checked_add(set_bytes))
                 .ok_or("catalog sibling index size overflow")?;
-            if used_scratch > MAX_CATALOG_SCRATCH_BYTES {
-                return Err("catalog preparation scratch exceeds the 32 MiB bound".into());
+            if used_scratch > scratch_limit {
+                return Err("catalog preparation scratch exceeds its charged scratch bound".into());
             }
             if self.sibling_rels.len() > MAX_CATALOG_FILES {
                 return Err("catalog source graph exceeds 8192 sibling modules".into());
@@ -1192,7 +871,7 @@ impl CatalogDiffWork {
             )
             .map_err(|error| error.message()),
             Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the WorkAdmission byte bound".into())
+                Err("catalog sources exceed the charged input bound".into())
             }
             Err(CatalogSourceError::File(_)) => Ok(()),
         }
@@ -1244,7 +923,7 @@ impl CatalogDiffWork {
                 Ok(())
             }
             Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the WorkAdmission byte bound".into())
+                Err("catalog sources exceed the charged input bound".into())
             }
             Err(CatalogSourceError::File(_)) => Ok(()),
         }
@@ -1520,7 +1199,7 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn index_failures(&mut self) -> Result<(), String> {
+    fn index_failures(&mut self, scratch_limit: usize) -> Result<(), String> {
         let diff = self.diff.as_ref().expect("diff exists before removals");
         let required = diff
             .failed
@@ -1533,7 +1212,7 @@ impl CatalogDiffWork {
             .expect("diff usage exists before removals")
             .bytes
             .checked_add(required)
-            .is_some_and(|bytes| bytes <= MAX_CATALOG_SCRATCH_BYTES)
+            .is_some_and(|bytes| bytes <= scratch_limit)
         {
             self.failed_indexes = (0..diff.failed.len()).collect();
             self.failed_indexes.sort_unstable_by(|left, right| {
@@ -1624,7 +1303,11 @@ impl CatalogPreparationWork {
         match self.phase {
             CatalogPreparationPhase::Diff => {
                 if let Some((diff, usage)) = self.diff_work.step(snapshot)? {
-                    self.candidates = Some(CatalogCandidateWork::new(diff, usage)?);
+                    self.candidates = Some(CatalogCandidateWork::new(
+                        diff,
+                        usage,
+                        snapshot.scratch_bytes(),
+                    )?);
                     self.phase = CatalogPreparationPhase::Candidates;
                 }
             }
@@ -1693,11 +1376,17 @@ struct CatalogCandidateWork {
     unchanged_changed: Vec<usize>,
     cleanup_index: usize,
     result_bytes: usize,
+    result_limit: usize,
+    scratch_limit: usize,
 }
 
 #[cfg(feature = "load")]
 impl CatalogCandidateWork {
-    fn new(diff: CatalogDiff, usage: CatalogDiffUsage) -> Result<Self, String> {
+    fn new(
+        diff: CatalogDiff,
+        usage: CatalogDiffUsage,
+        scratch_limit: usize,
+    ) -> Result<Self, String> {
         let changed_len = diff.changed.len();
         let added_len = diff.added.len();
         let candidate_count = changed_len
@@ -1732,6 +1421,7 @@ impl CatalogCandidateWork {
                 .ok_or_else(|| "catalog result size overflow".to_string())?,
         )
         .map_err(|_| "catalog result size overflow")?;
+        let result_limit = usage.result_limit;
         let work = Self {
             diff,
             usage,
@@ -1747,6 +1437,8 @@ impl CatalogCandidateWork {
             unchanged_changed,
             cleanup_index: 0,
             result_bytes,
+            result_limit,
+            scratch_limit,
         };
         work.ensure_result_bound()?;
         work.ensure_scratch_bound()?;
@@ -1811,7 +1503,9 @@ impl CatalogCandidateWork {
             stored_fingerprint: snapshot.fingerprints.get(&identity_key).cloned(),
             confirmation_fingerprint: None,
             catalog_settings_schema: Some(incoming.card.settings_schema.clone()),
+            source_limit_override: Some(snapshot.source_limit()),
             allow_unloadable: false,
+            force_prepare: false,
         };
         self.card_task_index = index;
         self.card_task_is_added = is_added;
@@ -1845,6 +1539,7 @@ impl CatalogCandidateWork {
                 .ok_or_else(|| "catalog result size overflow".to_string())?,
         )?;
         self.add_result_bytes(retained)?;
+        self.ensure_result_bound()?;
         self.ensure_scratch_bound()?;
         if is_added {
             self.warmed.push(card);
@@ -1871,6 +1566,7 @@ impl CatalogCandidateWork {
                 .ok_or_else(|| "catalog result size overflow".to_string())?,
         )?;
         self.add_result_bytes(retained)?;
+        self.ensure_result_bound()?;
         self.ensure_scratch_bound()?;
         self.prepare_failed.push(failure);
         Ok(())
@@ -1919,7 +1615,8 @@ impl CatalogCandidateWork {
     }
 
     fn adjust_for_diff_usage(&mut self, before: usize) -> Result<(), String> {
-        self.replace_result_bytes(before, self.usage.bytes)
+        self.replace_result_bytes(before, self.usage.bytes)?;
+        self.ensure_result_bound()
     }
 
     fn replace_result_bytes(&mut self, old: usize, new: usize) -> Result<(), String> {
@@ -1940,8 +1637,8 @@ impl CatalogCandidateWork {
     }
 
     fn ensure_result_bound(&self) -> Result<(), String> {
-        if self.result_bytes > MAX_CATALOG_RESULT_BYTES {
-            Err("prepared catalog result exceeds the 32 MiB result bound".into())
+        if self.result_bytes > self.result_limit {
+            Err("prepared catalog result exceeds its charged result bound".into())
         } else {
             Ok(())
         }
@@ -1957,8 +1654,8 @@ impl CatalogCandidateWork {
             .result_bytes
             .checked_add(unchanged_bytes)
             .ok_or_else(|| "catalog scratch size overflow".to_string())?;
-        if scratch > MAX_CATALOG_SCRATCH_BYTES {
-            Err("catalog preparation scratch exceeds the 32 MiB bound".into())
+        if scratch > self.scratch_limit {
+            Err("catalog preparation scratch exceeds its charged scratch bound".into())
         } else {
             Ok(())
         }
@@ -2002,12 +1699,12 @@ fn catalog_map_storage_bytes(capacity: usize, entry_bytes: usize) -> Option<usiz
 }
 
 #[cfg(feature = "load")]
-fn ensure_catalog_diff_bound(diff: &CatalogDiff) -> Result<(), String> {
+fn ensure_catalog_diff_bound(diff: &CatalogDiff, result_limit: usize) -> Result<(), String> {
     if diff
         .retained_bytes()
-        .is_none_or(|bytes| bytes > MAX_CATALOG_RESULT_BYTES)
+        .is_none_or(|bytes| bytes > result_limit)
     {
-        Err("catalog diff exceeds the 32 MiB result bound".into())
+        Err("catalog diff exceeds its charged result bound".into())
     } else {
         Ok(())
     }
@@ -2111,40 +1808,6 @@ fn prepared_card_retained_bytes(prepared: &PreparedCard) -> Option<usize> {
 }
 
 #[cfg(feature = "load")]
-fn catalog_preparation_result_bytes(
-    diff: &CatalogDiff,
-    prepared: &[PreparedCard],
-    prepared_capacity: usize,
-    warmed: &[PreparedCard],
-    warmed_capacity: usize,
-    prepare_failed: &[LoadFailure],
-    prepare_failed_capacity: usize,
-) -> Option<usize> {
-    let mut bytes = diff.retained_bytes()?;
-    let headers = std::mem::size_of::<CatalogPreparationResult>()
-        .checked_sub(std::mem::size_of::<CatalogDiff>())?;
-    add_catalog_bytes(&mut bytes, headers).ok()?;
-    for capacity in [prepared_capacity, warmed_capacity] {
-        add_catalog_bytes(
-            &mut bytes,
-            capacity.checked_mul(std::mem::size_of::<PreparedCard>())?,
-        )
-        .ok()?;
-    }
-    for card in prepared.iter().chain(warmed) {
-        add_catalog_bytes(&mut bytes, prepared_card_retained_bytes(card)?).ok()?;
-    }
-    add_catalog_bytes(
-        &mut bytes,
-        prepare_failed_capacity.checked_mul(std::mem::size_of::<LoadFailure>())?,
-    )
-    .ok()?;
-    for failure in prepare_failed {
-        add_catalog_bytes(&mut bytes, load_failure_retained_bytes(failure)?).ok()?;
-    }
-    Some(bytes)
-}
-#[cfg(feature = "load")]
 fn read_catalog_source(
     path: &Path,
     used: &mut usize,
@@ -2237,7 +1900,7 @@ fn complete_catalog_sources_bounded(
             Ok(text) => add_catalog_source(sources, &sibling, text, used, source_limit)
                 .map_err(|error| error.message())?,
             Err(CatalogSourceError::Aggregate) => {
-                return Err("catalog sources exceed the WorkAdmission byte bound".into());
+                return Err("catalog sources exceed the bounded input limit".into());
             }
             Err(CatalogSourceError::File(_)) => {}
         }
@@ -2269,7 +1932,7 @@ fn complete_catalog_sources_bounded(
                     break;
                 }
                 Err(CatalogSourceError::Aggregate) => {
-                    return Err("catalog sources exceed the WorkAdmission byte bound".into());
+                    return Err("catalog sources exceed the bounded input limit".into());
                 }
                 Err(CatalogSourceError::File(_)) => continue,
             }
@@ -2521,10 +2184,6 @@ impl JsLibrary {
             candidate_origin,
             MAX_PREPARATION_SOURCE_BYTES,
         )
-    }
-    /// Does not rewrite the persisted catalog path.
-    pub fn diff_catalog(&self, root: &Path) -> Result<CatalogDiff, String> {
-        self.catalog_preparation_snapshot(root)?.diff()
     }
     /// Apply an already-computed catalog diff. Added cards register as
     /// unstarted; removed catalog cards are dropped from the library (running

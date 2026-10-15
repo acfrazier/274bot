@@ -1487,7 +1487,7 @@ fn register_rs2b0t_missing_shopdb_stays_empty() {
 }
 
 #[test]
-fn diff_catalog_loads_shopdb_from_refresh_root() {
+fn cooperative_catalog_fill_loads_shopdb_from_refresh_root() {
     let iso = script::IsolatedEnv::enter("diff-shopdb-root");
     let intended = iso.dir.join("intended");
     let ambient = iso.dir.join("ambient");
@@ -1497,8 +1497,29 @@ fn diff_catalog_loads_shopdb_from_refresh_root() {
 
     let dir = scratch("diff_shopdb_intended");
     let mut lib = test_library(&dir);
-    let diff = lib.diff_catalog(&intended).expect("diff intended root");
+    let snapshot = std::sync::Arc::new(
+        lib.catalog_preparation_snapshot(&intended)
+            .expect("capture the refresh catalogue"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let diff = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_diff(),
+    )
+    .expect("admit the refresh catalogue")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue diff completes");
     lib.apply_catalog_diff(diff);
+    lib.set_catalog_root(&intended);
     let opts = shop_buy_items(&lib);
     assert_eq!(opts, &["RootA Elixir".to_string()]);
     assert!(!opts.iter().any(|n| n == "RootB Tonic"));

@@ -824,6 +824,8 @@ impl JsLibrary {
             confirmation_fingerprint,
             catalog_settings_schema: None,
             allow_unloadable: false,
+            source_limit_override: None,
+            force_prepare: false,
         };
         snapshot.source_limit()?;
         Ok(snapshot)
@@ -1086,6 +1088,8 @@ pub struct CardPreparationSnapshot {
     stored_fingerprint: Option<String>,
     confirmation_fingerprint: Option<String>,
     catalog_settings_schema: Option<Vec<SettingDef>>,
+    source_limit_override: Option<usize>,
+    force_prepare: bool,
     allow_unloadable: bool,
 }
 
@@ -1102,6 +1106,15 @@ impl CardPreparationSnapshot {
 
     pub const fn result_bytes(&self) -> usize {
         MAX_PREPARATION_RESULT_BYTES
+    }
+
+    /// Prepare even when the stored source fingerprint matches.
+    ///
+    /// This is used to warm a card that was registered without transpiling;
+    /// the bounded input, scratch, and result charges do not change.
+    pub fn force_prepare(mut self) -> Self {
+        self.force_prepare = true;
+        self
     }
 
     /// Source + siblings share the worker's 8 MiB input charge with the
@@ -1129,10 +1142,13 @@ impl CardPreparationSnapshot {
             add_schema_bytes(&mut retained, schema, schema.capacity())
                 .ok_or_else(|| "catalog settings snapshot is too large".to_string())?;
         }
-        MAX_PREPARATION_SOURCE_BYTES
+        let remaining = MAX_PREPARATION_SOURCE_BYTES
             .checked_sub(retained)
             .filter(|remaining| *remaining > 0)
-            .ok_or_else(|| "card metadata exceeds the 8 MiB preparation bound".into())
+            .ok_or_else(|| "card metadata exceeds the 8 MiB preparation bound".to_string())?;
+        Ok(self
+            .source_limit_override
+            .map_or(remaining, |limit| remaining.min(limit)))
     }
 
     /// Read and fingerprint on the worker; only changed candidates transpile.
@@ -1168,7 +1184,7 @@ impl CardPreparationSnapshot {
         if self.confirmation_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             return Ok(CardPreparationOutcome::Confirmed);
         }
-        if self.stored_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+        if !self.force_prepare && self.stored_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             return Ok(CardPreparationOutcome::Unchanged);
         }
         match self.prepare_candidate(origin, source_limit) {
@@ -1541,7 +1557,9 @@ impl CardPreparationTask {
                             self.phase = CardPreparationPhase::Complete;
                             return Ok(Some(CardPreparationOutcome::Confirmed));
                         }
-                        if self.snapshot.stored_fingerprint.as_deref() == Some(fingerprint.as_str())
+                        if !self.snapshot.force_prepare
+                            && self.snapshot.stored_fingerprint.as_deref()
+                                == Some(fingerprint.as_str())
                         {
                             self.phase = CardPreparationPhase::Complete;
                             return Ok(Some(CardPreparationOutcome::Unchanged));
