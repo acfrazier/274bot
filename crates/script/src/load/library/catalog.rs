@@ -169,8 +169,11 @@ impl CatalogPreparationSnapshot {
             return Err("catalog has more than 4096 registrations".into());
         }
         for card in &registrations {
-            add_catalog_bytes(&mut used, registry_card_bytes(card)?)
-                .map_err(|_| "catalog registry metadata exceeds its 56 MiB bound")?;
+            add_catalog_bytes(
+                &mut used,
+                registry_card_bytes(card).ok_or("catalog registry size overflow")?,
+            )
+            .map_err(|_| "catalog registry metadata exceeds its 56 MiB bound")?;
         }
         if used > source_limit {
             return Err("catalog inputs exceed the WorkAdmission byte bound".into());
@@ -198,14 +201,10 @@ impl CatalogPreparationSnapshot {
                 continue;
             };
             match read_catalog_source(&path, &mut used, source_limit) {
-                Ok(text) => add_catalog_source(
-                    &mut sources,
-                    &card.rel_path,
-                    text,
-                    &mut used,
-                    source_limit,
-                )
-                .map_err(|error| error.message())?,
+                Ok(text) => {
+                    add_catalog_source(&mut sources, &card.rel_path, text, &mut used, source_limit)
+                        .map_err(|error| error.message())?
+                }
                 Err(CatalogSourceError::Aggregate) => {
                     return Err("catalog sources exceed the 56 MiB WorkAdmission bound".into());
                 }
@@ -222,12 +221,7 @@ impl CatalogPreparationSnapshot {
                 }
             }
         }
-        self.complete_catalog_sources(
-            &mut sources,
-            &mut used,
-            source_limit,
-            &mut source_files,
-        )?;
+        self.complete_catalog_sources(&mut sources, &mut used, source_limit, &mut source_files)?;
         let mut diff = CatalogDiff {
             added: Vec::new(),
             changed: Vec::new(),
@@ -437,11 +431,8 @@ impl CatalogPreparationSnapshot {
                     .cloned()
                     .ok_or_else(|| format!("catalog {name}: existing card snapshot is missing"))?
             };
-            let identity_key = crate::identity::card_identity_key(
-                ScriptSource::Catalog,
-                &incoming.path,
-                name,
-            );
+            let identity_key =
+                crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, name);
             let snapshot = CardPreparationSnapshot {
                 template,
                 cache_root: self.cache_root.clone(),
@@ -458,7 +449,9 @@ impl CatalogPreparationSnapshot {
                     add_catalog_bytes(&mut result_bytes, bytes)
                         .map_err(|_| "prepared catalog result size overflow")?;
                     if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err("prepared catalog result exceeds the 32 MiB result bound".into());
+                        return Err(
+                            "prepared catalog result exceeds the 32 MiB result bound".into()
+                        );
                     }
                     if is_added {
                         warmed.push(card);
@@ -472,7 +465,9 @@ impl CatalogPreparationSnapshot {
                     add_catalog_bytes(&mut result_bytes, bytes)
                         .map_err(|_| "catalog failure size overflow")?;
                     if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err("prepared catalog result exceeds the 32 MiB result bound".into());
+                        return Err(
+                            "prepared catalog result exceeds the 32 MiB result bound".into()
+                        );
                     }
                     prepare_failed.push(failure);
                 }
@@ -494,7 +489,9 @@ impl CatalogPreparationSnapshot {
                     add_catalog_bytes(&mut result_bytes, bytes)
                         .map_err(|_| "catalog failure size overflow")?;
                     if result_bytes > MAX_CATALOG_RESULT_BYTES {
-                        return Err("prepared catalog result exceeds the 32 MiB result bound".into());
+                        return Err(
+                            "prepared catalog result exceeds the 32 MiB result bound".into()
+                        );
                     }
                     prepare_failed.push(failure);
                 }
@@ -503,11 +500,8 @@ impl CatalogPreparationSnapshot {
         for index in unchanged_changed.iter().copied() {
             let name = &diff.changed[index];
             if let Some(incoming) = diff.incoming.get(name) {
-                let identity_key = crate::identity::card_identity_key(
-                    ScriptSource::Catalog,
-                    &incoming.path,
-                    name,
-                );
+                let identity_key =
+                    crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, name);
                 if let Some(fingerprint) = self.fingerprints.get(&identity_key) {
                     if let Some(current) = diff.current_fingerprints.get_mut(name) {
                         *current = fingerprint.clone();
@@ -556,13 +550,7 @@ impl CatalogPreparationSnapshot {
         source_limit: usize,
         source_files: &mut usize,
     ) -> Result<(), String> {
-        complete_catalog_sources_bounded(
-            &self.root,
-            sources,
-            used,
-            source_limit,
-            source_files,
-        )
+        complete_catalog_sources_bounded(&self.root, sources, used, source_limit, source_files)
     }
 }
 
@@ -629,7 +617,11 @@ fn registry_card_bytes(card: &crate::rs2b0t_registry::RegistryCard) -> Option<us
     for tag in &card.tags {
         add_catalog_bytes(&mut bytes, tag.capacity()).ok()?;
     }
-    add_schema_bytes(&mut bytes, &card.settings_schema)?;
+    add_schema_bytes(
+        &mut bytes,
+        &card.settings_schema,
+        card.settings_schema.capacity(),
+    )?;
     Some(bytes)
 }
 
@@ -677,7 +669,11 @@ fn prepared_card_retained_bytes(prepared: &PreparedCard) -> Option<usize> {
     for tag in &card.tags {
         add_catalog_bytes(&mut bytes, tag.capacity()).ok()?;
     }
-    add_schema_bytes(&mut bytes, &card.settings_schema)?;
+    add_schema_bytes(
+        &mut bytes,
+        &card.settings_schema,
+        card.settings_schema.capacity(),
+    )?;
     if let Some(unloadable) = &card.unloadable {
         add_catalog_bytes(&mut bytes, unloadable.capacity()).ok()?;
     }
@@ -736,7 +732,8 @@ fn read_catalog_source(
     used: &mut usize,
     limit: usize,
 ) -> Result<String, CatalogSourceError> {
-    let metadata = std::fs::metadata(path).map_err(|error| CatalogSourceError::File(error.to_string()))?;
+    let metadata =
+        std::fs::metadata(path).map_err(|error| CatalogSourceError::File(error.to_string()))?;
     if !metadata.is_file() {
         return Err(CatalogSourceError::File("not a regular file".into()));
     }
@@ -870,8 +867,8 @@ pub(super) fn resolve_catalog_settings_schema_bounded(
     candidate_origin: &str,
     source_limit: usize,
 ) -> Result<Vec<crate::rs2b0t_registry::SettingDef>, String> {
-    let root = catalog_root
-        .ok_or_else(|| format!("catalog {name}: registry root is unavailable"))?;
+    let root =
+        catalog_root.ok_or_else(|| format!("catalog {name}: registry root is unavailable"))?;
     let index = crate::rs2b0t_registry::registry_index_path(root);
     let index_limit = source_limit.min(MAX_CATALOG_INDEX_BYTES);
     let index_ts = vault::read_regular_file(&index, index_limit as u64)
@@ -919,28 +916,18 @@ pub(super) fn resolve_catalog_settings_schema_bounded(
             let text = candidate_origin.to_string();
             add_catalog_bytes(&mut used, text.capacity())
                 .map_err(|_| "catalog inputs exceed the 8 MiB preparation bound")?;
-            add_catalog_source(
-                &mut sources,
-                &card.rel_path,
-                text,
-                &mut used,
-                source_limit,
-            )
-            .map_err(|error| error.message())?;
+            add_catalog_source(&mut sources, &card.rel_path, text, &mut used, source_limit)
+                .map_err(|error| error.message())?;
             continue;
         }
         let Some(path) = script_file_path(root, &card.rel_path) else {
             continue;
         };
         match read_catalog_source(&path, &mut used, source_limit) {
-            Ok(text) => add_catalog_source(
-                &mut sources,
-                &card.rel_path,
-                text,
-                &mut used,
-                source_limit,
-            )
-            .map_err(|error| error.message())?,
+            Ok(text) => {
+                add_catalog_source(&mut sources, &card.rel_path, text, &mut used, source_limit)
+                    .map_err(|error| error.message())?
+            }
             Err(CatalogSourceError::Aggregate) => {
                 return Err("catalog inputs exceed the 8 MiB preparation bound".into());
             }
@@ -957,8 +944,8 @@ pub(super) fn resolve_catalog_settings_schema_bounded(
     drop(registrations);
     registry_index
         .card_with_sources_bounded(&sources, name, source_limit)
-    .map(|card| card.settings_schema)
-    .map_err(|error| format!("catalog {name}: {error}"))
+        .map(|card| card.settings_schema)
+        .map_err(|error| format!("catalog {name}: {error}"))
 }
 
 #[cfg(feature = "load")]
@@ -1148,8 +1135,9 @@ impl JsLibrary {
             let card = &incoming.card;
             let path = &incoming.path;
             let key = crate::identity::card_identity_key(ScriptSource::Catalog, path, name);
-            self.cards
-                .retain(|candidate| !(candidate.source == ScriptSource::Catalog && candidate.name == card.name));
+            self.cards.retain(|candidate| {
+                !(candidate.source == ScriptSource::Catalog && candidate.name == card.name)
+            });
             let js_card = JsCard {
                 name: card.name.clone(),
                 path: path.clone(),

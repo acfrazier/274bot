@@ -57,11 +57,8 @@ type Erased = Box<dyn Any + Send>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WorkStartError {
     /// The OS CSPRNG failed while naming the process incarnation.
-    #[error("the operating system CSPRNG could not provide a process nonce")]
+    #[error("{}", ProcessServiceCode::WorkAdmissionUnavailable.operator_text())]
     OsRandom,
-    /// The sole WorkAdmission thread could not be started.
-    #[error("the WorkAdmission worker thread could not be started")]
-    WorkerThread,
 }
 
 /// Failure to complete an orderly worker shutdown.
@@ -74,6 +71,15 @@ pub enum WorkShutdownError {
     #[error("the WorkAdmission worker panicked before shutdown acknowledgement")]
     WorkerPanicked,
 }
+
+static WORK_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static SHARED_WORK: LazyLock<Result<Arc<Mutex<WorkService>>, WorkStartError>> =
+    LazyLock::new(|| {
+        let incarnation = WorkService::draw_incarnation()?;
+        let service = Arc::new(Mutex::new(WorkService::new(incarnation)));
+        WORK_INITIALIZED.store(true, Ordering::Release);
+        Ok(service)
+    });
 
 /// The process-wide WorkAdmission scheduler.
 ///
@@ -104,14 +110,26 @@ impl std::fmt::Debug for WorkService {
 }
 
 impl WorkService {
-    fn new(incarnation: ProcessIncarnation) -> Result<Self, WorkStartError> {
+    fn new(incarnation: ProcessIncarnation) -> Self {
         Self::build(incarnation, Arc::new(api::work::SystemClock))
     }
 
     fn build(
         incarnation: ProcessIncarnation,
         clock: Arc<dyn MonotonicClock + Send + Sync>,
-    ) -> Result<Self, WorkStartError> {
+    ) -> Self {
+        Self::build_with_spawn(incarnation, clock, |shared| {
+            thread::Builder::new()
+                .name("work-admission".to_owned())
+                .spawn(move || worker_thread(shared))
+        })
+    }
+
+    fn build_with_spawn(
+        incarnation: ProcessIncarnation,
+        clock: Arc<dyn MonotonicClock + Send + Sync>,
+        spawn: impl FnOnce(Arc<WorkerShared>) -> std::io::Result<JoinHandle<()>>,
+    ) -> Self {
         let origin = ProcessOrigin::at(clock.now());
         let bounds = AdmissionBounds::new(
             NonZeroUsize::new(MAX_WORK_JOBS).expect("nonzero fixed bound"),
@@ -139,12 +157,18 @@ impl WorkService {
             unavailable: AtomicBool::new(false),
             exited: AtomicBool::new(false),
         });
-        let thread_shared = Arc::clone(&shared);
-        let worker = thread::Builder::new()
-            .name("work-admission".to_owned())
-            .spawn(move || worker_thread(thread_shared))
-            .map_err(|_| WorkStartError::WorkerThread)?;
-        Ok(Self {
+        let worker = match spawn(Arc::clone(&shared)) {
+            Ok(worker) => Some(worker),
+            Err(_) => {
+                // The unavailable service keeps its process identity and
+                // typed condition so every later caller receives the frozen
+                // restart-required refusal, never a transient Full/start error.
+                latch_outage(&shared, ConditionCause::StartFailed, shared.clock.now());
+                None
+            }
+        };
+        let worker_joined = worker.is_none();
+        Self {
             incarnation,
             ids: RequestIdMinter::new(),
             bounds,
@@ -152,22 +176,28 @@ impl WorkService {
             last_job: None,
             stopping: false,
             shared,
-            _worker: Some(worker),
-            worker_joined: false,
+            _worker: worker,
+            worker_joined,
             worker_panicked: false,
-        })
+        }
     }
 
     /// Return the process-wide singleton, drawing its process nonce once from
     /// the OS CSPRNG (redrawing only if that draw is zero).
-    pub fn shared() -> Result<Arc<parking_lot::Mutex<Self>>, WorkStartError> {
-        static SHARED: LazyLock<Result<Arc<parking_lot::Mutex<WorkService>>, WorkStartError>> =
-            LazyLock::new(|| {
-                let incarnation = WorkService::draw_incarnation()?;
-                WorkService::new(incarnation)
-                    .map(|service| Arc::new(parking_lot::Mutex::new(service)))
-            });
-        SHARED.as_ref().map(Arc::clone).map_err(|error| *error)
+    pub fn shared() -> Result<Arc<Mutex<Self>>, WorkStartError> {
+        SHARED_WORK.as_ref().map(Arc::clone).map_err(|error| *error)
+    }
+
+    /// Stop the process worker at an application exit without creating one
+    /// for a run that never requested background work.
+    pub fn shutdown_if_started() -> Result<(), WorkShutdownError> {
+        if !WORK_INITIALIZED.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let Ok(shared) = SHARED_WORK.as_ref() else {
+            return Ok(());
+        };
+        Self::shutdown(shared)
     }
 
     fn draw_incarnation() -> Result<ProcessIncarnation, WorkStartError> {
@@ -408,7 +438,7 @@ impl WorkService {
     pub fn with_clock_for_tests(
         incarnation: ProcessIncarnation,
         clock: Arc<dyn MonotonicClock + Send + Sync>,
-    ) -> Result<Self, WorkStartError> {
+    ) -> Self {
         Self::build(incarnation, clock)
     }
 

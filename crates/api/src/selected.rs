@@ -321,17 +321,18 @@ pub struct Requirement {
     pub source: SourceSpan,
 }
 
-/// Preparation-worker capability. It is constructed only on a preparation
-/// worker: by [`Self::within`] inside a WorkAdmission `Prepare` step, or by
-/// [`Self::run`] on its own thread. Pump/tick callers never receive it. It
-/// cannot leave that thread or be retained by a prepared card.
+/// Preparation-worker capability. Production constructs it only inside
+/// [`Self::within`] on a WorkAdmission `Prepare` step; fixture tests can use
+/// `FamilyPreparation::run` on a dedicated thread. Pump/tick callers never receive it.
+/// It cannot leave that thread or be retained by a prepared card.
 pub struct FamilyPreparation {
     _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl FamilyPreparation {
-    /// Run preparation off-pump. The caller owns joining/settling the worker
-    /// and must fence its result against Stop, replacement and profile removal.
+    /// Test-only off-pump preparation helper. Production callers must submit
+    /// through WorkAdmission and fence the result before publication.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn run<R: Send + 'static>(
         work: impl FnOnce(&mut Self) -> R + Send + 'static,
     ) -> std::io::Result<std::thread::JoinHandle<R>> {

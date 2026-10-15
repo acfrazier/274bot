@@ -2,8 +2,8 @@
 //! Same-card replacements inherit accepted copy holds through their durable commit.
 use super::*;
 use script::native::{PreparedConfig, SettingsBag, StartError};
+use script::preparation::PreparedTask;
 use std::sync::atomic::AtomicBool;
-use std::thread::JoinHandle;
 
 /// Cancellation is shared by the sync report and its existing preparations/
 /// writes. Equality follows the owning sync operation, not its mutable flag.
@@ -64,6 +64,8 @@ struct AssignmentIntent {
     next: Option<vault::ScriptAssignment>,
 }
 
+type NativePreparation = PreparedTask<Result<Arc<PreparedConfig>, StartError>>;
+
 pub(super) struct PendingPreparation {
     profile: Profile,
     /// Explicit or inherited intent from a pending same-card draft. New copies
@@ -72,15 +74,31 @@ pub(super) struct PendingPreparation {
     renamed_from: Option<String>,
     mirror: ArmMirror,
     label: &'static str,
-    worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
+    worker: NativePreparation,
+    #[cfg(test)]
+    publication_gate: Option<Arc<AtomicBool>>,
     copy_start_hold: Option<NativeCopyHold>,
+}
+
+impl PendingPreparation {
+    fn is_finished(&self) -> bool {
+        #[cfg(test)]
+        if self
+            .publication_gate
+            .as_ref()
+            .is_some_and(|gate| !gate.load(Ordering::Acquire))
+        {
+            return false;
+        }
+        self.worker.is_finished()
+    }
 }
 
 pub(super) struct PendingDelivery {
     op: OperationId,
     name: String,
     live: LiveSettings,
-    worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
+    worker: NativePreparation,
 }
 
 impl ArmMirror {
@@ -175,7 +193,7 @@ impl<Io> OperatorSession<Io> {
             let prepared = pending
                 .worker
                 .join()
-                .map_err(|_| "native settings preparation worker panicked".to_string())
+                .map_err(|error| error.to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));
             let delivery =
                 if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op) {
@@ -338,6 +356,8 @@ impl<Io> OperatorSession<Io> {
                 mirror,
                 label,
                 worker,
+                #[cfg(test)]
+                publication_gate: None,
                 copy_start_hold,
             },
         );
@@ -353,14 +373,23 @@ impl<Io> OperatorSession<Io> {
             .preparations
             .iter()
             .filter(|(_, pending)| {
-                wait || pending.worker.is_finished()
-                    || pending.copy_start_hold.as_ref().is_some_and(|hold| {
-                        now >= hold.deadline
-                            || hold.cancellation.is_cancelled()
-                            || self.play.is_none()
-                            || self.vault.is_none()
-                            || !self.members().contains(&pending.profile.username)
-                    })
+                #[cfg(test)]
+                let gated = pending
+                    .publication_gate
+                    .as_ref()
+                    .is_some_and(|gate| !gate.load(Ordering::Acquire));
+                #[cfg(not(test))]
+                let gated = false;
+                if !gated && (wait || pending.is_finished()) {
+                    return true;
+                }
+                pending.copy_start_hold.as_ref().is_some_and(|hold| {
+                    now >= hold.deadline
+                        || hold.cancellation.is_cancelled()
+                        || self.play.is_none()
+                        || self.vault.is_none()
+                        || !self.members().contains(&pending.profile.username)
+                })
             })
             .map(|(op, _)| *op)
             .collect();
@@ -373,10 +402,11 @@ impl<Io> OperatorSession<Io> {
                 .copy_start_hold
                 .as_ref()
                 .is_some_and(|hold| now >= hold.deadline)
-                && !pending.worker.is_finished()
+                && !pending.is_finished()
             {
-                // Dropping the JoinHandle detaches a stuck preparer. Its late
-                // result cannot be persisted after this failed copy.
+                // Abandon the exact job; its worker and charge remain in
+                // custody until the shared WorkAdmission worker returns.
+                // Its late result cannot be persisted after this failed copy.
                 Err("settings copy timed out during native preparation".to_string())
             } else if pending
                 .copy_start_hold
@@ -392,7 +422,7 @@ impl<Io> OperatorSession<Io> {
                 pending
                     .worker
                     .join()
-                    .map_err(|_| "native settings preparation worker panicked".to_string())
+                    .map_err(|error| error.to_string())
                     .and_then(|result| result.map_err(|error| error.to_string()))
             };
             let card = pending
@@ -665,25 +695,14 @@ mod tests {
         f
     }
 
-    /// Gate a real preparation result without relying on worker scheduling.
-    fn block_preparation(
-        f: &mut Fixture,
-    ) -> (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>) {
+    /// Pause only publication of a real WorkAdmission result. The worker can
+    /// finish and release its thread while the owner holds the exact terminal.
+    fn block_preparation(f: &mut Fixture) -> Arc<AtomicBool> {
         let op = *f.core.preparations.keys().max().unwrap();
-        let mut pending = f.core.preparations.remove(&op).unwrap();
-        let (release, wait) = std::sync::mpsc::channel();
-        let (finished, done) = std::sync::mpsc::channel();
-        // Keep the real worker in the gated worker; a late result has no
-        // access to the session or writer after its handle is discarded.
-        let original = pending.worker;
-        pending.worker = std::thread::spawn(move || {
-            let result = original.join().unwrap();
-            wait.recv().unwrap();
-            finished.send(()).unwrap();
-            result
-        });
-        f.core.preparations.insert(op, pending);
-        (release, done)
+        let gate = Arc::new(AtomicBool::new(false));
+        let pending = f.core.preparations.get_mut(&op).unwrap();
+        pending.publication_gate = Some(Arc::clone(&gate));
+        gate
     }
 
     fn wait_running(f: &mut Fixture, name: &str) {
@@ -723,7 +742,7 @@ mod tests {
         f.scripts
             .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(24))
             .unwrap();
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
 
         // Settle only the superseded copy, leaving the real replacement
         // result gated. The queued Start must not consume the pre-copy bag.
@@ -739,8 +758,7 @@ mod tests {
         }
         let state = f.core.play().unwrap().script_state("bob");
         let held_place = f.scripts.start_queue_place("bob");
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         assert_eq!(state, script::RunState::Idle, "replacement still preparing");
         assert_eq!(held_place, Some(place));
 
@@ -775,11 +793,15 @@ mod tests {
         let op = *f.core.preparations.keys().next().unwrap();
         let mut pending = f.core.preparations.remove(&op).unwrap();
         pending.worker.join().unwrap().unwrap();
-        pending.worker = std::thread::spawn(|| {
-            Err(StartError::Unavailable(
-                "injected preparation failure".into(),
-            ))
-        });
+        let id = script::CompiledId("Gatherer");
+        let mut invalid = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        invalid.insert("radius".into(), json!("not a radius"));
+        pending.worker = f
+            .core
+            .play()
+            .unwrap()
+            .script_prepare_config(id, op.0, Arc::new(invalid))
+            .unwrap();
         f.core.preparations.insert(op, pending);
         f.core.take_preparations(true);
         f.scripts.poll(&mut f.core);
@@ -789,14 +811,13 @@ mod tests {
     #[test]
     fn cancelled_native_preparation_releases_copy_hold_without_a_late_write() {
         let mut f = preparing_copy("copy-cancel");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         assert!(f.scripts.start_profile(&mut f.core, "bob", None).is_err());
         f.scripts.cancel_settings_sync();
         f.core.poll();
         f.scripts.poll(&mut f.core);
         assert_pre_copy_start(&mut f);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
         let disk = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
         let entry = disk
@@ -815,9 +836,9 @@ mod tests {
     }
 
     #[test]
-    fn stuck_native_preparation_times_out_and_releases_copy_hold() {
+    fn withheld_native_preparation_times_out_and_releases_copy_hold() {
         let mut f = preparing_copy("copy-preparation-timeout");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core
             .preparations
             .values_mut()
@@ -833,15 +854,14 @@ mod tests {
         assert!(f.scripts.last_settings_sync().unwrap().failed[0]
             .1
             .contains("timed out"));
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
     }
 
     #[test]
     fn removed_slot_releases_its_native_preparation_hold() {
         let mut f = preparing_copy("copy-removed");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core
             .remove("bob", Instant::now(), &mut HeadlessSurface::new());
         f.core.poll();
@@ -849,8 +869,7 @@ mod tests {
         f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
         wait_running(&mut f, "alice");
         assert_eq!(f.scripts.last_settings_sync().unwrap().failed.len(), 1);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
     }
 
@@ -859,7 +878,7 @@ mod tests {
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
         let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core.vault = None;
         f.core.poll();
         f.scripts.poll(&mut f.core);
@@ -874,8 +893,7 @@ mod tests {
             script::CompiledDelivery::Unchanged
         );
         assert_eq!(f.scripts.last_settings_sync().unwrap().failed.len(), 1);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
     }
 
     #[test]
@@ -1119,7 +1137,7 @@ mod tests {
             .unwrap();
         assert!(Scripts::assignment(&f.core, "bob").is_none());
 
-        let intermediate = if let Some((release, done)) = gate {
+        let intermediate = if let Some(release) = gate {
             let deadline = Instant::now() + Duration::from_secs(10);
             while f.core.preparations.contains_key(&second) {
                 assert!(Instant::now() < deadline, "second copy did not settle");
@@ -1133,8 +1151,7 @@ mod tests {
             let assignment = disk.get("bob").unwrap().settings.script_assignment.clone();
             // Release before asserting so a negative control cannot strand
             // the older real preparation during fixture cleanup.
-            release.send(()).unwrap();
-            done.recv_timeout(Duration::from_secs(3)).unwrap();
+            release.store(true, Ordering::Release);
             Some(assignment)
         } else {
             None

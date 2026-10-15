@@ -92,9 +92,6 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(11);
-    let retained = Arc::new(Mutex::new(RetainedMemory::default()));
-    let held = retained.lock().unwrap();
-    slot.retained = Some(Arc::clone(&retained));
     start(&mut slot, SettingsBag::new());
     // Keep the real worker handle so this test can force drain of a completed
     // old reply. In production Stop discards it, making resurrection impossible.
@@ -103,7 +100,6 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     start(&mut slot, SettingsBag::new());
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     let replacement = slot.native_run().unwrap();
-    drop(held);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !stale.worker.is_finished() {
         assert!(Instant::now() < deadline);
@@ -114,6 +110,25 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     assert_eq!(slot.native_run(), Some(replacement));
     assert_eq!(slot.state(), RunState::Running);
     assert!(slot.preparing.is_none());
+}
+
+#[test]
+fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(12);
+    let retained = Arc::new(Mutex::new(RetainedMemory::default()));
+    slot.retained = Some(Arc::clone(&retained));
+    let held = retained.lock().unwrap();
+    start(&mut slot, SettingsBag::new());
+    assert!(matches!(
+        settle(&mut slot),
+        StartOutcome::Rejected(StartError::Unavailable(message))
+            if message.contains("retained memory")
+    ));
+    assert!(slot.native_run().is_none());
+    drop(held);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
 }
 
 struct Receiver {

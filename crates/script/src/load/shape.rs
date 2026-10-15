@@ -678,9 +678,7 @@ fn cached_preparation_js(
         .checked_sub(current_result_bytes)
         .ok_or_else(|| "prepared JavaScript exceeds the 16 MiB result limit".to_string())?;
     let object = cache.object_path(&JsCache::origin_sha(source.as_bytes()));
-    if std::fs::metadata(&object)
-        .is_ok_and(|metadata| metadata.len() > remaining as u64)
-    {
+    if std::fs::metadata(&object).is_ok_and(|metadata| metadata.len() > remaining as u64) {
         return Err("cached JavaScript exceeds the 16 MiB result limit".into());
     }
     let cached = cache.get_or_transpile(path, source.as_bytes(), meta.clone())?;
@@ -763,7 +761,10 @@ pub(crate) fn first_unloadable_for_card_bounded(
         .into_iter()
         .chain(scan_scripts_sibling_js_imports(origin))
     {
-        if let Some((_, _, _, source)) = siblings.iter().find(|(relative, _, _, _)| relative == &import_rel) {
+        if let Some((_, _, _, source)) = siblings
+            .iter()
+            .find(|(relative, _, _, _)| relative == &import_rel)
+        {
             if let Some(spec) = first_unloadable_specifier(source) {
                 return Ok(Some(spec));
             }

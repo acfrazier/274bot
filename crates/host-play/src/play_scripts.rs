@@ -435,15 +435,16 @@ impl Play {
         self.script_start_hold.lock().unwrap().upgrade()
     }
 
-    /// A settings preparer has only shared pinned resources, no slot or game
+    /// A profile preparer has only shared pinned resources, no slot or game
     /// action handle. Frontend persistence follows successful typed preparation.
+    /// The accepted job is charged to the one process WorkAdmission worker.
     pub fn script_prepare_config(
         &self,
         id: script::CompiledId,
         revision: u64,
         bag: Arc<script::native::SettingsBag>,
     ) -> Result<
-        std::thread::JoinHandle<
+        script::preparation::PreparedTask<
             Result<Arc<script::native::PreparedConfig>, script::native::StartError>,
         >,
         String,
@@ -453,9 +454,14 @@ impl Play {
             .clone()
             .ok_or("selected game data unavailable")?;
         let banks = Arc::clone(&self.named_banks);
-        api::selected::FamilyPreparation::run(move |worker| {
-            script::slot::prepare_config(worker, id, revision, bag, selected, banks)
-        })
+        let input = script::preparation::PreparationInput::for_settings(revision, &bag)
+            .map_err(|error| error.to_string())?;
+        script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            move |worker| script::slot::prepare_config(worker, id, revision, bag, selected, banks),
+        )
         .map_err(|error| error.to_string())
     }
 

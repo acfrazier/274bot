@@ -114,10 +114,21 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)";
 
+fn exit_after_work_shutdown(code: i32) -> ! {
+    let code = match script::work_admission::WorkService::shutdown_if_started() {
+        Ok(()) => code,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+            1
+        }
+    };
+    std::process::exit(code)
+}
+
 /// Usage on stderr for a bad invocation (exit 2, the CLI family's convention).
 fn usage() -> ! {
     eprintln!("{USAGE}");
-    std::process::exit(2);
+    exit_after_work_shutdown(2);
 }
 
 fn need_value(
@@ -151,7 +162,7 @@ pub fn parse_args() -> Args {
         Ok(args) => args,
         Err(msg) if msg == "usage" => {
             println!("{USAGE}");
-            std::process::exit(0);
+            exit_after_work_shutdown(0);
         }
         Err(msg) => {
             eprintln!("{msg}");
@@ -2455,13 +2466,13 @@ impl TuiSession {
                     Ok(true) => {
                         restore_terminal();
                         eprintln!("PASS: memory tui observation complete");
-                        std::process::exit(0);
+                        exit_after_work_shutdown(0);
                     }
                     Ok(false) => {}
                     Err(error) => {
                         restore_terminal();
                         eprintln!("FAIL: memory tui: {error}");
-                        std::process::exit(1);
+                        exit_after_work_shutdown(1);
                     }
                 }
             }

@@ -6,6 +6,7 @@ use super::compile::{self, CompileError};
 use super::path::PathDocument;
 use super::queue::{ReleaseIndex, ReleasePath, ReleasePathStatus};
 use api::game_data::SelectedGameData;
+use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FamilyPreparation};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -222,23 +223,40 @@ pub fn snapshot() -> PathRegistry {
         .clone()
 }
 
-/// Called for Reload and every Start. Disabled reads never clone the folder path.
-pub fn reload(
-    selected: &SelectedGameData,
-    worker: &mut FamilyPreparation,
-) -> Result<PathRegistry, CompileError> {
-    reload_with_catalog(selected, None, worker)
+/// A prepared Path snapshot holds no registry lock and publishes nothing.
+/// Its exact source is checked again when the current WorkAdmission ticket
+/// consumes the result; a stale/cancelled worker cannot replace the registry.
+pub struct PreparedRegistry {
+    source: FolderSource,
+    registry: PathRegistry,
 }
 
-pub(super) fn reload_with_catalog(
+impl PreparedRegistry {
+    pub fn registry(&self) -> &PathRegistry {
+        &self.registry
+    }
+}
+
+/// Prepare a candidate off-pump. This leaves the shared snapshot untouched.
+pub fn prepare_snapshot(
+    selected: &SelectedGameData,
+    worker: &mut FamilyPreparation,
+) -> Result<PreparedRegistry, CompileError> {
+    prepare_snapshot_with_catalog(selected, None, worker)
+}
+
+fn prepare_snapshot_with_catalog(
     selected: &SelectedGameData,
     provided: Option<&QuestCatalog>,
     worker: &mut FamilyPreparation,
-) -> Result<PathRegistry, CompileError> {
+) -> Result<PreparedRegistry, CompileError> {
     let source = {
         let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
         if !state.source.enabled {
-            return Ok(PathRegistry::Bundled);
+            return Ok(PreparedRegistry {
+                source: FolderSource::default(),
+                registry: PathRegistry::Bundled,
+            });
         }
         state.source.clone()
     };
@@ -251,8 +269,27 @@ pub(super) fn reload_with_catalog(
         &catalog
     };
     let registry = PathRegistry::load(&source, selected, quests, worker)?;
+    Ok(PreparedRegistry { source, registry })
+}
+
+/// Publish only the exact current, successfully consumed worker ticket and
+/// only while the source is still the source that was prepared.
+pub fn commit_snapshot(
+    prepared: PreparedRegistry,
+    completed: WorkIdentity,
+    current: WorkIdentity,
+) -> Result<PathRegistry, CompileError> {
+    if completed != current {
+        return Err(CompileError::code("stale-preparation")
+            .with_detail("Path preparation no longer belongs to the current reload"));
+    }
+    commit_prepared(prepared)
+}
+
+fn commit_prepared(prepared: PreparedRegistry) -> Result<PathRegistry, CompileError> {
+    let PreparedRegistry { source, registry } = prepared;
     let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
-    if state.source != source {
+    if state.source != source && (source.enabled || state.source.enabled) {
         return Err(CompileError::code("stale-folder-source")
             .with_detail("Path folder setting changed during Reload; reload again"));
     }
@@ -266,6 +303,26 @@ pub(super) fn reload_with_catalog(
         );
     }
     Ok(registry)
+}
+
+/// Called for Reload and every Start. Disabled reads never clone the folder path.
+pub fn reload(
+    selected: &SelectedGameData,
+    worker: &mut FamilyPreparation,
+) -> Result<PathRegistry, CompileError> {
+    reload_with_catalog(selected, None, worker)
+}
+
+pub(super) fn reload_with_catalog(
+    selected: &SelectedGameData,
+    provided: Option<&QuestCatalog>,
+    worker: &mut FamilyPreparation,
+) -> Result<PathRegistry, CompileError> {
+    let prepared = prepare_snapshot_with_catalog(selected, provided, worker)?;
+    if !prepared.source.enabled {
+        return Ok(PathRegistry::Bundled);
+    }
+    commit_prepared(prepared)
 }
 
 /// Owned bytes are shared with a run, never copied per bot.
@@ -1204,5 +1261,72 @@ mod tests {
                 panic!("reading the FIFO blocked; the Path loader must open with O_NONBLOCK");
             }
         }
+    }
+    #[test]
+    fn stale_or_cancelled_work_preparation_never_publishes_a_path_snapshot() {
+        use api::identity::{Cancellation, Scope};
+        use std::sync::Barrier;
+
+        let folder = Folder::new();
+        folder.cook("stale-publish-draft", "unpublished");
+        set_source(folder.source(true));
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let input =
+            crate::preparation::PreparationInput::new(1, 4096, 4 * 1024 * 1024, 32 * 1024 * 1024)
+                .unwrap();
+        let data = Arc::clone(&selected);
+        let stale = crate::preparation::submit(
+            crate::preparation::PreparationKind::Catalogue,
+            Scope::Process,
+            input,
+            move |worker| prepare_snapshot(&data, worker).unwrap(),
+        )
+        .unwrap();
+        let completed = stale.identity();
+        let prepared = stale.join().unwrap();
+        let wrong_current = crate::work_admission::WorkService::shared()
+            .unwrap()
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .unwrap();
+        assert_ne!(completed, wrong_current);
+        assert!(commit_snapshot(prepared, completed, wrong_current).is_err());
+        assert!(snapshot()
+            .rows()
+            .iter()
+            .all(|row| row.id != "stale-publish-draft"));
+
+        let checkpoint = Arc::new(Barrier::new(2));
+        let proceed = Arc::new(Barrier::new(2));
+        let data = Arc::clone(&selected);
+        let worker_checkpoint = Arc::clone(&checkpoint);
+        let worker_proceed = Arc::clone(&proceed);
+        let mut cancelled = crate::preparation::submit(
+            crate::preparation::PreparationKind::Catalogue,
+            Scope::Process,
+            crate::preparation::PreparationInput::new(2, 4096, 4 * 1024 * 1024, 32 * 1024 * 1024)
+                .unwrap(),
+            move |worker| {
+                let prepared = prepare_snapshot(&data, worker).unwrap();
+                worker_checkpoint.wait();
+                worker_proceed.wait();
+                prepared
+            },
+        )
+        .unwrap();
+        checkpoint.wait();
+        cancelled.cancel(Cancellation::Superseded);
+        proceed.wait();
+        assert!(matches!(
+            cancelled.join(),
+            Err(crate::preparation::PreparationError::Cancelled(
+                Cancellation::Superseded
+            ))
+        ));
+        assert!(snapshot()
+            .rows()
+            .iter()
+            .all(|row| row.id != "stale-publish-draft"));
+        set_source(FolderSource::default());
     }
 }

@@ -20,11 +20,10 @@ use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
 #[cfg(feature = "load")]
 use super::shape::{
-    catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded,
-    is_reserved, raw_content_fingerprint_bounded, resolve_api_family,
-    resolve_sibling_modules, resolve_sibling_modules_bounded, ApiFamily, LoadShape,
-    MAX_PREPARATION_RESULT_BYTES, MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES,
-    MAX_SOURCE_BYTES,
+    catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
+    raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_api_family,
+    resolve_sibling_modules_bounded, ApiFamily, LoadShape, MAX_PREPARATION_RESULT_BYTES,
+    MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES, MAX_SOURCE_BYTES,
 };
 
 /// A loaded JS bot: picker name, origin path, loader shape, origin text,
@@ -98,14 +97,7 @@ impl LoadFailure {
         let fingerprint = origin
             .map(|text| raw_content_fingerprint(path, text))
             .unwrap_or_default();
-        Self::capture_with_fingerprint(
-            source,
-            path,
-            name,
-            diagnostic,
-            fingerprint,
-            api_family,
-        )
+        Self::capture_with_fingerprint(source, path, name, diagnostic, fingerprint, api_family)
     }
 
     #[cfg(feature = "load")]
@@ -120,14 +112,7 @@ impl LoadFailure {
     ) -> Self {
         let fingerprint =
             raw_content_fingerprint_bounded(path, origin, source_limit).unwrap_or_default();
-        Self::capture_with_fingerprint(
-            source,
-            path,
-            name,
-            diagnostic,
-            fingerprint,
-            api_family,
-        )
+        Self::capture_with_fingerprint(source, path, name, diagnostic, fingerprint, api_family)
     }
 
     fn capture_with_fingerprint(
@@ -843,7 +828,6 @@ impl JsLibrary {
         Ok(snapshot)
     }
 
-
     /// Retain a worker-side validation failure against the exact bytes that
     /// were validated.
     pub fn record_prepared_failure(&mut self, prepared: &PreparedCard, diagnostic: &str) {
@@ -860,7 +844,6 @@ impl JsLibrary {
         failure.stage = LoadStage::RuntimeLoad;
         self.record_failure(failure);
     }
-
 
     pub fn commit_prepared(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
         let key = prepared.card.identity_key();
@@ -902,7 +885,6 @@ impl JsLibrary {
         self.refresh(source, name)
     }
 }
-
 
 #[cfg(feature = "load")]
 fn add_capacity(total: &mut usize, bytes: usize) -> Option<()> {
@@ -972,10 +954,10 @@ fn add_setting_bytes(total: &mut usize, setting: &SettingDef) -> Option<()> {
 }
 
 #[cfg(feature = "load")]
-fn add_schema_bytes(total: &mut usize, schema: &[SettingDef]) -> Option<()> {
+fn add_schema_bytes(total: &mut usize, schema: &[SettingDef], capacity: usize) -> Option<()> {
     add_capacity(
         total,
-        schema.capacity().checked_mul(std::mem::size_of::<SettingDef>())?,
+        capacity.checked_mul(std::mem::size_of::<SettingDef>())?,
     )?;
     for setting in schema {
         add_setting_bytes(total, setting)?;
@@ -1055,7 +1037,11 @@ impl CardPreparationTemplate {
         if let Some(unloadable) = &self.unloadable {
             add_capacity(&mut bytes, unloadable.capacity())?;
         }
-        add_schema_bytes(&mut bytes, &self.settings_schema)?;
+        add_schema_bytes(
+            &mut bytes,
+            &self.settings_schema,
+            self.settings_schema.capacity(),
+        )?;
         Some(bytes)
     }
 
@@ -1140,7 +1126,7 @@ impl CardPreparationSnapshot {
                 .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
         }
         if let Some(schema) = &self.catalog_settings_schema {
-            add_schema_bytes(&mut retained, schema)
+            add_schema_bytes(&mut retained, schema, schema.capacity())
                 .ok_or_else(|| "catalog settings snapshot is too large".to_string())?;
         }
         MAX_PREPARATION_SOURCE_BYTES
@@ -1154,12 +1140,7 @@ impl CardPreparationSnapshot {
         let source_limit = match self.source_limit() {
             Ok(limit) => limit,
             Err(error) => {
-                return Ok(self.failed_outcome(
-                    error,
-                    None,
-                    None,
-                    MAX_PREPARATION_SOURCE_BYTES,
-                ));
+                return Ok(self.failed_outcome(error, None, None, MAX_PREPARATION_SOURCE_BYTES));
             }
         };
         let origin = match self.read_origin(source_limit) {
@@ -1173,25 +1154,17 @@ impl CardPreparationSnapshot {
                 ));
             }
         };
-        let fingerprint = match raw_content_fingerprint_bounded(
-            &self.template.path,
-            &origin,
-            source_limit,
-        ) {
-            Ok(fingerprint) => fingerprint,
-            Err(error) => {
-                let family = resolve_api_family(&origin)
-                    .ok()
-                    .map(|(_, family)| family)
-                    .or(self.template.api_family);
-                return Ok(self.failed_outcome(
-                    error,
-                    Some(&origin),
-                    family,
-                    source_limit,
-                ));
-            }
-        };
+        let fingerprint =
+            match raw_content_fingerprint_bounded(&self.template.path, &origin, source_limit) {
+                Ok(fingerprint) => fingerprint,
+                Err(error) => {
+                    let family = resolve_api_family(&origin)
+                        .ok()
+                        .map(|(_, family)| family)
+                        .or(self.template.api_family);
+                    return Ok(self.failed_outcome(error, Some(&origin), family, source_limit));
+                }
+            };
         if self.confirmation_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             return Ok(CardPreparationOutcome::Confirmed);
         }
@@ -1200,12 +1173,9 @@ impl CardPreparationSnapshot {
         }
         match self.prepare_candidate(origin, source_limit) {
             Ok(prepared) => Ok(CardPreparationOutcome::Prepared(prepared)),
-            Err((error, origin, family)) => Ok(self.failed_outcome(
-                error,
-                Some(&origin),
-                family,
-                source_limit,
-            )),
+            Err((error, origin, family)) => {
+                Ok(self.failed_outcome(error, Some(&origin), family, source_limit))
+            }
         }
     }
 
@@ -1286,8 +1256,8 @@ impl CardPreparationSnapshot {
                 }
             }
         };
-        let (shape, api_family) =
-            resolve_api_family(origin).map_err(|error| format!("{}: {error}", self.template.name))?;
+        let (shape, api_family) = resolve_api_family(origin)
+            .map_err(|error| format!("{}: {error}", self.template.name))?;
         if shape == LoadShape::Reject {
             return Err(format!("not a bot shape: {}", self.template.name));
         }
@@ -1309,7 +1279,7 @@ impl CardPreparationSnapshot {
             .and_then(|bytes| bytes.checked_add(cached.js.capacity()))
             .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         if let Some(schema) = &self.catalog_settings_schema {
-            add_schema_bytes(&mut result_bytes, schema)
+            add_schema_bytes(&mut result_bytes, schema, schema.capacity())
                 .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         }
         if result_bytes > MAX_PREPARATION_RESULT_BYTES {
@@ -1369,7 +1339,6 @@ pub struct PreparedCard {
     pub siblings: Vec<(String, String)>,
     pub fingerprint: String,
 }
-
 
 #[cfg(feature = "load")]
 fn shape_to_kind(shape: LoadShape) -> ScriptKind {

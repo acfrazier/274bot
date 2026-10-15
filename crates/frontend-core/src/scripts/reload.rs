@@ -6,8 +6,8 @@
 //! work and candidates without touching any execution. A replacement Start
 //! is queued behind the reap of the run it replaces and settles like any Start.
 
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::{PendingCard, PendingStart, Scripts, StartKind};
 use crate::session::{OperatorSession, ScriptStart};
@@ -104,13 +104,16 @@ enum PreparationJob {
     Pending(PreparationRequest),
     Manual {
         epoch: u64,
-        task: script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
+        task:
+            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
         manual: ManualValidation,
         confirming: bool,
     },
     Catalog {
         epoch: u64,
-        task: script::preparation::PreparedTask<Result<script::load::CatalogPreparationResult, String>>,
+        task: script::preparation::PreparedTask<
+            Result<script::load::CatalogPreparationResult, String>,
+        >,
         root: PathBuf,
     },
     CatalogConfirmation {
@@ -304,11 +307,8 @@ impl Scripts {
                     move |_| worker_snapshot.prepare(),
                 ) {
                     Ok(task) => {
-                        self.reload.preparation = Some(PreparationJob::Catalog {
-                            epoch,
-                            task,
-                            root,
-                        });
+                        self.reload.preparation =
+                            Some(PreparationJob::Catalog { epoch, task, root });
                     }
                     Err(script::preparation::PreparationError::Refused(
                         api::work::SubmissionRefusal::Full,
@@ -344,11 +344,7 @@ impl Scripts {
                 ) {
                     Ok(task) => {
                         self.reload.preparation =
-                            Some(PreparationJob::CatalogConfirmation {
-                                epoch,
-                                task,
-                                root,
-                            });
+                            Some(PreparationJob::CatalogConfirmation { epoch, task, root });
                     }
                     Err(script::preparation::PreparationError::Refused(
                         api::work::SubmissionRefusal::Full,
@@ -458,10 +454,7 @@ impl Scripts {
             }
             script::load::CardPreparationOutcome::Prepared(prepared) => {
                 manual.fingerprint = prepared.fingerprint.clone();
-                match self.spawn_validation(
-                    vec![prepared],
-                    ValidationKind::Manual(manual),
-                ) {
+                match self.spawn_validation(vec![prepared], ValidationKind::Manual(manual)) {
                     Ok(()) => self.clear_notice(),
                     Err(error) => self.fail_reload("reload", error),
                 }
@@ -488,11 +481,7 @@ impl Scripts {
             warmed,
             prepare_failed,
         } = result;
-        if diff.is_noop()
-            && prepared.is_empty()
-            && warmed.is_empty()
-            && prepare_failed.is_empty()
-        {
+        if diff.is_noop() && prepared.is_empty() && warmed.is_empty() && prepare_failed.is_empty() {
             self.reload.catalog_report = Some(script::NOTHING_CHANGED_CATALOG.into());
             self.show(script::NOTHING_CHANGED_CATALOG);
             self.finish_reload(ReloadOutcome::NothingChanged);
@@ -502,14 +491,7 @@ impl Scripts {
             self.js.record_failure(failure.clone());
         }
         if prepared.is_empty() {
-            self.complete_catalog_validation(
-                core,
-                root,
-                diff,
-                warmed,
-                prepare_failed,
-                Vec::new(),
-            );
+            self.complete_catalog_validation(core, root, diff, warmed, prepare_failed, Vec::new());
             return;
         }
         let had_prepare_failure = !prepare_failed.is_empty();
@@ -779,14 +761,14 @@ impl Scripts {
         };
         let identity_key = card.identity_key();
         let (running_before, paused_before) = slots_with_identity(core, &identity_key);
-        let snapshot = match self.js.card_preparation_snapshot(
-            source,
-            &lookup,
-            confirmation_fingerprint,
-        ) {
-            Ok(snapshot) => Arc::new(snapshot),
-            Err(error) => return self.fail_reload("reload", error),
-        };
+        let snapshot =
+            match self
+                .js
+                .card_preparation_snapshot(source, &lookup, confirmation_fingerprint)
+            {
+                Ok(snapshot) => Arc::new(snapshot),
+                Err(error) => return self.fail_reload("reload", error),
+            };
         let manual = ManualValidation {
             source,
             lookup,
@@ -1077,7 +1059,6 @@ impl Scripts {
             PendingReloadKind::Catalog { root: pending_root, .. } if pending_root == root
         )
     }
-
 
     fn commit_catalog_pending<Io>(
         &mut self,

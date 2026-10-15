@@ -104,14 +104,14 @@ pub use shape::{resolve_sibling_modules, transpile_ts};
 
 #[cfg(feature = "load")]
 pub use library::JsLibrary;
+pub use library::{
+    default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
+    LoadStage, PreparedCard,
+};
 #[cfg(feature = "load")]
 pub use library::{
     CardPreparationOutcome, CardPreparationSnapshot, CatalogPreparationResult,
     CatalogPreparationSnapshot,
-};
-pub use library::{
-    default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
-    LoadStage, PreparedCard,
 };
 
 #[cfg(feature = "load")]

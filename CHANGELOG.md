@@ -3,6 +3,14 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+### Scripts
+
+- Reload and catalog refresh prepare source, siblings and settings off the UI
+  thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
+  preparation and validation, rather than calling both stages validation.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles
