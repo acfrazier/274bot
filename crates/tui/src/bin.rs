@@ -1918,16 +1918,21 @@ impl TuiSession {
                 .filter(|selection| self.scripts.restart_required_for(&profile, selection))
                 .map(|_| "Restart required to apply saved settings.".to_string())
         });
-        let visible_op = app.modal.as_ref().and_then(|modal| match modal {
+        let visible = app.modal.as_ref().and_then(|modal| match modal {
             Modal::Confirm(confirm) => match &confirm.kind {
-                ConfirmKind::RestartSettings { op, .. } => Some(*op),
+                ConfirmKind::RestartSettings {
+                    op, target_count, ..
+                } => Some((*op, *target_count)),
                 _ => None,
             },
             _ => None,
         });
-        let pending_op = self.scripts.pending_restart_prompt().map(|p| p.operation());
-        let replace = match (visible_op, pending_op) {
-            (Some(current), Some(next)) if current == next => false,
+        let pending = self
+            .scripts
+            .pending_restart_prompt()
+            .map(|prompt| (prompt.operation(), prompt.profiles().len()));
+        let replace = match (visible, pending) {
+            (Some((current, n)), Some((next, next_n))) if current == next && n == next_n => false,
             (Some(_), Some(_)) => true,
             (Some(_), None) => {
                 app.modal = None;
@@ -1940,6 +1945,7 @@ impl TuiSession {
             if let Some(prompt) = self.scripts.pending_restart_prompt() {
                 app.confirm(ConfirmKind::RestartSettings {
                     op: prompt.operation(),
+                    target_count: prompt.profiles().len(),
                     summary: prompt.summary(),
                 });
             }

@@ -70,20 +70,6 @@ impl ReloadWarning {
     pub fn affected_generations(&self) -> &[(String, u64)] {
         &self.affected_generations
     }
-
-    pub(crate) fn duplicate(&self) -> Self {
-        Self {
-            identity_key: self.identity_key.clone(),
-            source: self.source,
-            lookup: self.lookup.clone(),
-            fingerprint: self.fingerprint.clone(),
-            epoch: self.epoch,
-            running: self.running.clone(),
-            paused: self.paused.clone(),
-            paused_during_prep: self.paused_during_prep.clone(),
-            affected_generations: self.affected_generations.clone(),
-        }
-    }
 }
 
 pub(crate) struct CatalogPending {
@@ -285,7 +271,6 @@ pub(super) struct ReloadState {
     generation: u64,
     validation: Option<ValidationJob>,
     pending: Option<PendingReload>,
-    warning: Option<ReloadWarning>,
     catalog_confirm: bool,
     catalog_report: Option<String>,
     outcome: Option<ReloadOutcome>,
@@ -293,13 +278,11 @@ pub(super) struct ReloadState {
 
 impl ReloadState {
     fn clear_pending(&mut self) {
-        self.warning = None;
         self.pending = None;
         self.catalog_confirm = false;
     }
 
     fn install(&mut self, pending: PendingReload) {
-        self.warning = Some(pending.warning.duplicate());
         self.catalog_confirm = pending.kind.is_catalog();
         self.pending = Some(pending);
     }
@@ -324,7 +307,10 @@ impl Scripts {
 
     /// The warning awaiting confirmation, if any.
     pub fn reload_warning(&self) -> Option<&ReloadWarning> {
-        self.reload.warning.as_ref()
+        self.reload
+            .pending
+            .as_ref()
+            .map(|pending| pending.warning())
     }
 
     pub fn pending_reload(&self) -> Option<&PendingReload> {
@@ -990,7 +976,10 @@ impl Scripts {
         }
         let diff = match self.js.diff_catalog(&root) {
             Ok(d) => d,
-            Err(e) => return ReloadOutcome::failed(e),
+            Err(e) => {
+                self.reload.install(pending);
+                return ReloadOutcome::failed(e);
+            }
         };
         let failed = pending
             .kind

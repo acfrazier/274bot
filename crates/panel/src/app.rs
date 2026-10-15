@@ -3860,7 +3860,9 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         &mut session.quester_paths_folder_edit,
     )
     .build();
+    let mut folder_committed = false;
     if ui.is_item_deactivated_after_edit() {
+        folder_committed = true;
         paths_changed |= Path::new(&session.quester_paths_folder_edit)
             != session.quester_paths.settings().folder();
     }
@@ -3875,11 +3877,7 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
     }
     if paths_changed {
-        let after = frontend_core::QuesterPathsView::new(
-            enabled,
-            PathBuf::from(session.quester_paths_folder_edit.as_str()),
-        );
-        let _ = session.persist_quester_paths(after);
+        let _ = session.persist_quester_paths_change(enabled, folder_committed);
     } else if reload_requested {
         session.start_quester_paths_reload();
     }

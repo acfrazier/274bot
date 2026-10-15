@@ -5090,6 +5090,22 @@ impl Session {
         profile.game_data()
     }
 
+    /// Persist a Quest Paths form change. The folder field is used only in
+    /// the frame the operator commits it; a checkbox toggle keeps the saved
+    /// folder.
+    pub(crate) fn persist_quester_paths_change(
+        &mut self,
+        enabled: bool,
+        folder_committed: bool,
+    ) -> Result<(), String> {
+        let folder = if folder_committed {
+            PathBuf::from(self.quester_paths_folder_edit.as_str())
+        } else {
+            self.quester_paths.settings().folder().to_path_buf()
+        };
+        self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder))
+    }
+
     pub(crate) fn persist_quester_paths(
         &mut self,
         after: frontend_core::QuesterPathsView,

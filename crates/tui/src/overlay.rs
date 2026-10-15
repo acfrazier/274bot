@@ -92,6 +92,9 @@ pub enum ConfirmKind {
     /// A settings write saved successfully but its running script needs a restart.
     RestartSettings {
         op: frontend_core::OperationId,
+        /// Live prompt length when this summary was built. Compared on poll
+        /// so an in-place target removal redraws without allocating.
+        target_count: usize,
         summary: String,
     },
 }
