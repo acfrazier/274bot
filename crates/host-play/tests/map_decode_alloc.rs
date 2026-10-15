@@ -410,7 +410,7 @@ fn ancillary_metadata_preserves_pixels_with_bounded_allocations() {
     let large_text = String::from("x").repeat(400 * 1024);
     let ztxt = encode_ztxt_bomb(large_text);
     let iccp = encode_iccp_bomb(&ztxt);
-    let exif = encode_exif_png(&exif_description(250 * 1024));
+    let exif = encode_exif_png(&exif_description(500 * 1024));
 
     for png in [ztxt, iccp, exif] {
         expect_bounded_decode(png, &expected_pixels);
