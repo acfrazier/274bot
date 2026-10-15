@@ -940,7 +940,7 @@ mod tests {
         assert!(!path.exists());
 
         let retrying = Arc::clone(&slot);
-        let retry = thread::spawn(move || retrying.finish_within(Duration::from_millis(300)));
+        let retry = thread::spawn(move || retrying.finish_within(WAIT));
         assert_eq!(entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 17)]);
         let retry_request = last_request(&slot).request;
         assert_eq!(
@@ -1163,25 +1163,16 @@ mod tests {
         drop(slot_for);
         assert_eq!(play.bank_memories.len(), 1, "one memory for both spellings");
         assert!(Arc::ptr_eq(&first.memory, &second.memory));
-        let path = state.hint_path();
+        let first_identity = &first.hint.as_ref().unwrap().port.identity;
+        let second_identity = &second.hint.as_ref().unwrap().port.identity;
+        let path = state.service.root().bank_hint_file(
+            first_identity.account().profile(),
+            first_identity.account().account(),
+        );
         assert_eq!(
             state.service.root().bank_hint_file(
-                second
-                    .hint
-                    .as_ref()
-                    .unwrap()
-                    .port
-                    .identity
-                    .account()
-                    .profile(),
-                second
-                    .hint
-                    .as_ref()
-                    .unwrap()
-                    .port
-                    .identity
-                    .account()
-                    .account(),
+                second_identity.account().profile(),
+                second_identity.account().account(),
             ),
             path,
             "both spellings resolve to one service file"
