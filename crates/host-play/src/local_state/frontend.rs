@@ -56,12 +56,18 @@ fn operator_identity(domain: LocalStateDomain) -> DomainIdentity {
 /// composition (walk permissions, the quester Path folder, the session log
 /// switch, ...), through the process service. One top-level member of the
 /// file is one preference row; an object too long for one row is written
-/// member by member. Cheap to clone; clones share what was last read.
+/// member by member. A clone is one reference count: clones share the
+/// service handle, the identity and what was last read.
 #[derive(Clone)]
 pub struct Preferences {
-    pub(super) service: Arc<LocalStateService>,
-    pub(super) identity: DomainIdentity,
-    held: Arc<Mutex<Held>>,
+    shared: Arc<Shared>,
+}
+
+/// What every clone of one [`Preferences`] holds.
+struct Shared {
+    service: Arc<LocalStateService>,
+    identity: DomainIdentity,
+    held: Mutex<Held>,
 }
 
 /// The document last read, parsed once per store version.
@@ -75,15 +81,28 @@ struct Held {
 impl Preferences {
     pub(super) fn new(service: Arc<LocalStateService>) -> Self {
         Self {
-            service,
-            identity: operator_identity(LocalStateDomain::Preferences),
-            held: Arc::default(),
+            shared: Arc::new(Shared {
+                service,
+                identity: operator_identity(LocalStateDomain::Preferences),
+                held: Mutex::default(),
+            }),
         }
+    }
+
+    /// The service behind these preferences.
+    pub(super) fn service(&self) -> &Arc<LocalStateService> {
+        &self.shared.service
+    }
+
+    /// The operator identity these preferences read and write under.
+    #[cfg(test)]
+    pub(super) fn identity(&self) -> &DomainIdentity {
+        &self.shared.identity
     }
 
     /// The file behind the store, for messages.
     pub fn path(&self) -> PathBuf {
-        self.service.root().preferences_file()
+        self.service().root().preferences_file()
     }
 
     /// The whole document. The first read (nothing held yet) reads the file
@@ -95,8 +114,9 @@ impl Preferences {
     /// is parsed once per store version. An absent file is an empty
     /// document; a refused file is an error naming it.
     pub fn document(&self) -> io::Result<Arc<Map<String, Value>>> {
+        let shared = &*self.shared;
         let (stale, holding) = {
-            let held = self.held.lock();
+            let held = shared.held.lock();
             (
                 held.read_at
                     .is_none_or(|at| at.elapsed() >= PREFERENCES_FRESHNESS),
@@ -107,22 +127,22 @@ impl Preferences {
             if !holding {
                 return self.reload();
             }
-            self.service.refresh(&self.identity);
-            self.held.lock().read_at = Some(Instant::now());
+            shared.service.refresh(&shared.identity);
+            shared.held.lock().read_at = Some(Instant::now());
         }
-        let version = self
+        let version = shared
             .service
-            .lease_version(&self.identity)
+            .lease_version(&shared.identity)
             .map_err(|code| self.error(code))?;
         {
-            let held = self.held.lock();
+            let held = shared.held.lock();
             if held.version == Some(version) {
                 return Ok(Arc::clone(&held.document));
             }
         }
-        let lease = self
+        let lease = shared
             .service
-            .lease(&self.identity)
+            .lease(&shared.identity)
             .map_err(|code| self.error(code))?;
         self.adopt(&lease)
     }
@@ -137,10 +157,11 @@ impl Preferences {
     /// [`FRONTEND_TIMEOUT`]), whatever its freshness: what an explicit
     /// reload, or a test that just wrote the file, needs.
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
-        let read = self.service.readback(&self.identity, FRONTEND_TIMEOUT);
+        let shared = &*self.shared;
+        let read = shared.service.readback(&shared.identity, FRONTEND_TIMEOUT);
         // A failed read counts too: the next read retries after the
         // freshness interval, not on every frame.
-        self.held.lock().read_at = Some(Instant::now());
+        shared.held.lock().read_at = Some(Instant::now());
         let (lease, _) = read.map_err(|code| self.error(code))?;
         self.adopt(&lease)
     }
@@ -155,11 +176,12 @@ impl Preferences {
         &self,
         mut merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
     ) -> io::Result<()> {
+        let shared = &*self.shared;
         let mut conflict = None;
         for _ in 0..UPDATE_ATTEMPTS {
-            let (lease, _) = self
+            let (lease, _) = shared
                 .service
-                .readback(&self.identity, FRONTEND_TIMEOUT)
+                .readback(&shared.identity, FRONTEND_TIMEOUT)
                 .map_err(|code| self.error(code))?;
             let before = self.adopt(&lease)?;
             let mut after = (*before).clone();
@@ -168,9 +190,9 @@ impl Preferences {
             let mut conflicted = false;
             for (key, value) in preference_edits(&before, &after)? {
                 let edit =
-                    PreferencesEdit::try_new(self.identity.clone(), Some(expected), &key, &value)
+                    PreferencesEdit::try_new(shared.identity.clone(), Some(expected), &key, &value)
                         .map_err(|code| self.error(code))?;
-                match settle(&self.service, DomainEdit::Preferences(edit))
+                match settle(&shared.service, DomainEdit::Preferences(edit))
                     .map_err(|error| self.wrap(error))?
                 {
                     Settled::Durable(receipt) => expected = receipt.version(),
@@ -182,7 +204,7 @@ impl Preferences {
                 }
             }
             if !conflicted {
-                self.held.lock().read_at = Some(Instant::now());
+                shared.held.lock().read_at = Some(Instant::now());
                 return Ok(());
             }
         }
@@ -205,7 +227,7 @@ impl Preferences {
                 format!("preferences: unreadable rows ({})", self.path().display()),
             )
         })?);
-        let mut held = self.held.lock();
+        let mut held = self.shared.held.lock();
         held.version = Some(lease.version());
         held.document = Arc::clone(&document);
         Ok(document)

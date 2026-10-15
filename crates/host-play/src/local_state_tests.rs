@@ -2013,7 +2013,7 @@ fn a_preference_write_sets_one_member_and_keeps_every_other() {
         &path,
         br#"{"last_focus":"alice","nav":{"allow_teleports":true,"custom":{"keep":7}},"collapsed":{}}"#,
     );
-    let audits = audits(&preferences.service);
+    let audits = audits(preferences.service());
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
 
     preferences
@@ -2059,12 +2059,12 @@ fn an_oversize_preference_object_is_written_member_by_member() {
     assert!(document["collapsed"].to_string().len() > api::local_state::MAX_PREF_VALUE_BYTES);
     write_private(&path, &serde_json::to_vec_pretty(&document).unwrap());
     preferences.reload().unwrap();
-    let lease = preferences.service.lease(&preferences.identity).unwrap();
+    let lease = preferences.service().lease(preferences.identity()).unwrap();
     let rows = lease.snapshot().as_preferences().unwrap();
     assert_eq!(rows.len(), 81, "one row per profile, plus lowmem");
     assert!(rows.iter().any(|row| row.key() == "collapsed.profile_007"));
 
-    let audits = audits(&preferences.service);
+    let audits = audits(preferences.service());
     preferences
         .update(|document| {
             document["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
