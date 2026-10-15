@@ -3766,6 +3766,20 @@ impl Script for QueuedQuester {
                 None
             };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
+            // The operator's rows are leased here, on the slot thread, from
+            // the bound state capability; the compile runs off the pump
+            // with that immutable snapshot. A cold domain waits a tick.
+            let operator = match tick.operator_loadouts() {
+                Ok(operator) => operator,
+                Err(code) => {
+                    tick.output.log(
+                        api::hostlog::Level::Info,
+                        &format!("quester queue: Path {id} waits for operator loadouts: {code}"),
+                    );
+                    self.publish(tick.output, NativePhase::Waiting);
+                    return Ok(ScriptFlow::Continue);
+                }
+            };
             tick.output.log(
                 api::hostlog::Level::Info,
                 &format!("quester queue: preparing next Path {id}"),
@@ -3777,14 +3791,21 @@ impl Script for QueuedQuester {
             let worker = api::selected::FamilyPreparation::run(move |cap| {
                 let bytes =
                     bytes.ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
-                super::compile::compile_path_for_gang(bytes.as_ref(), &selected, &quests, cap, gang)
-                    .map_err(|error| {
-                        let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
-                        Arc::from(match &error.step {
-                            Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
-                            None => format!("{}: {detail}", error.code),
-                        })
+                super::compile::compile_path_for_gang(
+                    bytes.as_ref(),
+                    &selected,
+                    &quests,
+                    cap,
+                    gang,
+                    &operator,
+                )
+                .map_err(|error| {
+                    let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
+                    Arc::from(match &error.step {
+                        Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
+                        None => format!("{}: {detail}", error.code),
                     })
+                })
             });
             match worker {
                 Ok(worker) => self.preparing = Some(worker),

@@ -13,6 +13,7 @@ pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
 pub mod live_start;
+pub mod local_state;
 pub mod login_readiness;
 pub mod map_bind;
 pub mod map_cache;
@@ -303,6 +304,10 @@ pub struct Play {
     /// Host-capacity registry: each slot thread registers its own record
     /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
+    /// The process local-state service and the identities this Play's
+    /// slots read and write under (T5.2); `None` for the legacy direct
+    /// connection, which has no launch profile.
+    local_state: Option<Arc<local_state::StateComposition>>,
 }
 
 impl Play {
