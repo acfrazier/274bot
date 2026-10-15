@@ -219,12 +219,12 @@ extra rasters (`wall_open = false`); every slot keeps running.
 A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
 **Login all** / **Logout all**, then **Start all** / **Stop all** (script
 bulk — separate from login bulk; see [script.md](script.md)), an
-**only render selected** checkbox, one
+**only render focused** checkbox, one
 tile per wall member, **Profiles…**, and the 1 Hz resource card. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
 body focuses the member. The dot is error **red**, then ingame **amber**,
-then FIFO-queue **warn**, else grey. **only render selected** mirrors
+then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
 member paints. Unchecking it opens a **Render all wall members?** confirm:
@@ -252,9 +252,9 @@ section stays hidden only while the rail is shown).
 
 A fitted **Profiles** window (same one as the strip **Profiles** button
 and rail **Profiles…**), not a blocking modal. Clicking a row focuses it
-(and loads it onto the wall while MultiBox is on; stays open for more);
-the focused profile's own script card shows, and no script starts.
-Single-bot pick closes the picker. **Load all** is MultiBox-only.
+(and loads it onto the wall while MultiBox is on); the window stays open
+either way, with any open edit form as it was. The focused profile's own
+script card shows, and no script starts. **Load all** is MultiBox-only.
 Unlocking the vault while MultiBox is already on focuses the remembered
 (or first) profile the same way, so it joins the rail.
 **Close**/Esc closes without loading. **Edit** (next to **✕**) shows
@@ -265,6 +265,30 @@ profile or a rename onto a username another profile already has is
 refused with an error and nothing is written. The row **✕** deletes the
 **vault profile only** — a live wall member keeps running and stays on
 the rail (Save re-creates the row).
+**Import from rs2b0t…** (vault unlocked) reads rs2b0t's
+`rs2b0t-profiles.json` export: a path field, then a preview with Skip or
+Overwrite for profiles already in the vault (and, when the file has
+accounts the 289 client cannot log in with, a box to import those too),
+then **Import** and a report that offers to delete the export file (with
+an I understand confirm) once every chosen account is confirmed saved. See
+[vault.md](vault.md#importing-profiles-from-rs2b0t).
+
+Layout: **Load all** (MultiBox), then **New profile** and **Import from
+rs2b0t…** on one row; under them the profile list and the editor pane,
+each scrolling on its own, with a draggable divider between them; then
+**Close**, which always stays in view (the window itself never scrolls).
+The editor pane holds the edit form (its **Save** / **Cancel** and the
+save notice stay under the scrolling fields) or the import, one at a
+time; with neither open the list takes the whole area. From a content
+width of 502 logical px (the form's narrowest, 314 px — the 330 px
+docked panel less its padding — plus the 8 px divider and a 180 px
+list) the list sits on the left and the editor on the right; narrower,
+as in the default 330 px dock, the editor sits under the list. Opening
+the import while the form has unsaved edits (or a save still being
+written) asks **Discard** / **Keep editing** first; opening an edit or a
+new profile while an import preview shows drops the preview (it has
+written nothing). While an import's writes are being saved, **New
+profile**, **Edit** and the report's **Done** wait until they settle.
 The rail tile **✕** is the opposite: it removes the member from the wall,
 arms a clean IF logout when ingame, stops the slot, and never touches
 the vault. A member removed and loaded again while its old worker is

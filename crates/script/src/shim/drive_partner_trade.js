@@ -2,7 +2,7 @@
 // one frozen iteration per call. Rust calls the caller's callbacks in the
 // frozen drivePartnerTrade.ts order and reads the trade screens from the
 // scene.
-import { notImpl, runMachine } from '../../shim/_kernel.js';
+import { notImpl, runMachine, snap } from '../../shim/_kernel.js';
 
 const CALLBACKS = [
     'productNamesToOffer',
@@ -49,4 +49,12 @@ export async function driveActivePartnerTrade(opts) {
         hooks(opts),
     );
     if (out.kind === 'refused') throw notImpl('driveActivePartnerTrade', out.reason);
+}
+
+export function tradeScreenState() {
+    return globalThis.__rs2b0t_partner_trade('tradeScreenState', snap());
+}
+
+export function stableClosedPoll() {
+    throw notImpl('stableClosedPoll');
 }

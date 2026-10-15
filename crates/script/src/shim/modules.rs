@@ -121,6 +121,23 @@ globalThis.LoopingBot = class LoopingBot {
         h.log = h.log || [];
         h.log.push(String(message));
     }
+    // Frozen AbstractBot finish: a bound sink (a delegating parent)
+    // hears the reason; otherwise the host ends this script cleanly
+    // with it, the same flag ScriptRunner.stop sets. Rust owns the
+    // teardown, the bounded reason and the Stopped receipt.
+    requestFinish(reason) {
+        if (this._finishSink) {
+            this._finishSink(reason);
+            return;
+        }
+        const h = globalThis.__rs2b0t_host;
+        h.stopRequested = true;
+        if (typeof reason === 'string') h.stopReason = reason;
+    }
+    bindFinish(sink) {
+        this._finishSink = typeof sink === 'function' ? sink : null;
+    }
+    get delegated() { return !!this._finishSink; }
     get settings() {
         const bag = globalThis.__rs2b0t_host.settingsBag || {};
         // One view per bag: the accessors read the bag at call time, so the
@@ -185,6 +202,7 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();
         this._tasks = [];
+        this.activeTaskName = null;
     }
     add(...tasks) {
         this._tasks.push(...tasks);
@@ -192,10 +210,13 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     async loop() {
         for (const task of this._tasks) {
             if (await task.validate()) {
+                this.activeTaskName = task.label ?? null;
                 await task.execute();
+                this.activeTaskName = null;
                 return;
             }
         }
+        this.activeTaskName = null;
     }
 };
 globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {

@@ -2,7 +2,7 @@
 // and the hunting helpers (`crate::hunt_catalog`). Rust owns the loops,
 // walks, ops, waits and the bank-trip policy; the flask plans are declared
 // data.
-import { runMachine } from '../../../shim/_kernel.js';
+import { runMachine, notImpl } from '../../../shim/_kernel.js';
 import { Sustain } from '../../sustain/Sustain.js';
 import { EnterLair, bankRoutine as huntBank, hooksOf, leaveLair, siteArgs } from './combat.js';
 
@@ -79,9 +79,9 @@ export async function bankRoutine(h, site, opts) {
 }
 
 export function walkApproach() {
-    throw new Error('not impl: walkApproach');
+    throw notImpl('walkApproach');
 }
 
 export function withdrawTo() {
-    throw new Error('not impl: withdrawTo');
+    throw notImpl('withdrawTo');
 }

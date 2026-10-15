@@ -5310,9 +5310,7 @@ fn dialogue_hostile_close_never_reports_success() {
     assert!(
         matches!(
             result,
-            Poll::Ready(Ok(
-                crate::dialogue_outcome::DialogueOutcome::CombatInterrupted
-            ))
+            Poll::Ready(Err(crate::native::ActionError::CombatInterrupted))
         ),
         "a hostile close, including a zero-damage hit, cannot complete dialogue: {result:?}"
     );
@@ -5321,7 +5319,7 @@ fn dialogue_hostile_close_never_reports_success() {
 #[test]
 fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
     use super::dialogue::Dialogue;
-    use crate::dialogue_outcome::DialogueOutcome;
+    use crate::native::ActionError;
     for continue_component in [None, Some(4883), Some(-1)] {
         let mut snapshot = ready();
         seed_dialogue_combat(&mut snapshot, false);
@@ -5367,7 +5365,7 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         with_tick(&snapshot, &mut ledger, 3, |t| {
             assert!(matches!(
                 t.actions.poll(&handle, &mut t.cx),
-                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
+                Poll::Ready(Err(ActionError::CombatInterrupted))
             ));
         });
     }
@@ -6201,7 +6199,10 @@ fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
                         if *npc_type == expected.id
                 ));
             } else {
-                assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(ActionError::CombatInterrupted))
+                ));
             }
         }
     });

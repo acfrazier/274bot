@@ -1308,6 +1308,44 @@ fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
 }
 
 #[test]
+fn random_event_policy_persists_and_mirrors_after_durable_write() {
+    let mut s = session("random-event-policy", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    let op = s
+        .set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Fight)
+        .unwrap();
+    assert!(
+        alice.random_event_policies.lock().unwrap().is_empty(),
+        "a running slot changes only after the profile write is durable"
+    );
+
+    s.flush_writes();
+    let saved = Vault::unlock(&vault_path("random-event-policy"), "test-passphrase-01").unwrap();
+    assert_eq!(
+        saved
+            .get("alice")
+            .unwrap()
+            .settings
+            .random_event_policy("river troll"),
+        vault::RandomEventPolicy::Fight
+    );
+    assert_eq!(
+        alice
+            .random_event_policies
+            .lock()
+            .unwrap()
+            .get("river troll"),
+        Some(&vault::RandomEventPolicy::Fight)
+    );
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+}
+
+#[test]
 fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     let mut s = session("write-fail", &[("alice", 1, false)]);
     let mut surface = Recorder::default();

@@ -1288,13 +1288,15 @@ fn spawn_slot_thread(
                     };
                     slot.on_random(ev)
                 };
-                run_policy = Host::run_client(
+                run_policy = Host::run_client_with_event_policies(
                     &mut client,
                     &username,
                     profile.settings.clone(),
                     Arc::clone(&arm_obs.random_events),
                     Arc::clone(&arm_obs.lamp_auto),
                     Arc::clone(&arm_obs.lamp_skill),
+                    Arc::clone(&arm_obs.random_event_policies),
+                    connection.profile().and_then(|profile| profile.game_data()),
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),

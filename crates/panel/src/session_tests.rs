@@ -6510,6 +6510,29 @@ fn set_random_settings_upserts_all_three_fields_without_spawning() {
 }
 
 #[test]
+fn set_random_event_policy_persists_without_spawning() {
+    let path = tmp_vault("random-event-policy.vault");
+    let mut s = Session::new();
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    s.core
+        .vault_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    assert!(s.set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Ignore));
+    let saved = s.core.vault().unwrap().get("alice").unwrap();
+    assert_eq!(
+        saved.settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Ignore
+    );
+    assert!(
+        s.core.slots().is_empty(),
+        "editing a policy must not spawn a slot"
+    );
+}
+
+#[test]
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();

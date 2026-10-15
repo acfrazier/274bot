@@ -34,6 +34,7 @@ mod profiles;
 pub mod progress;
 pub mod quester_paths;
 pub mod resources;
+pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
 pub mod session;
@@ -61,6 +62,7 @@ pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
+pub use profiles::fresh_uid;
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

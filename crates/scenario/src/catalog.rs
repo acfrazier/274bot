@@ -82,6 +82,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("nav_elkoy", scenarios::nav_elkoy_scenario),
     Entry::new("nav_tele", scenarios::nav_tele_scenario),
     Entry::new("nav_shantay", scenarios::nav_shantay_scenario),
+    Entry::new(
+        "nav_mage_arena_bank",
+        scenarios::nav_mage_arena_bank_scenario,
+    ),
     Entry::new("nav_brass_hut", scenarios::nav_brass_hut_scenario),
     Entry::new("nav_routes", scenarios::nav_routes_scenario),
     Entry::new("nav_paint_path", scenarios::nav_paint_path_scenario),
@@ -124,6 +128,80 @@ const REGISTRY: &[Entry] = &[
         scenarios::strange_plant_owned_scenario,
     ),
     Entry::new("maze_owned", scenarios::maze_owned_scenario),
+    Entry::new(
+        "guardian_event_swarm",
+        scenarios::guardian_event_swarm_scenario,
+    ),
+    Entry::new(
+        "guardian_event_genie",
+        scenarios::guardian_event_genie_scenario,
+    ),
+    Entry::new(
+        "guardian_event_drunken_dwarf",
+        scenarios::guardian_event_drunken_dwarf_scenario,
+    ),
+    Entry::new(
+        "guardian_event_old_man",
+        scenarios::guardian_event_old_man_scenario,
+    ),
+    Entry::new(
+        "guardian_event_strange_plant",
+        scenarios::guardian_event_strange_plant_scenario,
+    ),
+    Entry::new(
+        "guardian_event_strange_box",
+        scenarios::guardian_event_strange_box_scenario,
+    ),
+    Entry::new(
+        "guardian_event_mime",
+        scenarios::guardian_event_mime_scenario,
+    ),
+    Entry::new(
+        "guardian_event_maze",
+        scenarios::guardian_event_maze_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_big_fish",
+        scenarios::guardian_skill_big_fish_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_river_troll",
+        scenarios::guardian_skill_river_troll_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_whirlpool",
+        scenarios::guardian_skill_whirlpool_scenario,
+    ),
+    Entry::new("guardian_skill_gas", scenarios::guardian_skill_gas_scenario),
+    Entry::new(
+        "guardian_skill_lost_pickaxe",
+        scenarios::guardian_skill_lost_pickaxe_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_rock_golem",
+        scenarios::guardian_skill_rock_golem_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_tree_spirit",
+        scenarios::guardian_skill_tree_spirit_scenario,
+    ),
+    Entry::new("guardian_skill_ent", scenarios::guardian_skill_ent_scenario),
+    Entry::new(
+        "guardian_skill_lost_axe",
+        scenarios::guardian_skill_lost_axe_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_shade",
+        scenarios::guardian_skill_shade_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_zombie",
+        scenarios::guardian_skill_zombie_scenario,
+    ),
+    Entry::new(
+        "guardian_skill_watchman",
+        scenarios::guardian_skill_watchman_scenario,
+    ),
     Entry::new("chicken_killer", scenarios::chicken_killer_scenario),
     Entry::new(
         "chicken_killer_bank",
@@ -133,6 +211,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new(
         "thiever_diagonal_door_trap",
         scenarios::thiever_diagonal_door_trap_scenario,
+    ),
+    Entry::new(
+        "thiever_guard_no_bank",
+        scenarios::thiever_guard_no_bank_scenario,
     ),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
@@ -173,6 +255,7 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("dart_fletcher", scenarios::dart_fletcher_scenario),
     Entry::new("dart_fletcher_iron", scenarios::dart_fletcher_iron_scenario),
+    Entry::new("dart_fletcher_rune", scenarios::dart_fletcher_rune_scenario),
     Entry::new("herb_cleaner", scenarios::herb_cleaner_scenario),
     Entry::new("herb_cleaner_named", scenarios::herb_cleaner_named_scenario),
     Entry::new(
@@ -210,6 +293,7 @@ const REGISTRY: &[Entry] = &[
     Entry::new("potion_maker", scenarios::potion_maker_scenario),
     Entry::new("potion_maker_named", scenarios::potion_maker_named_scenario),
     Entry::new("tanner_bot", scenarios::tanner_bot_scenario),
+    Entry::new("flour_collector", scenarios::flour_collector_scenario),
     Entry::new("tanner_bot_hard", scenarios::tanner_bot_hard_scenario),
     Entry::new("rune_crafter", scenarios::rune_crafter_scenario),
     Entry::new("rune_crafter_earth", scenarios::rune_crafter_earth_scenario),
@@ -230,6 +314,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("cook_bot_lobster", scenarios::cook_bot_lobster_scenario),
     Entry::new("smelter_bot", scenarios::smelter_bot_scenario),
     Entry::new("smelter_bot_steel", scenarios::smelter_bot_steel_scenario),
+    Entry::new(
+        "smelter_bot_furnace",
+        scenarios::smelter_bot_furnace_scenario,
+    ),
     Entry::new("flax_spinner", scenarios::flax_spinner_scenario),
     Entry::new("flax_aio", scenarios::flax_aio_scenario),
     Entry::new("flax_aio_pick", scenarios::flax_aio_pick_scenario),
@@ -258,6 +346,14 @@ const REGISTRY: &[Entry] = &[
     Entry::new("auto_fighter", scenarios::auto_fighter_scenario),
     Entry::new("auto_fighter_mage", scenarios::auto_fighter_mage_scenario),
     Entry::new("auto_fighter_range", scenarios::auto_fighter_range_scenario),
+    Entry::new(
+        "auto_fighter_targets",
+        scenarios::auto_fighter_targets_scenario,
+    ),
+    Entry::new(
+        "auto_fighter_food_override",
+        scenarios::auto_fighter_food_override_scenario,
+    ),
     Entry::new("rock_crab", scenarios::rock_crab_scenario),
     Entry::new("rock_crab_range", scenarios::rock_crab_range_scenario),
     Entry::new("green_dragon", scenarios::green_dragon_scenario),
@@ -327,10 +423,6 @@ const REGISTRY: &[Entry] = &[
         scenarios::green_dragon_bank_default_prepared_scenario,
     ),
     Entry::new("green_dragon_tele", scenarios::green_dragon_tele_scenario),
-    Entry::new(
-        "green_dragon_tele_prepared",
-        scenarios::green_dragon_tele_prepared_scenario,
-    ),
     Entry::new(
         "fire_giant_approach",
         scenarios::fire_giant_approach_scenario,
@@ -454,6 +546,20 @@ const REGISTRY: &[Entry] = &[
     Entry::new("duel_arena", scenarios::duel_arena_scenario),
     Entry::new("clue_duel_3554", scenarios::clue_duel_3554_scenario),
     Entry::new("jive_kq_four", scenarios::jive_kq_four_scenario),
+    Entry::new("jive_chests", scenarios::jive_chests_scenario),
+    Entry::new("jive_crafting", scenarios::jive_crafting_scenario),
+    Entry::new("jive_enchanter", scenarios::jive_enchanter_scenario),
+    Entry::new("jive_dragons", scenarios::jive_dragons_scenario),
+    Entry::new(
+        "jive_dragons_black_range",
+        scenarios::jive_dragons_black_range_scenario,
+    ),
+    Entry::new(
+        "jive_dragons_potion_restock",
+        scenarios::jive_dragons_potion_restock_scenario,
+    ),
+    Entry::new("jive_demons", scenarios::jive_demons_scenario),
+    Entry::new("jive_kbd", scenarios::jive_kbd_scenario),
 ];
 
 /// The registered scenario with this name, `None` when unknown or when a

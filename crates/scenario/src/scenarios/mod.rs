@@ -9,7 +9,9 @@ pub(crate) mod combat;
 pub(crate) mod enter_lair;
 pub(crate) mod fight_field;
 pub(crate) mod gatherer;
+pub(crate) mod guardian_events;
 pub(crate) mod hold_spot;
+pub(crate) mod jive;
 pub(crate) mod leave_lair;
 pub(crate) mod line_of_sight;
 pub(crate) mod navigation;
@@ -34,35 +36,52 @@ pub(crate) use clue::{
     sherlock_search_scenario, sherlock_talk_scenario,
 };
 pub(crate) use gatherer::gatherer_scenario;
+pub(crate) use guardian_events::{
+    guardian_event_drunken_dwarf_scenario, guardian_event_genie_scenario,
+    guardian_event_maze_scenario, guardian_event_mime_scenario, guardian_event_old_man_scenario,
+    guardian_event_strange_box_scenario, guardian_event_strange_plant_scenario,
+    guardian_event_swarm_scenario, guardian_skill_big_fish_scenario, guardian_skill_ent_scenario,
+    guardian_skill_gas_scenario, guardian_skill_lost_axe_scenario,
+    guardian_skill_lost_pickaxe_scenario, guardian_skill_river_troll_scenario,
+    guardian_skill_rock_golem_scenario, guardian_skill_shade_scenario,
+    guardian_skill_tree_spirit_scenario, guardian_skill_watchman_scenario,
+    guardian_skill_whirlpool_scenario, guardian_skill_zombie_scenario,
+};
 
 pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_bank_seeded_scenario, ardy_fighter_scenario,
-    auto_fighter_bank_scenario, auto_fighter_mage_scenario, auto_fighter_range_scenario,
-    auto_fighter_scenario, chaos_druid_bank_scenario, chaos_druid_scenario,
-    chaos_druid_tower_scenario, chaos_druid_yanille_scenario, fire_giant_approach_scenario,
-    fire_giant_bank_prepared_scenario, fire_giant_bank_scenario,
-    fire_giant_camelot_prepared_scenario, fire_giant_prepared_scenario, fire_giant_scenario,
-    green_dragon_bank_default_prepared_scenario, green_dragon_bank_prepared_scenario,
-    green_dragon_bank_scenario, green_dragon_mage_prepared_scenario,
-    green_dragon_potions_prepared_scenario, green_dragon_potions_scenario,
-    green_dragon_prepared_scenario, green_dragon_scenario, green_dragon_special_prepared_scenario,
-    green_dragon_special_scenario, green_dragon_tele_prepared_scenario, green_dragon_tele_scenario,
-    hill_giant_bank_prepared_scenario, hill_giant_bank_scenario, hill_giant_loot_deposit_scenario,
-    hill_giant_scenario, moss_giant_bank_scenario, moss_giant_bank_start_scenario,
-    moss_giant_dart_scenario, moss_giant_prepared_scenario, moss_giant_scenario,
-    rock_crab_bank_scenario, rock_crab_bank_seeded_scenario, rock_crab_range_scenario,
-    rock_crab_scenario,
+    auto_fighter_bank_scenario, auto_fighter_food_override_scenario, auto_fighter_mage_scenario,
+    auto_fighter_range_scenario, auto_fighter_scenario, auto_fighter_targets_scenario,
+    chaos_druid_bank_scenario, chaos_druid_scenario, chaos_druid_tower_scenario,
+    chaos_druid_yanille_scenario, fire_giant_approach_scenario, fire_giant_bank_prepared_scenario,
+    fire_giant_bank_scenario, fire_giant_camelot_prepared_scenario, fire_giant_prepared_scenario,
+    fire_giant_scenario, green_dragon_bank_default_prepared_scenario,
+    green_dragon_bank_prepared_scenario, green_dragon_bank_scenario,
+    green_dragon_mage_prepared_scenario, green_dragon_potions_prepared_scenario,
+    green_dragon_potions_scenario, green_dragon_prepared_scenario, green_dragon_scenario,
+    green_dragon_special_prepared_scenario, green_dragon_special_scenario,
+    green_dragon_tele_scenario, hill_giant_bank_prepared_scenario, hill_giant_bank_scenario,
+    hill_giant_loot_deposit_scenario, hill_giant_scenario, moss_giant_bank_scenario,
+    moss_giant_bank_start_scenario, moss_giant_dart_scenario, moss_giant_prepared_scenario,
+    moss_giant_scenario, rock_crab_bank_scenario, rock_crab_bank_seeded_scenario,
+    rock_crab_range_scenario, rock_crab_scenario,
 };
 pub(crate) use enter_lair::enter_lair_v2_scenario;
 pub(crate) use fight_field::fight_field_v2_scenario;
 pub(crate) use hold_spot::hold_spot_v2_scenario;
+pub(crate) use jive::{
+    jive_chests_scenario, jive_crafting_scenario, jive_demons_scenario,
+    jive_dragons_black_range_scenario, jive_dragons_potion_restock_scenario, jive_dragons_scenario,
+    jive_enchanter_scenario, jive_kbd_scenario,
+};
 pub(crate) use leave_lair::leave_lair_v2_scenario;
 pub(crate) use line_of_sight::line_of_sight_v2_scenario;
 pub(crate) use navigation::{
     nav_brass_hut_scenario, nav_cart_scenario, nav_diagonal_door_scenario, nav_door_scenario,
-    nav_elkoy_scenario, nav_essence_scenario, nav_paint_path_scenario, nav_quest_door_scenario,
-    nav_routes_scenario, nav_shantay_scenario, nav_tele_scenario, walk_scenario,
+    nav_elkoy_scenario, nav_essence_scenario, nav_mage_arena_bank_scenario,
+    nav_paint_path_scenario, nav_quest_door_scenario, nav_routes_scenario, nav_shantay_scenario,
+    nav_tele_scenario, walk_scenario,
 };
 pub(crate) use pair::{
     clue_duel_3554_scenario, duel_arena_scenario, flax_runner_scenario, jive_kq_four_scenario,
@@ -79,10 +98,11 @@ pub(crate) use production::{
     bank_fletcher_shafts_scenario, bank_fletcher_string_scenario, brimhaven_agility_scenario,
     chicken_killer_bank_scenario, chicken_killer_scenario, climbing_boots_scenario,
     climbing_boots_teleport_scenario, coal_trucks_scenario, cook_bot_lobster_scenario,
-    cook_bot_scenario, dart_fletcher_iron_scenario, dart_fletcher_scenario,
-    door_opener_gate_scenario, door_opener_scenario, firemaker_oak_scenario, firemaker_scenario,
-    flax_aio_pick_scenario, flax_aio_scenario, flax_aio_spin_scenario, flax_picker_scenario,
-    flax_spinner_scenario, gem_cutter_named_scenario, gem_cutter_scenario, gnome_chop_scenario,
+    cook_bot_scenario, dart_fletcher_iron_scenario, dart_fletcher_rune_scenario,
+    dart_fletcher_scenario, door_opener_gate_scenario, door_opener_scenario,
+    firemaker_oak_scenario, firemaker_scenario, flax_aio_pick_scenario, flax_aio_scenario,
+    flax_aio_spin_scenario, flax_picker_scenario, flax_spinner_scenario, flour_collector_scenario,
+    gem_cutter_named_scenario, gem_cutter_scenario, gnome_chop_scenario,
     gnome_course_radius_scenario, gnome_course_scenario, gnome_fletch_long_scenario,
     gnome_fletch_short_scenario, herb_cleaner_empty_bank_scenario, herb_cleaner_named_scenario,
     herb_cleaner_scenario, herblore_secondaries_newt_scenario, herblore_secondaries_scenario,
@@ -90,12 +110,13 @@ pub(crate) use production::{
     leather_crafter_hard_body_scenario, leather_crafter_scenario,
     leather_crafter_thread_shop_scenario, mule_crafter_scenario, potion_maker_named_scenario,
     potion_maker_scenario, rune_crafter_earth_scenario, rune_crafter_scenario,
-    smelter_bot_scenario, smelter_bot_steel_scenario, smithing_bot_mithril_scenario,
-    smithing_bot_nails_scenario, smithing_bot_platebody_scenario, smithing_bot_scenario,
-    superheater_fire_battlestaff_scenario, superheater_mithril_scenario, superheater_scenario,
-    superheater_silver_low_natures_scenario, superheater_steel_scenario, tanner_bot_hard_scenario,
-    tanner_bot_scenario, thiever_diagonal_door_trap_scenario, thiever_scenario,
-    vial_filler_east_scenario, vial_filler_scenario, wildy_agility_scenario,
+    smelter_bot_furnace_scenario, smelter_bot_scenario, smelter_bot_steel_scenario,
+    smithing_bot_mithril_scenario, smithing_bot_nails_scenario, smithing_bot_platebody_scenario,
+    smithing_bot_scenario, superheater_fire_battlestaff_scenario, superheater_mithril_scenario,
+    superheater_scenario, superheater_silver_low_natures_scenario, superheater_steel_scenario,
+    tanner_bot_hard_scenario, tanner_bot_scenario, thiever_diagonal_door_trap_scenario,
+    thiever_guard_no_bank_scenario, thiever_scenario, vial_filler_east_scenario,
+    vial_filler_scenario, wildy_agility_scenario,
 };
 pub(crate) use quester::{
     quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,

@@ -510,7 +510,7 @@ mod tests {
         // Pref off keeps the 1 fps watch cadence.
         f.sidecar_50 = false;
         assert!(!full_rate_for(&f, "b"));
-        // Collapsed rail (only render selected): members do not draw, so
+        // Collapsed rail (only render focused): members do not draw, so
         // the pref cannot raise them.
         f.sidecar_50 = true;
         f.only_render_selected = true;

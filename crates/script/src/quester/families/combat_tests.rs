@@ -3140,7 +3140,7 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     });
     assert!(matches!(
         result,
-        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("interrupted")
+        Poll::Ready(Err(ActionError::CombatInterrupted))
     ));
 }
 

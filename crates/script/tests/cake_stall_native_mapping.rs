@@ -139,12 +139,20 @@ fn loc_row<'a>(
 
 const STEAL: &str = r#"
 import { stealCakes, carriedCakes, needsCakeRestock } from '../../api/thieving/CakeStall.js';
-import { STALL_TILE, STAND, STAND_ALT, FLEE_TILE, STALL_NAME, STALL_OP, CAKE_ITEMS, classifySteal } from '../../api/thieving/cakeStallData.js';
+import { STALL_TILE, STAND, STAND_ALT, FLEE_TILE, STALL_NAME, STALL_OP, CAKE_ITEMS, classifySteal, shouldReset } from '../../api/thieving/cakeStallData.js';
 
 globalThis.__stolen = 0;
 globalThis.__reset = 0;
 globalThis.__receivers = [];
 globalThis.__result = null;
+globalThis.__classify = [
+    classifySteal({ gained: true, combat: true, lockoutSeen: true, attemptSeen: true }),
+    classifySteal({ gained: false, combat: true, lockoutSeen: true, attemptSeen: true }),
+    classifySteal({ gained: false, combat: false, lockoutSeen: true, attemptSeen: true }),
+    classifySteal({ gained: false, combat: false, lockoutSeen: false, attemptSeen: true }),
+    classifySteal({ gained: false, combat: false, lockoutSeen: false, attemptSeen: false }),
+];
+globalThis.__resetChecks = [shouldReset(2), shouldReset(3), shouldReset(4)];
 globalThis.__pins = {
     stall: STALL_TILE ? [STALL_TILE.x, STALL_TILE.z, STALL_TILE.level] : null,
     stand: STAND ? [STAND.x, STAND.z, STAND.level] : null,
@@ -154,12 +162,6 @@ globalThis.__pins = {
     op: STALL_OP,
     items: CAKE_ITEMS.slice(),
 };
-try {
-    classifySteal();
-    globalThis.__classify = 'called';
-} catch (e) {
-    globalThis.__classify = String(e && e.message ? e.message : e);
-}
 
 export default class T extends LoopingBot {
     async loop() {
@@ -257,11 +259,15 @@ fn posted_pins_match_selected_274_289_stall_and_live_stand() {
     assert_eq!(pins["op"], "Steal from");
     assert_eq!(
         pins["items"],
-        serde_json::json!(["Cake", "Bread", "Chocolate slice"])
+        serde_json::json!(["cake", "bread", "chocolate slice"])
     );
     assert_eq!(
         iso.probe("__classify").unwrap(),
-        "not impl: cakeStallData.classifySteal"
+        serde_json::json!(["success", "caught", "lockout", "refused", "timeout"])
+    );
+    assert_eq!(
+        iso.probe("__resetChecks").unwrap(),
+        serde_json::json!([false, true, true])
     );
     iso.join();
 }
@@ -666,7 +672,7 @@ fn slice_of_cake_at_food_target_one_does_not_restock() {
 }
 
 #[test]
-fn result_is_never_boolean_and_classify_is_not_on_the_path() {
+fn result_is_never_boolean_and_classification_is_native() {
     let iso = spawn();
     iso.probe("globalThis.__fillTo = 28").unwrap();
     let snap = base_snapshot(tile(2668, 3312, 0));
@@ -680,7 +686,7 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
     assert_ne!(result, false);
     assert_eq!(
         iso.probe("__classify").unwrap(),
-        "not impl: cakeStallData.classifySteal"
+        serde_json::json!(["success", "caught", "lockout", "refused", "timeout"])
     );
     iso.join();
 }

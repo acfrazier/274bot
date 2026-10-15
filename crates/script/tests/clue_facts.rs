@@ -532,7 +532,7 @@ fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde
 /// A schema-4 selected slot that decodes with no trail family at all.
 fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
-        "schema_version": 4,
+        "schema_version": 5,
         "revision": 274,
         "provenance": {
             "cache_identity": {"cache_id": "x"},

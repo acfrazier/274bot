@@ -121,7 +121,8 @@ globalThis.__wieldSteelPick5 = canWieldTool('Steel pickaxe', 5);
 globalThis.__wieldSteelAxe1 = canWieldTool('Steel axe', 1);
 globalThis.__wieldSteelAxe5 = canWieldTool('Steel axe', 5);
 globalThis.__wieldBronze0 = canWieldTool('Bronze pickaxe', 0);
-globalThis.__wieldUnknown = canWieldTool('Dragon pickaxe', 99);
+globalThis.__wieldUnknown0 = canWieldTool('Dragon pickaxe', 0);
+globalThis.__wieldUnknown1 = canWieldTool('Dragon pickaxe', 1);
 
 try {
     toolRestockPlan();
@@ -218,14 +219,15 @@ fn best_tool_callback_is_exclusive_and_ordered() {
 }
 
 #[test]
-fn can_wield_is_attack_not_held_and_unknown_is_false() {
+fn can_wield_is_attack_not_held_and_unknown_defaults_to_level_one() {
     let iso = spawn();
     assert_eq!(iso.probe("__wieldSteelPick1").unwrap(), false);
     assert_eq!(iso.probe("__wieldSteelPick5").unwrap(), true);
     assert_eq!(iso.probe("__wieldSteelAxe1").unwrap(), false);
     assert_eq!(iso.probe("__wieldSteelAxe5").unwrap(), true);
-    assert_eq!(iso.probe("__wieldBronze0").unwrap(), true);
-    assert_eq!(iso.probe("__wieldUnknown").unwrap(), false);
+    assert_eq!(iso.probe("__wieldBronze0").unwrap(), false);
+    assert_eq!(iso.probe("__wieldUnknown0").unwrap(), false);
+    assert_eq!(iso.probe("__wieldUnknown1").unwrap(), true);
     assert!(
         iso.probe("__restock")
             .unwrap()
@@ -236,7 +238,7 @@ fn can_wield_is_attack_not_held_and_unknown_is_false() {
     );
     assert_eq!(
         iso.probe("__exact").unwrap(),
-        serde_json::json!({"name": "Hammer"})
+        serde_json::json!({"kind": "exact", "name": "Hammer", "min": 1, "restock": 1})
     );
     iso.join();
 }

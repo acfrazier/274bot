@@ -192,7 +192,10 @@ export default class T extends LoopingBot {
     let probe = probe_loop(&iso, &snap);
     assert_eq!(probe["hostile"], true);
     assert_eq!(probe["face"], 32768);
-    assert_eq!(probe["names"], serde_json::json!([]));
+    assert_eq!(
+        probe["names"],
+        serde_json::json!(["Guard", "Knight of Ardougne", "Paladin", "Hero"])
+    );
 
     let other = npc_row(Some("Guard"), true, 2, 7, 1, &attack);
     snap.tick = 2;

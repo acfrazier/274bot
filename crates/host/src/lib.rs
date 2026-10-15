@@ -10,11 +10,13 @@ pub mod render;
 mod slot;
 mod slot_io;
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::game_data::SelectedGameData;
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::interact::set_run;
@@ -34,7 +36,8 @@ pub use capacity::{
 #[cfg(feature = "test-support")]
 pub use capacity::{force_off_cpu_measure, ServiceDelays};
 pub use random::{
-    detect, CooldownMap, DetectedRandom, Guardian, RandomClaim, RandomKind, RandomStatus,
+    detect, is_lamp_skill, CooldownMap, DetectedRandom, Guardian, GuardianLiveContext, RandomClaim,
+    RandomKind, RandomStatus,
 };
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
@@ -275,6 +278,51 @@ impl Host {
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
         run_policy: ScriptRunPolicy,
+        observe: F,
+        probe: P,
+        knock: K,
+    ) -> ScriptRunPolicy
+    where
+        F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
+        P: FnMut(&mut Client) -> bool,
+        K: FnMut(&DetectedRandom) -> RandomClaim,
+    {
+        let random_event_policies = Arc::new(Mutex::new(settings.random_event_policies.clone()));
+        Self::run_client_with_event_policies(
+            client,
+            username,
+            settings,
+            random_events,
+            lamp_auto,
+            lamp_skill,
+            random_event_policies,
+            None,
+            input,
+            mailbox,
+            ctl,
+            run_policy,
+            observe,
+            probe,
+            knock,
+        )
+    }
+
+    /// Like [`Host::run_client`], with a shared live policy map and selected
+    /// game data from host-play's bound connection profile.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_client_with_event_policies<F, P, K>(
+        client: &mut Client,
+        username: &str,
+        settings: ProfileSettings,
+        random_events: Arc<AtomicBool>,
+        lamp_auto: Arc<AtomicBool>,
+        lamp_skill: Arc<Mutex<String>>,
+        random_event_policies: Arc<Mutex<BTreeMap<String, vault::RandomEventPolicy>>>,
+        game_data: Option<Arc<SelectedGameData>>,
+        input: Option<Arc<SlotInput>>,
+        mailbox: Option<Arc<FrameBuf>>,
+        ctl: Option<Arc<SlotPark>>,
+        run_policy: ScriptRunPolicy,
         mut observe: F,
         mut probe: P,
         mut knock: K,
@@ -284,8 +332,15 @@ impl Host {
         P: FnMut(&mut Client) -> bool,
         K: FnMut(&DetectedRandom) -> RandomClaim,
     {
-        let mut slot =
-            SlotLoop::with_settings(settings, random_events, lamp_auto, lamp_skill, run_policy);
+        let mut slot = SlotLoop::with_settings(
+            settings,
+            random_events,
+            lamp_auto,
+            lamp_skill,
+            run_policy,
+            random_event_policies,
+        );
+        slot.game_data = game_data;
         #[cfg(feature = "performance-profile")]
         {
             slot.profile = Some(performance_profile::register(username));
@@ -505,9 +560,24 @@ impl Host {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let status = slot
-            .guardian
-            .tick(client, &slot.snapshot, &slot.settings, now_ms, knock);
+        let status = {
+            let policies = slot
+                .random_event_policies
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let context = random::GuardianLiveContext {
+                event_policies: &policies,
+                game_data: slot.game_data.as_deref(),
+            };
+            slot.guardian.tick_with_live_policies(
+                client,
+                &slot.snapshot,
+                &slot.settings,
+                &context,
+                now_ms,
+                knock,
+            )
+        };
         slot.guardian_status = status.clone();
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
@@ -1127,6 +1197,11 @@ struct SlotLoop {
     lamp_auto: Arc<AtomicBool>,
     /// Live lamp skill choice (shared with `SlotArm::lamp_skill`).
     lamp_skill: Arc<Mutex<String>>,
+    /// Live per-event policy map shared with the profile arm.
+    random_event_policies: Arc<Mutex<BTreeMap<String, vault::RandomEventPolicy>>>,
+    /// Selected content for the bound client revision; missing content never
+    /// substitutes a guessed hostile-NPC range.
+    game_data: Option<Arc<SelectedGameData>>,
     /// Random-event guardian (act/hold; the trapped-kind hold and the
     /// `on_random` knock live here).
     guardian: Guardian,
@@ -1188,6 +1263,7 @@ impl SlotLoop {
             Arc::new(AtomicBool::new(true)),
             Arc::new(Mutex::new("strength".to_string())),
             ScriptRunPolicy::default(),
+            Arc::new(Mutex::new(BTreeMap::new())),
         )
     }
 
@@ -1197,6 +1273,7 @@ impl SlotLoop {
         lamp_auto: Arc<AtomicBool>,
         lamp_skill: Arc<Mutex<String>>,
         run_policy: ScriptRunPolicy,
+        random_event_policies: Arc<Mutex<BTreeMap<String, vault::RandomEventPolicy>>>,
     ) -> Self {
         Self {
             pump: Pump::new(),
@@ -1212,6 +1289,8 @@ impl SlotLoop {
             guardian_status: RandomStatus::default(),
             renderer: None,
             renderer_prefer_cpu: None,
+            random_event_policies,
+            game_data: None,
             renderer_lowmem: None,
             raster_last: None,
             raster_was_on: false,

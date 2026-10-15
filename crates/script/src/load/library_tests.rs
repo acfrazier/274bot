@@ -347,7 +347,7 @@ fn catalog_missing_compat_api_export_gets_actionable_start_message() {
         .expect_err("missing compat API export must refuse Start");
     assert_eq!(
         error,
-        "This script needs a newer rs2b0t API than this build supports (frozen at commit 00d39a17e0; missing export: inDuelChallengeArea)."
+        "This script imports compatibility API member 'inDuelChallengeArea', which this build does not provide."
     );
 
     let failure = lib
@@ -414,4 +414,57 @@ fn unrelated_syntax_and_missing_relative_module_errors_stay_raw() {
             .expect_err("unrelated load errors are never rewritten");
         assert_eq!(error, raw);
     }
+}
+#[test]
+fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_card() {
+    let dir = scratch("refresh-unresolvable-settings");
+    let path = dir.join("SettingsBot.ts");
+    let good = "export const SETTINGS = { loadout: { ...LOADOUT_SETTING, group: 'Food' } }; export default class SettingsBot extends TaskBot {}";
+    let bad = "export const SETTINGS = { loadout: { ...UNKNOWN_SETTING, group: 'Food' } }; export default class SettingsBot extends TaskBot {}";
+    std::fs::write(&path, good).unwrap();
+    let mut library = library(&dir);
+    let loaded = library.load(&path).expect("valid schema loads");
+    let prior_schema = loaded.settings_schema.clone();
+    let prior_hash = loaded.sha256.clone();
+
+    std::fs::write(&path, bad).unwrap();
+    let refresh_error = library
+        .refresh(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .expect_err("refresh must reject a new unresolved setting spread");
+    assert!(
+        refresh_error.contains("SettingsBot")
+            && refresh_error.contains("loadout")
+            && refresh_error.contains("UNKNOWN_SETTING"),
+        "{refresh_error}"
+    );
+    let retained = library
+        .get(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .expect("the old accepted card remains registered");
+    assert_eq!(retained.origin, good);
+    assert_eq!(retained.sha256, prior_hash);
+    assert_eq!(retained.settings_schema, prior_schema);
+    assert!(
+        library.named_failure_output().contains("UNKNOWN_SETTING"),
+        "refresh refusal is visible in named failures: {}",
+        library.named_failure_output()
+    );
+
+    library
+        .cards
+        .iter_mut()
+        .find(|card| card.name == "SettingsBot")
+        .expect("registered card")
+        .js
+        .clear();
+    let ensure_error = library
+        .ensure_js(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .expect_err("ensure_js must reject the same unresolved source");
+    assert!(ensure_error.contains("UNKNOWN_SETTING"), "{ensure_error}");
+    let retained = library
+        .get(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .expect("failed ensure_js retains the old accepted card");
+    assert_eq!(retained.origin, good);
+    assert_eq!(retained.settings_schema, prior_schema);
+    drop(library);
+    std::fs::remove_dir_all(dir).unwrap();
 }

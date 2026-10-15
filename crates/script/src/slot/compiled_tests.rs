@@ -2010,11 +2010,11 @@ impl Script for TerminalReporter {
     }
 }
 #[derive(Debug, Clone)]
-struct CapturedStatusLine {
-    slot: String,
-    level: api::hostlog::Level,
-    source: api::hostlog::Source,
-    message: String,
+pub(crate) struct CapturedStatusLine {
+    pub(crate) slot: String,
+    pub(crate) level: api::hostlog::Level,
+    pub(crate) source: api::hostlog::Source,
+    pub(crate) message: String,
 }
 
 #[derive(Default)]
@@ -2036,11 +2036,11 @@ impl api::hostlog::Sink for StatusLineSink {
 
 static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(std::sync::Mutex::new(Vec::new()));
 
-fn install_status_line_sink() {
+pub(crate) fn install_status_line_sink() {
     let _ = api::hostlog::install_sink(&STATUS_LINE_SINK);
 }
 
-fn status_lines_for(slot: &str) -> Vec<CapturedStatusLine> {
+pub(crate) fn status_lines_for(slot: &str) -> Vec<CapturedStatusLine> {
     STATUS_LINE_SINK
         .0
         .lock()

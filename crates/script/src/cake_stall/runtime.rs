@@ -5,7 +5,10 @@
 //! one `cake_stall` step-machine row; JavaScript only marshals the options and
 //! awaits its completion.
 
-use super::{counts_as_stall_food, needs_cake_restock, select_baker_stall};
+use super::{
+    counts_as_stall_food, needs_cake_restock, select_baker_stall, LOCKOUT_TICKS,
+    RESET_AFTER_REFUSALS,
+};
 use crate::machine::{AbortReason, Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Scene, SceneRow};
 use crate::shim::InteractReq;
@@ -27,13 +30,6 @@ pub const RESTOCK_WAIT_MS: u64 = 8_000;
 pub const LOCKOUT_WAIT_MS: u64 = 12_000;
 /// Frozen `NEAR_STALL`: a claim this close to the stall tile may steal.
 const NEAR_STALL: i32 = 2;
-/// Frozen `RESET_AFTER_REFUSALS`: consecutive steals that gained nothing and
-/// were not caught (the stall owner was watching) before the other stand is
-/// tried.
-pub const RESET_AFTER_REFUSALS: u32 = 3;
-/// Frozen `LOCKOUT_TICKS`: how long a steal refused for recent combat waits
-/// before the next attempt.
-pub const LOCKOUT_TICKS: i64 = 10;
 /// Frozen `LOCKOUT_RE`: the server refuses stall steals within ten ticks of
 /// combat with this line. It is neither a catch nor a watched-stand refusal.
 const LOCKOUT_LINE: &str = "can't steal from the market stall during combat";

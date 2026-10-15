@@ -123,6 +123,129 @@ pub fn thiever_sustained_scenario() -> Scenario {
     scenario
 }
 
+const THIEVER_NO_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::Str(""),
+    },
+    // Same fixture loadout as `thiever`: it names Lobster as the food.
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Memory food"),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("None"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(22.0),
+    },
+    ScriptSettingInject {
+        id: "bankAtFood",
+        value: ScriptInjectValue::Num(0.0),
+    },
+];
+
+/// Sustained Thieving XP the no-bank watch requires: the fixed-window
+/// conversion of upstream's 25_000 XP/hr bar (`thievingbot-test.ts:19-20`
+/// `TARGET_XPH`, pass condition `:341-366`) over the 300 s post-Start
+/// watch: `25_000 * 300 / 3600 = 2083.3`, rounded up to 2084. At the
+/// Guard's content rate (`[pickpocket_guard]` experience 468 tenths =
+/// 46.8 XP in `skill_thieving/configs/pickpocking/pickpocket.dbrow:74`)
+/// that is at least 45 successes: 44 pay 2059.2 XP, 45 pay 2106 XP.
+const THIEVER_NO_BANK_XP: i32 = 2084;
+/// Runner dirty-snapshot increments, not engine ticks or wall seconds.
+/// The same ~2.5 dirties/second allowance as the 300s/750 combat
+/// qualification arm: this 750-dirty budget is the 300 s rate window
+/// the 2084 XP gate is priced against.
+const THIEVER_NO_BANK_WATCH_TICKS: u32 = 750;
+/// 420 s = the 300 s post-Start rate window plus 120 s for seed, login
+/// and Start, so seeding time is not counted against a script that
+/// only just meets 25k XP/hr. The watch budget above, not this
+/// scenario deadline, is the rate window.
+const THIEVER_NO_BANK_DEADLINE: Duration = Duration::from_secs(420);
+
+/// Ported from rs2b0t `e2e/thievingbot-test.ts` @2de6bb23.
+/// Changed: the wall-clock XP/hr >= 25k rate gate (after a 180s warmup)
+/// becomes 2084 Thieving XP inside the fixed 300s post-Start watch
+/// (25_000 * 300 / 3600, rounded up), under a 420s scenario deadline
+/// that keeps seed and login outside the rate window.
+/// Changed: `food`/`eatAtHp` session settings become the shared
+/// `thiever` fixture loadout, which names the same Lobster food.
+/// Kept: Ardougne Guards, a 22-Lobster pack, `banking=None`, loot off —
+/// the no-bank soak the `thiever` cell (banking Auto, XP >= 1) omits.
+pub(crate) fn thiever_guard_no_bank_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: 17,
+        min: THIEVER_NO_BANK_XP,
+    };
+    let tele = ARDOUGNE_GUARD;
+    Scenario {
+        name: "thiever_guard_no_bank",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "seed stats, a 22-Lobster pack, and tele to the guard stand",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "advancestat thieving 50");
+                        cheat(c, "advancestat hitpoints 50");
+                        cheat(c, "advancestat defence 40");
+                        cheat(c, "~clearinv");
+                        cheat(c, "give lobster 22");
+                        cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: tele.x,
+                        z: tele.z,
+                        level: tele.level,
+                        radius: 10,
+                    },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(drain_advancestat());
+            steps.push(start_catalog_step());
+            steps.push(Step {
+                name: "watch sustained Guard pickpocketing: 2084 Thieving XP, banking off",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: THIEVER_NO_BANK_WATCH_TICKS,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: THIEVER_NO_BANK_DEADLINE,
+            start_script: Some("Thiever"),
+            script_settings_inject: Some(THIEVER_NO_BANK_INJECT),
+            fixture_loadouts: Some(THIEVER_FIXTURE_LOADOUTS),
+            nav: gold_script_nav(),
+            terminal_shot: Some("thiever_guard_no_bank"),
+            ..Default::default()
+        },
+    }
+}
+
 const TRAP_HOUSE: WorldTile = WorldTile {
     x: 2671,
     z: 3316,

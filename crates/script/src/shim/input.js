@@ -163,4 +163,28 @@ export const Input = proxy('Input', {
         });
         return true;
     },
+    useItemOnLoc(useObjId, useSlot, useComId, lx, lz, typecode) {
+        throw notImpl('Input.useItemOnLoc');
+    },
+    useItemOnNpc(useObjId, useSlot, useComId, index) {
+        throw notImpl('Input.useItemOnNpc');
+    },
+    useItemOnObj(useObjId, useSlot, useComId, targetObjId, lx, lz) {
+        throw notImpl('Input.useItemOnObj');
+    },
+    useItemOnItem(useObjId, useSlot, useComId, targetObjId, targetSlot, targetComId) {
+        throw notImpl('Input.useItemOnItem');
+    },
+    castOnNpc(spellComId, index) {
+        throw notImpl('Input.castOnNpc');
+    },
+    castOnLoc(spellComId, lx, lz, typecode) {
+        throw notImpl('Input.castOnLoc');
+    },
+    castOnItem(spellComId, itemId, itemSlot, itemComId) {
+        throw notImpl('Input.castOnItem');
+    },
+    continueDialog() {
+        throw notImpl('Input.continueDialog');
+    },
 });

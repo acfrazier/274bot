@@ -38,6 +38,8 @@
     "name": "AbstractBot",
     "kind": "class",
     "members": [
+      "bindFinish",
+      "delegated",
       "grindTargets",
       "ignoredRandoms",
       "log",
@@ -50,6 +52,7 @@
       "onStart",
       "onStop",
       "recoveryAnchor",
+      "requestFinish",
       "settings"
     ]
   },
@@ -385,6 +388,7 @@
       "id",
       "interact",
       "name",
+      "noted",
       "slot",
       "useOn"
     ]
@@ -665,6 +669,7 @@
     "name": "TaskBot",
     "kind": "class",
     "members": [
+      "activeTaskName",
       "add",
       "loop"
     ]

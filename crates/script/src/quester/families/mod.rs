@@ -1376,11 +1376,6 @@ fn poll_dialogue_step(
                 receipt: None,
             }),
             DialogueOutcome::Failed => Err(ActionError::Failed(Arc::from("dialogue failed"))),
-            DialogueOutcome::CombatInterrupted => {
-                static REASON: std::sync::LazyLock<Arc<str>> =
-                    std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
-                Err(ActionError::Blocked(Arc::clone(&REASON)))
-            }
         })
     })
 }
@@ -1583,7 +1578,7 @@ impl StepRun for TalkRun {
                 Poll::Ready(Ok(DialogueOutcome::Failed)) => {
                     Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
                 }
-                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted)) => {
+                Poll::Ready(Err(error @ ActionError::CombatInterrupted)) => {
                     if let Some((npc_type, npc_index)) = self
                         .expect_combat
                         .and_then(|npc_type| expected_combat_target(&cx.tick.cx, npc_type))
@@ -1597,9 +1592,7 @@ impl StepRun for TalkRun {
                             })),
                         }));
                     }
-                    static REASON: std::sync::LazyLock<Arc<str>> =
-                        std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
-                    Poll::Ready(Err(ActionError::Blocked(Arc::clone(&REASON))))
+                    Poll::Ready(Err(error))
                 }
                 Poll::Ready(Ok(DialogueOutcome::Completed)) => Poll::Ready(Ok(StepOutcome {
                     progress: None,
@@ -3775,6 +3768,7 @@ impl AcquireRun {
             | ActionError::Failed(reason)
             | ActionError::Blocked(reason) => Arc::clone(reason),
             ActionError::NeedsEvidence(_) => Arc::from("needs evidence"),
+            ActionError::CombatInterrupted => Arc::from("dialogue interrupted by combat"),
             ActionError::UserInput => Arc::from(MANUAL_MOVEMENT_MESSAGE),
             _ => Arc::from(format!("{error:?}")),
         };

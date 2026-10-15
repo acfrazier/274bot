@@ -18,7 +18,7 @@ import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 
-type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
+type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
 type GeneratedInputs = { engine_commit: string; content_commit: string; engine: InputHash[]; content: InputHash[] };
 type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
@@ -332,6 +332,7 @@ function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<n
         wear_position: obj.wearpos,
         wear_position_2: obj.wearpos2,
         wear_position_3: obj.wearpos3,
+        worn_model: obj.manwear !== -1,
         category: categoryName(obj, categories),
         tradeable: obj.tradeable,
         stack_variant: piles.has(obj.id),
@@ -3080,7 +3081,7 @@ async function generate(spec: Revision) {
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
     hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
+    const payload = { schema_version: 5, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
     Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
     const debugArtifact = buildDebugArtifact(spec.revision, { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs: debugProvenanceInputs(spec.engine), content_inputs: debugCatalog.inputs, cache_identity: spec.cacheIdentity }, debugCatalog);
     const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
@@ -3130,7 +3131,7 @@ async function main() {
     const previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const merged = new Map(previous.revisions.map((row: { revision: number }) => [row.revision, row]));
     for (const result of results) merged.set(result.revision, result);
-    const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: [...merged.values()].sort((a, b) => a.revision - b.revision) };
+    const manifest = { schema_version: 5, generator: 'tools/game-data/generate.ts', revisions: [...merged.values()].sort((a, b) => a.revision - b.revision) };
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     // The hidden sites' regions for the reachability guard; a one-revision run keeps the other revision's rows.
     const hiddenPath = path.join(root, HIDDEN_SITES_FILE);

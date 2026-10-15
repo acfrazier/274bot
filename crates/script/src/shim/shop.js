@@ -7,6 +7,8 @@ import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 // What a call ended by a reset or a newer shop call resolves to.
 const ABORTED = { open: false, buy: 0, sell: 0, sellall: 0, close: undefined };
 
+export const SELL_STACK_STEP = globalThis.__rs2b0t_shop_op_batch('sellStackStep');
+
 async function run(kind, name, qty, pick) {
     const out = await runMachine(
         'shop',
@@ -16,6 +18,10 @@ async function run(kind, name, qty, pick) {
     if (out.kind === 'refused') throw notImpl(kind === 'sellall' ? 'Shop.sellAll' : 'Shop.' + kind, out.reason);
     if (out.kind !== 'done') return ABORTED[kind];
     return out.value ?? undefined;
+}
+
+export function shopOpBatch(ops, verb, remaining) {
+    return globalThis.__rs2b0t_shop_op_batch(ops, verb, remaining);
 }
 
 export const Shop = new Proxy(

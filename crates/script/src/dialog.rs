@@ -7,6 +7,7 @@
 //! the frozen log lines and completion stay here. Game actions reuse the
 //! existing FlatBuffer `npc` / `continue` / `answer` verbs.
 
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 #[cfg(test)]
 use crate::observed::Ops;
@@ -52,6 +53,10 @@ struct NativeObservation {
     chat_page_fingerprint: u64,
     chat_options: Vec<String>,
     bank_open: bool,
+    /// The local player's health-bar window (see
+    /// [`DialogueOutcome::combat_interrupted`]): raised by every hit,
+    /// including a 0-damage miss, so it witnesses a combat `if_close`.
+    in_combat: bool,
     #[cfg(test)]
     npcs: Vec<Npc>,
 }
@@ -75,6 +80,7 @@ impl NativeObservation {
             // Empty texts stay: the 1-based Answer index is the posted slot.
             chat_options: chat_options.to_vec(),
             bank_open: session.bank_open().unwrap_or(false),
+            in_combat: session.in_combat().unwrap_or(false),
             #[cfg(test)]
             npcs: Vec::new(),
         }
@@ -157,6 +163,15 @@ pub(crate) struct Dialog {
     reach: Option<NpcReach>,
     reach_result: Option<bool>,
     open_error: Option<String>,
+    /// A chat page was observed during this dialogue, so a later closed
+    /// observation is the conversation ending (or being ended), not the
+    /// wait for it to open.
+    chat_seen: bool,
+    /// The chat was observed closed while the player was in combat after
+    /// having been open: an NPC hit's `if_close`, not a finished talk.
+    /// Latched because the success decision can wait out a long authored
+    /// gap after the `in_combat` window closes.
+    combat_close_seen: bool,
 }
 
 impl Family for Dialog {
@@ -200,6 +215,8 @@ impl Family for Dialog {
             reach: None,
             reach_result: None,
             open_error: None,
+            chat_seen: false,
+            combat_close_seen: false,
         };
         match dialog.start(&obs, cx) {
             // A queued log line is written by the first step (the start kick).
@@ -404,22 +421,51 @@ impl Dialog {
         Step::Wait
     }
 
+    /// Latch a witnessed combat close: the chat was open on an earlier
+    /// observation and is now closed while the player is in combat. An
+    /// NPC hit `if_close`s the chat on every swing, including a 0-damage
+    /// miss, and that same hit raises `in_combat` (see
+    /// [`DialogueOutcome::combat_interrupted`]), so the two facts
+    /// together are the hit, not a finished conversation. The compat
+    /// contract stays the frozen bool: this only turns the would-be
+    /// success into the failure value `false`.
+    fn note_obs(&mut self, obs: &NativeObservation) {
+        if obs.dialog_ready() {
+            self.chat_seen = true;
+        } else if self.chat_seen
+            && DialogueOutcome::combat_interrupted(obs.dialog_ready(), obs.in_combat)
+        {
+            self.combat_close_seen = true;
+        }
+    }
+
+    /// The frozen closed-chat success, minus a witnessed combat close.
+    fn closed_ok(&self, obs: &NativeObservation) -> bool {
+        !obs.is_open() && !self.combat_close_seen
+    }
+
     fn wait_gap(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        self.note_obs(obs);
         if obs.dialog_ready() {
             self.phase = Phase::Drive;
             cx.clock().deadline = None;
             return self.drive_step(obs, cx);
         }
-        if obs.bank_open || cx.clock().bound_reached() {
+        // A bank the talk opened is its own success evidence, as before.
+        if obs.bank_open {
             return Step::Done(!obs.is_open());
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(self.closed_ok(obs));
         }
         Step::Wait
     }
 
     fn drive_step(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        self.note_obs(obs);
         self.phase = Phase::Drive;
         if self.steps >= DRIVE_STEPS {
-            return Step::Done(!obs.is_open());
+            return Step::Done(self.closed_ok(obs));
         }
         if !obs.dialog_ready() {
             if obs.bank_open {
@@ -428,7 +474,7 @@ impl Dialog {
             self.phase = Phase::WaitGap;
             cx.clock().arm(self.gap_ms);
             return if cx.clock().bound_reached() {
-                Step::Done(!obs.is_open())
+                Step::Done(self.closed_ok(obs))
             } else {
                 Step::Wait
             };
@@ -488,6 +534,106 @@ pub(crate) fn pick_preferred(options: &[String], prefer: &[String]) -> Option<us
             .filter(|&index| !options[index].is_empty())
     })
 }
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LineRule {
+    when_line: String,
+    choose: String,
+}
+
+/// Frozen `pickByLine` (`primitives.ts:36-49`): the longest matching spoken
+/// fragment wins, then its answer is resolved against the posted options.
+pub(crate) fn pick_by_line(
+    lines: &[String],
+    options: &[String],
+    rules: &[LineRule],
+) -> Option<usize> {
+    let said = flatten_spoken_lines(lines);
+    if said.is_empty() {
+        return None;
+    }
+    let mut hit: Option<(&LineRule, usize)> = None;
+    for rule in rules {
+        let needle = rule.when_line.to_lowercase();
+        if !said.contains(&needle) {
+            continue;
+        }
+        let length = rule.when_line.encode_utf16().count();
+        if hit.as_ref().is_none_or(|(_, longest)| length > *longest) {
+            hit = Some((rule, length));
+        }
+    }
+    let (hit, _) = hit?;
+    let answer = hit.choose.to_lowercase();
+    options
+        .iter()
+        .position(|option| option.to_lowercase().contains(&answer))
+}
+
+fn flatten_spoken_lines(lines: &[String]) -> String {
+    let mut flattened = String::new();
+    let mut pending_space = false;
+    for line in lines {
+        if !flattened.is_empty() {
+            pending_space = true;
+        }
+        let bytes = line.as_bytes();
+        let mut offset = 0;
+        while offset < bytes.len() {
+            if bytes.get(offset..offset + 5).is_some_and(|tag| {
+                tag[0] == b'@' && tag[4] == b'@' && tag[1..4].iter().all(u8::is_ascii_alphanumeric)
+            }) {
+                pending_space = true;
+                offset += 5;
+                continue;
+            }
+            let character = line[offset..]
+                .chars()
+                .next()
+                .expect("offset remains at a UTF-8 boundary");
+            if character == '|' || character.is_whitespace() {
+                pending_space = true;
+                offset += character.len_utf8();
+                continue;
+            }
+            if pending_space && !flattened.is_empty() {
+                flattened.push(' ');
+            }
+            pending_space = false;
+            flattened.extend(character.to_lowercase());
+            offset += character.len_utf8();
+        }
+    }
+    flattened
+}
+
+#[cfg(test)]
+mod pure_helper_tests {
+    use super::*;
+
+    #[test]
+    fn pick_by_line_normalizes_tags_and_prefers_longest_fragment() {
+        let lines = vec!["@dbl@Cur|tanath...".to_string()];
+        let options = vec![
+            "Cur.".to_string(),
+            "Ar.".to_string(),
+            "Bidith.".to_string(),
+            "Tanath.".to_string(),
+            "Gor.".to_string(),
+        ];
+        let rules = vec![
+            LineRule {
+                when_line: "ar cur".into(),
+                choose: "Gor.".into(),
+            },
+            LineRule {
+                when_line: "cur tanath".into(),
+                choose: "Bidith.".into(),
+            },
+        ];
+        assert_eq!(pick_by_line(&lines, &options, &rules), Some(2));
+    }
+}
 
 fn choose_option(options: &[String], prefer: &[String]) -> (i32, Option<String>) {
     if let Some(index) = pick_preferred(options, prefer) {
@@ -528,6 +674,7 @@ mod tests {
             chat_page_fingerprint: 0,
             chat_options: Vec::new(),
             bank_open: false,
+            in_combat: false,
             npcs,
         }
     }
@@ -543,6 +690,7 @@ mod tests {
                 .chat_page_fingerprint(obs.chat_page_fingerprint)
                 .chat_options(obs.chat_options.clone())
                 .bank_open(obs.bank_open)
+                .in_combat(obs.in_combat)
                 .npcs(
                     obs.npcs
                         .iter()
@@ -757,6 +905,64 @@ mod tests {
         assert_eq!(
             machine::take(drive),
             Take::Settled(Outcome::Done(json!(false)))
+        );
+    }
+
+    #[test]
+    fn combat_closed_chat_fails_but_a_finished_chat_succeeds() {
+        // `in_combat` is the only hit fact a 0-damage miss raises: the
+        // client sets the combat cycle for every Hit mask regardless of
+        // the damage value, while HP (and `taking_damage`) stay put. So
+        // `in_combat: true` with no other change is the miss case.
+        for (in_combat, expected) in [(true, false), (false, true)] {
+            let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
+            observation.chat_modal_id = 968;
+            post(&observation);
+            let drive = running(start("drive"));
+            assert!(ops().is_empty());
+            // The chat closes: a hit's `if_close`, or the talk's own end.
+            observation.tick = 2;
+            observation.chat_modal_id = -1;
+            observation.in_combat = in_combat;
+            post(&observation);
+            assert!(tick().is_empty());
+            assert_eq!(machine::take(drive), Take::Pending);
+            machine::tests::expire_deadlines();
+            assert!(tick().is_empty());
+            assert_eq!(
+                machine::take(drive),
+                Take::Settled(Outcome::Done(json!(expected))),
+                "closed chat with in_combat={in_combat}"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_gap_ms_controls_quiet_wait() {
+        let observation = obs(Vec::new());
+        post(&observation);
+        assert_eq!(
+            machine::start(
+                "dialog",
+                json!({ "kind": "drive", "gapMs": 0 }),
+                Vec::new(),
+                0,
+            ),
+            Started::Settled(Outcome::Done(json!(true)))
+        );
+
+        let drive = running(machine::start(
+            "dialog",
+            json!({ "kind": "drive", "gapMs": 12_000 }),
+            Vec::new(),
+            0,
+        ));
+        assert_eq!(machine::take(drive), Take::Pending);
+        machine::tests::expire_deadlines();
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(drive),
+            Take::Settled(Outcome::Done(json!(true)))
         );
     }
 }

@@ -80,19 +80,24 @@ pub(crate) fn flax_picker_scenario() -> Scenario {
         },
     ));
     steps.push(start_catalog_step());
+    // FlaxPicker banks on Inventory.isFull(), so the fill witness is a full
+    // posted pack holding flax, not exactly 28 flax: foreign slots (any
+    // ids, none named here) may take slots the flax would otherwise hold,
+    // are unbounded in number, and must not fail the cell. The bank arm
+    // likewise only requires flax to have been deposited.
     for (step_name, arm) in [
         (
-            "watch a full pack of exact flax 1779",
-            Proof::ItemId {
+            "watch a full posted pack holding flax 1779, foreign slots unbounded",
+            Proof::ItemIdInFullPack {
                 id: FLAX_ID,
-                count: 28,
+                count: 1,
             },
         ),
         (
             "watch script-created flax enter a fresh Seers bank",
             Proof::BankItemId {
                 id: FLAX_ID,
-                count: 28,
+                count: 1,
             },
         ),
         ("watch the flax bank close after deposit", Proof::BankClosed),

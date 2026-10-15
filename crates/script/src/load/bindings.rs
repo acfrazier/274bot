@@ -41,6 +41,20 @@ fn interface_style(label: &str) -> Option<&'static str> {
     }
 }
 
+const PLAYER_FACE_BASE: i32 = 32_768;
+
+fn retaliate_on_from_varp(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(serde_json::Value::as_f64)
+        .is_some_and(|value| value == 0.0)
+}
+
+fn facing_player(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(serde_json::Value::as_f64)
+        .is_some_and(|value| value >= f64::from(PLAYER_FACE_BASE))
+}
+
 /// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
 /// canonical style, anything else is itself (trimmed, lowercased).
 fn style_token(style: &str) -> String {
@@ -88,6 +102,53 @@ fn resolve_combat_style(style: &str) -> serde_json::Value {
             }),
             None => serde_json::Value::Null,
         }
+    })
+}
+
+/// Frozen `resolveCombatStyle(style, offeredModes)` (`CombatStyle.ts:82-107`):
+/// use the first valid requested mode, otherwise the last defensive mode.
+pub(super) fn resolve_combat_style_modes(
+    style: &str,
+    offered_modes: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(rows) = offered_modes.as_array() else {
+        return serde_json::Value::Null;
+    };
+    let mut seen_modes = Vec::with_capacity(rows.len());
+    let mut requested = None;
+    let mut last_defence = None;
+    for row in rows {
+        let Some(mode) = row
+            .get("mode")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|mode| mode.is_finite() && mode.fract() == 0.0)
+        else {
+            continue;
+        };
+        let Some(label) = row.get("label").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(effective) = interface_style(label) else {
+            continue;
+        };
+        if seen_modes.contains(&mode) {
+            continue;
+        }
+        seen_modes.push(mode);
+        if effective == style && requested.is_none() {
+            requested = Some((mode, effective));
+        }
+        if effective == "defence" {
+            last_defence = Some((mode, effective));
+        }
+    }
+    let Some((mode, effective)) = requested.or(last_defence) else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "requested": style,
+        "effective": effective,
+        "mode": mode,
     })
 }
 
@@ -201,6 +262,55 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
+
+    runtime
+        .register_function(
+            "__rs2b0t_should_bank_now",
+            |args: &[serde_json::Value]| {
+                let strategy = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let state = args.get(1).and_then(|v| v.as_object());
+                let number = |key: &str| {
+                    state
+                        .and_then(|state| state.get(key))
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(f64::NAN)
+                };
+                let Some(strategy) = crate::periodic_bank::parse_bank_strategy_token(strategy)
+                else {
+                    return Ok(serde_json::Value::Bool(false));
+                };
+                Ok(serde_json::Value::Bool(
+                    crate::periodic_bank::should_bank_now(
+                        strategy,
+                        number("lootCount"),
+                        number("itemsThreshold"),
+                        number("minutesSinceLastBank"),
+                        number("minutesThreshold"),
+                    ),
+                ))
+            },
+        )
+        .map_err(|e| format!("register should bank now: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_is_disposable_gather_junk",
+            |args: &[serde_json::Value]| {
+                let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let id = args
+                    .get(1)
+                    .and_then(|v| v.as_i64())
+                    .and_then(|id| i32::try_from(id).ok())
+                    .unwrap_or(-1);
+                Ok(serde_json::Value::Bool(
+                    api::content::is_disposable_gather_junk(
+                        crate::supply_v2::random_event_casket_id(),
+                        name,
+                        id,
+                    ),
+                ))
+            },
+        )
+        .map_err(|e| format!("register disposable gather junk: {e}"))?;
     runtime
         .register_function("__rs2b0t_channel_encode", |args: &[serde_json::Value]| {
             let value = args.first().unwrap_or(&serde_json::Value::Null);
@@ -356,6 +466,47 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register combat style row: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_retaliate_on_from_varp",
+            |args: &[serde_json::Value]| {
+                Ok(serde_json::json!(retaliate_on_from_varp(args.first())))
+            },
+        )
+        .map_err(|e| format!("register retaliate varp helper: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_player_face_base", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!(PLAYER_FACE_BASE))
+        })
+        .map_err(|e| format!("register player face base: {e}"))?;
+
+    runtime
+        .register_function("__rs2b0t_facing_player", |args: &[serde_json::Value]| {
+            Ok(serde_json::json!(facing_player(args.first())))
+        })
+        .map_err(|e| format!("register player face helper: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_parse_interface_combat_style",
+            |args: &[serde_json::Value]| {
+                let label = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                Ok(serde_json::json!(interface_style(label)))
+            },
+        )
+        .map_err(|e| format!("register combat style parser: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_resolve_combat_style_modes",
+            |args: &[serde_json::Value]| {
+                let style = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let offered_modes = args.get(1).unwrap_or(&serde_json::Value::Null);
+                Ok(resolve_combat_style_modes(style, offered_modes))
+            },
+        )
+        .map_err(|e| format!("register offered combat style resolver: {e}"))?;
     crate::shop::configure(game_data.clone());
     crate::supply_v2::configure(game_data.clone());
     crate::duel::configure(game_data.as_deref());
@@ -602,11 +753,13 @@ pub(super) fn wire_runtime(
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
+    super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
     super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
     super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;
     super::cake_stall_v8::install(runtime).map_err(|e| format!("cake stall v8: {e}"))?;
     super::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
+    super::walk_opening_v8::install(runtime).map_err(|e| format!("walk opening v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
     crate::bank_select::install(std::sync::Arc::clone(&named_banks));
