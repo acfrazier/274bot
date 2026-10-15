@@ -3768,15 +3768,23 @@ impl Script for QueuedQuester {
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
             // The operator's rows are leased here, on the slot thread, from
             // the bound state capability; the compile runs off the pump
-            // with that immutable snapshot. A cold domain waits a tick.
+            // with that immutable snapshot. A cold domain waits a tick; a
+            // refused loadouts file does not repair itself on a tick, so the
+            // Path is blocked with the reason instead.
             let operator = match tick.operator_loadouts() {
                 Ok(operator) => operator,
-                Err(code) => {
+                Err(code @ api::local_state::ErrorCode::NotReady { .. }) => {
                     tick.output.log(
                         api::hostlog::Level::Info,
                         &format!("quester queue: Path {id} waits for operator loadouts: {code}"),
                     );
                     self.publish(tick.output, NativePhase::Waiting);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Err(code) => {
+                    self.queue
+                        .mark_blocked(index, Arc::from(format!("operator loadouts: {code}")));
+                    self.refresh_fields();
                     return Ok(ScriptFlow::Continue);
                 }
             };
