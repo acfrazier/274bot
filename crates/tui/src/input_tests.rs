@@ -447,7 +447,14 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
         let all = text(&draw(&mut app, 120, 40));
         let label = app.script_sel.as_ref().unwrap().label();
         assert!(all.contains(&label), "{all}");
-        assert!(all.contains("1 marked bot"), "{all}");
+        if command == Command::ScriptRestartMarked {
+            assert!(
+                all.contains("Start the card on 1 idle bot: alice"),
+                "the restart confirmation names the starting bots: {all}"
+            );
+        } else {
+            assert!(all.contains("1 marked bot"), "{all}");
+        }
         let expected = match command {
             Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
             _ => AppAction::ScriptRestartMarked,
@@ -901,4 +908,184 @@ fn script_popups_swallow_clicks_outside_themselves() {
         assert!(app.modal.is_none());
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The restart confirmation for `count` marked bots, the first
+/// `running` of them running a script, with a card picked.
+fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
+    let names: Vec<String> = (0..count).map(|i| format!("bot{i:02}name")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = fleet_app(&refs);
+    for row in app.fleet.iter_mut().take(running) {
+        row.set_script(script::RunState::Running);
+    }
+    for name in &names {
+        let id = app.profile_id_for_name(name);
+        app.table.selection.set(id, true);
+    }
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    assert_eq!(
+        app.run_command(Command::ScriptRestartMarked),
+        AppAction::None
+    );
+    (app, names)
+}
+
+/// Screen text with every run of whitespace (including the row breaks
+/// a wrapped popup line spans) collapsed to one space, so a phrase is
+/// found wherever wrapping put it — but only if it was drawn at all.
+fn flattened(rows: &[String]) -> String {
+    text(rows).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// H1: with 7 running and 7 idle marked bots, the Assign & restart
+/// confirmation shows both lists with their counts at 120x40 and
+/// 80x24; bots past the six named per list are counted, never hidden.
+#[test]
+fn restart_confirm_shows_both_counts_and_counts_unnamed_bots() {
+    let (mut app, _names) = restart_confirm_app(14, 7);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let all = flattened(&draw(&mut app, width, height));
+        assert!(
+            all.contains("Stop and restart 7 running bots: bot00name,"),
+            "{width}x{height}: interrupted list and its count: {all}"
+        );
+        assert!(
+            all.contains("Start the card on 7 idle bots: bot07name,"),
+            "{width}x{height}: starting list and its count: {all}"
+        );
+        assert_eq!(
+            all.matches("+1 more").count(),
+            2,
+            "{width}x{height}: one bot past the cap in each list is counted: {all}"
+        );
+    }
+}
+
+/// H1: with 20 running marked bots the interrupted line alone would
+/// fill the old popup; the idle list and its count still show.
+#[test]
+fn restart_confirm_with_twenty_running_still_shows_the_idle_list() {
+    let (mut app, _names) = restart_confirm_app(23, 20);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let all = flattened(&draw(&mut app, width, height));
+        assert!(
+            all.contains("Stop and restart 20 running bots: bot00name,"),
+            "{width}x{height}: interrupted list and its count: {all}"
+        );
+        assert!(
+            all.contains("+14 more"),
+            "{width}x{height}: running bots past the cap are counted: {all}"
+        );
+        assert!(
+            all.contains("Start the card on 3 idle bots: bot20name, bot21name, bot22name"),
+            "{width}x{height}: every idle bot is named: {all}"
+        );
+    }
+}
+
+/// Inner rows of the drawn modal popup (borders stripped).
+fn popup_rows(app: &TuiApp, rows: &[String]) -> Vec<String> {
+    let m = app.regions.modal;
+    ((m.y + 1)..(m.y + m.height - 1))
+        .map(|y| {
+            rows[usize::from(y)]
+                .chars()
+                .skip(usize::from(m.x + 1))
+                .take(usize::from(m.width - 2))
+                .collect()
+        })
+        .collect()
+}
+
+/// The popup's text with wrapping undone: rows join with a space,
+/// except a row filled to its last cell whose next row starts
+/// mid-word (a word wider than the row, split by the wrap), which
+/// joins with nothing. Whitespace runs collapse to one space.
+fn popup_text(app: &TuiApp, rows: &[String]) -> String {
+    let popup = popup_rows(app, rows);
+    let mut joined = String::new();
+    for (index, row) in popup.iter().enumerate() {
+        if index > 0 {
+            let prev = &popup[index - 1];
+            let split_word = !prev.ends_with(' ') && !row.starts_with(' ');
+            if !split_word {
+                joined.push(' ');
+            }
+        }
+        joined.push_str(row);
+    }
+    joined.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// L1: at 40x20 the popup's text area is 38 cells, so an email-style
+/// name wider than that is split across rows by ratatui from a fresh
+/// row. The popup must be sized for those rows: both lists show in
+/// full and the slack row above the buttons stays blank.
+#[test]
+fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_popup() {
+    let names: Vec<String> = (0..6)
+        .map(|i| format!("bot{i:02}-with-a-very-long-email-name@example.com"))
+        .collect();
+    assert!(
+        names.iter().all(|name| name.len() > 38),
+        "every name is wider than the 40-wide popup's 38-cell text area: {names:?}"
+    );
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = fleet_app(&refs);
+    for row in app.fleet.iter_mut().take(3) {
+        row.set_script(script::RunState::Running);
+    }
+    for name in &names {
+        let id = app.profile_id_for_name(name);
+        app.table.selection.set(id, true);
+    }
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    assert_eq!(
+        app.run_command(Command::ScriptRestartMarked),
+        AppAction::None
+    );
+    let rows = draw(&mut app, 40, 20);
+    let popup = popup_rows(&app, &rows);
+    let all = popup_text(&app, &rows);
+    assert!(
+        all.contains(&format!(
+            "Stop and restart 3 running bots: {}, {}, {}",
+            names[0], names[1], names[2]
+        )),
+        "the interrupted list shows in full: {all}"
+    );
+    assert!(
+        all.contains(&format!(
+            "Start the card on 3 idle bots: {}, {}, {}",
+            names[3], names[4], names[5]
+        )),
+        "the idle list shows in full: {all}"
+    );
+    let slack = &popup[popup.len() - 2];
+    assert!(
+        slack.trim().is_empty(),
+        "the row above the buttons is slack, not text the popup barely fit: {slack:?}\n{}",
+        popup.join("\n")
+    );
+}
+
+/// The palette scope text of the combined all/marked commands follows
+/// the core scope resolver: everyone with no marks, the marked bots
+/// once anything is marked.
+#[test]
+fn palette_scope_text_follows_the_combined_bulk_scope() {
+    let mut app = fleet_app(&["alice", "bob", "carol"]);
+    assert_eq!(Command::LoadLoginAll.scope(&app), "every vault profile");
+    assert_eq!(Command::LogoutAll.scope(&app), "all 3 members");
+    assert_eq!(Command::ScriptStartAll.scope(&app), "all 3 members");
+    assert_eq!(Command::ScriptStopAll.scope(&app), "all 3 members");
+    for name in ["alice", "bob"] {
+        let id = app.profile_id_for_name(name);
+        app.table.selection.set(id, true);
+    }
+    assert_eq!(Command::LoadLoginAll.scope(&app), "2 marked bots");
+    assert_eq!(Command::LogoutAll.scope(&app), "2 marked bots");
+    assert_eq!(Command::ScriptStartAll.scope(&app), "2 marked bots");
+    assert_eq!(Command::ScriptStopAll.scope(&app), "2 marked bots");
 }

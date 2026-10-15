@@ -1441,11 +1441,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let identity = state
-            .session
-            .core
-            .profile_identity(row.name())
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(row.name()));
+        let identity = state.session.core.profile_identity_or_synthetic(row.name());
         let mut marked = state.session.fleet_selection.contains(identity);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
@@ -4833,11 +4829,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
-        let identity = state
-            .session
-            .core
-            .profile_identity(name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+        let identity = state.session.core.profile_identity_or_synthetic(name);
         let mut marked = state.session.fleet_selection.contains(identity);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
