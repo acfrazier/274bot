@@ -47,8 +47,8 @@ fn tick(slot: &mut SlotScript) {
 
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
-    use api::identity::Scope;
     use crate::preparation::{self, PreparationInput, PreparationKind};
+    use api::identity::Scope;
 
     const SOURCE_BYTES: usize = 64 * 1024 * 1024;
     let source = vec![0_u8; SOURCE_BYTES];

@@ -480,10 +480,11 @@ impl Play {
         script::preparation::PreparedTask<Result<PreparedScriptConfig, script::native::StartError>>,
         script::preparation::PreparationError,
     > {
-        let selected = self
-            .game_data
-            .clone()
-            .ok_or_else(|| script::preparation::PreparationError::Unavailable("selected game data unavailable".into()))?;
+        let selected = self.game_data.clone().ok_or_else(|| {
+            script::preparation::PreparationError::Unavailable(
+                "selected game data unavailable".into(),
+            )
+        })?;
         let banks = Arc::clone(&self.named_banks);
         let quester = id == script::quester::card::CARD.id;
         let cold_gathering =

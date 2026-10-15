@@ -7902,6 +7902,7 @@ fn script_start_selected_refuses_unloadable_import() {
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
+    s.core.fleet_mut().add("alice");
     s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(
@@ -8267,7 +8268,7 @@ fn select_script_card_queues_cached_output_through_worker() {
     let root = write_two_card_catalog(&iso.dir);
     let store = iso.dir.join("js-scripts.json");
     let cache = iso.dir.join("js-cache");
-    let mut warm = script::JsLibrary::with_cache(&store, &cache);
+    let mut warm = script::JsLibrary::with_cache(store.clone(), cache.clone());
     warm.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
     warm.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
@@ -8276,7 +8277,7 @@ fn select_script_card_queues_cached_output_through_worker() {
 
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.js = script::JsLibrary::with_cache(&store, &cache);
+    s.scripts.js = script::JsLibrary::with_cache(store, cache);
     s.scripts
         .js
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
@@ -8288,18 +8289,14 @@ fn select_script_card_queues_cached_output_through_worker() {
         .unwrap()
         .js
         .is_empty());
-    assert!(s
-        .scripts
-        .js
-        .cache()
-        .is_cached(
-            s.scripts
-                .js
-                .get(script::ScriptSource::Catalog, "BoneBurier")
-                .unwrap()
-                .origin
-                .as_bytes()
-        ));
+    assert!(s.scripts.js.cache().is_cached(
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .origin
+            .as_bytes()
+    ));
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
     assert_eq!(s.transpile_queue.len(), 1);

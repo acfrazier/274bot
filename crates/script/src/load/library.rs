@@ -849,6 +849,20 @@ impl JsLibrary {
     }
 
     pub fn commit_prepared(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
+        self.commit_prepared_with_failure_policy(prepared, true)
+    }
+
+    /// Keep the prior runtime diagnostic visible until the newly prepared
+    /// Start actually reaches Ready; preparation alone does not prove it runs.
+    pub fn commit_prepared_for_start(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
+        self.commit_prepared_with_failure_policy(prepared, false)
+    }
+
+    fn commit_prepared_with_failure_policy(
+        &mut self,
+        prepared: PreparedCard,
+        clear_failure: bool,
+    ) -> Result<JsCard, String> {
         let key = prepared.card.identity_key();
         if let Some(idx) = self.cards.iter().position(|c| c.identity_key() == key) {
             self.cards[idx] = prepared.card.clone();
@@ -860,7 +874,9 @@ impl JsLibrary {
         if prepared.card.source == ScriptSource::File {
             self.persist_file_cards(&self.cards)?;
         }
-        self.clear_failure(&key);
+        if clear_failure {
+            self.clear_failure(&key);
+        }
         Ok(prepared.card)
     }
 
@@ -1114,6 +1130,27 @@ impl CardPreparationSnapshot {
     /// the bounded input, scratch, and result charges do not change.
     pub fn force_prepare(mut self) -> Self {
         self.force_prepare = true;
+        self
+    }
+
+    /// Fingerprint captured with the library card before the worker read.
+    /// A consumer checks this against the current library before publication.
+    pub fn stored_fingerprint(&self) -> Option<&str> {
+        self.stored_fingerprint.as_deref()
+    }
+
+    /// Check the card identity captured before preparation without copying
+    /// its (potentially 8 MiB) source text back onto the UI thread.
+    pub fn matches_card(&self, card: &JsCard) -> bool {
+        self.template.source == card.source
+            && self.template.name == card.name
+            && self.template.path == card.path
+    }
+
+    /// Warm display/cache output even for an unavailable catalogue card.
+    /// The prepared card retains its unloadable reason; Start still refuses it.
+    pub fn cache_even_if_unloadable(mut self) -> Self {
+        self.allow_unloadable = true;
         self
     }
 

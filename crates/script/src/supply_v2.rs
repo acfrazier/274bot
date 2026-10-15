@@ -56,16 +56,18 @@ pub(crate) fn random_event_casket_id() -> Option<i32> {
 }
 
 /// The selected gathering catalogue, prepared lazily on first use and
-/// retained by this isolate thread until reconfiguration. A typed work
-/// refusal is returned to the JS helper rather than masquerading as an empty
-/// catalogue.
+/// retained by this isolate thread until reconfiguration. `Ok(None)` means
+/// the selected family is genuinely absent; a work refusal or outage is an
+/// error, never an empty catalogue.
 #[cfg(feature = "load")]
-pub(crate) fn gathering() -> Result<Arc<GatherCatalog>, String> {
+pub(crate) fn gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
     if let Some(held) = GATHERING.with(|slot| slot.borrow().clone()) {
-        return Ok(held);
+        return Ok(Some(held));
     }
     let catalog = acquire_gathering()?;
-    GATHERING.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&catalog)));
+    if let Some(catalog) = &catalog {
+        GATHERING.with(|slot| *slot.borrow_mut() = Some(Arc::clone(catalog)));
+    }
     Ok(catalog)
 }
 
@@ -73,10 +75,10 @@ pub(crate) fn gathering() -> Result<Arc<GatherCatalog>, String> {
 /// Arc input, parks for a capacity notification and retries with a fresh
 /// WorkIdentity. Accepted work is joined without a fixed busy-queue timeout.
 #[cfg(feature = "load")]
-fn acquire_gathering() -> Result<Arc<GatherCatalog>, String> {
+fn acquire_gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
     let data = selected_data().ok_or("missing-selected-data")?;
     if let Some(catalogue) = data.try_gathering() {
-        return Ok(catalogue);
+        return Ok(Some(catalogue));
     }
     let revision = u64::try_from(data.revision()).map_err(|error| error.to_string())?;
     let input = crate::preparation::PreparationInput::new(
@@ -101,10 +103,14 @@ fn acquire_gathering() -> Result<Arc<GatherCatalog>, String> {
             },
         ) {
             Ok(job) => {
-                return job
+                return match job
                     .join()
                     .map_err(|error| format!("work-admission-job:{error}"))?
-                    .map_err(|error| format!("gathering-family:{error:?}"));
+                {
+                    Ok(catalog) => Ok(Some(catalog)),
+                    Err(api::selected::FactError::FamilyUnavailable(_)) => Ok(None),
+                    Err(error) => Err(format!("gathering-family:{error:?}")),
+                };
             }
             Err(crate::preparation::PreparationError::Refused(
                 api::work::SubmissionRefusal::Full,

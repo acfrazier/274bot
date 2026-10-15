@@ -44,12 +44,15 @@ pub const WORK_SLICE: Duration = Duration::from_millis(10);
 /// 1,411,973 embedded input bytes). Only the first Profile Prepare step may
 /// use this qualified allowance; later steps return to the ordinary quantum.
 pub(crate) const GATHERING_DECODE_SLICE: Duration = Duration::from_millis(100);
-/// One bounded Quester registry preparation action. A folder document is at
-/// most 1 MiB; scan/read actions are smaller. The seal remains ordinary.
-pub(crate) const QUESTER_REGISTRY_SLICE: Duration = Duration::from_millis(100);
-/// One pinned bundled Quester Path profile compilation (the live Cook Path is
-/// 12,979 bytes; all bundled documents are bounded by the Path format).
-pub(crate) const QUESTER_PROGRESS_SLICE: Duration = Duration::from_millis(100);
+/// One bounded Quester registry action (at most a 1 MiB document). The
+/// release-build maximum for a 1 MiB action was 5.85 ms; the 250 ms reporting
+/// allowance also clears the 110–136 ms debug compile observations with
+/// margin. The seal returns to the ordinary quantum.
+pub(crate) const QUESTER_REGISTRY_SLICE: Duration = Duration::from_millis(250);
+/// One bounded Quester Path profile compilation. The largest bundled Path
+/// measured 6.69 ms in release, versus 110–136 ms in the debug host probe;
+/// the 250 ms reporting allowance leaves margin on both configurations.
+pub(crate) const QUESTER_PROGRESS_SLICE: Duration = Duration::from_millis(250);
 
 /// Closed, T1-internal declarations of the only longer units in this endpoint.
 /// Callers cannot supply a duration or widen an arbitrary preparation family.
@@ -485,7 +488,10 @@ impl WorkService {
                 {
                     return;
                 }
-                (Arc::clone(&service.shared.notifier), service.publication_epoch())
+                (
+                    Arc::clone(&service.shared.notifier),
+                    service.publication_epoch(),
+                )
             };
             notifier.wait_for_change(epoch, WORKER_STALL_LIMIT);
         }

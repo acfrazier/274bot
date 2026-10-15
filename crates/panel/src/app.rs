@@ -223,9 +223,7 @@ enum Boot {
 
 struct ProfilePrepareJob {
     generation: u64,
-    task: script::preparation::PreparedTask<
-        Result<Arc<host_play::SharedClientTemplate>, String>,
-    >,
+    task: script::preparation::PreparedTask<Result<Arc<host_play::SharedClientTemplate>, String>>,
     progress: LatestProgress,
 }
 
@@ -636,7 +634,6 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
 
     if let Some(pending) = startup.validate_pending.as_ref() {
         let generation = pending.generation;
-        let fatal = boot_failure_is_fatal(&pending.boot);
         let template = Arc::clone(&pending.template);
         let observer = pending.observer.clone();
         let progress = Arc::clone(&pending.progress);

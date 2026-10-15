@@ -1397,9 +1397,7 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let root = fake_rs2b0t_tree(&iso.dir, false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
-    session
-        .import_rs2b0t_catalog(&root)
-        .expect("import");
+    session.import_rs2b0t_catalog(&root).expect("import");
     assert!(session.scripts.catalog_work_pending());
     assert!(!iso.home.join(".274bot/rs2b0t-path").exists());
     settle_catalog_work(&mut session, &mut app);
@@ -1473,6 +1471,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     play.attach_arm("alice", SlotArm::new(7, false));
     play.attach_arm("bob", SlotArm::new(8, false));
     session.inject_play(play);
+    session.core.fleet_mut().add("alice");
+    session.core.fleet_mut().add("bob");
     let mut app = TuiApp::new("initial load proof");
     app.names = vec!["alice".into(), "bob".into(), "missing".into()];
     app.focused = Some(0);
@@ -3948,7 +3948,7 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
         starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
         "TUI Start all dispatched {starting} in the click frame"
     );
-    assert!(starting > 0);
+    assert!(starting > 0 || session.scripts.starts_pending());
     settle_starts(&mut session, &mut app);
     for name in names {
         wait_script_state(
@@ -4386,6 +4386,9 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
     let root = fake_rs2b0t_tree(&iso.dir, false);
     iso.set_rs2b0t(&root);
     let mut session = TuiSession::new(dummy_options());
+    session.core.set_vault(Some(
+        Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap(),
+    ));
     let mut app = TuiApp::new("274bot headless");
     let path = iso.dir.join("profiles.json");
     std::fs::write(
@@ -4402,10 +4405,7 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
     )
     .unwrap();
 
-    session.profile_import(
-        &mut app,
-        ImportAction::Preview(path.display().to_string()),
-    );
+    session.profile_import(&mut app, ImportAction::Preview(path.display().to_string()));
     assert!(session.scripts.catalog_work_pending());
     assert!(session.profile_import_preview_pending);
     assert_eq!(

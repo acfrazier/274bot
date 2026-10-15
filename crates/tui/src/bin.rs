@@ -1811,9 +1811,7 @@ impl TuiSession {
             }
             self.profile_import_preview_pending = false;
         }
-        if self.profile_import_preview_pending
-            && !matches!(&action, ImportAction::Close)
-        {
+        if self.profile_import_preview_pending && !matches!(&action, ImportAction::Close) {
             self.show_profile_import(app);
             return;
         }
@@ -1944,8 +1942,7 @@ impl TuiSession {
         if let Some((_, result)) = self.scripts.take_catalog_import_result() {
             match result {
                 Ok(_) => {
-                    let _ =
-                        script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
+                    let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
                     self.rs2b0t_catalog_open = false;
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
@@ -1953,9 +1950,7 @@ impl TuiSession {
                 Err(error) => app.error = Some(error),
             }
         }
-        if self.profile_import_preview_pending
-            && !self.scripts.catalog_work_pending()
-        {
+        if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {
             self.profile_import_preview_pending = false;
             self.profile_import.preview(&self.core, &self.scripts);
             self.show_profile_import(app);

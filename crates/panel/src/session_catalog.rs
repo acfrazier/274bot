@@ -43,7 +43,7 @@ impl Session {
         script::default_rs2b0t_import_file()
     }
 
-    fn rs2b0t_path_file(&self) -> PathBuf {
+    pub(crate) fn rs2b0t_path_file(&self) -> PathBuf {
         script::default_rs2b0t_path_file()
     }
 
@@ -172,12 +172,12 @@ impl Session {
     pub fn pump_script_transpile(&mut self) {
         self.settle_catalog_import();
         if let Some((source, name, result)) = self.scripts.take_transpile_result() {
-            if let Some(index) = self
-                .transpile_queue
-                .iter()
-                .position(|(queued_source, queued_name)| {
-                    *queued_source == source && queued_name == &name
-                })
+            if let Some(index) =
+                self.transpile_queue
+                    .iter()
+                    .position(|(queued_source, queued_name)| {
+                        *queued_source == source && queued_name == &name
+                    })
             {
                 self.transpile_queue.remove(index);
                 match result {

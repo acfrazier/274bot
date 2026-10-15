@@ -14,8 +14,8 @@ use super::{
     runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProfilePrepareJob, ProfilePreparePending, ProgressPhase, RunMode, ShotStatus,
-    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-    NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
@@ -712,8 +712,7 @@ fn profile_prepare_task(
             Ok(_) => 0,
             Err(error) => error.capacity(),
         };
-    let input =
-        script::preparation::PreparationInput::new(generation, 0, 0, result_bytes).unwrap();
+    let input = script::preparation::PreparationInput::new(generation, 0, 0, result_bytes).unwrap();
     script::preparation::submit(
         script::preparation::PreparationKind::Profile,
         api::identity::Scope::Process,
@@ -723,9 +722,7 @@ fn profile_prepare_task(
     .unwrap()
 }
 
-fn wait_for_preparation<R: Send + 'static>(
-    task: &script::preparation::PreparedTask<R>,
-) {
+fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !task.is_finished() {
         assert!(
@@ -845,8 +842,14 @@ fn profile_selection_retries_after_work_admission_is_full() {
     let full = saturate_work_admission();
 
     drive_startup(&mut state, &mut startup);
-    assert!(startup.prepare.is_none(), "Full must not start another worker");
-    assert!(startup.prepare_pending.is_some(), "the captured demand is retained");
+    assert!(
+        startup.prepare.is_none(),
+        "Full must not start another worker"
+    );
+    assert!(
+        startup.prepare_pending.is_some(),
+        "the captured demand is retained"
+    );
     assert!(state.session.profile_preparing());
     assert!(state.session.error.is_none());
     assert!(startup_progress(&startup, generation).is_some());
@@ -867,7 +870,10 @@ fn profile_validation_retries_after_work_admission_is_full() {
     let full = saturate_work_admission();
 
     drive_startup(&mut state, &mut startup);
-    assert!(startup.validate.is_none(), "Full must not start another worker");
+    assert!(
+        startup.validate.is_none(),
+        "Full must not start another worker"
+    );
     assert!(
         startup.validate_pending.is_some(),
         "the validation boot and template stay captured"
@@ -955,10 +961,7 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
         )
         .unwrap();
     let generation = state.session.profile_generation();
-    let task = profile_prepare_task(
-        generation,
-        Err("fixture preparation failed".into()),
-    );
+    let task = profile_prepare_task(generation, Err("fixture preparation failed".into()));
     wait_for_preparation(&task);
     let (_, progress) = progress_channel(ProfileProgress::steps(
         ProfileProgressStage::CheckingGameFiles,

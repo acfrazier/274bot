@@ -659,8 +659,8 @@ pub(super) fn prepare_run(
     let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
         card.id == crate::CompiledId("Gatherer") && selected.try_gathering().is_none();
-    let settings_input = PreparationInput::for_settings(run.run, &bag)
-        .map_err(StartError::WorkRefused)?;
+    let settings_input =
+        PreparationInput::for_settings(run.run, &bag).map_err(StartError::WorkRefused)?;
     // Charge folder retention only for an enabled source. Keep that exact
     // source for the worker; a later settings change fails the publish fence.
     // The Quester-only state lives in its Stage variant. Other cards pay no
@@ -954,8 +954,9 @@ pub(super) fn prepare_native_run(
         + Send
         + 'static,
 ) -> Result<Preparation, PrepareRunError> {
-    let slot = api::identity::SlotKey::from_incarnation(run.slot)
-        .ok_or_else(|| PrepareRunError::Other(StartError::Unavailable("slot worker is not bound".into())))?;
+    let slot = api::identity::SlotKey::from_incarnation(run.slot).ok_or_else(|| {
+        PrepareRunError::Other(StartError::Unavailable("slot worker is not bound".into()))
+    })?;
     let input = PreparationInput::new(
         run.run,
         account.capacity(),

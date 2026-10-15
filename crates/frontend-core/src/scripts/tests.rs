@@ -3399,18 +3399,10 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
     .unwrap();
     std::fs::write(card_dir.join("BoneBurier.ts"), LOOPING).unwrap();
     let selection = mark_uids(&[1, 2]);
-    let card = script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "BoneBurier".into(),
-    );
+    let card = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
 
-    let report = crate::marked::assign_marked(
-        &selection,
-        &mut f.core,
-        &mut f.scripts,
-        &card,
-        Some(&root),
-    );
+    let report =
+        crate::marked::assign_marked(&selection, &mut f.core, &mut f.scripts, &card, Some(&root));
     assert_eq!(report.pending_count(), 2);
     assert_eq!(report.failed_count(), 0);
     assert!(
@@ -3419,12 +3411,10 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
         "{}",
         report.summary()
     );
-    assert!(
-        report.rows().iter().all(|row| matches!(
-            &row.outcome,
-            crate::bulk::BulkOutcome::Pending(_)
-        ))
-    );
+    assert!(report
+        .rows()
+        .iter()
+        .all(|row| matches!(&row.outcome, crate::bulk::BulkOutcome::Pending(_))));
     for profile in ["alice", "bob"] {
         assert_eq!(Scripts::assignment(&f.core, profile), None);
     }

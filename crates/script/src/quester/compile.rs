@@ -1814,12 +1814,10 @@ mod tests {
                 .filter_map(|id| path_bytes(&id).map(|bytes| (id, bytes)))
                 .max_by_key(|(_, bytes)| bytes.len())
                 .expect("bundled Path documents");
-            let mut maximal = path_bytes("blackarmgang")
-                .expect("complex bundled Path")
-                .to_vec();
+            let mut maximal = path_bytes("elena").expect("complex bundled Path").to_vec();
             maximal.resize(crate::quester::registry::MAX_REGISTRY_FILE_BYTES, b' ');
             for (index, (name, source)) in [
-                ("blackarmgang", path_bytes("blackarmgang").unwrap()),
+                ("elena", path_bytes("elena").unwrap()),
                 (largest.0.as_str(), largest.1),
                 ("padded-1mib", maximal.as_slice()),
             ]

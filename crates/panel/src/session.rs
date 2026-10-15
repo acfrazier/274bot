@@ -1757,10 +1757,10 @@ impl Session {
                     Some(script::ScriptSel::Loaded(_, lookup)) => lookup.clone(),
                     _ => path.to_string_lossy().into_owned(),
                 };
-                if let Some(Err(error)) = self.scripts.take_external_loader_transpile_result(
-                    script::ScriptSource::File,
-                    &lookup,
-                ) {
+                if let Some(Err(error)) = self
+                    .scripts
+                    .take_external_loader_transpile_result(script::ScriptSource::File, &lookup)
+                {
                     watch.fail(format!("transpile: {error}"));
                     return;
                 }
@@ -1769,10 +1769,10 @@ impl Session {
                     .js
                     .js_is_ready(script::ScriptSource::File, &lookup)
                 {
-                    match self.scripts.request_external_loader_transpile(
-                        script::ScriptSource::File,
-                        &lookup,
-                    ) {
+                    match self
+                        .scripts
+                        .request_external_loader_transpile(script::ScriptSource::File, &lookup)
+                    {
                         Ok(_) => return,
                         Err(error) => {
                             watch.fail(format!("transpile: {error}"));
@@ -5439,6 +5439,7 @@ mod fleet_hold_tests {
             host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {});
         play.attach_arm("alice", host_play::SlotArm::new(1, false));
         session.core.set_play(Some(play));
+        session.core.fleet_mut().add("alice");
         session.set_focus_for_test("alice");
         session.load_js(&path);
         assert_eq!(session.error, None);

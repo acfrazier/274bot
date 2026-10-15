@@ -846,8 +846,12 @@ fn start_during_catalogue_refresh_cell() {
     entered_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("catalogue refresh entered work service");
-    play.script_start(&account, script::CompiledId("Sherlock"), serde_json::Map::new())
-        .expect("accept operator Start during catalogue refresh");
+    play.script_start(
+        &account,
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    )
+    .expect("accept operator Start during catalogue refresh");
     wait_for(&play, &account, &fixture, Duration::from_secs(10), |play| {
         play.script_state(&account) == script::RunState::Starting
     });
@@ -856,7 +860,11 @@ fn start_during_catalogue_refresh_cell() {
         .join()
         .expect("catalogue job completed")
         .expect("catalogue preparation");
-    assert_eq!(result.diff.changed.len(), 1, "real catalogue refresh completed");
+    assert_eq!(
+        result.diff.changed.len(),
+        1,
+        "real catalogue refresh completed"
+    );
     assert!(result.prepare_failed.is_empty(), "catalogue card prepared");
     assert_eq!(result.prepared.len(), 1, "changed card prepared");
     for prepared in std::mem::take(&mut result.prepared) {
