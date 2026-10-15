@@ -743,15 +743,23 @@ fn report_interrupted_execution(
     let Some(interrupt) = interrupt.filter(|interrupt| interrupt.consumed) else {
         return;
     };
-    let owner = match interrupt.owner {
-        ExecutionInterrupt::Watchdog => "watchdog",
-        ExecutionInterrupt::Pause => "Pause deadline",
-        ExecutionInterrupt::SessionReset => "session-reset deadline",
+    let message = match interrupt.owner {
+        ExecutionInterrupt::Watchdog => "runaway execution interrupted by watchdog",
+        ExecutionInterrupt::Pause => "runaway execution interrupted by Pause deadline",
+        ExecutionInterrupt::SessionReset => {
+            "runaway execution interrupted by session-reset deadline"
+        }
+        ExecutionInterrupt::NoDeadline(super::teardown::DeadlineRefusal::Capacity) => {
+            "execution interrupted: JS deadline supervisor is at capacity"
+        }
+        ExecutionInterrupt::NoDeadline(super::teardown::DeadlineRefusal::Stopped) => {
+            "execution interrupted: JS deadline supervisor worker stopped"
+        }
     };
     let _ = out.send(ThreadMsg::TickError {
         tick,
         generation,
-        message: format!("runaway execution interrupted by {owner}"),
+        message: message.into(),
     });
     let _ = out.send(ThreadMsg::ScriptCut);
 }

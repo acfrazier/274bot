@@ -3,6 +3,7 @@
 
 use super::super::library::PreparedCard;
 use super::{LoadIsolate, LoadIsolateError, LoadShape, Ready, JOIN_TIMEOUT, VALIDATION_TIMEOUT};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, LazyLock};
@@ -26,21 +27,41 @@ pub enum ValidationError {
     ByteLimit,
     #[error("validation coordinator: {0}")]
     Coordinator(String),
-    #[error("validation queue is full")]
-    QueueFull,
     #[error("validation coordinator unavailable")]
     Unavailable,
 }
 
-/// Owning reload receipt. Dropping it cancels queued/remaining card work.
+/// Owning reload receipt. A full bounded queue leaves this one transaction
+/// here for a later non-blocking poll. Dropping it cancels pending or queued
+/// work.
 pub struct ValidationBatch {
     receiver: Receiver<Batch>,
     cancelled: Arc<AtomicBool>,
+    pending: RefCell<Option<Job>>,
 }
 
 impl ValidationBatch {
     pub fn try_recv(&self) -> Result<Batch, TryRecvError> {
+        let seat = SEAT.as_ref().map_err(|_| TryRecvError::Disconnected)?;
+        try_admit_pending(seat, &self.pending)?;
         self.receiver.try_recv()
+    }
+}
+
+fn try_admit_pending(
+    seat: &SyncSender<Job>,
+    pending: &RefCell<Option<Job>>,
+) -> Result<(), TryRecvError> {
+    let Some(job) = pending.borrow_mut().take() else {
+        return Ok(());
+    };
+    match seat.try_send(job) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(job)) => {
+            pending.replace(Some(job));
+            Err(TryRecvError::Empty)
+        }
+        Err(TrySendError::Disconnected(_)) => Err(TryRecvError::Disconnected),
     }
 }
 
@@ -113,7 +134,8 @@ pub(super) fn validate(
 }
 
 /// Submit one complete reload validation transaction without a per-reload
-/// thread. The coordinator returns the original prepared cards in order.
+/// thread. A full worker queue leaves the batch on its receipt for a later
+/// non-blocking poll; results return in input order.
 pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch, ValidationError> {
     super::super::platform::require_v8_platform()?;
     if cards.len() > BATCH_CAP {
@@ -140,18 +162,20 @@ pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch
         .map_err(|error| ValidationError::Coordinator(error.clone()))?;
     let (reply, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    match seat.try_send(Job::Batch {
+    let pending = match seat.try_send(Job::Batch {
         cards,
         reply,
         cancelled: Arc::clone(&cancelled),
     }) {
-        Ok(()) => Ok(ValidationBatch {
-            receiver,
-            cancelled,
-        }),
-        Err(TrySendError::Full(_)) => Err(ValidationError::QueueFull),
-        Err(TrySendError::Disconnected(_)) => Err(ValidationError::Unavailable),
-    }
+        Ok(()) => None,
+        Err(TrySendError::Full(job)) => Some(job),
+        Err(TrySendError::Disconnected(_)) => return Err(ValidationError::Unavailable),
+    };
+    Ok(ValidationBatch {
+        receiver,
+        cancelled,
+        pending: RefCell::new(pending),
+    })
 }
 
 fn run(rx: Receiver<Job>) {
@@ -161,14 +185,9 @@ fn run(rx: Receiver<Job>) {
         if matches!(&job, Job::Batch { cancelled, .. } if cancelled.load(Ordering::Acquire)) {
             continue;
         }
-        if let Some(done) = retiring.as_ref() {
-            match done.try_recv() {
-                Ok(_) | Err(TryRecvError::Disconnected) => retiring = None,
-                Err(TryRecvError::Empty) => {
-                    refuse(job, "validation isolate is still retiring");
-                    continue;
-                }
-            }
+        if retiring_pending(&mut retiring) {
+            refuse(job, "validation isolate is still retiring");
+            continue;
         }
         match job {
             Job::Single {
@@ -190,7 +209,7 @@ fn run(rx: Receiver<Job>) {
                     if cancelled.load(Ordering::Acquire) {
                         break;
                     }
-                    let outcome = if retiring.is_some() {
+                    let outcome = if retiring_pending(&mut retiring) {
                         Err("validation isolate is still retiring".into())
                     } else {
                         validate_one(
@@ -199,13 +218,26 @@ fn run(rx: Receiver<Job>) {
                             card.siblings.clone(),
                             &mut retiring,
                         )
-                        .map_err(|error| format!("prepare {}: {error}", card.card.name))
-                    };
+                    }
+                    .map_err(|error| format!("prepare {}: {error}", card.card.name));
                     results.push((card, outcome));
                 }
                 let _ = reply.send(results);
             }
         }
+    }
+}
+
+fn retiring_pending(retiring: &mut Option<Receiver<Vec<String>>>) -> bool {
+    match retiring.as_ref().map(|done| done.try_recv()) {
+        Some(Ok(_)) => {
+            *retiring = None;
+            false
+        }
+        // The supervisor sends a receipt only after physical join. A closed
+        // receipt channel is not evidence that the isolate joined.
+        Some(Err(TryRecvError::Empty | TryRecvError::Disconnected)) => true,
+        None => false,
     }
 }
 
@@ -217,7 +249,10 @@ fn refuse(job: Job, reason: &str) {
         Job::Batch { cards, reply, .. } => {
             let rows = cards
                 .into_iter()
-                .map(|card| (card, Err(reason.into())))
+                .map(|card| {
+                    let error = format!("prepare {}: {reason}", card.card.name);
+                    (card, Err(error))
+                })
                 .collect();
             let _ = reply.send(rows);
         }
@@ -248,8 +283,57 @@ fn validate_one(
     match done_rx.recv_timeout(JOIN_TIMEOUT + Duration::from_millis(250)) {
         Ok(_) => result,
         Err(_) => {
+            // Setup readiness is the validation result. Keep the seat
+            // quarantined until join, but do not turn a ready card into a
+            // validation failure merely because teardown is still pending.
             *retiring = Some(done_rx);
-            Err("validation isolate is still retiring".into())
+            result
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn batch_job() -> Job {
+        let (reply, _) = mpsc::channel();
+        Job::Batch {
+            cards: Vec::new(),
+            reply,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn pending_batch_admission_retries_without_growing_the_queue() {
+        let (seat, rx) = mpsc::sync_channel(1);
+        assert!(matches!(seat.try_send(batch_job()), Ok(())));
+
+        let pending = RefCell::new(Some(batch_job()));
+        assert_eq!(try_admit_pending(&seat, &pending), Err(TryRecvError::Empty));
+
+        drop(rx.try_recv().unwrap());
+        try_admit_pending(&seat, &pending).unwrap();
+        assert!(pending.borrow_mut().take().is_none());
+        assert!(matches!(rx.try_recv(), Ok(Job::Batch { .. })));
+    }
+
+    #[test]
+    fn validation_permit_is_retained_until_join_receipt() {
+        let (joined, done) = mpsc::channel();
+        let mut retiring = Some(done);
+        assert!(retiring_pending(&mut retiring));
+        assert!(retiring.is_some());
+
+        joined.send(Vec::new()).unwrap();
+        assert!(!retiring_pending(&mut retiring));
+        assert!(retiring.is_none());
+
+        let (abandoned, done) = mpsc::channel();
+        let mut retiring = Some(done);
+        drop(abandoned);
+        assert!(retiring_pending(&mut retiring));
+        assert!(retiring.is_some());
     }
 }
