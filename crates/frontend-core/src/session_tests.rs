@@ -1523,7 +1523,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     let blocked = block_writes(&vault_path("rename-fail"));
 
     let op = s
-        .rename_profile(old_name, renamed.clone(), ArmMirror::none(), "credentials")
+        .rename_profile("alice", renamed.clone(), ArmMirror::none(), "credentials")
         .unwrap();
     assert!(s.vault().unwrap().get("alice").is_none(), "staged at once");
     s.flush_writes();
@@ -1545,7 +1545,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     assert!(disk.get("alice").is_some() && disk.get("alicia").is_none());
 
     let op = s
-        .rename_profile(old_name, renamed, ArmMirror::none(), "credentials")
+        .rename_profile("alice", renamed, ArmMirror::none(), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(
