@@ -10,18 +10,20 @@
   "families": [
     {
       "family_id": "acquisition",
-      "nav_consuming": false,
+      "nav_consuming": true,
       "activation_unit": "I-family(acquisition)",
       "activation_endpoint": "T2.rest",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "predecessors": [
         "F0",
         "T1.3",
-        "T2.1"
+        "T2.1",
+        "T5.1"
       ],
       "counts": {
         "declarations": 69,
