@@ -4185,6 +4185,7 @@ mod tests {
                     &data,
                     &quests,
                     cap,
+                    &crate::local_state::OperatorLoadouts::absent(),
                 )
             }
         })
@@ -6448,6 +6449,7 @@ mod tests {
                     &quests,
                     worker,
                     Some(Gang::Phoenix),
+                    &crate::local_state::OperatorLoadouts::absent(),
                 )
             }
         })

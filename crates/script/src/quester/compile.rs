@@ -1828,13 +1828,28 @@ mod tests {
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
-            let first = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
-            let hit = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            let first = compile_path(
+                cook_bytes(),
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+            )
+            .unwrap();
+            let hit = compile_path(
+                cook_bytes(),
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+            )
+            .unwrap();
             assert!(Arc::ptr_eq(&first, &hit));
             let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
             changed["id"] = serde_json::json!("cook-cache-different");
             let bytes = serde_json::to_vec(&changed).unwrap();
-            let miss = compile_path(&bytes, &data, &quests, worker).unwrap();
+            let miss =
+                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
             assert!(!Arc::ptr_eq(&first, &miss));
             assert_eq!(first.id.0.as_ref(), "cook");
             assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
@@ -1870,7 +1885,8 @@ mod tests {
             });
             document["roles"][0]["progress_reader"] = reader;
             let bytes = serde_json::to_vec(&document).unwrap();
-            let compiled = compile_path(&bytes, &data, &quests, worker).unwrap();
+            let compiled =
+                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
             assert_eq!(
                 compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
                 "gather-progress-reader"
@@ -2731,10 +2747,13 @@ mod tests {
 
         let potion = data.item_by_alias("4doseprayerrestore").unwrap();
         let display = potion.name.as_deref().unwrap();
-        let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
-        store.upsert(api::loadout::Loadout::new("cook/cash").with_carry(display, 2));
-        store.save().unwrap();
-        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let rows: Arc<[api::loadout::Loadout]> =
+            Arc::from(vec![
+                api::loadout::Loadout::new("cook/cash").with_carry(display, 2)
+            ]);
+        let operator = OperatorLoadouts::from_rows(rows, api::local_state::StoreVersion::INITIAL);
+        let path =
+            compile_uncached_for_test_with_loadouts(&document, &data, &quests, &operator).unwrap();
         let carry = &path.provisioning.loadout_carry["cook/cash"];
         assert_eq!(carry.len(), 1);
         assert_eq!(
