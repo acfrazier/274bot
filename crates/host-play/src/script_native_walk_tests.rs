@@ -255,38 +255,107 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 
 #[test]
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
+    for (why, expected, name) in [
+        (
+            nav::traveller::HopFailure::Expired,
+            script::native::WalkStallReason::Expired,
+            "Expired",
+        ),
+        (
+            nav::traveller::HopFailure::Dropped,
+            script::native::WalkStallReason::Dropped,
+            "Dropped",
+        ),
+    ] {
+        let mut rig = open_rig(false);
+        rig.observe(1);
+        rig.wait_routed();
+        let failure = nav::traveller::TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            aiming: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            why,
+            tries: 3,
+        };
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            super::apply_nav_follow_outcome(navs.get_mut("alice").unwrap(), Some(failure), false);
+        }
+        rig.observe(2);
+        let shared = rig.shared.lock();
+        let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(
+            receipt.end,
+            WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+                at: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                aiming: WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
+                why: expected,
+                tries: 3,
+            }))
+        );
+        let detail = receipt
+            .failure_detail()
+            .expect("hop failure detail is owed to the caller");
+        assert!(detail.contains(name), "{detail}");
+        assert!(detail.contains("tries: 3"), "{detail}");
+        assert!(detail.contains("aiming"), "{detail}");
+    }
+}
+#[test]
+fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
-    let failure = nav::traveller::TravelOutcome::Stalled {
-        at: WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        aiming: WorldTile {
-            x: 4,
-            z: 0,
-            level: 0,
-        },
-        why: nav::traveller::HopFailure::Dropped,
-        tries: 3,
+    let at = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let aiming = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
     };
     {
         let mut navs = rig.navs.lock().unwrap();
-        super::apply_nav_follow_outcome(navs.get_mut("alice").unwrap(), Some(failure), false);
+        super::apply_nav_follow_outcome(
+            navs.get_mut("alice").unwrap(),
+            Some(nav::traveller::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why: nav::traveller::HopFailure::EndBlocked,
+                tries: 0,
+            }),
+            false,
+        );
     }
     rig.observe(2);
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
-    assert_eq!(receipt.end, WalkEnd::Failed);
-    let detail = receipt
-        .detail
-        .as_deref()
-        .expect("hop failure detail is owed to the caller");
-    assert!(detail.contains("Dropped"), "{detail}");
-    assert!(detail.contains("tries: 3"), "{detail}");
-    assert!(detail.contains("aiming"), "{detail}");
+    assert_eq!(
+        receipt.end,
+        WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at,
+            aiming,
+            why: script::native::WalkStallReason::EndBlocked,
+            tries: 0,
+        }))
+    );
 }
 
 #[test]

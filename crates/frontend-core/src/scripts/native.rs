@@ -90,7 +90,20 @@ impl Scripts {
             })
         {
             match vault::CompiledSettingsRecord::view(entry) {
-                Err(reason) => return SchemaView::Unavailable(reason),
+                Err(error) => {
+                    return SchemaView::Unavailable(match error {
+                        vault::VaultError::InvalidCompiledSettingsEnvelope => {
+                            "invalid compiled settings envelope"
+                        }
+                        vault::VaultError::InvalidCompiledSettingsSchemaVersion => {
+                            "invalid compiled settings schema version"
+                        }
+                        vault::VaultError::CompiledSettingsValuesNotObject => {
+                            "compiled settings values must be an object"
+                        }
+                        _ => "compiled settings are unavailable",
+                    });
+                }
                 Ok((version, _)) if version != card.schema_version => {
                     return SchemaView::Unavailable(
                         "saved compiled settings schema is unsupported",
@@ -318,7 +331,8 @@ fn compiled_values(
     else {
         return Ok(Map::new());
     };
-    let (version, values) = vault::CompiledSettingsRecord::view(entry)?;
+    let (version, values) =
+        vault::CompiledSettingsRecord::view(entry).map_err(|error| error.to_string())?;
     if version != card.schema_version {
         return Err(format!(
             "compiled schema {version} unavailable for {} (supported {})",

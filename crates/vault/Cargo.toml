@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 # The same `aes` aes-gcm already builds, with its `zeroize` feature on so the
 # expanded key schedule is wiped when a cipher is dropped.

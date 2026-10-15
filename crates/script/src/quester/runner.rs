@@ -279,6 +279,7 @@ fn trace_error_reason(error: &ActionError) -> &str {
         ActionError::Unavailable(reason)
         | ActionError::Failed(reason)
         | ActionError::Blocked(reason) => reason.as_ref(),
+        ActionError::BankDeposit(reason) => reason.message(),
         ActionError::NeedsEvidence(_) => "needs evidence",
         ActionError::CombatInterrupted => "dialogue interrupted by combat",
         ActionError::UserInput => super::families::MANUAL_MOVEMENT_MESSAGE,
@@ -1065,6 +1066,9 @@ impl Quester {
             ActionError::Unavailable(reason)
             | ActionError::Failed(reason)
             | ActionError::Blocked(reason) => (QuesterFailureKind::Other, reason),
+            ActionError::BankDeposit(reason) => {
+                (QuesterFailureKind::Other, Arc::from(reason.message()))
+            }
             ActionError::CombatInterrupted => (
                 QuesterFailureKind::Other,
                 Arc::from("dialogue interrupted by combat"),

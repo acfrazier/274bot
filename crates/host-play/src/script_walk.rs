@@ -758,15 +758,18 @@ pub(crate) fn apply_nav_follow_outcome(
 ) {
     match outcome {
         Some(nav::traveller::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
-        // Frozen `'blocked'` (`WalkExecutor.ts:1092-1094`): the follow ended
-        // next to a route end the live scene refuses. The armed walk settles
-        // as its route end, flagged blocked, and walkResilient returns true
-        // (`Traversal.ts:171-174`). A bank-fetch stand walk is not the armed
-        // walk's end and fails below.
-        Some(nav::traveller::TravelOutcome::Stalled {
-            why: nav::traveller::HopFailure::EndBlocked,
-            ..
-        }) if bot.bank_fetch.is_none() => settle_route_end(bot, true),
+        // Frozen `walkResilient` treats EndBlocked as a completed route for
+        // compatibility. A native owner also receives the typed Traveller
+        // outcome so it can reject arrival without losing the hop diagnosis.
+        Some(
+            failure @ nav::traveller::TravelOutcome::Stalled {
+                why: nav::traveller::HopFailure::EndBlocked,
+                ..
+            },
+        ) if bot.bank_fetch.is_none() => {
+            settle_route_end(bot, true);
+            bot.note_native_follow_failure(&failure);
+        }
         Some(failure) => {
             let owned = bot.route_request_id == bot.walk_request_id;
             if !owned {
