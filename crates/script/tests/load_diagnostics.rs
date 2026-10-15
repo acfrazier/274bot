@@ -111,6 +111,54 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     assert_eq!(candidate.fingerprint, reference.fingerprint);
 }
 
+#[test]
+fn cooperative_force_prepare_warms_an_unchanged_card() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("cooperative-force-card");
+    let path = write(&dir, "unchanged.ts", GOOD);
+    let mut js = library(&dir);
+    js.load(&path).expect("load the original card");
+    let snapshot = js
+        .card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
+        .expect("capture an unchanged card");
+    let bounds = (
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    );
+    let snapshot = std::sync::Arc::new(snapshot.force_prepare());
+    assert_eq!(
+        bounds,
+        (
+            snapshot.input_bytes(),
+            snapshot.scratch_bytes(),
+            snapshot.result_bytes(),
+        ),
+        "forcing preparation must not change its bounded charge"
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let outcome = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Card,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_prepare(),
+    )
+    .expect("admit the forced card preparation")
+    .join()
+    .expect("worker completes")
+    .expect("forced preparation completes");
+    let CardPreparationOutcome::Prepared(prepared) = outcome else {
+        panic!("a forced preparation must warm the unchanged card");
+    };
+    assert!(!prepared.card.js.is_empty());
+}
+
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
@@ -269,6 +317,7 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
 
 #[test]
 fn catalog_mixed_batch_retains_named_failures() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
     let dir = scratch("catalog-mixed");
     let root = dir.join("catalog");
     fake_catalog(
@@ -304,22 +353,39 @@ fn catalog_mixed_batch_retains_named_failures() {
     )
     .unwrap();
 
-    let diff = js.diff_catalog(&root).unwrap();
-    assert!(diff.changed.iter().any(|n| n == "GoodBot"));
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(&root)
+            .expect("capture the catalogue metadata"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let result = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        std::sync::Arc::clone(&snapshot).cooperative_prepare(),
+    )
+    .expect("admit catalogue preparation")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue preparation completes");
+    assert!(result.diff.changed.iter().any(|name| name == "GoodBot"));
+    for failure in result.prepare_failed {
+        js.record_failure(failure);
+    }
     let mut prepared_ok = Vec::new();
-    for name in &diff.changed {
-        match prepare_snapshot(&js, ScriptSource::Catalog, name) {
-            CardPreparationOutcome::Prepared(candidate) => {
-                let (candidate, result) = validate_cards(vec![candidate])
-                    .pop()
-                    .expect("one validation result");
-                match result {
-                    Ok(()) => prepared_ok.push(candidate),
-                    Err(error) => js.record_prepared_failure(&candidate, &error),
-                }
-            }
-            CardPreparationOutcome::Failed { failure, .. } => js.record_failure(failure),
-            CardPreparationOutcome::Unchanged | CardPreparationOutcome::Confirmed => {}
+    for candidate in result.prepared.into_iter().chain(result.warmed) {
+        let (candidate, result) = validate_cards(vec![candidate])
+            .pop()
+            .expect("one validation result");
+        match result {
+            Ok(()) => prepared_ok.push(candidate),
+            Err(error) => js.record_prepared_failure(&candidate, &error),
         }
     }
     assert_eq!(prepared_ok.len(), 1);
@@ -327,7 +393,7 @@ fn catalog_mixed_batch_retains_named_failures() {
     for item in prepared_ok {
         js.commit_prepared(item).unwrap();
     }
-    let report = js.apply_catalog_diff(diff);
+    let report = js.apply_catalog_diff(result.diff);
     let good = js.get(ScriptSource::Catalog, "GoodBot").unwrap();
     assert_ne!(good.js, good_js);
     let bad_parse = js.get(ScriptSource::Catalog, "BadParse").unwrap();
@@ -372,8 +438,6 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
         js.catalog_preparation_snapshot(&root)
             .expect("capture the catalogue metadata"),
     );
-    let reference = snapshot.diff().expect("current synchronous catalogue diff");
-    assert_eq!(reference.changed, ["GoodBot"]);
     let input = script::preparation::PreparationInput::new(
         1,
         snapshot.input_bytes(),
@@ -391,10 +455,10 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
     .join()
     .expect("worker completes")
     .expect("bounded catalogue diff completes");
-    assert_eq!(diff.added, reference.added);
-    assert_eq!(diff.changed, reference.changed);
-    assert_eq!(diff.removed, reference.removed);
-    assert_eq!(diff.failed.len(), reference.failed.len());
+    assert!(diff.added.is_empty());
+    assert_eq!(diff.changed, ["GoodBot"]);
+    assert!(diff.removed.is_empty());
+    assert!(diff.failed.is_empty());
 
     let input = script::preparation::PreparationInput::new(
         1,
@@ -413,7 +477,7 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
     .join()
     .expect("worker completes")
     .expect("bounded catalogue preparation completes");
-    assert_eq!(prepared.diff.changed, reference.changed);
+    assert_eq!(prepared.diff.changed, diff.changed);
     assert!(
         prepared.prepare_failed.is_empty(),
         "{:?}",
@@ -421,6 +485,88 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
     );
     assert_eq!(prepared.prepared.len(), 1);
     assert_eq!(prepared.prepared[0].card.name, "GoodBot");
+}
+
+#[test]
+fn small_catalogue_refresh_reserves_a_measured_charge() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("small-catalog-charge");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("GoodBot", GOOD)]);
+    let mut js = library(&dir);
+    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("load current registry");
+    std::fs::write(
+        root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+        "export default class T extends LoopingBot { override loop() { return; } }\n",
+    )
+    .unwrap();
+    let snapshot = js
+        .catalog_preparation_snapshot(&root)
+        .expect("capture the catalogue metadata");
+    let charge = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap()
+    .charge();
+    let total = charge.total_bytes().expect("checked catalogue charge");
+    let accounted = charge
+        .input_bytes()
+        .checked_add(charge.scratch_bytes())
+        .and_then(|bytes| bytes.checked_add(charge.result_bytes()))
+        .expect("catalogue charge sum is representable");
+    assert_eq!(total, accounted);
+    assert!(total < 64 * 1024 * 1024, "small catalogue charged {total} bytes");
+}
+
+#[test]
+fn catalogue_growth_past_its_measured_input_charge_is_refused() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-input-over-budget");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("GoodBot", GOOD), ("OtherBot", GOOD)]);
+    let mut js = library(&dir);
+    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("load current registry");
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(&root)
+            .expect("capture the bounded catalogue"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    let oversized = format!("{}\n/*{}*/\n", GOOD, "x".repeat(5 * 1024 * 1024));
+    std::fs::write(
+        root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+        oversized.as_bytes(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/bot/scripts/OtherBot/OtherBot.ts"),
+        oversized.as_bytes(),
+    )
+    .unwrap();
+    let error = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_prepare(),
+    )
+    .expect("admit the bounded catalogue demand")
+    .join()
+    .expect("worker completes")
+    .expect_err("source growth beyond the captured charge must be refused");
+    assert!(
+        error.contains("charged input bound"),
+        "unexpected over-budget refusal: {error}"
+    );
 }
 
 #[test]
@@ -448,4 +594,131 @@ fn v1_and_v2_family_errors_keep_stable_identities() {
     assert!(!failures
         .iter()
         .any(|f| f.identity_key == good.identity_key()));
+}
+
+#[test]
+#[ignore = "release-only timing probe"]
+fn release_probe_bounded_card_transpile_8mib() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("release-card-probe");
+    let path = write(&dir, "probe.ts", GOOD);
+    let mut js = library(&dir);
+    js.load(&path).expect("load probe baseline");
+    let snapshot = js
+        .card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
+        .expect("capture probe card");
+    let source_limit = snapshot.source_limit().expect("bounded source limit");
+    let mut prefix = String::from(GOOD);
+    prefix.push_str("\n/*");
+    let suffix = "*/\n";
+    let filler_bytes = source_limit
+        .checked_sub(prefix.len() + suffix.len())
+        .expect("source limit fits probe wrapper");
+    let source = format!("{prefix}{}{suffix}", "x".repeat(filler_bytes));
+    assert_eq!(source.len(), source_limit);
+    let source_bytes = source.len();
+    std::fs::write(&path, source).unwrap();
+
+    let snapshot = std::sync::Arc::new(snapshot);
+    let input_bytes = snapshot.input_bytes();
+    let scratch_bytes = snapshot.scratch_bytes();
+    let result_bytes = snapshot.result_bytes();
+    let input =
+        script::preparation::PreparationInput::new(1, input_bytes, scratch_bytes, result_bytes)
+            .unwrap();
+    let timing = std::sync::Arc::new(std::sync::Mutex::new((0_usize, Duration::ZERO)));
+    let worker_timing = std::sync::Arc::clone(&timing);
+    let work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
+    let started = Instant::now();
+    let outcome = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Card,
+        api::identity::Scope::Process,
+        input,
+        move |context| {
+            let action_started = Instant::now();
+            let step = work(context);
+            let elapsed = action_started.elapsed();
+            let mut timing = worker_timing.lock().expect("probe timing lock");
+            timing.0 += 1;
+            timing.1 = timing.1.max(elapsed);
+            step
+        },
+    )
+    .expect("admit near-limit card")
+    .join()
+    .expect("worker completes")
+    .expect("near-limit card transpiles");
+    let wall_time = started.elapsed();
+    let (actions, max_action) = *timing.lock().expect("probe timing lock");
+    let CardPreparationOutcome::Prepared(prepared) = outcome else {
+        panic!("near-limit card should be prepared");
+    };
+    assert!(!prepared.card.js.is_empty());
+    eprintln!(
+        "scenario=bounded_card_transpile source_bytes={source_bytes} input_charge={} scratch_charge={} result_charge={} actions={actions} max_action_us={} wall_us={}",
+        input_bytes,
+        scratch_bytes,
+        result_bytes,
+        max_action.as_micros(),
+        wall_time.as_micros(),
+    );
+}
+
+#[test]
+#[ignore = "release-only timing probe"]
+fn release_probe_catalogue_cooperative_action_max() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("release-catalogue-probe");
+    let root = dir.join("catalog");
+    let names = [
+        "Probe0", "Probe1", "Probe2", "Probe3", "Probe4", "Probe5", "Probe6", "Probe7",
+    ];
+    let bots: Vec<(&str, &str)> = names.iter().copied().map(|name| (name, GOOD)).collect();
+    fake_catalog(&root, &bots);
+    let js = library(&dir);
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(&root)
+            .expect("capture probe catalogue"),
+    );
+    let input_bytes = snapshot.input_bytes();
+    let scratch_bytes = snapshot.scratch_bytes();
+    let result_bytes = snapshot.result_bytes();
+    let input =
+        script::preparation::PreparationInput::new(1, input_bytes, scratch_bytes, result_bytes)
+            .unwrap();
+    let timing = std::sync::Arc::new(std::sync::Mutex::new((0_usize, Duration::ZERO)));
+    let worker_timing = std::sync::Arc::clone(&timing);
+    let work = std::sync::Arc::clone(&snapshot).cooperative_prepare();
+    let started = Instant::now();
+    let result = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        move |context| {
+            let action_started = Instant::now();
+            let step = work(context);
+            let elapsed = action_started.elapsed();
+            let mut timing = worker_timing.lock().expect("probe timing lock");
+            timing.0 += 1;
+            timing.1 = timing.1.max(elapsed);
+            step
+        },
+    )
+    .expect("admit probe catalogue")
+    .join()
+    .expect("worker completes")
+    .expect("catalogue preparation completes");
+    let wall_time = started.elapsed();
+    let (actions, max_action) = *timing.lock().expect("probe timing lock");
+    assert_eq!(result.warmed.len(), bots.len());
+    assert!(result.prepare_failed.is_empty());
+    eprintln!(
+        "scenario=catalogue_initial_fill cards={} input_charge={} scratch_charge={} result_charge={} actions={actions} max_action_us={} wall_us={}",
+        bots.len(),
+        input_bytes,
+        scratch_bytes,
+        result_bytes,
+        max_action.as_micros(),
+        wall_time.as_micros(),
+    );
 }
