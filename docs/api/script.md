@@ -1449,10 +1449,14 @@ key uses the middle-level default. A file that is not a JSON object clears
 every grant until the next preference save moves it aside, byte for byte,
 to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
 audit line) and starts fresh preferences. A file refused for itself (owner,
-mode, size) clears every grant and is never rewritten; one holding content
-this build cannot hold whole is read but never rewritten. A peer
-frontend's change therefore updates both the warning and the next walk's
-options.
+mode, size) clears every grant and is never rewritten. Otherwise the rule
+is lossless representability, with no version check: a file holding a
+member this build cannot hold as a preference row (a name with a `.`,
+outside `[A-Za-z0-9_-]` or longer than 128 bytes, or a value too long even
+member by member) is read but never rewritten, and a save keeps every
+member it holds, a `schema_version` or any other member this build does
+not know included. A peer frontend's change therefore updates both the
+warning and the next walk's options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.
