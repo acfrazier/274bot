@@ -14,18 +14,15 @@ pub enum ArrivalKind {
 
 /// Area arrival has no path-to-centre requirement. The caller supplies
 /// current, loaded-scene standability; packed route goals are not proof.
+/// The rule is [`api::query::arrived_in_area`] (one implementation for the
+/// bake and the scene); this is its packed-bake entry.
 pub fn arrived_in_area(
     here: api::snapshot::WorldTile,
     centre: api::snapshot::WorldTile,
     radius: i32,
     standable: impl FnOnce(api::snapshot::WorldTile) -> bool,
 ) -> bool {
-    let Ok(radius) = u32::try_from(radius) else {
-        return false;
-    };
-    here.level == centre.level
-        && here.x.abs_diff(centre.x).max(here.z.abs_diff(centre.z)) <= radius
-        && standable(here)
+    api::query::arrived_in_area(here, centre, radius, standable)
 }
 
 /// Packed Area goals are every standable tile in the Chebyshev neighbourhood

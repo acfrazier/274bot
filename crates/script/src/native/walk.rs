@@ -3,7 +3,7 @@ use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
-use nav::arrival::ArrivalKind;
+use nav::contract::ArrivalKind;
 use std::num::NonZeroU64;
 use std::task::Poll;
 use std::time::Duration;
@@ -48,7 +48,7 @@ impl Observation for Frame<'_> {
         let here = player.value.player.network;
         match (self.arrival, self.loc_id) {
             (ArrivalKind::Area, None) => {
-                nav::arrival::arrived_in_area(here, key.tile, key.radius, |tile| {
+                api::query::arrived_in_area(here, key.tile, key.radius, |tile| {
                     self.snapshot
                         .reach()
                         .is_some_and(|reach| reach.value.walkable(tile))

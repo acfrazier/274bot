@@ -1188,7 +1188,7 @@ pub fn walk_request(
         target: tile,
         loc_id,
         radius,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav::contract::ArrivalKind::Reach,
         options: crate::native::WalkOptions::default(),
         required_after,
         evidence: None,

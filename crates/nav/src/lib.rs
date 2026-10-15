@@ -18,6 +18,7 @@ pub mod map;
 pub mod named_banks;
 pub mod pack;
 pub mod paint;
+pub mod producer;
 pub mod quest_gates;
 pub mod router;
 pub mod tile;

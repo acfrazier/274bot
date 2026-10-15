@@ -2338,6 +2338,26 @@ pub fn is_arrived<P: ArrivalProbe, V: std::ops::Deref<Target = P>>(
     !view.probeable(dest) || reach(true)
 }
 
+/// Area arrival: the mover stands on any current-standable tile of the
+/// same level within the Chebyshev `radius` of `centre`. There is no
+/// path-to-centre requirement. The caller supplies the standability it
+/// means: live walks pass the loaded scene's reach word, packed goals pass
+/// the bake (`nav::contract::CollisionView::arrived`). A negative radius
+/// never arrives.
+pub fn arrived_in_area(
+    here: WorldTile,
+    centre: WorldTile,
+    radius: i32,
+    standable: impl FnOnce(WorldTile) -> bool,
+) -> bool {
+    let Ok(radius) = u32::try_from(radius) else {
+        return false;
+    };
+    here.level == centre.level
+        && here.x.abs_diff(centre.x).max(here.z.abs_diff(centre.z)) <= radius
+        && standable(here)
+}
+
 /// Pack walkable bits from a borrowed scene (`SQ_BLOCKED == 0`, same
 /// `lx * height + lz` index as [`ReachFlood`]). Off-scene / missing
 /// collision entries stay unset.
