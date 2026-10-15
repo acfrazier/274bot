@@ -1,8 +1,11 @@
 # Nightly live run
 
-Every night a dedicated VM builds `tui-play` for each branch in
+Every night a dedicated Linux VM builds `tui-play` for each branch in
 [`branches.conf`](branches.conf) and runs every live cell of the scenario
-catalog against its own private 289 engine. The archive host pulls each
+catalog against its own private 289 engine. A Windows host does the same for
+`dev` natively on Windows: the CI test lanes with the GPU on, every cell
+through `panel-play` and every cell through `tui-play` on ConPTY, against
+Engine B (see [Windows nightly](#windows-nightly)). The archive host pulls each
 finished run into ZFS and snapshots it. A review machine mirrors the last
 7 days.
 
@@ -11,6 +14,10 @@ nightly VM (runs, writes only its own disk)
    /srv/nightly/runs/<run>/            <- run_nightly.py, 02:00 America/New_York
         |  read-only rsync, pulled by the archive host (hourly, :10)
         v
+Windows nightly host (BotTest console session, writes only C:\274bot-nightly)
+   C:\274bot-nightly\runs\<run>-windows\  <- run_nightly.py, 23:00 America/New_York
+        |  read-only chrooted SFTP, pulled by the archive host (hourly, :15)
+        v
 archive host  tank/274bot-nightly/<run>/   + snapshot tank/274bot-nightly@<run>
         |  read-only rsync, pulled by the review machine (hourly, :25)
         v
@@ -18,14 +25,18 @@ review machine  <mirror folder>/<run>/  (last 7 days; older runs pruned there on
 ```
 
 `<run>` is `<date>-<branch>-<commit>`, for example
-`2026-10-14-release-0.2.3-fb43e9b9a`. `<date>` is the America/New_York date
+`2026-10-14-release-0.2.3-fb43e9b9a`; Windows runs end in `-windows`
+(`2026-10-15-dev-1fc2e3e31-windows`), so one commit's runs on the two platforms
+never collide on the dataset. `<date>` is the America/New_York date
 the run started; `/` in the branch name becomes `-`. A second run of the same
 branch and commit on the same date gets `-r2`, `-r3`, ….
 
 ## What runs
 
-[`run_nightly.py`](run_nightly.py) (Python 3 standard library only) does this for each branch, in
-the order of `branches.conf`:
+[`run_nightly.py`](run_nightly.py) (Python 3 standard library only; on Windows also
+`pywinpty`) does this for each branch, in the order of `branches.conf`. This is the
+Linux VM; the Windows host runs the same script with three steps instead of one
+(see [Windows nightly](#windows-nightly)):
 
 1. Fetches the branch tip anonymously from the public repository into
    `/srv/nightly/trees/<branch>` and checks it out detached with its submodule
@@ -70,11 +81,12 @@ local runs older than 14 days (`NIGHTLY_KEEP_DAYS`). The archive keeps all runs.
 <run>/
   summary.md          table: cell, result, ticks, wall time, first failure line, commit
   summary.json        the same rows plus run metadata (platform, host, branch, commit,
-                      build, engine, catalog commit, runner commit, tui-play sha256, counts)
+                      build, engine, catalog commit, runner commit, tui-play sha256, counts,
+                      steps with their status and deadline)
   build.log           git and cargo output
-  engine.log          the engine's log for this run
-  engine-control.log  engine start/stop output
-  cells/<cell>/
+  engine.log          the engine's log for this run (Linux; Engine B's log is not copied)
+  engine-control.log  engine start/stop output (Linux)
+  cells/<cell>/       one tui-play cell:
     result.json       this cell's summary row
     receipt.json      the scenario's JSON PASS/FAIL record (when it printed one)
     stderr.log        tui-play stderr (the `FAIL: live <cell> {…}` line and `FAIL: <message>`)
@@ -82,21 +94,26 @@ local runs older than 14 days (`NIGHTLY_KEEP_DAYS`). The archive keeps all runs.
     command.txt       the exact command line
     session-logs/     logs tui-play wrote under its throwaway HOME
     evidence/         LIVE_EVIDENCE_DIR captures, when the cell writes any
+  panel-cells/<cell>/ Windows: one panel-play cell, the same files with stdout.log for tty.log
+  lanes/<lane>/       Windows: one CI lane: result.json (exit code, summed test counts,
+                      failed test names) and cargo.log
   DONE                finish time; written last
-```
 
 Results:
 
 | Result | Meaning |
 |---|---|
-| `PASS` / `FAIL` | the scenario printed its JSON record with that outcome; `first_failure` is its `message` |
-| `TIMEOUT` | no record before the outer cap; the process group was killed |
-| `ERROR` | `tui-play` exited without a record (startup error, panic); `first_failure` is the first error-looking stderr line |
+| `PASS` / `FAIL` | the scenario printed its JSON record with that outcome; `first_failure` is its `message`. A lane: `cargo` exited 0 / nonzero |
+| `TIMEOUT` | no record before the outer cap or the step deadline; the process tree was killed |
+| `ERROR` | the frontend exited without a record (startup error, panic); `first_failure` is the first error-looking stderr line |
+| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (Windows: BotTest console session not active, Engine B not reachable, or a paired proof that panel-play has no gate for) |
 | `SKIP` | listed in `skip.conf`; `reason` says why |
-| `NOT_RUN` | the build or the engine failed, or the run was interrupted; `reason` says which |
+| `NOT_RUN` | the build failed, the step deadline passed before it started, or the run was interrupted; `reason` says which |
 
-Every row has `platform` (for example `linux-x86_64`), `branch` and `commit`. Every
-summary also has `os` and `host`, so runs from other platforms can share the archive.
+Every row has `platform` (`linux-x86_64`, `windows-x86_64`), `branch` and `commit`;
+cell rows also have `frontend` (`tui` or `panel`) and `renderer` (`cpu` for `BOT_CPU=1`,
+`gpu`). Every summary also has `os` and `host`, so runs from both platforms share the
+archive.
 
 ## Run one night by hand
 
@@ -120,8 +137,24 @@ Settings can also go in `/etc/274bot-nightly.env` on the VM (read by the unit):
 `NIGHTLY_PARALLEL`, `NIGHTLY_CELL_CAP_S`, `NIGHTLY_BRANCHES` (space-separated;
 overrides `branches.conf`), `NIGHTLY_KEEP_DAYS`, `NIGHTLY_NAME_PREFIX`.
 
+On the Windows host, as BotTest, through the same task the schedule starts (it runs in
+the console session; from an SSH shell, which is session 0, start the task rather than
+the script):
+
+```powershell
+Start-ScheduledTask -TaskName 274bot-nightly
+Get-Content (Get-ChildItem C:\274bot-nightly\logs\*-night.log | Sort-Object LastWriteTime)[-1] -Wait
+```
+
+Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
+([`windows/nightly.env`](windows/nightly.env) is the deployed copy); the step list
+(`NIGHTLY_STEPS`, default `lanes,panel,tui`) and each step's deadline
+(`NIGHTLY_LANES_DEADLINE_S`, `NIGHTLY_BUILD_DEADLINE_S`, `NIGHTLY_PANEL_DEADLINE_S`,
+`NIGHTLY_TUI_DEADLINE_S`) can be set there too.
+
 Pull at once instead of waiting for the hour:
-`systemctl start 274bot-nightly-pull.service` on the archive host, then
+`systemctl start 274bot-nightly-pull.service` (Windows runs:
+`274bot-nightly-pull-windows.service`) on the archive host, then
 `systemctl --user start 274bot-nightly-mirror.service` on the review machine.
 
 ## Stop it
@@ -133,6 +166,14 @@ Pull at once instead of waiting for the hour:
 - Stop archiving: `systemctl disable --now 274bot-nightly-pull.timer` on the archive host.
 - Stop mirroring: `systemctl --user disable --now 274bot-nightly-mirror.timer` on the
   review machine.
+- Windows: `Stop-ScheduledTask -TaskName 274bot-nightly` stops tonight's run (the task
+  ends the runner without a summary; that night has no `DONE` and is never pulled).
+  `Disable-ScheduledTask -TaskName 274bot-nightly` (and `274bot-nightly-catchup`) stops
+  the Windows nightly; `windows\install-tasks.ps1 -Remove` removes both tasks.
+  `systemctl disable --now 274bot-nightly-pull-windows.timer` on the archive host
+  stops archiving Windows runs; `systemctl --user disable --now
+  274bot-nightly-win-engine.service` on the review machine takes Engine B away
+  from the Windows host (its cells then report `UNAVAILABLE`).
 
 ## Change the branches
 
@@ -178,11 +219,20 @@ reads the new list. No unit changes are needed.
 4. `qm set <vmid> --onboot 1` so the VM comes back after a host reboot.
 5. Mirror key: one line in root's `authorized_keys`:
    `restrict,from="<review machine IP>",command="/usr/bin/rrsync -ro /tank/274bot-nightly/" ssh-ed25519 … 274bot-nightly-mirror`.
+6. Windows pull (needs the Windows host's pull account, below):
+   `ssh-keygen -t ed25519 -N '' -C '274bot-nightly-win-pull (cellar)' -f /etc/274bot-nightly/win_pull_ed25519`,
+   pin the Windows host's key as `nightly-windows ssh-ed25519 …` in
+   `/etc/274bot-nightly/known_hosts`, copy `cellar-pull-windows.sh` to
+   `/usr/local/sbin/274bot-nightly-pull-windows` and
+   `systemd/274bot-nightly-pull-windows.{service,timer}` to `/etc/systemd/system/`, then
+   `systemctl daemon-reload && systemctl enable --now 274bot-nightly-pull-windows.timer`.
+   Settings: `NIGHTLY_WIN_HOST` (`DESKTOP-SL99R6C.lan`), `NIGHTLY_WIN_USER`
+   (`274bot-pull`), `NIGHTLY_DATASET`.
 
 The pull copies only runs that have `DONE` and are not on the dataset yet. It copies
-without symlinks (`rsync -rt`) into `.incoming-<run>`, renames the copy into place,
-makes it read-only, and takes `tank/274bot-nightly@<run>`. A run on the dataset is
-never rewritten.
+without symlinks (`rsync -rt`, or SFTP's recursive get for Windows runs) into
+`.incoming-<run>`, renames the copy into place, makes it read-only, and takes
+`tank/274bot-nightly@<run>`. A run on the dataset is never rewritten.
 
 ### Review machine (user units)
 
@@ -201,33 +251,132 @@ never rewritten.
    `systemd/274bot-nightly-mirror.{service,timer}` to `~/.config/systemd/user/`, then run
    `systemctl --user daemon-reload && systemctl --user enable --now 274bot-nightly-mirror.timer`.
 
-User timers run only while the user has a session, unless lingering is enabled
+4. Engine B for the Windows host: copy `systemd/274bot-nightly-win-engine.service` to
+   `~/.config/systemd/user/`, then
+   `systemctl --user daemon-reload && systemctl --user enable --now 274bot-nightly-win-engine.service`.
+   It needs the review machine's existing `274bot-engine-tunnel` service and its
+   `bottest` SSH host entry.
+
+User units run only while the user has a session, unless lingering is enabled
 (`loginctl enable-linger`). `Persistent=true` catches up a missed hour at the next login.
+
+### Windows nightly host (BotTest, no elevation)
+
+Every step runs as BotTest without the admin token, so the nightly keeps working if
+BotTest is demoted to a standard user. Only the pull account (step 8) needs an
+administrator, once.
+
+1. Prerequisites already on the host: the Rust toolchain from `rust-toolchain.toml` in
+   `C:\Users\BotTest\.cargo`/`.rustup` with the MSVC build tools, Git for Windows,
+   NASM in `C:\Users\BotTest\274bot-tools\nasm-3.02`, CPython 3.14 in
+   `C:\Program Files\Python314`. The host clock is set to Eastern time (the runner uses
+   the host clock: Windows CPython has no tz database).
+2. `C:\274bot-nightly\` with `runs\`, `logs\`, `state\`; the venv:
+   `& 'C:\Program Files\Python314\python.exe' -m venv C:\274bot-nightly\venv`, then
+   `C:\274bot-nightly\venv\Scripts\python.exe -m pip install --require-hashes --only-binary :all: --no-deps -r <runner>\tools\nightly\windows\requirements.txt`.
+3. Read-only inputs (copied in once; refresh them when they change):
+   `engine-pristine\{engine,content}` (the 289 engine and content, without
+   `node_modules`, account database or player saves: the clients read its pack, config
+   and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
+   `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
+   when it is missing or stale), `fixtures\bake-r2-a.navpack` (the script lanes'
+   `NAV_PACK`, sha256 `4270f027…`) and
+   `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
+   prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
+4. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
+   carries `tools/nightly/` (`git -C C:\274bot-nightly\runner pull --ff-only` to update).
+5. Settings: copy [`windows/nightly.env`](windows/nightly.env) to `C:\274bot-nightly\nightly.env`.
+6. Tasks: `powershell -ExecutionPolicy Bypass -File C:\274bot-nightly\runner\tools\nightly\windows\install-tasks.ps1`
+   (`-At 23:00` by default).
+7. Engine B: the review machine's `274bot-nightly-win-engine` service (above).
+8. Pull account, **by an administrator** (elevated PowerShell), with the archive host's
+   public key: `C:\274bot-nightly\runner\tools\nightly\windows\pull-access.ps1 -PublicKey '<win_pull_ed25519.pub>'`
+   (`-From` defaults to the archive host's 10.0.0.72). It creates `274bot-pull` (no
+   groups, random unknown password), makes `C:\274bot-nightly` private to BotTest,
+   SYSTEM and Administrators with read-only `runs\` for `274bot-pull`, and adds the
+   `Match User 274bot-pull` block (chroot `runs\`, `internal-sftp -R`, no forwarding,
+   no TTY) after `sshd -t` accepts it. `-Undo` removes all of it.
 
 ## Keys
 
 | Key | Lives on | Accepted by | Can do |
 |---|---|---|---|
 | `274bot-nightly-pull` | archive host `/etc/274bot-nightly/pull_ed25519` | VM user `bot` | read-only rsync of `/srv/nightly/runs/` from the archive host's address; no shell, no forwarding |
+| `274bot-nightly-win-pull` | archive host `/etc/274bot-nightly/win_pull_ed25519` | Windows host user `274bot-pull` (`%ProgramData%\ssh\274bot_pull_authorized_keys`) | read-only SFTP of `C:\274bot-nightly\runs\` (chroot) from the archive host's address; no shell, no forwarding, no TTY |
 | `274bot-nightly-mirror` | review machine `~/.ssh/274bot_nightly_mirror_ed25519` | archive host root | read-only rsync of `/tank/274bot-nightly/` from the review machine's address; no shell, no forwarding |
 
-The VM clones only public repositories, anonymously, and has no push credentials.
+The VM and the Windows host clone only public repositories, anonymously
+(`credential.helper` empty, no terminal prompt), and hold no push credentials. The
+Windows host gets Engine B from the review machine's reverse forward; it holds no key
+to the builder VM.
 
-## A Windows runner (later phase)
+## Windows nightly
 
-The runner is platform-neutral: `summary.json` and every row carry `platform`, and the
-archive and mirror only move directories. A Windows lab VM would need:
+The Windows host runs `dev` (`NIGHTLY_BRANCHES` in `nightly.env`) as BotTest in
+BotTest's console session, which the GPU and the panel windows need. Nothing it does
+needs the admin token.
 
-- the Rust toolchain from `rust-toolchain.toml`, Git, Python 3, and the build
-  prerequisites from `docs/` for Windows (MSVC build tools);
-- its own 289 engine (Node 26, the engine and content copy, `npm ci`, empty
-  database), started and stopped by a PowerShell equivalent of
-  `start-289.sh`/`stop-289.sh`, because those scripts use `lsof`, `ps` and `nohup`;
-- a console host for `tui-play` instead of `pty` (ConPTY, for example through
-  `pywinpty`), plus `USERPROFILE`/`HOME`/`TEMP` set per cell;
-- a Task Scheduler job in place of the systemd timer;
-- OpenSSH Server with a restricted pull key. `rrsync` does not exist on Windows,
-  so the archive host would pull over SFTP with a chrooted, read-only account,
-  or the VM would expose the runs folder read-only some other way;
-- a distinct `<run>` name, for example `<date>-<branch>-<commit>-windows`, so runs
-  for the same commit on two platforms do not collide on the dataset.
+**Tasks.** `274bot-nightly` (daily 23:00, Interactive: runs only while BotTest is
+logged on, Limited, no stored password) starts `windows\nightly-launch.vbs`, which runs
+`windows\nightly-task.ps1` without a console window; that reads `nightly.env` and
+starts `run_nightly.py` with the venv's Python, logging to `logs\<stamp>-night.log`.
+The runner then checks the scenario driver's conditions: BotTest is the console user,
+`query user` shows BotTest's console session Active, and the runner runs in that
+session. If not (for example the session is disconnected), it still writes the whole
+run with every lane and cell `UNAVAILABLE` and the reason. An Interactive task cannot
+start at all while BotTest is logged off (after a reboot, the host does not log on by
+itself), so `274bot-nightly-catchup` runs at BotTest's next logon: if the last 23:00
+night left no `state\started-<date>` marker, it writes that night as a run with every
+lane and cell `UNAVAILABLE: BotTest console session not active at the scheduled 23:00
+start`.
+
+**One night, in order, each step with its own deadline:**
+
+1. Sources: an anonymous fetch of the branch into the bare mirror
+   `mirror\274bot.git`, then a fresh clone of that exact commit into
+   `trees\<branch>-<commit>-<stamp>`, with the pinned client submodule from
+   `mirror\vendor-fr-client-rust.git`. Trees are never reused; the last 2 are kept
+   for debugging (`NIGHTLY_KEEP_TREES`).
+2. `lanes` (3 h): the Windows platform gate's set (`gate.ps1`) with the GPU on
+   (`SKIP_GPU` unset): `build`, `build-vendor`, `clippy`, `clippy-vendor` (with
+   `-D warnings`), `test-workspace`, `test-vendor` (`ENGINE_DIR` = the engine copy),
+   `test-script-load` and `test-script-no-default` (`NAV_PACK` = the fixture),
+   `test-host-play-memory`, `test-host-play-memory-no-alloc`, `test-host-performance`,
+   `test-panel-memory` (every target, including the desktop-only `ime_frame`),
+   `test-panel-render-diagnostics`, `test-tui-memory`, and `cargo fmt --check` per
+   crate (a workspace-root fmt hits OS error 206 on Windows). Each lane gets its own
+   throwaway `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
+   decoded snapshot, and `BOT_NAV_BUILD=skip`, `CARGO_INCREMENTAL=0`,
+   `CARGO_PROFILE_DEV_DEBUG=0`; the target directory is `target\<branch>-ci`.
+3. Build (1.5 h): `cargo build --locked --release -p tui --bin tui-play -p panel --bin panel-play`
+   into `target\<branch>`, with the navigation bake as on the Linux VM.
+4. `panel` (3.5 h): every cell as `panel-play --profile local-289 --host 127.0.0.1
+   --port 47594 --asset-host 127.0.0.1 --http-port 3080 --engine <engine-run>\engine
+   --catalog C:\274bot-nightly\rs2b0t --live script_<cell>`, 3 at a time
+   (`NIGHTLY_PANEL_PARALLEL`), windows on the console desktop, prefix `np`. Paired
+   proofs are `UNAVAILABLE` here (panel-play has no `--pair-core`); the `tui` step runs
+   them under the gate.
+5. `tui` (3.5 h): every cell as on the Linux VM, with the same engine flags, on ConPTY
+   (pywinpty; a `cmd /c … 2>stderr.log` shim inside the console keeps stderr apart), 4 at
+   a time, prefix `nw`.
+
+In both cell steps every cell gets a throwaway `HOME`/`USERPROFILE`/`APPDATA`/
+`LOCALAPPDATA`/`TEMP`, and `BOT_CPU=1` unless its name matches `NIGHTLY_GPU_CELLS`
+(`^render_`: those draw with the GPU). The outer cap is 1200 s on this host
+(`NIGHTLY_CELL_CAP_S`); a cell still running when its step's deadline passes is
+stopped as `TIMEOUT`, and cells not started by then are `NOT_RUN`.
+
+**Engine B.** The cells use Engine B, the shared engine other agents' live cells use,
+through the review machine's `274bot-nightly-win-engine` reverse forward on host
+loopback 47594 (game) and 3080 (web). The runner never starts, stops or reconfigures
+it; before each cell step it checks the 40-byte `/crc` identity and the game port, and
+if either fails, that step's cells are `UNAVAILABLE: Engine B not reachable`. Accounts
+are minted under the nightly prefixes, and cells change only their own accounts.
+
+**What persists between nights:** BotTest's `CARGO_HOME` and `RUSTUP_HOME`, the build
+caches `target\<branch>` and `target\<branch>-ci` (compiled artefacts only), the bare
+mirrors, the read-only inputs (`engine-pristine`, `rs2b0t`, `nav-snapshot`,
+`fixtures`), `runs\` (14 days), the last 2 trees, `logs\` (30 days), the `state\`
+markers, the venv and the runner checkout. `engine-run\` (a fresh copy of
+`engine-pristine` per step) and `work\` (per-cell and per-lane homes, removed after
+each) carry nothing to the next night.
