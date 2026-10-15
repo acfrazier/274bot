@@ -2,10 +2,14 @@
 //! allocate nothing per call, so a bounded prefix costs only what the caller takes.
 use api::game_data::{for_revision, SelectedGameData};
 use api::gather_methods::{GatherCatalog, SceneRegionInput};
+use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 struct Counting;
 
@@ -44,11 +48,14 @@ fn events() -> usize {
 }
 
 fn prepare(data: &Arc<SelectedGameData>) -> Arc<GatherCatalog> {
-    let data = Arc::clone(data);
-    FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-        .expect("worker")
-        .join()
-        .expect("worker panicked")
+    let clock = SystemClock;
+    let cancel = SharedCancellation::new();
+    let budget = SliceBudget::new(
+        NonZeroU32::MIN,
+        Deadline::at(Instant::now() + Duration::from_secs(60)),
+    );
+    let mut step = StepContext::<PreparationPhase>::new(&clock, budget, &cancel);
+    FamilyPreparation::within(&mut step, |worker| data.prepare_gathering(worker))
         .expect("gathering family prepares")
 }
 
