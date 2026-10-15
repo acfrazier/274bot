@@ -129,6 +129,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
 
+### Release engineering
+
+- The architecture checker and its rules now live in the operator-owned
+  `274bot-arch` repo (`main`); this repo keeps only the
+  `tools/architecture/run.sh` runner, and CI runs the same check on pushes
+  and PRs. Propose rule changes (crate edges, ownership rows, seam types)
+  as a patch or branch bundle for the operator to push.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles

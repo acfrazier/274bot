@@ -142,26 +142,34 @@ cargo test --workspace
 cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
 
 # Crate-graph ownership (Python 3.11+). Does not replace fmt/clippy/test.
-python3 tools/architecture/check.py
-python3 tools/architecture/check.py --self-test
+# The checker and its rules live in operator-owned `274bot-arch` `main`;
+# `run.sh` fetches them into a bare-Git cache (`ARCH_CACHE_DIR`, default
+# `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`) and runs them against a
+# tree (`--root`, default the product root). `ARCH_REPO` takes a URL
+# (always `main`) or a local clone (its local `HEAD`, for pre-push proof).
+tools/architecture/run.sh
+tools/architecture/run.sh --root /path/to/tree
 ```
 
-Crate edges are an explicit allowlist
-([`tools/architecture/policy.toml`](tools/architecture/policy.toml),
-[docs/architecture.md](docs/architecture.md)). New reverse or convenience
-dependencies, workspace aliases, target tables, and unknown workspace
-members fail closed. Optional-only allows do not accept a required target
-dependency. Membership is the explicit `workspace.members` paths plus a
-root `[package]` if present; globs are unsupported and fail closed.
-Lifecycle, FlatBuffer isolate/host wire, last-FBO, and JS-shim policy are
-review requirements, not this checker.
+Crate edges are an explicit allowlist in the operator-owned
+[`274bot-arch`](https://github.com/acfrazier/274bot-arch) repo
+([`policy.toml`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml),
+[docs/architecture.md](docs/architecture.md)). Rule changes are proposed as
+a patch or branch bundle for the operator to push; agents cannot push that
+repo. New reverse or convenience dependencies, workspace aliases, target
+tables, and unknown workspace members fail closed. Optional-only allows do
+not accept a required target dependency. Membership is the explicit
+`workspace.members` paths plus a root `[package]` if present; globs are
+unsupported and fail closed. Lifecycle, FlatBuffer isolate/host wire,
+last-FBO, and JS-shim policy are review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
 feature-gated test lanes (script `load` and V8-free `--no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
-`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture checker
-(no Rust toolchain). `path-schema`, `live-harness` and `test-support` are
+`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture
+check (fetched from `274bot-arch` `main` and run against the candidate;
+no Rust toolchain). `path-schema`, `live-harness` and `test-support` are
 exercised through the workspace test lane's feature unification; no CI lane
 runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:
