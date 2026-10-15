@@ -245,6 +245,61 @@ fn bound_exemption_matches_the_raw_contains_zone() {
 }
 
 #[test]
+fn bound_keys_and_group_members_name_the_raw_rows() {
+    let world = zone_world();
+    let zones = zones_view(&world).unwrap().unwrap();
+    let table = world.graph.zones.as_ref().unwrap();
+    for index in 0..3u16 {
+        let bound = bind_key(zones, ZoneKey::Zone(index)).unwrap();
+        assert_eq!(bound.key(), ZoneKey::Zone(index));
+        assert_eq!(bound.pack(), zones.pack());
+        assert_eq!(zones.zone(bound).unwrap().key(), bound);
+    }
+    let group = bind_key(zones, ZoneKey::Group(0)).unwrap();
+    let members: Vec<_> = group_members(zones, group).unwrap().collect();
+    let raw: Vec<_> = table.groups()[0]
+        .members
+        .iter()
+        .map(|&member| bind_key(zones, ZoneKey::Zone(member)).unwrap())
+        .collect();
+    assert_eq!(members, raw);
+    for member in members {
+        assert_eq!(zones.zone(member).unwrap().group(), Some(group));
+    }
+    // The world's lease serves the same identity: its view accepts keys the
+    // borrowed producer bound.
+    let leased = lease(&world).unwrap();
+    let leased = leased.zones().unwrap();
+    assert_eq!(
+        leased
+            .zone(group_members(zones, group).unwrap().next().unwrap())
+            .unwrap()
+            .key(),
+        raw[0]
+    );
+
+    assert_eq!(
+        bind_key(zones, ZoneKey::Zone(3)),
+        Err(ContractError::UnknownKey)
+    );
+    assert_eq!(
+        bind_key(zones, ZoneKey::Group(1)),
+        Err(ContractError::UnknownKey)
+    );
+    let zone = bind_key(zones, ZoneKey::Zone(0)).unwrap();
+    assert!(matches!(
+        group_members(zones, zone),
+        Err(ContractError::UnknownKey)
+    ));
+    let other = zone_world();
+    let foreign = zones_view(&other).unwrap().unwrap();
+    assert!(matches!(
+        group_members(foreign, group),
+        Err(ContractError::PackMismatch)
+    ));
+}
+
+#[test]
 fn views_of_a_legacy_world_have_no_zone_table() {
     let world = Arc::new(NavWorld::from_grid(
         &crate::grid::StepGrid::fixture_open_3x3(),

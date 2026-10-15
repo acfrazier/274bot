@@ -96,14 +96,15 @@ fn fixture_world(
     world
 }
 
-/// Script's facts for packed kind row `kind`, read as the host's witness
-/// check reads them.
-fn kind_facts(world: &NavWorld, kind: usize) -> KindRisk {
-    let kind = &world.graph.zones.as_ref().unwrap().kinds()[kind];
-    tables(world).unwrap().risks.facts(KindSource {
-        npc_id: (kind.npc_id != -1).then_some(kind.npc_id),
-        hazard_damage: nav::zones::curated::hazard_damage(kind.id.as_ref()),
-    })
+/// Script's facts for zone row `row`, read through the facade kind view as
+/// the host's witness check reads them.
+fn kind_facts(world: &NavWorld, row: u16) -> KindRisk {
+    let zones = producer::zones_view(world).unwrap().unwrap();
+    let bound = producer::bind_key(zones, ZoneKey::Zone(row)).unwrap();
+    tables(world)
+        .unwrap()
+        .risks
+        .zone_kind(zones.zone(bound).unwrap().kind())
 }
 
 fn zone(spawn_x: i32, kind: u16, group: Option<u16>) -> Zone {
@@ -546,6 +547,166 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
         assert!(result.assessment.is_none());
     }
 }
+
+/// T5.1 r3: the witness check binds each raw key to the zone view and reads
+/// facts through `ZoneKindView`. Its verdicts equal both a literal table and
+/// the round-2 rule, re-derived from the raw kind rows (an NPC's selected
+/// facts or missing facts; for a hazard, its curated damage), for an NPC
+/// kind, a curated hazard, an uncurated hazard, a missing-facts kind, a
+/// known group, a group with one missing member, mixed key sets and keys
+/// this pack does not name.
+#[test]
+fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
+    let combat = selected_combat();
+    let kinds = vec![
+        ice_kind(&combat),
+        ZoneKind::new("ikov-lava-bridge", "Lava bridge", -1, 0, false, false),
+        ZoneKind::new("t51-uncurated", "Uncurated hazard", -1, 0, false, false),
+        ZoneKind::new(
+            "missing-kind",
+            "Missing selected facts",
+            i32::from(i16::MAX),
+            1,
+            false,
+            false,
+        ),
+    ];
+    let hazard = |min_x, max_x, kind| {
+        Zone::hazard(
+            AvoidRect {
+                min_x,
+                max_x,
+                min_z: 1,
+                max_z: 1,
+                level: Some(0),
+            },
+            0,
+            kind,
+        )
+    };
+    let group = |id: &str, min_x, max_x, members: Vec<u16>| {
+        ZoneGroup::new(
+            id.to_string(),
+            id.to_string(),
+            AvoidRect {
+                min_x,
+                max_x,
+                min_z: 1,
+                max_z: 1,
+                level: Some(0),
+            },
+            members,
+        )
+    };
+    // Rows: 0 ice, 1 curated hazard, 2 uncurated hazard, 3 missing;
+    // group 0 = rows 4, 5 (ice, ice); group 1 = rows 6, 7 (ice, missing).
+    let zones = vec![
+        zone(2, 0, None),
+        hazard(4, 5, 1),
+        hazard(7, 7, 2),
+        zone(9, 3, None),
+        zone(11, 0, Some(0)),
+        zone(13, 0, Some(0)),
+        zone(15, 0, Some(1)),
+        zone(17, 3, Some(1)),
+    ];
+    let world = fixture_world(
+        combat,
+        open_corridor(24, 3, 1),
+        zones,
+        kinds,
+        vec![
+            group("known", 11, 13, vec![4, 5]),
+            group("partly", 15, 17, vec![6, 7]),
+        ],
+        TransportGraph::default(),
+    );
+
+    // The facts each row's kind view yields.
+    let ice = kind_facts(&world, 0);
+    assert_eq!(
+        (ice.max_hit, ice.unknown, ice.hazard()),
+        (6, UnknownKind::Known, false)
+    );
+    let lava = kind_facts(&world, 1);
+    assert_eq!(
+        (lava.max_hit, lava.unknown, lava.hazard()),
+        (20, UnknownKind::Known, true)
+    );
+    assert_eq!(kind_facts(&world, 2).unknown, UnknownKind::HazardDamage);
+    assert_eq!(kind_facts(&world, 3).unknown, UnknownKind::MissingFacts);
+    for row in [4, 5, 6] {
+        assert_eq!(kind_facts(&world, row), ice);
+    }
+    assert_eq!(kind_facts(&world, 7).unknown, UnknownKind::MissingFacts);
+
+    // Round 2's rule over raw storage: the selected NPC's facts (or missing
+    // facts), or a hazard's curated damage (unknown when uncurated).
+    let table = world.graph.zones.as_ref().unwrap();
+    let risks = &tables(&world).unwrap().risks;
+    let row_ok = |row: u16, input: &RiskInput| {
+        let Some(zone) = table.zones().get(usize::from(row)) else {
+            return false;
+        };
+        let kind = &table.kinds()[usize::from(zone.kind)];
+        if kind.npc_id == -1 {
+            nav::zones::curated::hazard_damage(kind.id.as_ref()).is_some_and(|max| max < input.hp)
+        } else {
+            risks.npc(kind.npc_id).is_some_and(|facts| {
+                facts.unknown_for(input.map_members).is_none() && facts.max_hit < input.hp
+            })
+        }
+    };
+    let round_two = |keys: &[ZoneKey], input: &RiskInput| {
+        !keys.is_empty()
+            && keys.iter().all(|key| match *key {
+                ZoneKey::Zone(row) => row_ok(row, input),
+                ZoneKey::Group(index) => {
+                    table.groups().get(usize::from(index)).is_some_and(|group| {
+                        !group.members.is_empty()
+                            && group.members.iter().all(|&row| row_ok(row, input))
+                    })
+                }
+            })
+    };
+
+    // Literal table: the largest hit each key's members can take, `None`
+    // when any member is unsupported or the key names nothing here.
+    let cases: [(&[ZoneKey], Option<u8>); 12] = [
+        (&[ZoneKey::Zone(0)], Some(6)),
+        (&[ZoneKey::Zone(1)], Some(20)),
+        (&[ZoneKey::Zone(2)], None),
+        (&[ZoneKey::Zone(3)], None),
+        (&[ZoneKey::Group(0)], Some(6)),
+        (&[ZoneKey::Group(1)], None),
+        (&[ZoneKey::Zone(0), ZoneKey::Zone(1)], Some(20)),
+        (&[ZoneKey::Zone(1), ZoneKey::Group(0)], Some(20)),
+        (&[ZoneKey::Group(0), ZoneKey::Zone(3)], None),
+        (&[ZoneKey::Zone(8)], None),
+        (&[ZoneKey::Group(2)], None),
+        (&[], None),
+    ];
+    let mut admitted = 0;
+    for map_members in [false, true] {
+        for hp in [1, 6, 7, 20, 21, 99] {
+            let input = RiskInput {
+                map_members,
+                ..input(hp)
+            };
+            for (keys, max_hit) in cases {
+                let verdict = witness_admissible(&world, &input, keys);
+                let context = format!("keys {keys:?}, hp {hp}, members {map_members}");
+                assert_eq!(verdict, max_hit.is_some_and(|max| max < hp), "{context}");
+                assert_eq!(verdict, round_two(keys, &input), "{context}");
+                admitted += usize::from(verdict);
+            }
+        }
+    }
+    // Both verdicts occur, for each member flag: hp 7 and 20 admit 2 key
+    // sets each, hp 21 and 99 admit 5 each.
+    assert_eq!(admitted, 2 * (2 + 2 + 5 + 5));
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {

@@ -24,12 +24,12 @@
 use std::sync::Arc;
 
 use crate::contract::{
-    BoundZoneExempt, CollisionView, ContractError, NavIdentity, NavLease, PackDigest, PackId,
-    RouteView, WildernessView, ZoneTableView,
+    BoundZoneExempt, BoundZoneKey, CollisionView, ContractError, NavIdentity, NavLease, PackDigest,
+    PackId, RouteView, WildernessView, ZoneTableView,
 };
 use crate::router::Route;
 use crate::world::NavWorld;
-use crate::zones::ZoneExempt;
+use crate::zones::{ZoneExempt, ZoneKey};
 
 /// Record the loaded pack's content digest on `world` and mint its
 /// identity. The first bind wins; a later bind with the same digest is a
@@ -133,6 +133,24 @@ pub fn bind_exempt(
         zones.bind(key)?;
     }
     Ok(BoundZoneExempt::bound(zones.pack(), exempt))
+}
+
+/// Bind a raw zone or group key the owner holds (a router witness) to the
+/// pack behind `zones`. A key naming no row or group of that pack is
+/// [`ContractError::UnknownKey`].
+pub fn bind_key(zones: ZoneTableView<'_>, key: ZoneKey) -> Result<BoundZoneKey, ContractError> {
+    zones.bind(key)
+}
+
+/// The member zone keys of a bound group, bound to the same pack, in pack
+/// order, for an owner-boundary check that judges a group by every member.
+/// A zone key or an unknown group is [`ContractError::UnknownKey`]; a key
+/// from another pack is [`ContractError::PackMismatch`].
+pub fn group_members<'a>(
+    zones: ZoneTableView<'a>,
+    group: BoundZoneKey,
+) -> Result<impl Iterator<Item = BoundZoneKey> + 'a, ContractError> {
+    zones.members(group)
 }
 
 #[cfg(test)]
