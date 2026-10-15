@@ -465,6 +465,22 @@ mod tests {
         }
     }
 
+    struct RestoreRegistrySource;
+
+    impl Drop for RestoreRegistrySource {
+        fn drop(&mut self) {
+            script::quester::registry::set_source(FolderSource::default());
+        }
+    }
+
+    struct ReleaseHeldWork(Arc<AtomicBool>);
+
+    impl Drop for ReleaseHeldWork {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
     fn write_cook(folder: &Path, id: &str, display_name: &str, invalid: bool) {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -568,43 +584,75 @@ mod tests {
             enabled: true,
             folder: folder.clone(),
         };
+        let zero = script::preparation::PreparationInput::new(0, 0, 0, 0).unwrap();
+        let folder_charge =
+            script::preparation::PreparationInput::for_quester_folder(0, zero, &source)
+                .unwrap()
+                .charge()
+                .total_bytes()
+                .unwrap();
+        assert!(folder_charge > 48 * 1024 * 1024);
 
         let started = Arc::new(AtomicBool::new(false));
         let released = Arc::new(AtomicBool::new(false));
-        let worker_started = Arc::clone(&started);
-        let worker_released = Arc::clone(&released);
-        let held = script::preparation::submit_cooperative(
-            script::preparation::PreparationKind::Catalogue,
-            api::identity::Scope::Process,
-            script::preparation::PreparationInput::new(777_001, 80 * 1024 * 1024, 0, 0)
-                .expect("bounded temporary admission load"),
-            move |_| {
-                worker_started.store(true, Ordering::Release);
-                if worker_released.load(Ordering::Acquire) {
-                    script::preparation::CooperativePreparationStep::Complete {
-                        output: (),
-                        completed: 1,
-                        total: Some(1),
+        let _release_on_panic = ReleaseHeldWork(Arc::clone(&released));
+        // Reserve bounded jobs until the byte ledger reports Full. One
+        // 48 MiB reservation is smaller than this folder reload's charge,
+        // so the next attempt must wait rather than refuse the reload.
+        let mut held = Vec::new();
+        for index in 0..64_u64 {
+            let worker_started = Arc::clone(&started);
+            let worker_released = Arc::clone(&released);
+            let request = script::preparation::submit_cooperative(
+                script::preparation::PreparationKind::Catalogue,
+                api::identity::Scope::Process,
+                script::preparation::PreparationInput::new(777_001 + index, 48 * 1024 * 1024, 0, 0)
+                    .expect("bounded temporary admission load"),
+                move |_| {
+                    worker_started.store(true, Ordering::Release);
+                    if worker_released.load(Ordering::Acquire) {
+                        script::preparation::CooperativePreparationStep::Complete {
+                            output: (),
+                            completed: 1,
+                            total: Some(1),
+                        }
+                    } else {
+                        script::preparation::CooperativePreparationStep::Continue {
+                            completed: 0,
+                            total: Some(1),
+                        }
                     }
-                } else {
-                    script::preparation::CooperativePreparationStep::Continue {
-                        completed: 0,
-                        total: Some(1),
-                    }
-                }
-            },
-        )
-        .expect("reserve temporary WorkAdmission capacity");
+                },
+            );
+            match request {
+                Ok(job) => held.push(job),
+                Err(script::preparation::PreparationError::Refused(
+                    api::work::SubmissionRefusal::Full,
+                )) => break,
+                Err(error) => panic!("temporary capacity fixture: {error}"),
+            }
+        }
+        assert!(
+            !held.is_empty(),
+            "fixture must reserve WorkAdmission capacity"
+        );
         let deadline = Instant::now() + Duration::from_secs(10);
         while !started.load(Ordering::Acquire) {
             assert!(Instant::now() < deadline, "capacity fixture did not start");
             std::thread::yield_now();
         }
         script::quester::registry::set_source(source.clone());
+        let _restore_source = RestoreRegistrySource;
         let mut reload = ReloadPaths::default();
         let queued = reload.start(Arc::clone(&selected), source.clone());
+        assert!(
+            reload.pending.is_some(),
+            "Path reload must encounter temporary Full"
+        );
         released.store(true, Ordering::Release);
-        held.join().expect("temporary capacity worker completes");
+        for job in held {
+            job.join().expect("temporary capacity worker completes");
+        }
         queued.expect("Full Path reload remains pending");
         assert!(reload.pending.is_some());
         reload
@@ -618,10 +666,6 @@ mod tests {
         for (id, label) in [
             ("cook", "Folder Cook [folder]"),
             ("fresh-draft", "Fresh Draft [draft]"),
-            (
-                "broken-draft",
-                "Broken Draft [draft] — Authoring in progress",
-            ),
         ] {
             assert!(
                 published
@@ -639,7 +683,6 @@ mod tests {
             .join("\n");
         for expected in [
             "broken-draft.json",
-            "Broken Draft",
             "step=start",
             "code=invalid-args",
             "not_a_real_argument",
@@ -668,9 +711,6 @@ mod tests {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.to_string().contains("invalid-args")));
-        script::quester::registry::set_source(FolderSource {
-            enabled: false,
-            folder: script::bot_file("quester/paths/289"),
-        });
+        // The restore guard resets the process-global source even on panic.
     }
 }

@@ -186,9 +186,7 @@ fn catalog_scratch_budget(source_limit: usize) -> Result<usize, String> {
     let derived = source_limit
         .checked_mul(CATALOG_SCRATCH_GROWTH_FACTOR)
         .ok_or_else(|| "catalog scratch charge overflow".to_string())?;
-    Ok(derived
-        .max(MAX_PREPARATION_RESULT_BYTES)
-        .min(MAX_CATALOG_SCRATCH_BYTES))
+    Ok(derived.clamp(MAX_PREPARATION_RESULT_BYTES, MAX_CATALOG_SCRATCH_BYTES))
 }
 
 #[cfg(feature = "load")]
@@ -198,9 +196,7 @@ fn catalog_result_budget(source_limit: usize) -> Result<usize, String> {
     let derived = source_limit
         .checked_mul(CATALOG_RESULT_GROWTH_FACTOR)
         .ok_or_else(|| "catalog result charge overflow".to_string())?;
-    Ok(derived
-        .max(MAX_PREPARATION_RESULT_BYTES)
-        .min(MAX_CATALOG_RESULT_BYTES))
+    Ok(derived.clamp(MAX_PREPARATION_RESULT_BYTES, MAX_CATALOG_RESULT_BYTES))
 }
 
 #[cfg(feature = "load")]
