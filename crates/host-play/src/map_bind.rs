@@ -207,9 +207,9 @@ pub fn map_ready_images(
 
 /// Maximum compressed terrain bytes admitted to the shared walk-map decoder.
 pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
-/// WorkAdmission scratch reservation for png 0.18.1: its 512 KiB `Limits`
-/// budget plus bounded row/inflate buffers and fixed decoder state.
-pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 5 * 256 * 1024;
+/// WorkAdmission scratch reservation for png 0.18.1: 512 KiB parser limits
+/// for raw chunks, one bounded eXIf copy, ≤136 KiB row buffering, and inflater state.
+pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
 const PNG_DECODER_LIMIT_BYTES: usize = 512 * 1024;
 
 /// Stable, allocation-free failures from the bounded walk-map PNG decoder.
@@ -219,7 +219,6 @@ pub enum WalkMapDecodeFailure {
     PngHeader,
     DimensionsOrFormat,
     PngBytesLimit,
-    PngChunkLayout,
     PngInfo,
     PngOutputLimit,
     PngOutputSize,
@@ -236,7 +235,6 @@ impl std::fmt::Display for WalkMapDecodeFailure {
             Self::PngHeader => "invalid map PNG header",
             Self::DimensionsOrFormat => "invalid map PNG dimensions/format",
             Self::PngBytesLimit => "map limit exceeded: png bytes",
-            Self::PngChunkLayout => "map PNG is not in producer format",
             Self::PngInfo => "invalid map png decode info",
             Self::PngOutputLimit => "map limit exceeded: png output",
             Self::PngOutputSize => "invalid map png output size",
@@ -350,13 +348,12 @@ fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
     if bytes.len() > WALK_MAP_DECODE_PNG_LIMIT {
         return Err(WalkMapDecodeFailure::PngBytesLimit);
     }
-    validate_producer_png_chunks(bytes)?;
-
-    // nav::map::raster::encode_png emits only an 8-bit RGBA IHDR, IDAT data,
-    // and IEND. Reject all ancillary chunks before png parses them: text may
-    // expand from Latin-1 and ICC is separately inflated, outside dimension
-    // bounds. No format conversion or metadata is silently accepted.
+    // The former decoder applied no ICC/gamma transformation, so unused text
+    // and ICC metadata cannot affect RGBA. Skip text/ICC parsing and inflation;
+    // png retains one bounded eXIf copy, included in the WorkAdmission charge.
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_ignore_iccp_chunk(true);
     decoder.set_limits(png::Limits {
         bytes: PNG_DECODER_LIMIT_BYTES,
     });
@@ -383,42 +380,6 @@ fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
         .finish()
         .map_err(|_| WalkMapDecodeFailure::PngTrailing)?;
     Ok(rgba)
-}
-
-/// Require the exact chunk grammar emitted by the native raster producer.
-/// The PNG library validates signatures, CRCs, and the compressed image stream.
-fn validate_producer_png_chunks(bytes: &[u8]) -> Result<(), WalkMapDecodeFailure> {
-    let mut offset = 8usize;
-    let mut saw_header = false;
-    let mut saw_data = false;
-    loop {
-        if bytes.len().saturating_sub(offset) < 8 {
-            return Err(WalkMapDecodeFailure::Truncated);
-        }
-        let length = u32::from_be_bytes([
-            bytes[offset],
-            bytes[offset + 1],
-            bytes[offset + 2],
-            bytes[offset + 3],
-        ]);
-        let payload_len =
-            usize::try_from(length).map_err(|_| WalkMapDecodeFailure::PngChunkLayout)?;
-        let chunk_end = offset
-            .checked_add(payload_len)
-            .and_then(|end| end.checked_add(12))
-            .ok_or(WalkMapDecodeFailure::PngChunkLayout)?;
-        if chunk_end > bytes.len() {
-            return Err(WalkMapDecodeFailure::Truncated);
-        }
-        let kind = &bytes[offset + 4..offset + 8];
-        match kind {
-            b"IHDR" if offset == 8 && !saw_header && length == 13 => saw_header = true,
-            b"IDAT" if saw_header => saw_data = true,
-            b"IEND" if saw_data && length == 0 && chunk_end == bytes.len() => return Ok(()),
-            _ => return Err(WalkMapDecodeFailure::PngChunkLayout),
-        }
-        offset = chunk_end;
-    }
 }
 
 /// Authenticated navpois next to the bound pack. Missing/stale/wrong-identity

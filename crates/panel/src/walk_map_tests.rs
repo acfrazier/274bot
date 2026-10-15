@@ -1480,3 +1480,141 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
         );
     }
 }
+
+fn encode_png_with_ztxt(rgba: &[u8], text: String) -> Vec<u8> {
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, TILE_PIXELS, TILE_PIXELS);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .add_ztxt_chunk(String::from("description"), text)
+            .expect("encode compressed text chunk");
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer.write_image_data(rgba).expect("write PNG pixels");
+    }
+    png
+}
+
+fn encode_png_with_iccp(rgba: &[u8], profile: &[u8]) -> Vec<u8> {
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, TILE_PIXELS, TILE_PIXELS);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer
+            .write_chunk(png::chunk::iCCP, profile)
+            .expect("encode compressed ICC chunk");
+        writer.write_image_data(rgba).expect("write PNG pixels");
+    }
+    png
+}
+
+fn exif_description(size: usize) -> Vec<u8> {
+    assert!(size >= 27);
+    let mut tiff = vec![0u8; size];
+    tiff[0..2].copy_from_slice(b"II");
+    tiff[2..4].copy_from_slice(&42u16.to_le_bytes());
+    tiff[4..8].copy_from_slice(&8u32.to_le_bytes());
+    tiff[8..10].copy_from_slice(&1u16.to_le_bytes());
+    tiff[10..12].copy_from_slice(&270u16.to_le_bytes());
+    tiff[12..14].copy_from_slice(&2u16.to_le_bytes());
+    tiff[14..18].copy_from_slice(&u32::try_from(size - 26).unwrap().to_le_bytes());
+    tiff[18..22].copy_from_slice(&26u32.to_le_bytes());
+    let text_end = size - 1;
+    tiff[26..text_end].fill(b'x');
+    tiff
+}
+
+fn encode_png_with_exif(rgba: &[u8], exif: &[u8]) -> Vec<u8> {
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, TILE_PIXELS, TILE_PIXELS);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer
+            .write_chunk(png::chunk::eXIf, exif)
+            .expect("encode Exif chunk");
+        writer.write_image_data(rgba).expect("write PNG pixels");
+    }
+    png
+}
+
+fn find_png_chunk_payload<'a>(png: &'a [u8], wanted: &[u8; 4]) -> &'a [u8] {
+    let mut offset = 8usize;
+    while offset + 12 <= png.len() {
+        let length = u32::from_be_bytes(
+            png[offset..offset + 4]
+                .try_into()
+                .expect("PNG chunk length"),
+        ) as usize;
+        let end = offset + length + 12;
+        assert!(end <= png.len(), "PNG chunk fits the encoded file");
+        if &png[offset + 4..offset + 8] == wanted {
+            return &png[offset + 8..offset + 8 + length];
+        }
+        offset = end;
+    }
+    panic!("requested PNG chunk exists");
+}
+
+#[test]
+fn ancillary_text_and_icc_preserve_legacy_pixels() {
+    let identity = super::fixtures::image_identity();
+    let mut controller = WalkMapDecodeController::new();
+    let large_text = String::from("x").repeat(400 * 1024);
+
+    for (key, with_icc) in [(lod0(52, 50), false), (lod0(53, 50), true)] {
+        let base_png = encode_tile(key).expect("encode source tile");
+        let expected_rgba = decode_tile(&base_png).expect("decode source tile");
+        let text_png = encode_png_with_ztxt(&expected_rgba, large_text.clone());
+        let png = if with_icc {
+            let profile = find_png_chunk_payload(&text_png, b"zTXt");
+            encode_png_with_iccp(&expected_rgba, profile)
+        } else {
+            text_png
+        };
+        assert!(png.len() <= 512 * 1024);
+
+        let legacy_rgba = decode_tile(&png).expect("legacy decoder accepts ancillary PNG");
+        assert_eq!(legacy_rgba, expected_rgba);
+        controller
+            .request(1, identity, key, Arc::from(png))
+            .expect("submit ancillary PNG");
+        let result = wait_for_decode(&mut controller);
+        assert_eq!(result.generation(), 1);
+        assert_eq!(result.image_identity(), identity);
+        assert_eq!(result.key(), key);
+        let result_rgba = result.into_rgba();
+        assert_eq!(
+            serialize_decode_outcome(1, identity, key, &result_rgba),
+            serialize_decode_outcome(1, identity, key, &legacy_rgba),
+            "ancillary decode differs from the legacy pixels"
+        );
+        assert!(!controller.is_busy());
+    }
+    let key = lod0(54, 50);
+    let base_png = encode_tile(key).expect("encode Exif source tile");
+    let expected_rgba = decode_tile(&base_png).expect("decode Exif source tile");
+    let exif = exif_description(250 * 1024);
+    let png = encode_png_with_exif(&expected_rgba, &exif);
+    assert!(png.len() <= 512 * 1024);
+    let legacy_rgba = decode_tile(&png).expect("legacy decoder accepts Exif PNG");
+    assert_eq!(legacy_rgba, expected_rgba);
+    controller
+        .request(1, identity, key, Arc::from(png))
+        .expect("submit Exif PNG");
+    let result = wait_for_decode(&mut controller);
+    assert_eq!(result.generation(), 1);
+    assert_eq!(result.image_identity(), identity);
+    assert_eq!(result.key(), key);
+    let result_rgba = result.into_rgba();
+    assert_eq!(
+        serialize_decode_outcome(1, identity, key, &result_rgba),
+        serialize_decode_outcome(1, identity, key, &legacy_rgba),
+        "Exif decode differs from the legacy pixels"
+    );
+    assert!(!controller.is_busy());
+}

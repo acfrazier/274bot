@@ -239,6 +239,79 @@ fn encode_iccp_bomb(ztxt_png: &[u8]) -> Vec<u8> {
     png
 }
 
+fn exif_description(size: usize) -> Vec<u8> {
+    assert!(size >= 27);
+    let mut tiff = vec![0u8; size];
+    tiff[0..2].copy_from_slice(b"II");
+    tiff[2..4].copy_from_slice(&42u16.to_le_bytes());
+    tiff[4..8].copy_from_slice(&8u32.to_le_bytes());
+    tiff[8..10].copy_from_slice(&1u16.to_le_bytes());
+    tiff[10..12].copy_from_slice(&270u16.to_le_bytes());
+    tiff[12..14].copy_from_slice(&2u16.to_le_bytes());
+    tiff[14..18].copy_from_slice(&u32::try_from(size - 26).unwrap().to_le_bytes());
+    tiff[18..22].copy_from_slice(&26u32.to_le_bytes());
+    let text_end = size - 1;
+    tiff[26..text_end].fill(b'x');
+    tiff
+}
+
+fn encode_exif_png(exif: &[u8]) -> Vec<u8> {
+    let pixels = vec![0u8; TILE_RGBA_BYTES];
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, TILE_PIXELS, TILE_PIXELS);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer
+            .write_chunk(png::chunk::eXIf, exif)
+            .expect("write bounded Exif chunk");
+        writer.write_image_data(&pixels).expect("write PNG pixels");
+    }
+    png
+}
+
+fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
+    assert!(png.len() <= WALK_MAP_DECODE_PNG_LIMIT);
+    let input: Arc<[u8]> = Arc::from(png);
+    let keep_input_alive = Arc::clone(&input);
+    let actual_charge = declared_charge(input.len());
+    assert!(
+        actual_charge.total_bytes().unwrap() <= maximum_declared_charge().total_bytes().unwrap()
+    );
+    let mut job = WalkMapDecodeJob::new(input);
+    let start = Instant::now();
+    let clock = FixedClock(start);
+    let cancellation = SharedCancellation::default();
+    let mut context = StepContext::<WalkMapDecodePhase>::new(
+        &clock,
+        slice_budget(start),
+        &cancellation,
+    );
+    let allocations = allocation_counter::measure(|| {
+        match job.step(&mut context) {
+            StepOutcome::Completed(rgba) => assert_eq!(rgba.as_slice(), expected_pixels),
+            StepOutcome::Failed(error) => panic!("bounded metadata PNG failed: {error}"),
+            StepOutcome::Yielded => panic!("bounded metadata PNG should finish in one slice"),
+        }
+        drop(job);
+    });
+    drop(keep_input_alive);
+
+    assert_eq!(allocations.bytes_current, 0, "result and parser allocations are released");
+    assert_eq!(allocations.count_current, 0);
+    let charged_live_peak = u64::try_from(
+        actual_charge.scratch_bytes() + actual_charge.result_bytes(),
+    )
+    .expect("metadata decode charge fits u64");
+    assert!(
+        allocations.bytes_max <= charged_live_peak,
+        "metadata PNG peak {}B exceeds charged scratch + result {}B",
+        allocations.bytes_max,
+        charged_live_peak
+    );
+}
+
 fn expect_rejected_without_decoder_allocations(
     png: Vec<u8>,
     expected: WalkMapDecodeFailure,
@@ -284,12 +357,14 @@ fn alternate_color_depth_and_interlace_modes_fail_before_conversion() {
 }
 
 #[test]
-fn compressed_text_and_icc_metadata_fail_before_png_parser_allocation() {
-    let large_profile = String::from("x").repeat(1024 * 1024);
-    let ztxt = encode_ztxt_bomb(large_profile);
-    assert!(ztxt.len() <= WALK_MAP_DECODE_PNG_LIMIT);
+fn ancillary_metadata_preserves_pixels_with_bounded_allocations() {
+    let expected_pixels = vec![0u8; TILE_RGBA_BYTES];
+    let large_text = String::from("x").repeat(400 * 1024);
+    let ztxt = encode_ztxt_bomb(large_text);
     let iccp = encode_iccp_bomb(&ztxt);
-    assert!(iccp.len() <= WALK_MAP_DECODE_PNG_LIMIT);
-    expect_rejected_without_decoder_allocations(ztxt, WalkMapDecodeFailure::PngChunkLayout);
-    expect_rejected_without_decoder_allocations(iccp, WalkMapDecodeFailure::PngChunkLayout);
+    let exif = encode_exif_png(&exif_description(250 * 1024));
+
+    for png in [ztxt, iccp, exif] {
+        expect_bounded_decode(png, &expected_pixels);
+    }
 }
