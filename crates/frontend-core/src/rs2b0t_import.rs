@@ -142,9 +142,36 @@ impl JsonType {
 
 /// Why a profile file was refused. Details remain private, and the original
 /// I/O cause is available through [`std::error::Error::source`].
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub struct ImportError(#[from] ImportFailure);
+pub struct ImportError(ImportFailure);
+
+impl std::fmt::Debug for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for ImportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.0 {
+            ImportFailure::Read { source, .. } | ImportFailure::Delete { source, .. } => {
+                Some(source.as_ref())
+            }
+            _ => None,
+        }
+    }
+}
+
+impl From<ImportFailure> for ImportError {
+    fn from(failure: ImportFailure) -> Self {
+        Self(failure)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 enum ImportFailure {

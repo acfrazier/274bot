@@ -15,6 +15,7 @@ use api::process_condition::{
 
 use super::*;
 use crate::operations::ActionKind;
+use crate::rs2b0t_import::ConflictPolicy as ImportConflictPolicy;
 use crate::selection::ProfileIdentity;
 
 struct Fixture {
@@ -218,17 +219,17 @@ type Columns = (
     Option<ActionKind>,
 );
 
-/// The application decisions the r1 and r2 reviews found missing (D7 /
-/// `00-contract.md:52`: fleet model, shared picker, legacy settings,
-/// dirty-form workflow, catalogue preparation, map demand and loadout
-/// draft are core-owned), each with its independently specified columns.
+/// The core-owned application decisions (D7 / `00-contract.md:52`: fleet
+/// model, shared picker, legacy settings, dirty-form workflow, catalogue
+/// preparation, map demand, loadout draft and the rs2b0t import flow), each
+/// with its independently specified columns.
 #[test]
 fn the_core_owned_application_decisions_have_their_frozen_columns() {
     use OperatorCommand as C;
     use ProcessCapability as P;
     use Settles::{AtDispatch, Owner};
     use SubjectKind::{Application, Profile};
-    let rows: [Columns; 24] = [
+    let rows: [Columns; 32] = [
         (C::SetFleetFilter, Application, AtDispatch, None, None),
         (
             C::SetFleetSort(FleetOrder::Name),
@@ -295,6 +296,56 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
             Owner,
             None,
             Some(ActionKind::SaveProfile),
+        ),
+        (
+            C::SetGuardian,
+            Profile,
+            Owner,
+            None,
+            Some(ActionKind::SaveProfile),
+        ),
+        (
+            C::EditProfileImportPath,
+            Application,
+            AtDispatch,
+            None,
+            None,
+        ),
+        (C::PreviewProfileImport, Application, AtDispatch, None, None),
+        (
+            C::SetProfileImportPolicy(ImportConflictPolicy::Overwrite),
+            Application,
+            AtDispatch,
+            None,
+            None,
+        ),
+        (
+            C::SetProfileImportIncludeUnusable(false),
+            Application,
+            AtDispatch,
+            None,
+            None,
+        ),
+        (
+            C::ReturnToProfileImportPath,
+            Application,
+            AtDispatch,
+            None,
+            None,
+        ),
+        (
+            C::SetProfileImportDeletePrompt(false),
+            Application,
+            AtDispatch,
+            None,
+            None,
+        ),
+        (
+            C::DeleteProfileImportExport,
+            Application,
+            AtDispatch,
+            None,
+            None,
         ),
         (C::SelectLoadout, Application, AtDispatch, None, None),
         (

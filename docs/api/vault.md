@@ -238,8 +238,14 @@ The importer keeps owning data behind private fields. Catalog adapters use
 `CatalogCard::new` and its accessors. Consumers read skipped items through
 `Skipped::item` and `Skipped::reason`. `ImportRun::results` returns borrowed
 `AccountResult` views, so reading a settled failure does not copy its text.
-`ImportError` is opaque. Its display message is unchanged, and
+`ImportError` is opaque. Its display and `Debug` diagnostics are unchanged, and
 `std::error::Error::source` exposes the original I/O cause.
+
+The operator command census records import preview choices and export-deletion
+confirmations as application decisions. Confirmed account writes use the
+existing `CreateProfile` or `SaveProfile` row, according to the planned account
+status. The census describes the existing owner entry points. It does not add
+another import execution path.
 
 ## Secrets in memory
 

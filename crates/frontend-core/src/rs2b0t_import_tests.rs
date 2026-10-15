@@ -782,7 +782,7 @@ fn refuses_malformed_shapes_without_quoting_a_password() {
             o.insert("storage".into(), storage);
         }))
         .unwrap_err();
-        assert_eq!(format!("{:?}", error.0), format!("{want:?}"));
+        assert_eq!(format!("{error:?}"), format!("{want:?}"));
         assert_no_password(&error.to_string());
     }
 }
