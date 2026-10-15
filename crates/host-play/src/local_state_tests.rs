@@ -135,7 +135,10 @@ fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
     );
     let identity = loadouts_identity();
     let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
-    assert_eq!(lease.snapshot().as_loadouts().unwrap(), &[first.clone()]);
+    assert_eq!(
+        lease.snapshot().as_loadouts().unwrap(),
+        std::slice::from_ref(&first)
+    );
 
     let second = Loadout::new("banking").with_carry("Coins", 250);
     let request = request(service.submit(DomainEdit::Loadout(
@@ -291,7 +294,7 @@ fn a_new_queued_hint_supersedes_the_old_one_and_quiescence_tracks_the_newest() {
             entered_tx
                 .send(())
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
-            let _ = release_rx
+            release_rx
                 .lock()
                 .unwrap()
                 .recv()
@@ -467,7 +470,10 @@ fn external_loadout_edit_is_read_back_at_a_higher_version() {
     );
     let identity = loadouts_identity();
     let before = service.readback_lease(&identity, WAIT).unwrap().unwrap();
-    assert_eq!(before.snapshot().as_loadouts().unwrap(), &[first.clone()]);
+    assert_eq!(
+        before.snapshot().as_loadouts().unwrap(),
+        std::slice::from_ref(&first)
+    );
 
     let second = Loadout::new("external");
     let mut store = script::LoadoutsStore::at(path);

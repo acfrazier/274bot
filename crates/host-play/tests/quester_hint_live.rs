@@ -426,7 +426,15 @@ fn production_start(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) 
         let path = api::selected::FamilyPreparation::run({
             let selected = Arc::clone(&selected);
             let quests = Arc::clone(&quests);
-            move |cap| compile_path(COOK_PATH_JSON.as_bytes(), &selected, &quests, cap)
+            move |cap| {
+                compile_path(
+                    COOK_PATH_JSON.as_bytes(),
+                    &selected,
+                    &quests,
+                    cap,
+                    &script::local_state::OperatorLoadouts::absent(),
+                )
+            }
         })
         .map_err(|error| format!("prepare bundled Cook Path: {error}"))?
         .join()

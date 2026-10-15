@@ -359,7 +359,7 @@ fn run_cell(variant: Variant) {
     let account_key = api::local_state::AccountKey::try_new(PROFILE, &account)
         .expect("a minted live name is a login identity");
     let hint_path = crate::local_state::StateRoot::new(PathBuf::from(&home).join(".274bot"))
-        .bank_hint_file(PROFILE, &account_key.account().to_string());
+        .bank_hint_file(PROFILE, account_key.account());
     assert!(
         hint_path.starts_with(&home),
         "the hint path {} must sit under HOME {home}",
