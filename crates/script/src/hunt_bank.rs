@@ -2276,4 +2276,118 @@ mod tests {
         assert_eq!(after_stopping["kind"], "yield");
         assert_eq!(after_stopping["value"], false);
     }
+
+    fn hunt_row(ops: &[&str]) -> BankRow {
+        BankRow {
+            id: 379,
+            count: 100,
+            name: "Lobster".into(),
+            slot: 0,
+            has_slot: true,
+            ops: ops.iter().map(|op| op.to_string()).collect(),
+        }
+    }
+
+    /// Characterization (T2.2): the hunt withdraw selector is the frozen
+    /// chunk ladder. Need 7 is a labelled Withdraw-5; need 12 is
+    /// Withdraw-X/12 when the row carries an X label, else one
+    /// Withdraw-10; no need still emits one Withdraw-1.
+    #[test]
+    fn named_withdraw_emits_the_frozen_chunk_shapes() {
+        crate::observed::on_reset();
+        BankObservation::empty().post();
+        let ladder = hunt_row(&["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-X"]);
+
+        let mut rt = BankRuntime::new(9);
+        let step = emit_named_withdraw(&mut rt, &ladder, 0, 7, false);
+        assert_eq!(step["kind"], "withdraw", "{step}");
+        assert_eq!(step["name"], "Lobster", "{step}");
+        assert_eq!(step["action"], "Withdraw-5", "{step}");
+        assert!(step.get("count").is_none(), "{step}");
+        assert_eq!(
+            rt.pending.as_ref().map(|pending| pending.kind),
+            Some(OpKind::Withdraw)
+        );
+
+        let mut rt = BankRuntime::new(9);
+        let step = emit_named_withdraw(&mut rt, &ladder, 0, 12, true);
+        assert_eq!(step["kind"], "withdraw-x", "{step}");
+        assert_eq!(step["count"], 12, "{step}");
+        assert_eq!(step["action"], "Withdraw-X", "{step}");
+        assert_eq!(step["bank_item_id"], 379, "{step}");
+        assert_eq!(step["lands_as_id"], 379, "{step}");
+        assert_eq!(
+            rt.pending.as_ref().map(|pending| pending.kind),
+            Some(OpKind::WithdrawX)
+        );
+
+        let fixed = hunt_row(&["Withdraw-1", "Withdraw-5", "Withdraw-10"]);
+        let mut rt = BankRuntime::new(9);
+        let step = emit_named_withdraw(&mut rt, &fixed, 0, 12, false);
+        assert_eq!(step["kind"], "withdraw", "{step}");
+        assert_eq!(step["action"], "Withdraw-10", "{step}");
+
+        let mut rt = BankRuntime::new(9);
+        let step = emit_named_withdraw(&mut rt, &ladder, 7, 7, false);
+        assert_eq!(step["kind"], "withdraw", "{step}");
+        assert_eq!(step["action"], "Withdraw-1", "{step}");
+    }
+
+    /// Characterization (T2.2): the X label is found by the dash-or-space
+    /// spelling only; the row's own label text is emitted verbatim.
+    #[test]
+    fn x_action_matches_only_the_dash_or_space_spelling() {
+        assert_eq!(
+            x_action(&hunt_row(&["Withdraw-X"])).as_deref(),
+            Some("Withdraw-X")
+        );
+        assert_eq!(
+            x_action(&hunt_row(&["withdraw x"])).as_deref(),
+            Some("withdraw x")
+        );
+        assert_eq!(
+            x_action(&hunt_row(&[" Withdraw-X "])).as_deref(),
+            Some(" Withdraw-X ")
+        );
+        assert_eq!(x_action(&hunt_row(&["Withdraw_X"])), None);
+        assert_eq!(x_action(&hunt_row(&["Withdraw  X"])), None);
+        assert_eq!(x_action(&hunt_row(&["Withdraw-All"])), None);
+    }
+
+    /// Characterization (T2.2): held-target chunking by difference.
+    #[test]
+    fn quantity_label_is_the_chunk_of_want_minus_have() {
+        assert!(matches!(
+            quantity_label(0, 12),
+            Some(Quantity::X { count: 12 })
+        ));
+        assert!(matches!(
+            quantity_label(0, 10),
+            Some(Quantity::Fixed { ref action }) if action == "Withdraw-10"
+        ));
+        assert!(matches!(
+            quantity_label(3, 10),
+            Some(Quantity::Fixed { ref action }) if action == "Withdraw-5"
+        ));
+        assert!(matches!(
+            quantity_label(9, 10),
+            Some(Quantity::Fixed { ref action }) if action == "Withdraw-1"
+        ));
+        assert!(quantity_label(10, 10).is_none());
+        assert!(quantity_label(11, 10).is_none());
+    }
+
+    /// Characterization (T2.2): a hunt deposit effect is the item name
+    /// only — never a count, never an action.
+    #[test]
+    fn deposit_emits_the_name_only() {
+        crate::observed::on_reset();
+        BankObservation::empty().post();
+        let mut rt = BankRuntime::new(9);
+        let step = emit_deposit(&mut rt, "Bones", OpKind::Deposit);
+        assert_eq!(step["kind"], "deposit", "{step}");
+        assert_eq!(step["name"], "Bones", "{step}");
+        assert!(step.get("count").is_none(), "{step}");
+        assert!(step.get("action").is_none(), "{step}");
+    }
 }

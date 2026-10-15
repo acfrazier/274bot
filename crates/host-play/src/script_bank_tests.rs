@@ -1825,3 +1825,87 @@ fn native_bank_pick_timeout_is_only_candidate_order_not_wall_arrival() {
     );
     drop(slot);
 }
+
+/// Characterization (T2.2): the host label layer under every bank
+/// dispatch. Slots are 1-based, holes keep their position, matching
+/// ignores case and whitespace/`-`/`_` separators, and the first match
+/// wins.
+#[test]
+fn bank_label_slots_are_one_based_first_match_over_holes() {
+    let actions: Vec<Option<String>> = vec![
+        None,
+        Some("Withdraw-5".into()),
+        Some("withdraw 5".into()),
+        Some("Deposit_All".into()),
+    ];
+    assert_eq!(action_slot(&actions, "Withdraw 5"), Some(2));
+    assert_eq!(action_slot(&actions, "withdraw_5"), Some(2));
+    assert_eq!(action_slot(&actions, "WITHDRAW-5"), Some(2));
+    assert_eq!(action_slot(&actions, "Deposit All"), Some(4));
+    assert_eq!(action_slot(&actions, "Withdraw-1"), None);
+    assert_eq!(action_slot(&[], "Withdraw-5"), None);
+}
+
+/// Characterization (T2.2): the host All slot is the first label whose
+/// normalized form merely contains `all` — even inside another word —
+/// with no last-label fallback.
+#[test]
+fn bank_all_slot_is_first_containing_all_without_fallback() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Deposit-1".into()),
+        None,
+        Some("Deposit-All".into()),
+        Some("Deposit-X".into()),
+    ];
+    assert_eq!(all_slot(&actions), Some(3));
+    assert_eq!(all_slot(&[Some("Small".into())]), Some(1));
+    assert_eq!(
+        all_slot(&[Some("Deposit-1".into()), Some("Deposit-X".into())]),
+        None
+    );
+    assert_eq!(all_slot(&[]), None);
+}
+
+/// Characterization (T2.2): the fill order is an exact `Withdraw {count}`
+/// label first (even when the count is the whole stack), then All only
+/// when the fill consumes the current stock, then the X continuation.
+#[test]
+fn bank_fill_is_exact_then_whole_stock_all_then_x() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw-1".into()),
+        Some("Withdraw-5".into()),
+        Some("Withdraw-10".into()),
+        Some("Withdraw-All".into()),
+        Some("Withdraw-X".into()),
+    ];
+    assert_eq!(fill_withdraw_action(&actions, 1, 50), Some((1, false)));
+    assert_eq!(fill_withdraw_action(&actions, 5, 5), Some((2, false)));
+    assert_eq!(fill_withdraw_action(&actions, 10, 50), Some((3, false)));
+    assert_eq!(fill_withdraw_action(&actions, 50, 50), Some((4, false)));
+    assert_eq!(fill_withdraw_action(&actions, 7, 50), Some((5, true)));
+    assert_eq!(fill_withdraw_action(&actions, 7, 7), Some((4, false)));
+    assert_eq!(fill_withdraw_action(&actions, 0, 50), Some((5, true)));
+    // No exact, not the whole stack, no X: no fill click at all.
+    let fixed: Vec<Option<String>> = vec![Some("Withdraw-1".into()), Some("Withdraw-All".into())];
+    assert_eq!(fill_withdraw_action(&fixed, 7, 50), None);
+    // The whole stack without an All label still routes through X.
+    let no_all: Vec<Option<String>> = vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())];
+    assert_eq!(fill_withdraw_action(&no_all, 7, 7), Some((2, true)));
+}
+
+/// Characterization (T2.2): only the resolved Withdraw-X label is the
+/// open-only dialog op; every other slot settles on the observed delta.
+#[test]
+fn bank_open_only_withdraw_x_reads_the_resolved_label() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw-1".into()),
+        Some("Withdraw-X".into()),
+        Some("withdraw x".into()),
+    ];
+    assert!(!open_only_withdraw_x(&actions, 1));
+    assert!(open_only_withdraw_x(&actions, 2));
+    assert!(open_only_withdraw_x(&actions, 3));
+    assert!(!open_only_withdraw_x(&actions, 0));
+    assert!(!open_only_withdraw_x(&actions, 4));
+    assert!(!open_only_withdraw_x(&actions, -1));
+}
