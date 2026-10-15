@@ -26,7 +26,7 @@ pub struct CollisionView<'a> {
 }
 
 impl<'a> CollisionView<'a> {
-    pub(super) fn new(pack: PackId, collision: &'a WorldCollision) -> Self {
+    pub(crate) fn new(pack: PackId, collision: &'a WorldCollision) -> Self {
         Self { pack, collision }
     }
 

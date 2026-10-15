@@ -81,7 +81,9 @@ impl fmt::Debug for RoutePlanLease {
     }
 }
 
-/// Borrowed route: destination, exact f64 tick cost, bounded legs.
+/// Borrowed route: destination, exact f64 tick cost, bounded legs. Served
+/// through [`RoutePlanLease::view`], or borrowed from the owner's retained
+/// route by the owner boundary (`crate::producer::route_view`).
 #[derive(Clone, Copy)]
 pub struct RouteView<'a> {
     pack: PackId,
@@ -89,6 +91,12 @@ pub struct RouteView<'a> {
 }
 
 impl<'a> RouteView<'a> {
+    /// A view over a route the owner boundary retains for `pack`
+    /// (`crate::producer::route_view`); the view cannot outlive it.
+    pub(crate) const fn borrowed(pack: PackId, route: &'a Route) -> Self {
+        Self { pack, route }
+    }
+
     /// Originating pack.
     pub const fn pack(self) -> PackId {
         self.pack

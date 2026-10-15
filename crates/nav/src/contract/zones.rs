@@ -31,9 +31,10 @@ impl BoundZoneKey {
     }
 }
 
-/// A [`ZoneExempt`] bound to the pack that produced its keys. Built only by
-/// [`ZoneTableView::exempt`]. Raw indices and [`ZoneTable`] do not appear
-/// on this type.
+/// A [`ZoneExempt`] bound to the pack that produced its keys. Built by
+/// [`ZoneTableView::exempt`] / [`ZoneTableView::exempt_all`], or by the
+/// owner boundary from a request's raw exemption (`crate::producer`).
+/// Raw indices and [`ZoneTable`] do not appear on this type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoundZoneExempt {
     pack: PackId,
@@ -41,6 +42,12 @@ pub struct BoundZoneExempt {
 }
 
 impl BoundZoneExempt {
+    /// A request's raw exemption whose keys the owner boundary has checked
+    /// against the table of `pack` (`crate::producer::bind_exempt`).
+    pub(crate) const fn bound(pack: PackId, inner: ZoneExempt) -> Self {
+        Self { pack, inner }
+    }
+
     /// Originating pack.
     pub const fn pack(self) -> PackId {
         self.pack
@@ -60,7 +67,7 @@ pub struct ZoneTableView<'a> {
 }
 
 impl<'a> ZoneTableView<'a> {
-    pub(super) fn new(pack: PackId, table: &'a ZoneTable) -> Self {
+    pub(crate) fn new(pack: PackId, table: &'a ZoneTable) -> Self {
         Self { pack, table }
     }
 
@@ -78,9 +85,8 @@ impl<'a> ZoneTableView<'a> {
     }
 
     /// Bind `key` to this pack, or refuse unknown keys. Not public: a raw
-    /// index must not be laundered into another pack's identity. Test-only
-    /// until T5.1 adds a producer that binds raw keys.
-    #[cfg(test)]
+    /// index must not be laundered into another pack's identity. The owner
+    /// boundary binds the raw keys it holds (`crate::producer`).
     pub(crate) fn bind(self, key: ZoneKey) -> Result<BoundZoneKey, ContractError> {
         if !self.contains_key(key) {
             return Err(ContractError::UnknownKey);
@@ -371,7 +377,7 @@ pub struct WildernessView<'a> {
 }
 
 impl<'a> WildernessView<'a> {
-    pub(super) fn new(rules: &'a WildernessRules) -> Self {
+    pub(crate) fn new(rules: &'a WildernessRules) -> Self {
         Self { rules }
     }
 

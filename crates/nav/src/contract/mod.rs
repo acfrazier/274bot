@@ -108,6 +108,17 @@ pub struct NavIdentity {
 }
 
 impl NavIdentity {
+    /// Mint a fresh lease identity for `content`. One per loaded world
+    /// (`crate::producer`) or per [`NavLease::wrap`] call.
+    pub(crate) fn mint(content: PackDigest) -> Result<Self, ContractError> {
+        Ok(Self {
+            pack: PackId::mint()?,
+            content,
+            format: FORMAT_ID,
+            version: VERSION,
+        })
+    }
+
     /// The originating pack lease. Distinct even when content matches.
     pub const fn pack(self) -> PackId {
         self.pack
@@ -171,18 +182,19 @@ pub struct NavLease {
 
 impl NavLease {
     /// Wrap a loaded world as an immutable lease with its content digest.
-    /// T5.1's host producer constructs this at the owner boundary; script
-    /// does not reopen packs.
+    /// Every call mints a distinct lease identity; the host's one shared
+    /// identity per loaded world is [`crate::producer::lease`].
     pub fn wrap(world: Arc<NavWorld>, content: PackDigest) -> Result<Self, ContractError> {
         Ok(Self {
-            identity: NavIdentity {
-                pack: PackId::mint()?,
-                content,
-                format: FORMAT_ID,
-                version: VERSION,
-            },
+            identity: NavIdentity::mint(content)?,
             world,
         })
+    }
+
+    /// A lease over `world` under an identity the owner boundary already
+    /// minted for it (`crate::producer`).
+    pub(crate) fn with_identity(world: Arc<NavWorld>, identity: NavIdentity) -> Self {
+        Self { identity, world }
     }
 
     /// Pack/format/content identity.
@@ -213,8 +225,10 @@ impl NavLease {
     /// Publish an immutable, identity-bound plan from a backend route.
     /// Owner-boundary constructor; iterating the lease does not expose
     /// `Route`/`Leg` storage. Not part of the frozen public facade
-    /// (hidden storage must not appear in a public signature). Test-only
-    /// until T5.1 adds the producer.
+    /// (hidden storage must not appear in a public signature). T5.1 serves
+    /// borrowed [`RouteView`]s from the owner's retained route
+    /// (`crate::producer::route_view`); publication under a work identity
+    /// is test-only until T5.W(route) runs the search as a job.
     #[cfg(test)]
     pub(crate) fn publish_route(
         &self,
