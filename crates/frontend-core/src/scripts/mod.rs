@@ -1364,7 +1364,7 @@ impl Scripts {
     /// card's load diagnostic; a failure records it) and parameter writes.
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
-        self.settle_parameter_edits(core);
+        self.poll_reload_preparation(core);
         self.poll_reload_validation(core);
         self.release_stopped_restarts(core);
         if !self.admit.is_empty() {

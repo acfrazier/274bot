@@ -4,7 +4,9 @@
 use std::collections::{HashMap, HashSet};
 mod catalog;
 
-pub use catalog::{CatalogApplyReport, CatalogDiff};
+pub use catalog::{
+    CatalogApplyReport, CatalogDiff, CatalogPreparationResult, CatalogPreparationSnapshot,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -18,10 +20,12 @@ use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
 #[cfg(feature = "load")]
 use super::shape::{
-    catalog_unloadable, first_unloadable_for_card, is_reserved, resolve_api_family,
-    resolve_sibling_modules,
+    catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded,
+    is_reserved, raw_content_fingerprint_bounded, resolve_api_family,
+    resolve_sibling_modules, resolve_sibling_modules_bounded, ApiFamily, LoadShape,
+    MAX_PREPARATION_RESULT_BYTES, MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES,
+    MAX_SOURCE_BYTES,
 };
-use super::shape::{raw_content_fingerprint, ApiFamily, LoadShape};
 
 /// A loaded JS bot: picker name, origin path, loader shape, origin text,
 /// cached JS (SHA object), execution kind, provenance, and content hash.
@@ -91,10 +95,49 @@ impl LoadFailure {
         origin: Option<&str>,
         api_family: Option<ApiFamily>,
     ) -> Self {
-        let fingerprint = match origin {
-            Some(text) => raw_content_fingerprint(path, text),
-            None => String::new(),
-        };
+        let fingerprint = origin
+            .map(|text| raw_content_fingerprint(path, text))
+            .unwrap_or_default();
+        Self::capture_with_fingerprint(
+            source,
+            path,
+            name,
+            diagnostic,
+            fingerprint,
+            api_family,
+        )
+    }
+
+    #[cfg(feature = "load")]
+    fn capture_bounded(
+        source: ScriptSource,
+        path: &Path,
+        name: &str,
+        diagnostic: &str,
+        origin: &str,
+        api_family: Option<ApiFamily>,
+        source_limit: usize,
+    ) -> Self {
+        let fingerprint =
+            raw_content_fingerprint_bounded(path, origin, source_limit).unwrap_or_default();
+        Self::capture_with_fingerprint(
+            source,
+            path,
+            name,
+            diagnostic,
+            fingerprint,
+            api_family,
+        )
+    }
+
+    fn capture_with_fingerprint(
+        source: ScriptSource,
+        path: &Path,
+        name: &str,
+        diagnostic: &str,
+        fingerprint: String,
+        api_family: Option<ApiFamily>,
+    ) -> Self {
         let (line, column) = extract_line_column(diagnostic);
         let sibling = extract_sibling(diagnostic);
         let stage = classify_stage(diagnostic, sibling.as_deref());
@@ -187,12 +230,9 @@ struct StoreEntry {
     path: String,
 }
 
-/// Bounds on what restore reads: the store is a short list of paths and a bot
-/// source is tens of KiB, so anything near these is not a real one.
+/// Bound on the short persisted card list.
 #[cfg(feature = "load")]
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
-#[cfg(feature = "load")]
-const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// A stored entry path is restorable only when absolute (a relative one would
 /// resolve against wherever the host happens to be started) and free of `..`.
@@ -777,102 +817,50 @@ impl JsLibrary {
         Ok(self.fingerprints.get(&key).map(String::as_str) != Some(now.as_str()))
     }
 
-    /// Build a candidate without creating a V8 runtime. UI callers use this
-    /// finite disk/transpile phase, then move [`PreparedCard::validate`] to a
-    /// worker so hostile module evaluation never owns the UI thread.
-    pub fn prepare_card_unvalidated(
-        &mut self,
+    /// Capture only the immutable metadata needed to prepare one candidate.
+    /// The source, siblings, cache output and the rest of the library are not
+    /// copied; disk work begins only when the snapshot runs on WorkAdmission.
+    pub fn card_preparation_snapshot(
+        &self,
         source: ScriptSource,
         name: &str,
-    ) -> Result<PreparedCard, String> {
-        let prior = self.get(source, name).cloned();
-        match self.prepare_card_unvalidated_unrecorded(source, name) {
-            Ok(prepared) => Ok(prepared),
-            Err(error) => {
-                if let Some(card) = prior {
-                    let origin = std::fs::read_to_string(&card.path).ok();
-                    let family = origin
-                        .as_deref()
-                        .and_then(|text| resolve_api_family(text).ok().map(|(_, family)| family))
-                        .or(Some(card.api_family));
-                    self.note_err(source, &card.path, name, &error, origin.as_deref(), family);
-                }
-                Err(error)
-            }
-        }
+        confirmation_fingerprint: Option<String>,
+    ) -> Result<CardPreparationSnapshot, String> {
+        let card = self
+            .get(source, name)
+            .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
+        let identity_key = card.identity_key();
+        let snapshot = CardPreparationSnapshot {
+            template: CardPreparationTemplate::from_card(card),
+            cache_root: self.cache.root().to_path_buf(),
+            catalog_root: self.catalog_root.clone(),
+            stored_fingerprint: self.fingerprints.get(&identity_key).cloned(),
+            confirmation_fingerprint,
+            catalog_settings_schema: None,
+            allow_unloadable: false,
+        };
+        snapshot.source_limit()?;
+        Ok(snapshot)
     }
+
 
     /// Retain a worker-side validation failure against the exact bytes that
     /// were validated.
     pub fn record_prepared_failure(&mut self, prepared: &PreparedCard, diagnostic: &str) {
-        let mut failure = LoadFailure::capture(
+        let mut failure = LoadFailure::capture_with_fingerprint(
             prepared.card.source,
             &prepared.card.path,
             &prepared.card.name,
             diagnostic,
-            Some(&prepared.card.origin),
+            prepared.fingerprint.clone(),
             Some(prepared.card.api_family),
         );
-        // PreparedCard::validate is the typed runtime boundary; diagnostic
+        // Validation batches are the typed runtime boundary; diagnostic
         // wording does not decide whether this was a transpile failure.
         failure.stage = LoadStage::RuntimeLoad;
         self.record_failure(failure);
     }
 
-    fn prepare_card_unvalidated_unrecorded(
-        &self,
-        source: ScriptSource,
-        name: &str,
-    ) -> Result<PreparedCard, String> {
-        let card = self
-            .get(source, name)
-            .ok_or_else(|| format!("no card ({source:?}, {name})"))?
-            .clone();
-        let origin = std::fs::read_to_string(&card.path)
-            .map_err(|e| format!("prepare {}: {e}", card.path.display()))?;
-        let settings_schema = self.candidate_settings_schema(&card, &origin)?;
-        let (shape, api_family) =
-            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
-        if shape == LoadShape::Reject {
-            return Err(format!("not a bot shape: {name}"));
-        }
-        let cached = self.cache.get_or_transpile(
-            &card.path,
-            origin.as_bytes(),
-            cache_meta(shape, source, api_family),
-        )?;
-        let unloadable = catalog_unloadable(
-            &card.name,
-            source,
-            &cached.sha256,
-            &card.path,
-            first_unloadable_for_card(&origin, &card.path),
-        );
-        if let Some(reason) = &unloadable {
-            return Err(format!("unloadable import: {reason}"));
-        }
-        let siblings = resolve_sibling_modules(
-            &card.path,
-            &origin,
-            &self.cache,
-            cache_meta(shape, source, api_family),
-        )?;
-        let fingerprint = raw_content_fingerprint(&card.path, &origin);
-        let mut prepared = card;
-        prepared.origin = origin;
-        prepared.shape = shape;
-        prepared.js = cached.js;
-        prepared.kind = shape_to_kind(shape);
-        prepared.sha256 = cached.sha256;
-        prepared.unloadable = unloadable;
-        prepared.api_family = api_family;
-        prepared.settings_schema = settings_schema;
-        Ok(PreparedCard {
-            card: prepared,
-            siblings,
-            fingerprint,
-        })
-    }
 
     pub fn commit_prepared(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
         let key = prepared.card.identity_key();
@@ -915,6 +903,465 @@ impl JsLibrary {
     }
 }
 
+
+#[cfg(feature = "load")]
+fn add_capacity(total: &mut usize, bytes: usize) -> Option<()> {
+    *total = total.checked_add(bytes)?;
+    Some(())
+}
+
+#[cfg(feature = "load")]
+fn add_optional_capacity(total: &mut usize, value: Option<&String>) -> Option<()> {
+    if let Some(value) = value {
+        add_capacity(total, value.capacity())?;
+    }
+    Some(())
+}
+
+#[cfg(feature = "load")]
+fn add_setting_bytes(total: &mut usize, setting: &SettingDef) -> Option<()> {
+    add_capacity(total, setting.id.capacity())?;
+    add_capacity(total, setting.ty.capacity())?;
+    for value in [
+        &setting.default,
+        &setting.label,
+        &setting.min,
+        &setting.max,
+        &setting.step,
+        &setting.group,
+        &setting.show_if,
+        &setting.options_from,
+        &setting.csv_toggle,
+        &setting.help,
+    ] {
+        add_optional_capacity(total, value.as_ref())?;
+    }
+    for values in [&setting.options, &setting.option_labels] {
+        add_capacity(
+            total,
+            values
+                .capacity()
+                .checked_mul(std::mem::size_of::<String>())?,
+        )?;
+        for value in values {
+            add_capacity(total, value.capacity())?;
+        }
+    }
+    if let Some(spec) = &setting.item_option_spec {
+        add_capacity(
+            total,
+            spec.prefix
+                .capacity()
+                .checked_mul(std::mem::size_of::<String>())?,
+        )?;
+        for prefix in &spec.prefix {
+            add_capacity(total, prefix.capacity())?;
+        }
+        add_capacity(
+            total,
+            spec.candidates.capacity().checked_mul(std::mem::size_of::<
+                crate::rs2b0t_registry::ItemOptionCandidate,
+            >())?,
+        )?;
+        for candidate in &spec.candidates {
+            add_capacity(total, candidate.key.capacity())?;
+            add_optional_capacity(total, candidate.label.as_ref())?;
+        }
+    }
+    Some(())
+}
+
+#[cfg(feature = "load")]
+fn add_schema_bytes(total: &mut usize, schema: &[SettingDef]) -> Option<()> {
+    add_capacity(
+        total,
+        schema.capacity().checked_mul(std::mem::size_of::<SettingDef>())?,
+    )?;
+    for setting in schema {
+        add_setting_bytes(total, setting)?;
+    }
+    Some(())
+}
+/// A reload candidate computed from one immutable card snapshot. `Unchanged`
+/// skips V8; `Confirmed` means the warned fingerprint is still exact.
+#[cfg(feature = "load")]
+#[derive(Debug)]
+pub enum CardPreparationOutcome {
+    Unchanged,
+    Confirmed,
+    Prepared(PreparedCard),
+    Failed { error: String, failure: LoadFailure },
+}
+
+#[cfg(feature = "load")]
+#[derive(Debug, Clone)]
+struct CardPreparationTemplate {
+    name: String,
+    path: PathBuf,
+    source: ScriptSource,
+    description: String,
+    category: String,
+    tags: Vec<String>,
+    settings_schema: Vec<SettingDef>,
+    unloadable: Option<String>,
+    api_family: Option<ApiFamily>,
+}
+
+#[cfg(feature = "load")]
+impl CardPreparationTemplate {
+    fn from_card(card: &JsCard) -> Self {
+        Self {
+            name: card.name.clone(),
+            path: card.path.clone(),
+            source: card.source,
+            description: card.description.clone(),
+            category: card.category.clone(),
+            tags: card.tags.clone(),
+            settings_schema: card.settings_schema.clone(),
+            unloadable: card.unloadable.clone(),
+            api_family: Some(card.api_family),
+        }
+    }
+
+    fn from_registry_card(card: &crate::rs2b0t_registry::RegistryCard, path: PathBuf) -> Self {
+        Self {
+            name: card.name.clone(),
+            path,
+            source: ScriptSource::Catalog,
+            description: card.description.clone(),
+            category: card.category.clone(),
+            tags: card.tags.clone(),
+            settings_schema: card.settings_schema.clone(),
+            unloadable: None,
+            api_family: None,
+        }
+    }
+
+    fn retained_bytes(&self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        add_capacity(&mut bytes, self.name.capacity())?;
+        add_capacity(&mut bytes, self.path.as_os_str().len())?;
+        add_capacity(&mut bytes, self.description.capacity())?;
+        add_capacity(&mut bytes, self.category.capacity())?;
+        add_capacity(
+            &mut bytes,
+            self.tags
+                .capacity()
+                .checked_mul(std::mem::size_of::<String>())?,
+        )?;
+        for tag in &self.tags {
+            add_capacity(&mut bytes, tag.capacity())?;
+        }
+        if let Some(unloadable) = &self.unloadable {
+            add_capacity(&mut bytes, unloadable.capacity())?;
+        }
+        add_schema_bytes(&mut bytes, &self.settings_schema)?;
+        Some(bytes)
+    }
+
+    fn build(
+        &self,
+        origin: String,
+        js: String,
+        sha256: String,
+        shape: LoadShape,
+        api_family: ApiFamily,
+        settings_schema: Vec<SettingDef>,
+        unloadable: Option<String>,
+    ) -> JsCard {
+        JsCard {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            shape,
+            origin,
+            js,
+            kind: shape_to_kind(shape),
+            source: self.source,
+            sha256,
+            description: self.description.clone(),
+            category: self.category.clone(),
+            tags: self.tags.clone(),
+            settings_schema,
+            unloadable,
+            api_family,
+        }
+    }
+}
+
+/// The only retained library state in a card preparation job: one card's
+/// metadata, its cache root, registry root and generation-baseline hashes.
+/// Source text and compiled JS are deliberately not cloned from the library.
+#[cfg(feature = "load")]
+#[derive(Debug)]
+pub struct CardPreparationSnapshot {
+    template: CardPreparationTemplate,
+    cache_root: PathBuf,
+    catalog_root: Option<PathBuf>,
+    stored_fingerprint: Option<String>,
+    confirmation_fingerprint: Option<String>,
+    catalog_settings_schema: Option<Vec<SettingDef>>,
+    allow_unloadable: bool,
+}
+
+#[cfg(feature = "load")]
+impl CardPreparationSnapshot {
+    /// Maximum charged bytes for this bounded card job.
+    pub const fn input_bytes(&self) -> usize {
+        MAX_PREPARATION_SOURCE_BYTES
+    }
+
+    pub const fn scratch_bytes(&self) -> usize {
+        16 * 1024 * 1024
+    }
+
+    pub const fn result_bytes(&self) -> usize {
+        MAX_PREPARATION_RESULT_BYTES
+    }
+
+    /// Source + siblings share the worker's 8 MiB input charge with the
+    /// immutable metadata snapshot.
+    pub fn source_limit(&self) -> Result<usize, String> {
+        let mut retained = self
+            .template
+            .retained_bytes()
+            .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
+        add_capacity(&mut retained, self.cache_root.as_os_str().len())
+            .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
+        if let Some(root) = &self.catalog_root {
+            add_capacity(&mut retained, root.as_os_str().len())
+                .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
+        }
+        if let Some(fingerprint) = &self.stored_fingerprint {
+            add_capacity(&mut retained, fingerprint.capacity())
+                .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
+        }
+        if let Some(fingerprint) = &self.confirmation_fingerprint {
+            add_capacity(&mut retained, fingerprint.capacity())
+                .ok_or_else(|| "card preparation snapshot is too large".to_string())?;
+        }
+        if let Some(schema) = &self.catalog_settings_schema {
+            add_schema_bytes(&mut retained, schema)
+                .ok_or_else(|| "catalog settings snapshot is too large".to_string())?;
+        }
+        MAX_PREPARATION_SOURCE_BYTES
+            .checked_sub(retained)
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(|| "card metadata exceeds the 8 MiB preparation bound".into())
+    }
+
+    /// Read and fingerprint on the worker; only changed candidates transpile.
+    pub fn prepare(&self) -> Result<CardPreparationOutcome, String> {
+        let source_limit = match self.source_limit() {
+            Ok(limit) => limit,
+            Err(error) => {
+                return Ok(self.failed_outcome(
+                    error,
+                    None,
+                    None,
+                    MAX_PREPARATION_SOURCE_BYTES,
+                ));
+            }
+        };
+        let origin = match self.read_origin(source_limit) {
+            Ok(origin) => origin,
+            Err(error) => {
+                return Ok(self.failed_outcome(
+                    error,
+                    None,
+                    self.template.api_family,
+                    source_limit,
+                ));
+            }
+        };
+        let fingerprint = match raw_content_fingerprint_bounded(
+            &self.template.path,
+            &origin,
+            source_limit,
+        ) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                let family = resolve_api_family(&origin)
+                    .ok()
+                    .map(|(_, family)| family)
+                    .or(self.template.api_family);
+                return Ok(self.failed_outcome(
+                    error,
+                    Some(&origin),
+                    family,
+                    source_limit,
+                ));
+            }
+        };
+        if self.confirmation_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            return Ok(CardPreparationOutcome::Confirmed);
+        }
+        if self.stored_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            return Ok(CardPreparationOutcome::Unchanged);
+        }
+        match self.prepare_candidate(origin, source_limit) {
+            Ok(prepared) => Ok(CardPreparationOutcome::Prepared(prepared)),
+            Err((error, origin, family)) => Ok(self.failed_outcome(
+                error,
+                Some(&origin),
+                family,
+                source_limit,
+            )),
+        }
+    }
+
+    fn failed_outcome(
+        &self,
+        error: String,
+        origin: Option<&str>,
+        family: Option<ApiFamily>,
+        source_limit: usize,
+    ) -> CardPreparationOutcome {
+        let failure = if let Some(origin) = origin {
+            LoadFailure::capture_bounded(
+                self.template.source,
+                &self.template.path,
+                &self.template.name,
+                &error,
+                origin,
+                family,
+                source_limit,
+            )
+        } else {
+            LoadFailure::capture(
+                self.template.source,
+                &self.template.path,
+                &self.template.name,
+                &error,
+                None,
+                family,
+            )
+        };
+        CardPreparationOutcome::Failed { error, failure }
+    }
+
+    fn read_origin(&self, source_limit: usize) -> Result<String, String> {
+        let limit = source_limit.min(MAX_SOURCE_BYTES as usize) as u64;
+        vault::read_regular_file(&self.template.path, limit)
+            .map_err(|error| format!("missing {}: {error}", self.template.path.display()))
+    }
+
+    fn prepare_candidate(
+        &self,
+        origin: String,
+        source_limit: usize,
+    ) -> Result<PreparedCard, (String, String, Option<ApiFamily>)> {
+        let fallback_family = self.template.api_family;
+        let prepared = self.prepare_candidate_inner(&origin, source_limit);
+        match prepared {
+            Ok(prepared) => Ok(prepared),
+            Err(error) => {
+                let family = resolve_api_family(&origin)
+                    .ok()
+                    .map(|(_, family)| family)
+                    .or(fallback_family);
+                Err((error, origin, family))
+            }
+        }
+    }
+
+    fn prepare_candidate_inner(
+        &self,
+        origin: &str,
+        source_limit: usize,
+    ) -> Result<PreparedCard, String> {
+        let settings_schema = if let Some(schema) = &self.catalog_settings_schema {
+            schema.clone()
+        } else {
+            match self.template.source {
+                ScriptSource::Catalog => catalog::resolve_catalog_settings_schema_bounded(
+                    self.catalog_root.as_deref(),
+                    &self.template.name,
+                    &self.template.path,
+                    origin,
+                    source_limit,
+                )?,
+                ScriptSource::File | ScriptSource::Builtin => {
+                    crate::rs2b0t_registry::try_settings_schema_from_source(origin)
+                        .map_err(|error| format!("{}: {error}", self.template.name))?
+                }
+            }
+        };
+        let (shape, api_family) =
+            resolve_api_family(origin).map_err(|error| format!("{}: {error}", self.template.name))?;
+        if shape == LoadShape::Reject {
+            return Err(format!("not a bot shape: {}", self.template.name));
+        }
+        let cache = JsCache::new(self.cache_root.clone());
+        let meta = cache_meta(shape, self.template.source, api_family);
+        let object = cache.object_path(&JsCache::origin_sha(origin.as_bytes()));
+        if std::fs::metadata(&object)
+            .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
+        {
+            return Err("cached JavaScript exceeds the 16 MiB result limit".into());
+        }
+        let cached = cache
+            .get_or_transpile(&self.template.path, origin.as_bytes(), meta.clone())
+            .map_err(|error| format!("{}: {error}", self.template.name))?;
+        let mut result_bytes = self
+            .template
+            .retained_bytes()
+            .and_then(|bytes| bytes.checked_add(origin.len()))
+            .and_then(|bytes| bytes.checked_add(cached.js.capacity()))
+            .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
+        if let Some(schema) = &self.catalog_settings_schema {
+            add_schema_bytes(&mut result_bytes, schema)
+                .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
+        }
+        if result_bytes > MAX_PREPARATION_RESULT_BYTES {
+            return Err("prepared card exceeds the 16 MiB result limit".into());
+        }
+        let first_unloadable =
+            first_unloadable_for_card_bounded(origin, &self.template.path, source_limit)?;
+        let unloadable = catalog_unloadable(
+            &self.template.name,
+            self.template.source,
+            &cached.sha256,
+            &self.template.path,
+            first_unloadable,
+        );
+        if !self.allow_unloadable {
+            if let Some(reason) = &unloadable {
+                return Err(format!("unloadable import: {reason}"));
+            }
+        }
+        let siblings = resolve_sibling_modules_bounded(
+            &self.template.path,
+            origin,
+            &cache,
+            meta,
+            result_bytes,
+            source_limit,
+        )?;
+        let fingerprint =
+            raw_content_fingerprint_bounded(&self.template.path, origin, source_limit)?;
+        result_bytes = result_bytes
+            .checked_add(fingerprint.capacity())
+            .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
+        if result_bytes > MAX_PREPARATION_RESULT_BYTES {
+            return Err("prepared card exceeds the 16 MiB result limit".into());
+        }
+        let card = self.template.build(
+            origin.to_string(),
+            cached.js,
+            cached.sha256,
+            shape,
+            api_family,
+            settings_schema,
+            unloadable,
+        );
+        Ok(PreparedCard {
+            card,
+            siblings,
+            fingerprint,
+        })
+    }
+}
+
 /// Candidate prepared while old library cards and isolates stay intact.
 #[derive(Debug, Clone)]
 pub struct PreparedCard {
@@ -923,16 +1370,6 @@ pub struct PreparedCard {
     pub fingerprint: String,
 }
 
-#[cfg(feature = "load")]
-impl PreparedCard {
-    /// Evaluate this candidate on the serialized ValidationSeat. This call
-    /// waits for a terminal result; UI refreshes submit a cancellable batch
-    /// instead of calling it on the control thread.
-    pub fn validate(&self) -> Result<(), String> {
-        crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
-            .map_err(|error| format!("prepare {}: {error}", self.card.name))
-    }
-}
 
 #[cfg(feature = "load")]
 fn shape_to_kind(shape: LoadShape) -> ScriptKind {

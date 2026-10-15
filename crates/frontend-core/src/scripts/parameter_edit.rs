@@ -1917,9 +1917,29 @@ export const SETTINGS: SettingsSchema = {
             assert_eq!(initial_loadout.ty, "string", "{name}");
             assert_eq!(initial_loadout.default.as_deref(), Some(""), "{name}");
 
-            let prepared = library
-                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
-                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"));
+            let path = library
+                .get(script::ScriptSource::Catalog, name)
+                .expect("registered card")
+                .path
+                .clone();
+            let mut source = std::fs::read_to_string(&path).unwrap();
+            source.push('\n');
+            std::fs::write(path, source).unwrap();
+            let prepared = match library
+                .card_preparation_snapshot(script::ScriptSource::Catalog, name, None)
+                .unwrap_or_else(|error| panic!("{name}: snapshot failed: {error}"))
+                .prepare()
+                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
+            {
+                script::load::CardPreparationOutcome::Prepared(prepared) => prepared,
+                script::load::CardPreparationOutcome::Failed { error, .. } => {
+                    panic!("{name}: prepare failed: {error}")
+                }
+                script::load::CardPreparationOutcome::Unchanged
+                | script::load::CardPreparationOutcome::Confirmed => {
+                    panic!("{name}: changed catalog card was not prepared")
+                }
+            };
             let prepared_loadout = prepared
                 .card
                 .settings_schema
