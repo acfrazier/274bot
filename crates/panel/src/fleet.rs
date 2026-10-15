@@ -756,6 +756,70 @@ mod tests {
         assert!(session.fleet_selection.contains(bob));
     }
 
+    /// The session-sync prune binary-searches a sorted universe, so
+    /// the in-place sort in `prune_fleet_marks` is load-bearing:
+    /// vault order here is alphabetical by username, which is not
+    /// UID order, and every mark must survive the prune. A vault
+    /// swap with no Fleet frame then prunes at the next sync.
+    #[test]
+    fn prune_keeps_marks_when_vault_order_differs_from_uid_order() {
+        let dir = crate::test_support::TestDir::new("fleet-prune-order");
+        let mut session = crate::session::Session::new();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        for (username, uid) in [("zed", 1), ("amy", 3), ("max", 2), ("bea", 5), ("kim", 4)] {
+            vault
+                .upsert(vault::Profile {
+                    username: username.into(),
+                    password: "pw".into(),
+                    uid,
+                    settings: vault::ProfileSettings::default(),
+                })
+                .unwrap();
+        }
+        session.core.set_vault(Some(vault));
+        let order: Vec<_> = session
+            .core
+            .vault()
+            .unwrap()
+            .profiles()
+            .map(|profile| profile.uid)
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_ne!(
+            order, sorted,
+            "the fixture's vault order must differ from UID order"
+        );
+        for name in ["zed", "amy", "max", "bea", "kim"] {
+            let id = session.core.profile_identity(name).unwrap();
+            session.fleet_selection.set(id, true);
+        }
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        // Universe change without a Fleet frame: a smaller vault replaces it.
+        let mut smaller = vault::Vault::create(&dir.join("vault2"), "test-passphrase-01").unwrap();
+        smaller
+            .upsert(vault::Profile {
+                username: "amy".into(),
+                password: "pw".into(),
+                uid: 3,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+        session.core.set_vault(Some(smaller));
+        session.pump_status();
+        assert_eq!(
+            session.fleet_selection.len(),
+            1,
+            "only amy's mark survives the swap"
+        );
+        assert!(session
+            .fleet_selection
+            .contains(frontend_core::ProfileIdentity::uid(3)));
+    }
+
     fn shown_names<'a>(rows: &'a [FleetRow], filter: &str, order: FleetOrder) -> Vec<&'a str> {
         let mut shown = Vec::new();
         fill_visible_row_indices(rows, filter, order, &mut shown);

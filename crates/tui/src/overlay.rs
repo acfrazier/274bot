@@ -138,30 +138,24 @@ impl ContextItem {
     }
 }
 
-const NAMES_SHOWN: usize = 6;
-
+/// The Bulk confirmation's member names: core's bounded list
+/// ([`frontend_core::PROMPT_NAMES_SHOWN`] names, then "+N more"),
+/// shared with the restart prompt so the cap cannot drift between
+/// surfaces. An empty scope reads "(none)".
 fn scope_names(members: &[String]) -> String {
-    let mut text = members
-        .iter()
-        .take(NAMES_SHOWN)
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join(", ");
-    if members.len() > NAMES_SHOWN {
-        text.push_str(&format!(" +{} more", members.len() - NAMES_SHOWN));
+    if members.is_empty() {
+        return "(none)".into();
     }
-    if text.is_empty() {
-        text.push_str("(none)");
-    }
-    text
+    frontend_core::bounded_names(members)
 }
 
 /// Rows `line` occupies when word-wrapped at `width` cells, mirroring
 /// the confirmation [`Paragraph`]'s `Wrap { trim: false }`: words move
-/// whole to the next row, a word longer than a row is split across
-/// rows, and the separating space stays on the row it ends. Used to
-/// size the confirm popup so wrapped text is never clipped; the
-/// popup keeps one further row of slack below the text.
+/// whole to the next row, a word longer than a row starts on a fresh
+/// row and is then split across rows, and the separating space stays
+/// on the row it ends. Used to size the confirm popup so wrapped
+/// text is never clipped; the popup keeps one further row of slack
+/// below the text.
 fn wrapped_rows(line: &str, width: usize) -> usize {
     let mut rows = 1;
     let mut col = 0;
@@ -175,7 +169,7 @@ fn wrapped_rows(line: &str, width: usize) -> usize {
             }
         }
         let mut rest = Line::from(word).width();
-        if rest <= width && col > 0 && col + rest > width {
+        if col > 0 && col + rest > width {
             rows += 1;
             col = 0;
         }
@@ -831,4 +825,84 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rows ratatui actually uses for `line` wrapped at `width` with
+    /// the confirmation's `Wrap { trim: false }` (last non-blank row
+    /// + 1); the test lines carry no trailing space.
+    fn rendered_rows(line: &str, width: u16) -> usize {
+        let height = 400;
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        Paragraph::new(vec![Line::from(line.to_string())])
+            .wrap(Wrap { trim: false })
+            .render(area, &mut buf);
+        let mut last = 0;
+        for y in 0..height {
+            let blank = (0..width).all(|x| buf[(x, y)].symbol() == " ");
+            if !blank {
+                last = usize::from(y) + 1;
+            }
+        }
+        last.max(1)
+    }
+
+    /// `wrapped_rows` mirrors ratatui even when a word is wider than
+    /// the row: ratatui starts such a word on a fresh row and then
+    /// splits it, so counting the split from the current column
+    /// under-counts and the popup would clip the overflow.
+    #[test]
+    fn wrapped_rows_matches_ratatui_when_a_word_is_wider_than_the_row() {
+        let name27 = "a".repeat(27);
+        let name41 = "b".repeat(41);
+        let cases: Vec<(String, u16)> = vec![
+            // The smallest over-wide case: 2 rows counted, 3 drawn.
+            ("zt jmfuk".to_string(), 4),
+            // Confirmation-shaped lines at narrow popup widths.
+            (
+                format!("Stop and restart 3 running bots: {name27}, {name27}, {name27}"),
+                26,
+            ),
+            (
+                format!("Start the card on 3 idle bots: {name41}, {name41}, {name41}"),
+                38,
+            ),
+            // Words that fit a row keep their exact count too.
+            (
+                "Stop and restart 2 running bots: alice, bob".to_string(),
+                38,
+            ),
+            ("hello world again".to_string(), 5),
+        ];
+        for (line, width) in &cases {
+            assert_eq!(
+                wrapped_rows(line, usize::from(*width)),
+                rendered_rows(line, *width),
+                "width {width}: {line:?}"
+            );
+        }
+    }
+
+    /// The Bulk confirmation's names are core's bounded list (the
+    /// same cap the restart prompt uses), with "(none)" for an empty
+    /// scope: there is no second six-name cap in this surface.
+    #[test]
+    fn scope_names_uses_the_core_bounded_names_cap() {
+        assert_eq!(scope_names(&[]), "(none)");
+        let few: Vec<String> = ["alice", "bob"].iter().map(|n| n.to_string()).collect();
+        assert_eq!(scope_names(&few), frontend_core::bounded_names(&few));
+        let many: Vec<String> = (0..frontend_core::PROMPT_NAMES_SHOWN + 2)
+            .map(|i| format!("bot{i}"))
+            .collect();
+        assert_eq!(scope_names(&many), frontend_core::bounded_names(&many));
+        assert!(
+            scope_names(&many).ends_with(" +2 more"),
+            "{}",
+            scope_names(&many)
+        );
+    }
 }

@@ -178,6 +178,7 @@ const CORE: &[(&str, Decision)] = &[
         "marked.rs::combined_bulk_scope",
         Excluded("pure scope choice for combined all/marked commands; the command's row is the caller's"),
     ),
+    ("marked.rs::bounded_names", Excluded(FORMAT)),
     // nav_prefs.rs
     (
         "nav_prefs.rs::nav_preference",
