@@ -207,9 +207,11 @@ pub fn map_ready_images(
 
 /// Maximum compressed terrain bytes admitted to the shared walk-map decoder.
 pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
-/// Inline job storage and the shared PNG allocation's two reference counts.
-pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize =
-    std::mem::size_of::<WalkMapDecodeJob>() + 2 * std::mem::size_of::<usize>();
+/// Inline job storage, the shared PNG's reference counts, and their maximum alignment padding.
+pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize = std::mem::size_of::<WalkMapDecodeJob>()
+    + 2 * std::mem::size_of::<usize>()
+    + std::mem::align_of::<std::sync::atomic::AtomicUsize>()
+    - 1;
 /// WorkAdmission scratch for png 0.18.1. Text/ICC chunks are skipped; the 512 KiB whole-file
 /// input cap bounds the only unbounded copied chunk (eXIf) and its Info clone (both ≤512 KiB).
 /// Include their overlap, ≤128 KiB unfilter data, ≤1,033-byte row scratch, and bounded inflater
