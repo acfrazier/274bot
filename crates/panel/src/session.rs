@@ -1555,7 +1555,7 @@ impl Session {
             loadouts_search_hits: Vec::new(),
             loadouts_picker_rows: crate::name_picker::PickerRows::default(),
             loadouts_qty_bufs: Vec::new(),
-            loadouts: script::LoadoutsStore::with_default_path(),
+            loadouts: script::LoadoutsStore::at(script::bot_file("loadouts.json")),
             scenario: Arc::new(Mutex::new(None)),
             live_script_stop_wait_started: None,
             pending_script: Arc::new(Mutex::new(Vec::new())),
