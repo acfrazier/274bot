@@ -500,6 +500,10 @@ const CORE: &[(&str, Decision)] = &[
         "selection.rs::MarkedSelection::retain",
         Excluded("projection maintenance: drops marks of rows no longer shown"),
     ),
+    (
+        "selection.rs::MarkedSelection::retain_sorted",
+        Excluded("projection maintenance: drops marks of rows no longer shown"),
+    ),
     ("selection.rs::start_marked", Row(C::StartScript)),
     ("selection.rs::stop_marked", Row(C::StopScript)),
     ("selection.rs::MarkedSelection::mark_shown", Row(C::MarkAll)),

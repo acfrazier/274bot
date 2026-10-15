@@ -3694,3 +3694,26 @@ fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
         .unwrap();
     assert!(book.report(save).unwrap().is_settled());
 }
+
+#[test]
+fn assignment_has_sel_agrees_with_sel_from_assignment() {
+    for (source_kind, identity) in [
+        ("compiled", "Gatherer"),
+        ("compiled", "no-such-card"),
+        ("file", "looper.ts"),
+        ("catalog", "Thiever"),
+        ("bogus", "looper.ts"),
+        ("", ""),
+    ] {
+        let assignment = vault::ScriptAssignment {
+            source_kind: source_kind.into(),
+            identity: identity.into(),
+            ..vault::ScriptAssignment::default()
+        };
+        assert_eq!(
+            super::assignment_has_sel(&assignment),
+            super::sel_from_assignment(&assignment).is_some(),
+            "{source_kind}:{identity}"
+        );
+    }
+}

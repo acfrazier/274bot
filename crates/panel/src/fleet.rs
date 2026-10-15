@@ -239,12 +239,22 @@ fn action_bar(ui: &Ui, session: &mut Session) {
             session.fleet_login_selected();
         }
         ui.set_item_tooltip("log in every marked profile, loading the ones not loaded yet");
-        continue_line_if_fits(ui, button_width(ui, &log_out_label));
+    }
+    continue_line_if_fits(ui, button_width(ui, &log_out_label));
+    {
+        let _disabled = blocked(MarkedAction::Logout)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(log_out_label) {
             session.fleet_logout_selected();
         }
         ui.set_item_tooltip("log out every marked profile that is logged in");
-        continue_line_if_fits(ui, button_width(ui, &walk_label));
+    }
+    continue_line_if_fits(ui, button_width(ui, &walk_label));
+    {
+        let _disabled = blocked(MarkedAction::Walk)
+            .is_err()
+            .then(|| ui.begin_disabled());
         if ui.button(walk_label) {
             session.open_walkto_for_marked();
         }
@@ -563,13 +573,12 @@ pub fn window(ui: &Ui, session: &mut Session) {
                 .build();
             sort_combo(ui, session);
             // The surface's universe is every vault profile; marks are
-            // pruned to it at this sync, then the core model decides the
-            // shown rows over it.
+            // pruned to it at the session sync (see
+            // `Session::prune_fleet_marks`, run here as well so the
+            // counts below never lag it), then the core model decides
+            // the shown rows over it.
             let rows = profile_rows(session);
-            session.fleet_selection.retain(
-                rows.iter()
-                    .map(|row| session.core.profile_identity_or_synthetic(row.name())),
-            );
+            session.prune_fleet_marks();
             let mut shown = std::mem::take(&mut session.fleet_shown);
             fill_visible_row_indices(&rows, &session.fleet_filter, session.fleet_sort, &mut shown);
             ui.separator();
@@ -716,6 +725,35 @@ mod tests {
         assert!(session.profile_assignment("alice").is_none());
         let report = session.fleet_report.clone().expect("the assign report");
         assert!(report.contains("Assign"), "{report}");
+    }
+
+    /// Marks are pruned at the per-frame session sync, not only while
+    /// the Fleet window is drawn: with the window closed, one
+    /// `pump_status` drops the mark whose profile is gone and keeps
+    /// the vault profile's mark.
+    #[test]
+    fn marks_are_pruned_at_the_session_sync_with_the_fleet_window_closed() {
+        let dir = crate::test_support::TestDir::new("fleet-prune-closed");
+        let mut session = crate::session::Session::new();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        vault
+            .upsert(vault::Profile {
+                username: "bob".into(),
+                password: "pw".into(),
+                uid: 2,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+        session.core.set_vault(Some(vault));
+        assert!(!session.fleet_open, "the Fleet window stays closed");
+        let bob = session.core.profile_identity("bob").unwrap();
+        session.fleet_selection.set(bob, true);
+        session
+            .fleet_selection
+            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+        session.pump_status();
+        assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
+        assert!(session.fleet_selection.contains(bob));
     }
 
     fn shown_names<'a>(rows: &'a [FleetRow], filter: &str, order: FleetOrder) -> Vec<&'a str> {

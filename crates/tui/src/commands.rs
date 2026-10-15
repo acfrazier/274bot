@@ -5,7 +5,9 @@
 //! shortcuts: each table below is routed only while its pane has keyboard
 //! focus, so no letter leaks into another pane or a text field.
 
-use frontend_core::{marked_availability, MarkedAction, MarkedBlock};
+use frontend_core::{
+    combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock,
+};
 use script::RunState;
 
 use crate::app::{TuiApp, WalkSendMode};
@@ -385,20 +387,25 @@ impl Command {
             Some(name) => format!("BOT {name}"),
             None => "no bot selected".to_string(),
         };
-        let selected_scope = || {
-            if app.table.selection.is_empty() {
-                format!("all {}", members_text(app.names.len()))
-            } else {
-                format!("{} marked bots", app.table.selection.len())
-            }
+        let selected_scope = || match combined_bulk_scope(&app.table.selection) {
+            BulkScope::All => format!("all {}", members_text(app.names.len())),
+            BulkScope::Marked => format!("{} marked bots", app.table.selection.len()),
         };
         match self.group() {
             Group::App => "app".into(),
             Group::Logs => "log".into(),
             Group::Fleet => match self {
-                Command::LoadLoginAll if !app.table.selection.is_empty() => selected_scope(),
+                Command::LoadLoginAll
+                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                {
+                    selected_scope()
+                }
                 Command::LoadLoginAll => "every vault profile".into(),
-                Command::LogoutAll if !app.table.selection.is_empty() => selected_scope(),
+                Command::LogoutAll
+                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                {
+                    selected_scope()
+                }
                 Command::LogoutAll => format!("all {}", members_text(app.names.len())),
                 Command::ImportProfiles => "vault".into(),
                 _ => "fleet table".into(),

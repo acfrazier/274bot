@@ -1959,6 +1959,16 @@ pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> 
     Some(script::ScriptSel::Loaded(source, asg.identity.clone()))
 }
 
+/// Whether [`sel_from_assignment`] would name a card for `asg`, decided
+/// by borrowing only (the selection `sel_from_assignment` builds clones
+/// the stored identity, which a per-frame enable check must not do).
+pub(crate) fn assignment_has_sel(asg: &ScriptAssignment) -> bool {
+    if asg.source_kind == "compiled" {
+        return script::compiled_id(&asg.identity).is_some();
+    }
+    script::parse_source_kind(&asg.source_kind).is_some()
+}
+
 /// The library lookup for a card: a File card by path, others by name.
 fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String {
     match source {

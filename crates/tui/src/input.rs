@@ -304,7 +304,7 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            let marked = combined_bulk_scope(!self.table.selection.is_empty()) == BulkScope::Marked;
+            let marked = combined_bulk_scope(&self.table.selection) == BulkScope::Marked;
             let members = if marked {
                 self.marked_names()
             } else {

@@ -156,6 +156,42 @@ fn scope_names(members: &[String]) -> String {
     text
 }
 
+/// Rows `line` occupies when word-wrapped at `width` cells, mirroring
+/// the confirmation [`Paragraph`]'s `Wrap { trim: false }`: words move
+/// whole to the next row, a word longer than a row is split across
+/// rows, and the separating space stays on the row it ends. Used to
+/// size the confirm popup so wrapped text is never clipped; the
+/// popup keeps one further row of slack below the text.
+fn wrapped_rows(line: &str, width: usize) -> usize {
+    let mut rows = 1;
+    let mut col = 0;
+    for (index, word) in line.split(' ').enumerate() {
+        if index > 0 {
+            if col >= width {
+                rows += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        let mut rest = Line::from(word).width();
+        if rest <= width && col > 0 && col + rest > width {
+            rows += 1;
+            col = 0;
+        }
+        while rest > 0 {
+            if col >= width {
+                rows += 1;
+                col = 0;
+            }
+            let take = rest.min(width - col);
+            col += take;
+            rest -= take;
+        }
+    }
+    rows
+}
+
 impl Confirm {
     fn title(&self, app: &TuiApp) -> &'static str {
         match &self.kind {
@@ -651,24 +687,32 @@ impl TuiApp {
         let lines = confirm.lines(self);
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
         let width = (longest + 4).clamp(30, 90).min(area.width);
-        let height = (lines.len() as u16 + 4).min(area.height);
+        // Size by wrapped rows, not logical lines: a line longer than
+        // the popup wraps onto extra rows, and a popup sized by line
+        // count would cut the overflow (and any line after it) off.
+        let text_width = usize::from(width.saturating_sub(2).max(1));
+        let wrapped: usize = lines
+            .iter()
+            .map(|line| wrapped_rows(line, text_width))
+            .sum();
+        let height = (wrapped as u16 + 4).min(area.height);
+        let paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
+            .wrap(Wrap { trim: false });
         let popup = centered(area, width, height);
         Clear.render(popup, buf);
         let title = format!(" {} ", confirm.title(self));
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(popup);
         block.render(popup, buf);
-        Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
-            .wrap(Wrap { trim: false })
-            .render(
-                Rect::new(
-                    inner.x,
-                    inner.y,
-                    inner.width,
-                    inner.height.saturating_sub(1),
-                ),
-                buf,
-            );
+        paragraph.render(
+            Rect::new(
+                inner.x,
+                inner.y,
+                inner.width,
+                inner.height.saturating_sub(1),
+            ),
+            buf,
+        );
         self.regions.modal = popup;
         if inner.height == 0 {
             return;
