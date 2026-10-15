@@ -210,8 +210,10 @@ pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
 /// Inline job storage and the shared PNG allocation's two reference counts.
 pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize =
     std::mem::size_of::<WalkMapDecodeJob>() + 2 * std::mem::size_of::<usize>();
-/// WorkAdmission scratch reservation for png 0.18.1: 512 KiB parser limits
-/// for raw chunks, one bounded eXIf copy, ≤136 KiB row buffering, and inflater state.
+/// WorkAdmission scratch for png 0.18.1. Text/ICC chunks are skipped; the 512 KiB whole-file
+/// input cap bounds the only unbounded copied chunk (eXIf) and its Info clone (both ≤512 KiB).
+/// Include their overlap, ≤128 KiB unfilter data, ≤1,033-byte row scratch, and bounded inflater
+/// tables; png::Limits separately caps its accounted parser allocations at 512 KiB.
 pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
 const PNG_DECODER_LIMIT_BYTES: usize = 512 * 1024;
 
