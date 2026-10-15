@@ -44,13 +44,33 @@ fn resolve<Io>(selection: &MarkedSelection, core: &OperatorSession<Io>) -> Resol
 /// selected. Callers should retain this report rather than inferring success
 /// from the number of marked rows after the command: a profile can disappear
 /// or change readiness while the per-row admission closure runs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MarkedCommandReport {
-    pub accepted: usize,
-    pub skipped: Vec<BulkSkip>,
+    accepted: usize,
+    skipped: Vec<BulkSkip>,
 }
 
 impl MarkedCommandReport {
+    /// Build a report from already-counted admissions.
+    pub fn from_parts(accepted: usize, skipped: Vec<BulkSkip>) -> Self {
+        Self { accepted, skipped }
+    }
+
+    /// How many marked rows the command admitted.
+    pub fn accepted(&self) -> usize {
+        self.accepted
+    }
+
+    /// Rows that could not take the command, with their reasons.
+    pub fn skipped(&self) -> &[BulkSkip] {
+        &self.skipped
+    }
+
+    /// Take the accepted count and skipped rows.
+    pub fn into_parts(self) -> (usize, Vec<BulkSkip>) {
+        (self.accepted, self.skipped)
+    }
+
     pub fn total(&self) -> usize {
         self.accepted + self.skipped.len()
     }
@@ -63,7 +83,7 @@ impl MarkedCommandReport {
         );
         let mut sep = ": ";
         for skip in &self.skipped {
-            let _ = write!(text, "{sep}{}: {}", skip.profile, skip.reason);
+            let _ = write!(text, "{sep}{}: {}", skip.profile(), skip.reason());
             sep = ", ";
         }
         text
@@ -91,18 +111,15 @@ where
     };
     for identity in selection.iter() {
         let Some((_, profile)) = rows.iter().find(|(row_id, _)| *row_id == identity) else {
-            report.skipped.push(BulkSkip {
-                profile: format!("profile#{}", identity.raw()),
-                reason: "profile unavailable".into(),
-            });
+            report.skipped.push(BulkSkip::new(
+                format!("profile#{}", identity.raw()),
+                "profile unavailable",
+            ));
             continue;
         };
         match admit(profile) {
             Ok(()) => report.accepted += 1,
-            Err(reason) => report.skipped.push(BulkSkip {
-                profile: profile.clone(),
-                reason,
-            }),
+            Err(reason) => report.skipped.push(BulkSkip::new(profile.clone(), reason)),
         }
     }
     report
@@ -166,13 +183,25 @@ pub fn assign_marked<Io>(
 
 /// Which marked bots *Assign & restart* would interrupt, for the
 /// confirmation that names them.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct RestartScope {
     /// Marked bots with an active script: it is stopped, then the card
     /// starts.
-    pub interrupted: Vec<String>,
+    interrupted: Vec<String>,
     /// Marked, loaded bots with no active script: the card just starts.
-    pub starting: Vec<String>,
+    starting: Vec<String>,
+}
+
+impl RestartScope {
+    /// Marked bots with an active script: it is stopped, then the card starts.
+    pub fn interrupted(&self) -> &[String] {
+        &self.interrupted
+    }
+
+    /// Marked, loaded bots with no active script: the card just starts.
+    pub fn starting(&self) -> &[String] {
+        &self.starting
+    }
 }
 
 pub fn restart_scope<Io>(selection: &MarkedSelection, core: &OperatorSession<Io>) -> RestartScope {
@@ -274,7 +303,7 @@ pub fn login_marked<Io, S: SlotSurface<Io = Io>>(
     let mut rows = unavailable_rows(gone);
     let mut eligible = Vec::new();
     for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase);
+        let phase = core.fleet_view().row(&name).map(|row| row.phase());
         let member = core.members().contains(&name);
         match phase.filter(|_| member) {
             Some(Phase::Ready) => rows.push(BulkRow::new(
@@ -323,7 +352,7 @@ pub fn logout_marked<Io>(
     let mut rows = unavailable_rows(gone);
     let mut eligible = Vec::new();
     for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase);
+        let phase = core.fleet_view().row(&name).map(|row| row.phase());
         let member = core.members().contains(&name);
         match phase.filter(|_| member) {
             None | Some(Phase::Offline | Phase::LoggedOut | Phase::Failed) => {
@@ -373,7 +402,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
         }
         script::ScriptSel::Loaded(card_source, lookup) => {
             let (name, path) = scripts
-                .js
+                .js()
                 .get(*card_source, lookup)
                 .map(|card| (card.name.clone(), card.path.clone()))
                 .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;

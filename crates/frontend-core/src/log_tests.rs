@@ -11,7 +11,7 @@ fn line(store: &LogStore, slot: Option<&str>, source: Source, level: Level, mess
 }
 
 fn messages(view: &LogView) -> Vec<&str> {
-    view.rows().iter().map(|e| &*e.message).collect()
+    view.rows().iter().map(|e| e.message()).collect()
 }
 
 #[test]
@@ -37,23 +37,23 @@ fn each_slot_ring_keeps_its_newest_500_and_counts_what_it_evicted() {
         "a flooding slot never evicts another"
     );
 
-    let mut view = LogView::new(LogScope::Slot("alice".into()));
+    let mut view = LogView::new(LogScope::slot("alice"));
     store.refresh(&mut view);
     assert_eq!(view.len(), SLOT_RING_CAP);
-    assert_eq!(view.rows().front().unwrap().message.as_ref(), "a700");
-    assert_eq!(view.rows().back().unwrap().message.as_ref(), "a1199");
+    assert_eq!(view.rows().front().unwrap().message(), "a700");
+    assert_eq!(view.rows().back().unwrap().message(), "a1199");
     assert_eq!(view.dropped(), 700);
 
     let mut process = LogView::new(LogScope::Process);
     store.refresh(&mut process);
     assert_eq!(process.len(), PROCESS_RING_CAP);
-    assert_eq!(process.rows().front().unwrap().message.as_ref(), "p100");
+    assert_eq!(process.rows().front().unwrap().message(), "p100");
 }
 
 #[test]
 fn a_view_appends_new_lines_and_skips_work_when_nothing_changed() {
     let store = LogStore::new();
-    let mut view = LogView::new(LogScope::Slot("alice".into()));
+    let mut view = LogView::new(LogScope::slot("alice"));
     line(&store, Some("alice"), Source::Script, Level::Info, "one");
     assert!(store.refresh(&mut view));
     assert!(!store.refresh(&mut view), "unchanged store: no work");
@@ -107,11 +107,11 @@ fn filters_by_level_source_and_case_insensitive_text() {
         "answered choice 2 for npc",
     );
 
-    let mut view = LogView::new(LogScope::Slot("alice".into()));
+    let mut view = LogView::new(LogScope::slot("alice"));
     store.refresh(&mut view);
     assert_eq!(view.len(), 4, "debug is hidden by the default Info minimum");
 
-    view.edit_filter(|f| f.min_level = Level::Warn);
+    view.edit_filter(|f| f.set_min_level(Level::Warn));
     store.refresh(&mut view);
     assert_eq!(
         messages(&view),
@@ -119,7 +119,7 @@ fn filters_by_level_source_and_case_insensitive_text() {
     );
 
     view.edit_filter(|f| {
-        f.min_level = Level::Debug;
+        f.set_min_level(Level::Debug);
         f.set_source(Some(Source::Script));
     });
     store.refresh(&mut view);
@@ -128,16 +128,16 @@ fn filters_by_level_source_and_case_insensitive_text() {
 
     view.edit_filter(|f| {
         f.set_source(None);
-        f.text = "OAK".into();
+        f.set_text("OAK");
     });
     store.refresh(&mut view);
     assert_eq!(messages(&view), ["Chopping Oak"]);
 
-    view.edit_filter(|f| f.text = "ALI".into());
+    view.edit_filter(|f| f.set_text("ALI"));
     store.refresh(&mut view);
     assert_eq!(view.len(), 5, "text search also matches the slot name");
 
-    view.edit_filter(|f| f.text = "no such text".into());
+    view.edit_filter(|f| f.set_text("no such text"));
     store.refresh(&mut view);
     assert!(view.is_empty());
     line(&store, s, Source::Script, Level::Info, "still no match");
@@ -159,7 +159,7 @@ fn scope_switches_between_slot_process_and_all_in_order() {
     line(&store, Some("bob"), Source::Login, Level::Info, "b1");
     line(&store, Some("alice"), Source::Script, Level::Info, "a2");
 
-    let mut view = LogView::new(LogScope::Slot("alice".into()));
+    let mut view = LogView::new(LogScope::slot("alice"));
     store.refresh(&mut view);
     assert_eq!(messages(&view), ["a1", "a2"]);
 
@@ -182,7 +182,7 @@ fn scope_switches_between_slot_process_and_all_in_order() {
     line(&store, Some("bob"), Source::Login, Level::Info, "b2");
     line(&store, Some("alice"), Source::Script, Level::Info, "a3");
     store.refresh(&mut view);
-    assert_eq!(view.rows().back().unwrap().message.as_ref(), "a3");
+    assert_eq!(view.rows().back().unwrap().message(), "a3");
     assert_eq!(view.len(), 6);
 }
 
@@ -206,7 +206,7 @@ fn registered_passwords_never_reach_a_row_a_copy_or_a_save() {
         Level::Error,
         &format!("login failed for {profile:?} with fcpass77 (old fcpass)"),
     );
-    let mut view = LogView::new(LogScope::Slot("alice".into()));
+    let mut view = LogView::new(LogScope::slot("alice"));
     store.refresh(&mut view);
     let text = view.to_text();
     assert!(!text.contains("fcpass"), "{text}");

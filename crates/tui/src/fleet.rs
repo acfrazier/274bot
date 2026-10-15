@@ -27,15 +27,15 @@ pub fn member_row<'a>(
 ) -> Option<&'a FleetRow> {
     let name = names.get(index)?;
     match rows.get(index) {
-        Some(row) if row.name == *name => Some(row),
-        _ => rows.iter().find(|row| row.name == *name),
+        Some(row) if row.name() == *name => Some(row),
+        _ => rows.iter().find(|row| row.name() == *name),
     }
 }
 
 /// The row's status label (the one the panel's caps show); a member not
 /// projected yet is offline.
 pub fn state_label(row: Option<&FleetRow>) -> &str {
-    row.map_or(Phase::Offline.label(), |row| row.brief.as_str())
+    row.map_or(Phase::Offline.label(), |row| row.brief())
 }
 
 /// ASCII case-insensitive substring test without allocating.
@@ -51,7 +51,7 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
 /// or a status substring: the phase (`ready`, `queued`, `login error`, …)
 /// or the row's label (`running`, `idle`, …).
 fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
-    let phase = row.map_or(Phase::Offline, |row| row.phase);
+    let phase = row.map_or(Phase::Offline, |row| row.phase());
     if contains_ci(name, term)
         || contains_ci(phase.label(), term)
         || contains_ci(state_label(row), term)
@@ -68,7 +68,7 @@ fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
     };
     number
         .parse::<u16>()
-        .is_ok_and(|world| row.and_then(|row| row.world) == Some(world))
+        .is_ok_and(|world| row.and_then(|row| row.world()) == Some(world))
 }
 
 /// Every whitespace-separated filter term must match.
@@ -401,7 +401,7 @@ impl FleetTable<'_> {
             }
             cell.push(' ');
             let world_at = cell.len();
-            match row.and_then(|row| row.world) {
+            match row.and_then(|row| row.world()) {
                 Some(world) => {
                     let _ = write!(cell, "w{world}");
                 }
@@ -414,7 +414,7 @@ impl FleetTable<'_> {
             if wide {
                 cell.push(' ');
                 let queue_at = cell.len();
-                match row.and_then(|row| row.queue) {
+                match row.and_then(|row| row.queue()) {
                     Some(place) => {
                         let _ = write!(cell, "{}/{}", place.position, place.total);
                     }
@@ -424,7 +424,7 @@ impl FleetTable<'_> {
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
                 cell.push_str(run_state_label(
-                    row.map_or(RunState::Idle, |row| row.script),
+                    row.map_or(RunState::Idle, |row| row.script()),
                 ));
             }
             if is_cursor && keys {

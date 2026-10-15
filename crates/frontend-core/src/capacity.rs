@@ -7,7 +7,7 @@ pub use host::{CapacityWarning, RenderPolicyLabel};
 /// One process-wide warning: this machine is not giving the bots CPU time
 /// when they need it. Panel, TUI and the session log all show
 /// [`Self::notice_text`]. Built only when the warning's figures change.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct CapacityNotice {
     warning: CapacityWarning,
     text: String,

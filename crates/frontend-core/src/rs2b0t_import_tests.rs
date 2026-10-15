@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Vault};
 
 use super::*;
+use crate::operations::Outcome;
 
 const FIXTURE: &str = include_str!("../tests/fixtures/rs2b0t-profiles.json");
 const PASSWORDS: [&str; 2] = ["fake-pass-alice", "fake-pass-bob"];
@@ -509,7 +510,7 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
     core.flush_writes();
     assert!(matches!(
         core.operation(later).unwrap().outcome("rvimprobe"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     let results = run.results(&core);
     assert!(!durable(&results[0].1), "{results:?}");
@@ -1651,7 +1652,7 @@ fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
 
     let mut view = crate::log::LogView::new(crate::log::LogScope::All);
     store.refresh(&mut view);
-    let messages: Vec<&str> = view.rows().iter().map(|row| &*row.message).collect();
+    let messages: Vec<&str> = view.rows().iter().map(|row| row.message()).collect();
     assert!(
         messages
             .iter()
@@ -1805,7 +1806,7 @@ fn r3_h3_a_password_repeated_in_any_other_field_reaches_no_text() {
     store.refresh(&mut view);
     for row in view.rows() {
         for (label, secret) in &secrets {
-            leaks.check(secret, &format!("{label}: log line"), &row.message);
+            leaks.check(secret, &format!("{label}: log line"), row.message());
         }
     }
     leaks.assert_none();

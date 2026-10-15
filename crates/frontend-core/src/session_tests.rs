@@ -35,11 +35,7 @@ impl SlotSurface for Recorder {
             self.attached += 1;
             self.attached
         });
-        SlotAttach {
-            io,
-            input: None,
-            mailbox: None,
-        }
+        SlotAttach::new(io, None, None)
     }
 
     fn lifetime_reset(&mut self, name: &str) {
@@ -763,12 +759,7 @@ fn offline_start_and_stop_settle_through_poll() {
     let op = s
         .start_script(
             "alice",
-            ScriptStart::Load {
-                js,
-                shape,
-                bag: None,
-                siblings: Vec::new(),
-            },
+            ScriptStart::load(js, shape, None, Vec::new()),
             Some("file:looping".into()),
         )
         .unwrap();
@@ -802,7 +793,7 @@ fn offline_start_and_stop_settle_through_poll() {
     );
     let resume = s.toggle_pause("alice");
     assert_eq!(
-        s.operation(resume).unwrap().action,
+        s.operation(resume).unwrap().action(),
         ActionKind::ScriptResume
     );
 
@@ -829,12 +820,7 @@ fn a_start_refused_by_the_host_is_an_error_not_an_operation() {
     let mut s = session("start-refused", &[]);
     let refused = s.start_script(
         "ghost",
-        ScriptStart::Load {
-            js: String::new(),
-            shape: script::LoadShape::Reject,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(String::new(), script::LoadShape::Reject, None, Vec::new()),
         None,
     );
     assert_eq!(
@@ -871,21 +857,21 @@ fn transitions_report_each_change_once() {
     assert_eq!(
         s.transitions()
             .iter()
-            .map(|t| t.transition.clone())
+            .map(|t| t.transition())
             .collect::<Vec<_>>(),
-        [Transition::Ingame, Transition::Scene(2)]
+        [&Transition::Ingame, &Transition::scene(2)]
     );
 }
 
 /// Rows of `slot`'s ring in the shared store (tests use unique slot names:
 /// the store is process-wide).
 fn slot_log(slot: &str) -> Vec<(Source, Level, String)> {
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
-    view.edit_filter(|f| f.min_level = Level::Debug);
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
+    view.edit_filter(|f| f.set_min_level(Level::Debug));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .map(|e| (e.source, e.level, e.message.to_string()))
+        .map(|e| (e.source(), e.level(), e.message().to_string()))
         .collect()
 }
 
@@ -1122,14 +1108,14 @@ fn lines_recorded_by_the_poll_carry_the_slots_current_tick() {
     .unwrap();
     push_status(&s, row("logtick-gus"));
     s.poll();
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot("logtick-gus".into()));
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot("logtick-gus"));
     crate::log::global().refresh(&mut view);
     let up = view
         .rows()
         .iter()
-        .find(|e| &*e.message == "slot up")
+        .find(|e| e.message() == "slot up")
         .unwrap();
-    assert_eq!(up.tick, Some(4242));
+    assert_eq!(up.tick(), Some(4242));
 }
 
 #[test]
@@ -1196,12 +1182,7 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",
-        ScriptStart::Load {
-            js: card.js,
-            shape: card.shape,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(card.js, card.shape, None, Vec::new()),
         Some("file:broken".into()),
     )
     .unwrap();
@@ -1362,16 +1343,12 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
     assert_eq!(
-        (
-            failures[0].op,
-            failures[0].target.as_str(),
-            failures[0].label
-        ),
+        (failures[0].op(), failures[0].target(), failures[0].label()),
         (op, "alice", "random"),
         "{failures:?}"
     );
@@ -1399,12 +1376,7 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
     let (js, shape) = looping_bot(&iso.dir);
-    let load = |js: &str| ScriptStart::Load {
-        js: js.to_string(),
-        shape,
-        bag: None,
-        siblings: Vec::new(),
-    };
+    let load = |js: &str| ScriptStart::load(js.to_string(), shape, None, Vec::new());
     s.start_script("alice", load(&js), None).unwrap();
     settle_start(&mut s);
     // Reload shape: Stop, then a replacement Start queued behind the reap.
@@ -1505,7 +1477,12 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     assert!(!alice.random_events.load(Ordering::Relaxed));
     assert!(!alice.lamp_auto.load(Ordering::Relaxed));
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Prayer");
-    let outcome = |op| s.operation(op).unwrap().outcome("alice").cloned();
+    let outcome = |op| {
+        s.operation(op)
+            .unwrap()
+            .outcome("alice")
+            .map(|o| o.duplicate())
+    };
     assert_eq!(outcome(auto), Some(Outcome::Completed));
     assert_eq!(
         outcome(magic),
@@ -1531,7 +1508,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alicia"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert!(
         s.vault().unwrap().get("alice").is_some(),
@@ -1780,7 +1757,7 @@ fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fai
     );
     assert!(matches!(
         s.operation(off).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert_eq!(s.take_write_failures().len(), 1, "one failure reported");
     let saved = s.vault().unwrap().get("alice").unwrap();
@@ -1922,9 +1899,22 @@ use crate::{FormNotice, FormSettled, ProfileFormSave};
 fn outcomes(settled: &[FormSettled]) -> Vec<(&'static str, String, bool)> {
     settled
         .iter()
-        .map(|s| match s {
-            FormSettled::Saved(s) => ("saved", s.record.destination.clone(), s.same_form),
-            FormSettled::Failed(f) => ("failed", f.record.destination.clone(), f.same_form),
+        .map(|s| {
+            if let Some(saved) = s.as_saved() {
+                (
+                    "saved",
+                    saved.record().destination().to_string(),
+                    saved.same_form(),
+                )
+            } else if let Some(failed) = s.as_failed() {
+                (
+                    "failed",
+                    failed.record().destination().to_string(),
+                    failed.same_form(),
+                )
+            } else {
+                panic!("unexpected settled save: {s:?}")
+            }
         })
         .collect()
 }
@@ -1970,7 +1960,7 @@ fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
     assert_eq!(
-        (failures[0].op, failures[0].target.as_str()),
+        (failures[0].op(), failures[0].target()),
         (op, "alice"),
         "the failure names its operation and profile"
     );
@@ -1980,7 +1970,7 @@ fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
     );
     assert_eq!(
         form.notice(),
-        Some(&FormNotice::Failed(failures[0].to_string())),
+        Some(&FormNotice::failed(failures[0].to_string())),
         "the form shows the banner's text"
     );
     assert!(!form.saving(&s), "a failed save can be retried");
@@ -2033,7 +2023,10 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
     // what the save carried.
     s.set_auto_login("alice", true).unwrap();
     assert_eq!(
-        s.saves_in_flight().iter().map(|r| r.op).collect::<Vec<_>>(),
+        s.saves_in_flight()
+            .iter()
+            .map(|r| r.op())
+            .collect::<Vec<_>>(),
         [op],
         "the session's record of the save is all that says it is in flight"
     );
@@ -2044,16 +2037,20 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
 
     assert!(s.saves_in_flight().is_empty());
     let settled = form.settle(&mut s);
-    let [FormSettled::Failed(failed)] = settled.as_slice() else {
+    let [failed] = settled.as_slice() else {
         panic!("one failed save, got {settled:?}");
     };
-    assert_eq!(failed.record.op, op);
-    assert_eq!(failed.record.source.as_deref(), Some("alice"));
-    assert_eq!(failed.record.destination, "alice");
+    let Some(failed) = failed.as_failed() else {
+        panic!("one failed save, got {settled:?}");
+    };
+    assert_eq!(failed.record().op(), op);
+    assert_eq!(failed.record().source(), Some("alice"));
+    assert_eq!(failed.record().destination(), "alice");
     let mut expected = alice_with(&s, "typed");
     expected.settings.auto_login = false;
     assert_eq!(
-        failed.record.draft, expected,
+        failed.record().draft(),
+        &expected,
         "the typed draft as submitted, not the restored row or a later edit"
     );
     assert_eq!(s.vault().unwrap().get("alice").unwrap().password, "pw");
@@ -2205,11 +2202,11 @@ fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
             );
             let failures = s.take_write_failures();
             assert_eq!(
-                failures.iter().map(|f| f.op).collect::<Vec<_>>(),
+                failures.iter().map(|f| f.op()).collect::<Vec<_>>(),
                 [second],
                 "one report, by the write that owns the row"
             );
-            assert!(matches!(form.notice(), Some(FormNotice::Failed(_))));
+            assert!(form.notice().is_some_and(FormNotice::is_failed));
         } else {
             assert_eq!(
                 settled,
@@ -2219,10 +2216,7 @@ fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
                 ],
                 "the superseded save is durable inside the later one's row"
             );
-            assert_eq!(
-                form.notice(),
-                Some(&FormNotice::Saved("Saved alice.".into()))
-            );
+            assert_eq!(form.notice(), Some(&FormNotice::saved("Saved alice.")));
             let disk = Vault::unlock(&vault_path(&test), "test-passphrase-01").unwrap();
             assert_eq!(disk.get("alice").unwrap().password, "second");
         }
@@ -2269,7 +2263,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
     assert_eq!(
         failures
             .iter()
-            .map(|f| (f.op, f.target.as_str()))
+            .map(|f| (f.op(), f.target()))
             .collect::<Vec<_>>(),
         [(delete, "alice")]
     );
@@ -2374,11 +2368,10 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
         .fleet_view()
         .row("alice")
         .expect("member row")
-        .last_op
-        .as_ref()
+        .last_op()
         .expect("a reported operation");
-    assert_eq!(last.action, ActionKind::Login);
-    assert_eq!(last.outcome, Outcome::Completed);
+    assert_eq!(last.action(), ActionKind::Login);
+    assert_eq!(last.outcome(), &Outcome::Completed);
 }
 
 #[test]
@@ -2436,12 +2429,12 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert!(s
         .take_write_failures()
         .iter()
-        .any(|failure| failure.label == "memory"));
+        .any(|failure| failure.label() == "memory"));
     assert!(
         s.vault().unwrap().get("alice").unwrap().settings.lowmem,
         "the staged edit is rolled back to the durable value"
@@ -2470,12 +2463,7 @@ fn memory_relog_warns_while_a_script_runs() {
     let (js, shape) = looping_bot(&iso.dir);
     s.start_script(
         "alice",
-        ScriptStart::Load {
-            js,
-            shape,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(js, shape, None, Vec::new()),
         Some("file:looping".into()),
     )
     .unwrap();
@@ -2647,11 +2635,7 @@ impl SlotSurface for MemoryOverrideSurface {
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
         profile.settings.lowmem = false;
-        SlotAttach {
-            io: retained.unwrap_or_default(),
-            input: None,
-            mailbox: None,
-        }
+        SlotAttach::new(retained.unwrap_or_default(), None, None)
     }
 
     fn lifetime_reset(&mut self, _name: &str) {}
@@ -2676,12 +2660,12 @@ fn session_memory_override_is_the_effective_mode_not_a_permanent_notice() {
 
 fn capacity_log() -> Vec<(Level, String)> {
     let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
-    view.edit_filter(|f| f.min_level = Level::Debug);
+    view.edit_filter(|f| f.set_min_level(Level::Debug));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .filter(|e| e.message.starts_with("Host "))
-        .map(|e| (e.level, e.message.to_string()))
+        .filter(|e| e.message().starts_with("Host "))
+        .map(|e| (e.level(), e.message().to_string()))
         .collect()
 }
 

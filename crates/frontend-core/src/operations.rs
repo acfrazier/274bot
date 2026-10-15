@@ -52,37 +52,138 @@ impl ActionKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outcome {
-    /// Accepted; the host has not settled it yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutcomeKind {
     Pending,
     Completed,
-    Skipped(String),
-    Failed(String),
-    /// A later command or the slot's removal superseded it.
+    Skipped,
+    Failed,
     Cancelled,
 }
 
+/// One member's pending or terminal result.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Outcome {
+    kind: OutcomeKind,
+    reason: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
 impl Outcome {
+    /// Accepted; the host has not settled it yet.
+    pub const Pending: Self = Self {
+        kind: OutcomeKind::Pending,
+        reason: None,
+    };
+
+    /// The command took effect.
+    pub const Completed: Self = Self {
+        kind: OutcomeKind::Completed,
+        reason: None,
+    };
+
+    /// A later command or the slot's removal superseded it.
+    pub const Cancelled: Self = Self {
+        kind: OutcomeKind::Cancelled,
+        reason: None,
+    };
+
+    /// A skip with `reason`.
+    pub fn skipped(reason: impl Into<String>) -> Self {
+        Self {
+            kind: OutcomeKind::Skipped,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// A failure with `reason`.
+    pub fn failed(reason: impl Into<String>) -> Self {
+        Self {
+            kind: OutcomeKind::Failed,
+            reason: Some(reason.into()),
+        }
+    }
+
     pub fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
+        self.kind == OutcomeKind::Pending
+    }
+
+    /// Whether this member completed.
+    pub fn is_completed(&self) -> bool {
+        self.kind == OutcomeKind::Completed
+    }
+
+    /// Whether this member was skipped.
+    pub fn is_skipped(&self) -> bool {
+        self.kind == OutcomeKind::Skipped
+    }
+
+    /// Whether this member failed.
+    pub fn is_failed(&self) -> bool {
+        self.kind == OutcomeKind::Failed
+    }
+
+    /// Whether a later command superseded this member.
+    pub fn is_cancelled(&self) -> bool {
+        self.kind == OutcomeKind::Cancelled
+    }
+
+    /// Skip or failure text, when this outcome carries one.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    /// A second owner of the same outcome (the report row and the change
+    /// journal). Not [`Clone`]: seam types do not derive it.
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            kind: self.kind,
+            reason: self.reason.clone(),
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MemberOutcome {
-    pub slot: String,
-    pub outcome: Outcome,
+    slot: String,
+    outcome: Outcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl MemberOutcome {
+    /// The targeted member.
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
+
+    /// That member's outcome.
+    pub fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct OperationReport {
-    pub id: OperationId,
-    pub action: ActionKind,
-    pub members: Vec<MemberOutcome>,
+    id: OperationId,
+    action: ActionKind,
+    members: Vec<MemberOutcome>,
 }
 
 impl OperationReport {
+    /// The operation identity.
+    pub fn id(&self) -> OperationId {
+        self.id
+    }
+
+    /// The action this report is for.
+    pub fn action(&self) -> ActionKind {
+        self.action
+    }
+
+    /// Every targeted member, in the order they were recorded.
+    pub fn members(&self) -> &[MemberOutcome] {
+        &self.members
+    }
+
     pub fn outcome(&self, slot: &str) -> Option<&Outcome> {
         self.members
             .iter()
@@ -96,16 +197,22 @@ impl OperationReport {
 
     /// First failure text, formatted `slot: reason` for multi-member scopes.
     pub fn first_failure(&self) -> Option<String> {
-        self.members.iter().find_map(|m| match &m.outcome {
-            Outcome::Failed(reason) if self.members.len() == 1 => Some(reason.clone()),
-            Outcome::Failed(reason) => Some(format!("{}: {reason}", m.slot)),
-            _ => None,
+        self.members.iter().find_map(|m| {
+            let reason = m.outcome.reason()?;
+            if !m.outcome.is_failed() {
+                return None;
+            }
+            if self.members.len() == 1 {
+                Some(reason.to_owned())
+            } else {
+                Some(format!("{}: {reason}", m.slot))
+            }
         })
     }
 }
 
 /// One member outcome that changed: what the log and the fleet rows see.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct OpChange {
     pub id: OperationId,
     pub action: ActionKind,
@@ -123,11 +230,11 @@ pub(crate) fn write_op(
 ) -> std::fmt::Result {
     write!(out, "op#{} {} ", id.0, action.label())?;
     match outcome {
-        Outcome::Pending => out.write_str("accepted"),
-        Outcome::Completed => out.write_str("completed"),
-        Outcome::Skipped(reason) => write!(out, "skipped: {reason}"),
-        Outcome::Failed(reason) => write!(out, "failed: {reason}"),
-        Outcome::Cancelled => out.write_str("cancelled"),
+        _ if outcome.is_pending() => out.write_str("accepted"),
+        _ if outcome.is_completed() => out.write_str("completed"),
+        _ if outcome.is_skipped() => write!(out, "skipped: {}", outcome.reason().unwrap_or("")),
+        _ if outcome.is_failed() => write!(out, "failed: {}", outcome.reason().unwrap_or("")),
+        _ => out.write_str("cancelled"),
     }
 }
 
@@ -176,10 +283,10 @@ impl OperationBook {
         let report = &mut self.reports[index];
         match report.members.iter_mut().find(|m| m.slot == slot) {
             Some(member) if member.outcome == outcome => return,
-            Some(member) => member.outcome = outcome.clone(),
+            Some(member) => member.outcome = outcome.duplicate(),
             None => report.members.push(MemberOutcome {
                 slot: slot.to_string(),
-                outcome: outcome.clone(),
+                outcome: outcome.duplicate(),
             }),
         }
         self.changes.push(OpChange {
@@ -206,7 +313,7 @@ impl OperationBook {
                             id: report.id,
                             action,
                             slot: member.slot.clone(),
-                            outcome: member.outcome.clone(),
+                            outcome: member.outcome.duplicate(),
                         });
                     }
                 }
@@ -228,12 +335,12 @@ impl OperationBook {
         for report in reports.iter_mut().filter(|r| r.action == action) {
             for member in report.members.iter_mut() {
                 if member.slot == slot && member.outcome.is_pending() {
-                    member.outcome = outcome.clone();
+                    member.outcome = outcome.duplicate();
                     changes.push(OpChange {
                         id: report.id,
                         action,
                         slot: member.slot.clone(),
-                        outcome: outcome.clone(),
+                        outcome: outcome.duplicate(),
                     });
                 }
             }

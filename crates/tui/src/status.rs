@@ -71,7 +71,7 @@ impl Widget for StatusPane<'_> {
                 Line::from(format!("walk: {}", self.walk)),
             ],
             Some(d) => {
-                let mut lines = vec![Line::from(format!("state: {}", d.state))];
+                let mut lines = vec![Line::from(format!("state: {}", d.state()))];
                 if let Some(script) = d.script_phase() {
                     lines.push(Line::from(format!("script: {}", script.label())));
                     if let Some(phase) = script.phase() {
@@ -81,38 +81,45 @@ impl Widget for StatusPane<'_> {
                         lines.push(Line::from(format!("reason: {reason}")));
                     }
                 }
-                if let (false, Some(error)) = (d.row.phase.is_error(), d.row.error.as_deref()) {
+                if let (false, Some(error)) = (d.row().phase().is_error(), d.row().error()) {
                     lines.push(Line::from(format!("last error: {error}")));
                 }
-                if let Some(op) = d.row.last_op.as_ref() {
+                if let Some(op) = d.row().last_op() {
                     lines.push(Line::from(format!("operation: {op}")));
                 }
-                if let Some(random) = d.random.as_deref() {
+                if let Some(random) = d.random() {
                     lines.push(Line::from(format!("random: {random}")));
                 }
-                if let Some(welcome) = d.welcome.as_deref() {
+                if let Some(welcome) = d.welcome() {
                     lines.push(Line::from(format!("welcome: {welcome}")));
                 }
-                let player = if d.player.is_empty() { "?" } else { &d.player };
-                let world = match d.row.world {
+                let player = if d.player().is_empty() {
+                    "?"
+                } else {
+                    d.player()
+                };
+                let world = match d.row().world() {
                     Some(number) => format!("w{number}"),
                     None => "local".to_string(),
                 };
-                let queue = match d.row.queue {
+                let queue = match d.row().queue() {
                     Some(place) => place.to_string(),
                     None => "—".to_string(),
                 };
                 lines.push(Line::from(format!("player: {player} · world: {world}")));
                 lines.push(Line::from(format!(
                     "tile: {} {} · walk: {}",
-                    d.tile.0, d.tile.1, self.walk
+                    d.tile().0,
+                    d.tile().1,
+                    self.walk
                 )));
-                if let Some(reason) = d.manual_walk_risk.as_deref() {
+                if let Some(reason) = d.manual_walk_risk() {
                     lines.push(Line::from(format!("Walk risk: {reason}")));
                 }
                 lines.push(Line::from(format!(
                     "queue: {queue} · modals: {} · mem: {}",
-                    d.modal, self.mem
+                    d.modal(),
+                    self.mem
                 )));
                 if let Some(note) = self.mem_notice {
                     lines.push(Line::from(format!("mem: {note}")));
@@ -121,15 +128,15 @@ impl Widget for StatusPane<'_> {
             }
         };
         if let Some(view) = self.resources {
-            let mut bots = format!("bots: {}", format_bots(view.bots, view.ingame));
-            if view.background > 0 {
+            let mut bots = format!("bots: {}", format_bots(view.bots(), view.ingame()));
+            if view.background() > 0 {
                 bots.push_str(" · ");
-                bots.push_str(&format_background(view.background));
+                bots.push_str(&format_background(view.background()));
             }
             lines.push(Line::from(bots));
-            lines.push(Line::from(format!("cpu: {}", view.cpu.text())));
-            lines.push(Line::from(format!("ram: {}", view.ram.text())));
-            lines.push(Line::from(format!("traffic: {}", view.traffic.text())));
+            lines.push(Line::from(format!("cpu: {}", view.cpu().text())));
+            lines.push(Line::from(format!("ram: {}", view.ram().text())));
+            lines.push(Line::from(format!("traffic: {}", view.traffic().text())));
         }
         if let Some(notice) = self.background_notice {
             lines.push(Line::from(format!("notice: {notice}")));
@@ -170,18 +177,15 @@ mod tests {
     #[test]
     fn a_retrying_slot_shows_its_last_error_and_operation() {
         let mut detail = SlotDetail::default();
-        detail.row = FleetRow {
-            name: "alice".into(),
-            phase: Phase::Connecting,
-            error: Some("code 5: already logged in".into()),
-            last_op: Some(OpBrief {
-                id: OperationId(7),
-                action: ActionKind::Login,
-                outcome: Outcome::Pending,
-            }),
-            ..FleetRow::default()
-        };
-        detail.state = "logging in…".into();
+        let mut row = FleetRow::fixture("alice", Phase::Connecting, None, None);
+        row.set_error(Some("code 5: already logged in".into()));
+        row.set_last_op(Some(OpBrief::new(
+            OperationId(7),
+            ActionKind::Login,
+            Outcome::Pending,
+        )));
+        detail.set_row(row);
+        detail.set_state("logging in…");
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 14);
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(
@@ -194,28 +198,21 @@ mod tests {
     #[test]
     fn a_current_error_is_the_state_not_a_last_error() {
         let mut detail = SlotDetail::default();
-        detail.row = FleetRow {
-            name: "bob".into(),
-            phase: Phase::LoginError,
-            error: Some("code 3: invalid username or password".into()),
-            ..FleetRow::default()
-        };
-        detail.state = "login code 3: invalid username or password".into();
+        let mut row = FleetRow::fixture("bob", Phase::LoginError, None, None);
+        row.set_error(Some("code 3: invalid username or password".into()));
+        detail.set_row(row);
+        detail.set_state("login code 3: invalid username or password");
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 12);
         assert!(!text.contains("last error"), "{text:?}");
     }
 
     #[test]
     fn the_meter_shows_measuring_and_unavailable_values() {
-        let view = ResourceView {
-            bots: 0,
-            ingame: 0,
-            background: 0,
-            cpu: Metric::Measuring,
-            ram: Metric::Available("64.0 MB process, peak 80.0 MB".into()),
-            traffic: Metric::Unavailable("no live slots"),
-            ..ResourceView::default()
-        };
+        let view = ResourceView::with_metrics(
+            Metric::Measuring,
+            Metric::available("64.0 MB process, peak 80.0 MB"),
+            Metric::unavailable("no live slots"),
+        );
         let text = render(
             StatusPane::new(None, "—", "lowmem").resources(&view),
             60,
@@ -231,29 +228,23 @@ mod tests {
     #[test]
     fn a_58x14_pane_shows_the_whole_meter() {
         let mut detail = SlotDetail::default();
-        detail.row = FleetRow {
-            name: "fc3bob".into(),
-            phase: Phase::Ready,
-            last_op: Some(OpBrief {
-                id: OperationId(8),
-                action: ActionKind::Logout,
-                outcome: Outcome::Completed,
-            }),
-            ..FleetRow::default()
-        };
-        detail.state = "ingame scene 2".into();
-        detail.player = "Fc3bob".into();
-        detail.tile = (3094, 3106, 0);
-        detail.modal = 3559;
-        let view = ResourceView {
-            bots: 3,
-            ingame: 2,
-            background: 2,
-            cpu: Metric::Available("0.1 cores (0% of 16)".into()),
-            ram: Metric::Available("263.9 MB process, peak 263.9 MB".into()),
-            traffic: Metric::Available("1.2 KB/s".into()),
-            ..ResourceView::default()
-        };
+        let mut row = FleetRow::fixture("fc3bob", Phase::Ready, None, None);
+        row.set_last_op(Some(OpBrief::new(
+            OperationId(8),
+            ActionKind::Logout,
+            Outcome::Completed,
+        )));
+        detail.set_row(row);
+        detail.set_state("ingame scene 2");
+        detail.set_player("Fc3bob");
+        detail.set_tile((3094, 3106, 0));
+        detail.set_modal(3559);
+        let mut view = ResourceView::with_metrics(
+            Metric::available("0.1 cores (0% of 16)"),
+            Metric::available("263.9 MB process, peak 263.9 MB"),
+            Metric::available("1.2 KB/s"),
+        );
+        view.set_counts(3, 2, 2);
         let text = render(
             StatusPane::new(Some(&detail), "—", "lowmem").resources(&view),
             58,
@@ -271,13 +262,10 @@ mod tests {
     #[test]
     fn a_38x6_pane_keeps_the_retry_reason() {
         let mut detail = SlotDetail::default();
-        detail.row = FleetRow {
-            name: "fc3alice".into(),
-            phase: Phase::Connecting,
-            error: Some("code 5: Try again in 60 secs".into()),
-            ..FleetRow::default()
-        };
-        detail.state = "logging in…".into();
+        let mut row = FleetRow::fixture("fc3alice", Phase::Connecting, None, None);
+        row.set_error(Some("code 5: Try again in 60 secs".into()));
+        detail.set_row(row);
+        detail.set_state("logging in…");
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 38, 6);
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(text.contains("last error: code 5"), "{text:?}");
@@ -285,13 +273,8 @@ mod tests {
     #[test]
     fn stopped_native_queue_refusal_precedes_routine_status_rows() {
         let mut detail = SlotDetail::default();
-        detail.row = FleetRow {
-            name: "qs-alice".into(),
-            phase: Phase::Ready,
-            script: script::RunState::Idle,
-            ..FleetRow::default()
-        };
-        detail.state = "ingame scene 2".into();
+        detail.set_row(FleetRow::fixture("qs-alice", Phase::Ready, None, None));
+        detail.set_state("ingame scene 2");
         let status = script::native::ScriptStatus {
             run: api::selected::RunKey {
                 slot: 1,
@@ -328,8 +311,10 @@ mod walk_risk_tests {
     #[test]
     fn manual_refusal_reason_survives_an_unarmed_route() {
         let mut detail = SlotDetail::default();
-        detail.state = "ingame".into();
-        detail.manual_walk_risk = Some(std::sync::Arc::from("Route assessment unknown: Poison"));
+        detail.set_state("ingame");
+        detail.set_manual_walk_risk(Some(std::sync::Arc::from(
+            "Route assessment unknown: Poison",
+        )));
         let mut terminal = Terminal::new(TestBackend::new(90, 14)).unwrap();
         terminal
             .draw(|frame| {

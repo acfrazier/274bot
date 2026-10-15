@@ -12,48 +12,230 @@ use std::path::{Path, PathBuf};
 use super::{PendingCard, PendingStart, Scripts, StartKind};
 use crate::session::{OperatorSession, ScriptStart};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ReloadWarning {
-    pub identity_key: String,
-    pub source: script::ScriptSource,
-    pub lookup: String,
-    pub fingerprint: String,
-    pub epoch: u64,
-    pub running: Vec<String>,
-    pub paused: Vec<String>,
-    pub paused_during_prep: Vec<String>,
-    pub affected_generations: Vec<(String, u64)>,
+    pub(crate) identity_key: String,
+    pub(crate) source: script::ScriptSource,
+    pub(crate) lookup: String,
+    pub(crate) fingerprint: String,
+    pub(crate) epoch: u64,
+    pub(crate) running: Vec<String>,
+    pub(crate) paused: Vec<String>,
+    pub(crate) paused_during_prep: Vec<String>,
+    pub(crate) affected_generations: Vec<(String, u64)>,
 }
 
-#[derive(Debug, Clone)]
-pub enum PendingReloadKind {
+impl ReloadWarning {
+    /// Card identity this warning is bound to.
+    pub fn identity_key(&self) -> &str {
+        &self.identity_key
+    }
+
+    /// Script source of the candidate.
+    pub fn source(&self) -> script::ScriptSource {
+        self.source
+    }
+
+    /// Library lookup name.
+    pub fn lookup(&self) -> &str {
+        &self.lookup
+    }
+
+    /// Candidate fingerprint.
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
+
+    /// Reload generation this warning belongs to.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Running slots that would be replaced.
+    pub fn running(&self) -> &[String] {
+        &self.running
+    }
+
+    /// Paused slots that would be replaced.
+    pub fn paused(&self) -> &[String] {
+        &self.paused
+    }
+
+    /// Slots that paused during prepare.
+    pub fn paused_during_prep(&self) -> &[String] {
+        &self.paused_during_prep
+    }
+
+    /// Affected (slot, generation) pairs.
+    pub fn affected_generations(&self) -> &[(String, u64)] {
+        &self.affected_generations
+    }
+}
+
+pub(crate) struct CatalogPending {
+    pub root: PathBuf,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub failed: Vec<script::LoadFailure>,
+    pub set_fingerprint: String,
+}
+
+enum PendingReloadKindInner {
     Manual,
-    Catalog {
-        root: PathBuf,
-        added: Vec<String>,
-        removed: Vec<String>,
-        failed: Vec<script::LoadFailure>,
-        set_fingerprint: String,
-    },
+    Catalog(CatalogPending),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub struct PendingReloadKind(PendingReloadKindInner);
+
+impl std::fmt::Debug for PendingReloadKindInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Manual => f.write_str("Manual"),
+            Self::Catalog(pending) => f
+                .debug_struct("Catalog")
+                .field("root", &pending.root)
+                .field("added", &pending.added)
+                .field("removed", &pending.removed)
+                .field("failed", &pending.failed)
+                .field("set_fingerprint", &pending.set_fingerprint)
+                .finish(),
+        }
+    }
+}
+
+#[allow(non_upper_case_globals)]
+impl PendingReloadKind {
+    pub const Manual: Self = Self(PendingReloadKindInner::Manual);
+
+    pub(crate) fn catalog(pending: CatalogPending) -> Self {
+        Self(PendingReloadKindInner::Catalog(pending))
+    }
+
+    pub fn is_manual(&self) -> bool {
+        matches!(self.0, PendingReloadKindInner::Manual)
+    }
+
+    pub fn is_catalog(&self) -> bool {
+        matches!(self.0, PendingReloadKindInner::Catalog(_))
+    }
+
+    pub(crate) fn as_catalog(&self) -> Option<&CatalogPending> {
+        match &self.0 {
+            PendingReloadKindInner::Catalog(pending) => Some(pending),
+            PendingReloadKindInner::Manual => None,
+        }
+    }
+
+    pub(crate) fn into_catalog(self) -> Option<CatalogPending> {
+        match self.0 {
+            PendingReloadKindInner::Catalog(pending) => Some(pending),
+            PendingReloadKindInner::Manual => None,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct PendingReload {
-    pub warning: ReloadWarning,
-    pub prepared: Vec<script::PreparedCard>,
-    pub kind: PendingReloadKind,
+    pub(crate) warning: ReloadWarning,
+    pub(crate) prepared: Vec<script::PreparedCard>,
+    pub(crate) kind: PendingReloadKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReloadOutcome {
+impl PendingReload {
+    /// The warning published for this candidate.
+    pub fn warning(&self) -> &ReloadWarning {
+        &self.warning
+    }
+
+    /// Prepared cards waiting to apply.
+    pub fn prepared(&self) -> &[script::PreparedCard] {
+        &self.prepared
+    }
+
+    /// Manual vs catalog refresh.
+    pub fn kind(&self) -> &PendingReloadKind {
+        &self.kind
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReloadOutcomeKind {
     NothingChanged,
     NeedsConfirm,
-    Applied {
-        restarted: usize,
-        stopped_paused: usize,
-        failed: usize,
-    },
-    Failed(String),
+    Applied,
+    Failed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReloadOutcome {
+    kind: ReloadOutcomeKind,
+    restarted: usize,
+    stopped_paused: usize,
+    failed: usize,
+    error: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl ReloadOutcome {
+    pub const NothingChanged: Self = Self {
+        kind: ReloadOutcomeKind::NothingChanged,
+        restarted: 0,
+        stopped_paused: 0,
+        failed: 0,
+        error: None,
+    };
+    pub const NeedsConfirm: Self = Self {
+        kind: ReloadOutcomeKind::NeedsConfirm,
+        restarted: 0,
+        stopped_paused: 0,
+        failed: 0,
+        error: None,
+    };
+
+    pub fn applied(restarted: usize, stopped_paused: usize, failed: usize) -> Self {
+        Self {
+            kind: ReloadOutcomeKind::Applied,
+            restarted,
+            stopped_paused,
+            failed,
+            error: None,
+        }
+    }
+
+    /// Apply failed with `error`.
+    pub fn failed(error: impl Into<String>) -> Self {
+        Self {
+            kind: ReloadOutcomeKind::Failed,
+            restarted: 0,
+            stopped_paused: 0,
+            failed: 0,
+            error: Some(error.into()),
+        }
+    }
+
+    /// Whether nothing on disk changed.
+    pub fn is_nothing_changed(&self) -> bool {
+        self.kind == ReloadOutcomeKind::NothingChanged
+    }
+
+    /// Whether a confirm is required before apply.
+    pub fn is_needs_confirm(&self) -> bool {
+        self.kind == ReloadOutcomeKind::NeedsConfirm
+    }
+
+    /// Failure text, when this outcome failed.
+    pub fn failure(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Applied counts: restarted, stopped-paused, failed.
+    pub fn applied_counts(&self) -> Option<(usize, usize, usize)> {
+        match self.kind {
+            ReloadOutcomeKind::Applied => Some((self.restarted, self.stopped_paused, self.failed)),
+            _ => None,
+        }
+    }
 }
 
 type ValidationBatch = Vec<(script::PreparedCard, Result<(), String>)>;
@@ -89,7 +271,6 @@ pub(super) struct ReloadState {
     generation: u64,
     validation: Option<ValidationJob>,
     pending: Option<PendingReload>,
-    warning: Option<ReloadWarning>,
     catalog_confirm: bool,
     catalog_report: Option<String>,
     outcome: Option<ReloadOutcome>,
@@ -97,14 +278,12 @@ pub(super) struct ReloadState {
 
 impl ReloadState {
     fn clear_pending(&mut self) {
-        self.warning = None;
         self.pending = None;
         self.catalog_confirm = false;
     }
 
     fn install(&mut self, pending: PendingReload) {
-        self.warning = Some(pending.warning.clone());
-        self.catalog_confirm = matches!(pending.kind, PendingReloadKind::Catalog { .. });
+        self.catalog_confirm = pending.kind.is_catalog();
         self.pending = Some(pending);
     }
 
@@ -128,7 +307,10 @@ impl Scripts {
 
     /// The warning awaiting confirmation, if any.
     pub fn reload_warning(&self) -> Option<&ReloadWarning> {
-        self.reload.warning.as_ref()
+        self.reload
+            .pending
+            .as_ref()
+            .map(|pending| pending.warning())
     }
 
     pub fn pending_reload(&self) -> Option<&PendingReload> {
@@ -141,7 +323,7 @@ impl Scripts {
         self.reload
             .pending
             .as_ref()
-            .is_some_and(|pending| matches!(pending.kind, PendingReloadKind::Manual))
+            .is_some_and(|pending| pending.kind.is_manual())
     }
 
     /// The next catalog Refresh confirms the warning shown.
@@ -159,7 +341,7 @@ impl Scripts {
 
     fn fail_reload(&mut self, prefix: &str, error: String) {
         self.show(format!("{prefix}: {error}"));
-        self.finish_reload(ReloadOutcome::Failed(error));
+        self.finish_reload(ReloadOutcome::failed(error));
     }
 
     /// The card a Reload of `profile` targets: its pending Browse
@@ -246,7 +428,7 @@ impl Scripts {
         let Some(batch) = batch else {
             let error = "script validation worker exited without a result".to_string();
             self.show(error.clone());
-            self.finish_reload(ReloadOutcome::Failed(error));
+            self.finish_reload(ReloadOutcome::failed(error));
             return;
         };
         match job.kind {
@@ -375,13 +557,13 @@ impl Scripts {
             self.reload.install(PendingReload {
                 warning,
                 prepared,
-                kind: PendingReloadKind::Catalog {
+                kind: PendingReloadKind::catalog(CatalogPending {
                     root,
                     added: diff.added,
                     removed: diff.removed,
                     failed: prepare_failed,
                     set_fingerprint,
-                },
+                }),
             });
             self.finish_reload(ReloadOutcome::NeedsConfirm);
         } else {
@@ -416,10 +598,12 @@ impl Scripts {
         match self.js.raw_source_changed(source, &lookup) {
             Ok(false) => {
                 self.show(script::NOTHING_CHANGED_RELOAD);
-                if matches!(
-                    self.reload.pending.as_ref().map(|pending| &pending.kind),
-                    Some(PendingReloadKind::Manual)
-                ) {
+                if self
+                    .reload
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.kind.is_manual())
+                {
                     self.reload.clear_pending();
                 }
                 self.finish_reload(ReloadOutcome::NothingChanged);
@@ -467,7 +651,7 @@ impl Scripts {
         let Some(pending) = self.reload.pending.as_ref() else {
             return false;
         };
-        if !matches!(pending.kind, PendingReloadKind::Manual) {
+        if !pending.kind.is_manual() {
             return false;
         }
         let w = &pending.warning;
@@ -484,11 +668,11 @@ impl Scripts {
 
     fn commit_manual_pending<Io>(&mut self, core: &mut OperatorSession<Io>) -> ReloadOutcome {
         let Some(mut pending) = self.reload.pending.take() else {
-            return ReloadOutcome::Failed("no pending reload".into());
+            return ReloadOutcome::failed("no pending reload");
         };
         if pending.warning.epoch != self.reload.generation {
             self.reload.clear_pending();
-            return ReloadOutcome::Failed("reload cancelled".into());
+            return ReloadOutcome::failed("reload cancelled");
         }
         if let Some(paused_during) = newly_paused_during(core, &pending.warning) {
             pending.warning.paused_during_prep = paused_during;
@@ -517,7 +701,7 @@ impl Scripts {
                     prepared,
                     kind: PendingReloadKind::Manual,
                 });
-                return ReloadOutcome::Failed(e);
+                return ReloadOutcome::failed(e);
             }
         }
         let (restarted, stopped_paused, failed, errors) =
@@ -528,11 +712,7 @@ impl Scripts {
         } else {
             self.clear_notice();
         }
-        ReloadOutcome::Applied {
-            restarted,
-            stopped_paused,
-            failed,
-        }
+        ReloadOutcome::applied(restarted, stopped_paused, failed)
     }
 
     /// Restart one replaced slot on the prepared card. The caller has just
@@ -563,12 +743,7 @@ impl Scripts {
         if self.fail_reload_start_for.as_deref() == Some(profile) {
             return Err("injected start failure".into());
         }
-        let start = ScriptStart::Load {
-            js: card.js.clone(),
-            shape: card.shape,
-            bag,
-            siblings: prepared.siblings.clone(),
-        };
+        let start = ScriptStart::load(card.js.clone(), card.shape, bag, prepared.siblings.clone());
         if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
             return self.js.record_start_result(card, Err(e));
         }
@@ -686,7 +861,7 @@ impl Scripts {
         self.reload.outcome = None;
         if self.catalog_pending_binds(root) {
             let outcome = self.commit_catalog_pending(core);
-            if let ReloadOutcome::Failed(error) = &outcome {
+            if let Some(error) = outcome.failure() {
                 self.show(format!("Refresh catalog: {error}"));
             }
             self.finish_reload(outcome);
@@ -742,17 +917,10 @@ impl Scripts {
         let Some(pending) = self.reload.pending.as_ref() else {
             return false;
         };
-        let PendingReloadKind::Catalog {
-            root: pending_root,
-            added,
-            removed,
-            set_fingerprint,
-            ..
-        } = &pending.kind
-        else {
+        let Some(catalog) = pending.kind.as_catalog() else {
             return false;
         };
-        if pending.warning.epoch != self.reload.generation || pending_root != root {
+        if pending.warning.epoch != self.reload.generation || catalog.root != root {
             return false;
         }
         let Ok(diff) = self.js.diff_catalog(root) else {
@@ -770,20 +938,26 @@ impl Scripts {
         }
         let current =
             catalog_set_fingerprint_from_diff(&diff.added, &diff.changed, &diff.removed, &fps);
-        current == *set_fingerprint && diff.added == *added && diff.removed == *removed
+        current == catalog.set_fingerprint
+            && diff.added == catalog.added
+            && diff.removed == catalog.removed
     }
 
     fn commit_catalog_pending<Io>(&mut self, core: &mut OperatorSession<Io>) -> ReloadOutcome {
         let Some(mut pending) = self.reload.pending.take() else {
-            return ReloadOutcome::Failed("no pending catalog refresh".into());
+            return ReloadOutcome::failed("no pending catalog refresh");
         };
-        let PendingReloadKind::Catalog { root, .. } = pending.kind.clone() else {
+        let Some(root) = pending
+            .kind
+            .as_catalog()
+            .map(|catalog| catalog.root.clone())
+        else {
             self.reload.pending = Some(pending);
-            return ReloadOutcome::Failed("pending reload is not catalog".into());
+            return ReloadOutcome::failed("pending reload is not catalog");
         };
         if pending.warning.epoch != self.reload.generation {
             self.reload.clear_pending();
-            return ReloadOutcome::Failed("reload cancelled".into());
+            return ReloadOutcome::failed("reload cancelled");
         }
         if let Some(paused_during) = newly_paused_during(core, &pending.warning) {
             pending.warning.paused_during_prep = paused_during;
@@ -802,12 +976,13 @@ impl Scripts {
         }
         let diff = match self.js.diff_catalog(&root) {
             Ok(d) => d,
-            Err(e) => return ReloadOutcome::Failed(e),
+            Err(e) => return ReloadOutcome::failed(e),
         };
-        let failed = match pending.kind {
-            PendingReloadKind::Catalog { failed, .. } => failed,
-            PendingReloadKind::Manual => Vec::new(),
-        };
+        let failed = pending
+            .kind
+            .into_catalog()
+            .map(|catalog| catalog.failed)
+            .unwrap_or_default();
         self.apply_catalog_prepared(core, diff, pending.prepared, failed, pending.warning)
     }
 
@@ -848,11 +1023,7 @@ impl Scripts {
         self.show(format!("Refresh catalog: {summary}"));
         self.reload.catalog_report = Some(summary);
         self.reload.clear_pending();
-        ReloadOutcome::Applied {
-            restarted,
-            stopped_paused,
-            failed,
-        }
+        ReloadOutcome::applied(restarted, stopped_paused, failed)
     }
 
     pub(super) fn mark_removed_catalog_assignments<Io>(

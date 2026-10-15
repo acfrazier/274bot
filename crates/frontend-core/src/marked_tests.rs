@@ -87,7 +87,7 @@ impl Fixture {
     fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, script::ScriptSel) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
-        let card = self.scripts.js.load(&path).unwrap();
+        let card = self.scripts.js_mut().load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
         (card, sel)
     }
@@ -413,9 +413,8 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     // bob and dave take the copy; carol is on another card and frank is not
     // loaded (both marked, so both are named); erin is unmarked.
     let marked = marks(&[2, 3, 4, 6]);
-    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let scope =
+        prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
     assert_eq!(scope.targets, ["bob", "dave"]);
     assert_eq!(
         scope.skipped,
@@ -516,7 +515,7 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     f.assign("alice", &card);
     f.assign("bob", &card);
     f.scripts
-        .legacy
+        .legacy_mut()
         .set_str(card.source, &card.name, "target", "Guard");
     let key = card.identity_key();
     let in_vault = |f: &Fixture, name: &str| {
@@ -534,14 +533,20 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     let vault_file = f.dir.join("vault");
     let before = std::fs::read(&vault_file).unwrap();
 
-    let scope = prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let (targets, target_override) = {
+        let scope =
+            prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel)
+                .unwrap();
+        (
+            scope.targets.clone(),
+            scope.overrides.get("target").cloned(),
+        )
+    };
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(targets, ["bob"]);
     assert_eq!(
-        scope.overrides.get("target"),
+        target_override.as_ref(),
         Some(&serde_json::json!("Guard")),
         "the frozen bag is what the first read would migrate"
     );
@@ -618,9 +623,8 @@ fn apply_to_marked_assigns_unassigned_and_says_so() {
     f.scripts.poll(&mut f.core);
 
     let marked = marks(&[1, 2, 4]);
-    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let scope =
+        prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
     assert_eq!(scope.targets, ["bob", "dave"]);
     assert_eq!(scope.assigning, ["bob"]);
     let prompt = scope.prompt();

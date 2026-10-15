@@ -1054,26 +1054,27 @@ fn send_wires<'a, I>(
             for wire in wires {
                 command_count += 1;
                 let report = session.send_debug_command_marked_snapshot(wire, targets.clone());
-                accepted += report.accepted;
-                skipped.extend(report.skipped);
+                let (accepted_now, skipped_now) = report.into_parts();
+                accepted += accepted_now;
+                skipped.extend(skipped_now);
             }
-            let report = frontend_core::MarkedCommandReport { accepted, skipped };
-            if report.accepted > 0 {
+            let report = frontend_core::MarkedCommandReport::from_parts(accepted, skipped);
+            if report.accepted() > 0 {
                 session.ui.debug_panel.remember_recent(command_name);
                 save_prefs(session);
             }
-            let mut text = if report.accepted > 0 {
+            let mut text = if report.accepted() > 0 {
                 if command_count == 1 {
                     format!(
                         "Queued for {}/{} ({}) : {summary}",
-                        report.accepted,
+                        report.accepted(),
                         report.total(),
                         target_description(&targets)
                     )
                 } else {
                     format!(
                         "Queued for {}/{} command sends ({}) : {summary}",
-                        report.accepted,
+                        report.accepted(),
                         report.total(),
                         target_description(&targets)
                     )
@@ -1081,14 +1082,14 @@ fn send_wires<'a, I>(
             } else {
                 format!("Send failed for {}: ", target_description(&targets))
             };
-            if !report.skipped.is_empty() || report.accepted == 0 {
-                if report.accepted > 0 {
+            if !report.skipped().is_empty() || report.accepted() == 0 {
+                if report.accepted() > 0 {
                     text.push_str("; ");
                 }
                 text.push_str(&report.summary("Admission"));
             }
             session.debug_panel.status = Some(PanelStatus {
-                success: report.accepted > 0,
+                success: report.accepted() > 0,
                 text,
             });
         }

@@ -62,22 +62,26 @@ fn failing() -> ProcessProbe {
 fn a_platform_without_a_sampler_and_a_failed_read_say_so() {
     let now = Instant::now();
     let mut meter = Resources::with_probe(unsupported);
-    settle(&mut meter, now, None, |view| view.cpu != Metric::Measuring);
+    settle(&mut meter, now, None, |view| {
+        view.cpu() != &Metric::Measuring
+    });
     let view = meter.view();
-    assert_eq!(view.cpu, Metric::Unavailable(NOT_MEASURED_HERE));
-    assert_eq!(view.ram, Metric::Unavailable(NOT_MEASURED_HERE));
+    assert_eq!(view.cpu(), &Metric::unavailable(NOT_MEASURED_HERE));
+    assert_eq!(view.ram(), &Metric::unavailable(NOT_MEASURED_HERE));
     assert_eq!(
-        view.traffic,
-        Metric::Unavailable(NO_LIVE_SLOTS),
+        view.traffic(),
+        &Metric::unavailable(NO_LIVE_SLOTS),
         "no workers: no rate to measure, not 0 B/s"
     );
-    assert_eq!(view.brief, "cpu - ram - net -", "the header says so too");
+    assert_eq!(view.brief(), "cpu - ram - net -", "the header says so too");
 
     let mut meter = Resources::with_probe(failing);
-    settle(&mut meter, now, None, |view| view.cpu != Metric::Measuring);
-    assert_eq!(meter.view().cpu, Metric::Error(PROBE_FAILED.into()));
-    assert_eq!(meter.view().ram, Metric::Error(PROBE_FAILED.into()));
-    assert_eq!(meter.view().brief, "cpu err ram err net -");
+    settle(&mut meter, now, None, |view| {
+        view.cpu() != &Metric::Measuring
+    });
+    assert_eq!(meter.view().cpu(), &Metric::error(PROBE_FAILED));
+    assert_eq!(meter.view().ram(), &Metric::error(PROBE_FAILED));
+    assert_eq!(meter.view().brief(), "cpu err ram err net -");
 }
 
 static CPU_READS: AtomicUsize = AtomicUsize::new(0);
@@ -97,25 +101,25 @@ fn cpu_measures_after_two_reads_and_memory_names_its_definition() {
     let start = Instant::now();
     let mut meter = Resources::with_probe(peak_only);
     settle(&mut meter, start, None, |view| {
-        view.ram != Metric::Measuring
+        view.ram() != &Metric::Measuring
     });
     assert_eq!(
-        meter.view().cpu,
-        Metric::Measuring,
+        meter.view().cpu(),
+        &Metric::Measuring,
         "a rate needs two reads"
     );
     assert_eq!(
-        meter.view().ram,
-        Metric::Available("peak 3.00 GB process".into())
+        meter.view().ram(),
+        &Metric::available("peak 3.00 GB process")
     );
-    assert_eq!(meter.view().brief, "cpu … ram peak 3.00 GB net -");
+    assert_eq!(meter.view().brief(), "cpu … ram peak 3.00 GB net -");
     meter.poll(start + Duration::from_millis(500), None, None);
     assert_eq!(CPU_READS.load(Ordering::SeqCst), 1, "not due yet");
     settle(&mut meter, start + Duration::from_secs(1), None, |view| {
-        view.cpu != Metric::Measuring
+        view.cpu() != &Metric::Measuring
     });
-    assert!(matches!(meter.view().cpu, Metric::Available(_)));
-    let brief = &meter.view().brief;
+    assert!(meter.view().cpu().is_available());
+    let brief = meter.view().brief();
     assert!(
         brief.starts_with("cpu ") && brief.ends_with("% ram peak 3.00 GB net -"),
         "the header shows the CPU share: {brief}"
@@ -141,11 +145,11 @@ fn grown_after_peak() -> ProcessProbe {
 fn the_peak_shown_is_never_below_the_current_size() {
     let mut meter = Resources::with_probe(grown_after_peak);
     settle(&mut meter, Instant::now(), None, |view| {
-        view.ram != Metric::Measuring
+        view.ram() != &Metric::Measuring
     });
     assert_eq!(
-        meter.view().ram,
-        Metric::Available("365.0 MB process, peak 365.0 MB".into())
+        meter.view().ram(),
+        &Metric::available("365.0 MB process, peak 365.0 MB")
     );
 }
 
@@ -176,35 +180,29 @@ fn traffic_is_a_rate_over_the_same_workers_and_streams() {
     let mut meter = Resources::with_probe(unsupported);
     let sample = |meter: &mut Resources, play: &Play, secs| {
         meter.poll(at(secs), Some(play), Some("alice"));
-        meter.view().traffic.clone()
+        meter.view().traffic().duplicate()
     };
     live(&mut play, "alice", 1_000);
     live(&mut play, "bob", 1_000);
     assert_eq!(
         sample(&mut meter, &play, 0),
-        Metric::Measuring,
+        Metric::Measuring, // owned duplicate
         "one sample"
     );
-    assert_eq!((meter.view().bots, meter.view().background), (2, 1));
+    assert_eq!((meter.view().bots(), meter.view().background()), (2, 1));
 
     live(&mut play, "alice", 2_024);
     live(&mut play, "bob", 2_024);
-    assert_eq!(
-        sample(&mut meter, &play, 1),
-        Metric::Available("2.0 KB/s".into())
-    );
+    assert_eq!(sample(&mut meter, &play, 1), Metric::available("2.0 KB/s"));
 
     // bob's worker is replaced; the count stays two.
     play.attach_arm("bob", SlotArm::new(2, true));
     live(&mut play, "bob", 9_000);
     assert_eq!(sample(&mut meter, &play, 2), Metric::Measuring);
-    assert_eq!(meter.view().bots, 2);
+    assert_eq!(meter.view().bots(), 2);
     live(&mut play, "alice", 2_536);
     live(&mut play, "bob", 9_000);
-    assert_eq!(
-        sample(&mut meter, &play, 3),
-        Metric::Available("512 B/s".into())
-    );
+    assert_eq!(sample(&mut meter, &play, 3), Metric::available("512 B/s"));
 
     // alice's counter restarts while bob grows more: the sum still grows.
     live(&mut play, "alice", 0);
@@ -215,10 +213,7 @@ fn traffic_is_a_rate_over_the_same_workers_and_streams() {
     // count before the sample: the stream, not the count, tells.
     live(&mut play, "alice", 100);
     live(&mut play, "bob", 20_000);
-    assert_eq!(
-        sample(&mut meter, &play, 5),
-        Metric::Available("100 B/s".into())
-    );
+    assert_eq!(sample(&mut meter, &play, 5), Metric::available("100 B/s"));
     {
         let mut rows = play.statuses.lock().unwrap();
         let alice = rows.iter_mut().find(|row| row.username == "alice").unwrap();
@@ -262,13 +257,15 @@ fn the_probe_runs_off_the_polling_thread() {
     for _ in 0..10 {
         meter.poll(now, None, None);
     }
-    assert_eq!(meter.view().ram, Metric::Measuring, "not finished yet");
+    assert_eq!(meter.view().ram(), &Metric::Measuring, "not finished yet");
     assert_ne!(*PROBE_THREAD.lock(), Some(std::thread::current().id()));
     GATE_OPEN.store(true, Ordering::SeqCst);
-    settle(&mut meter, now, None, |view| view.ram != Metric::Measuring);
+    settle(&mut meter, now, None, |view| {
+        view.ram() != &Metric::Measuring
+    });
     assert_eq!(
-        meter.view().ram,
-        Metric::Available("10.0 MB process, peak 20.0 MB".into())
+        meter.view().ram(),
+        &Metric::available("10.0 MB process, peak 20.0 MB")
     );
 }
 

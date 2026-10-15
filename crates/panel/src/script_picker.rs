@@ -66,6 +66,13 @@ pub struct DialogRow {
     pub mtime: Option<SystemTime>,
 }
 
+impl DialogRow {
+    /// File or folder name shown in the dialog table.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogSort {
     Name,
