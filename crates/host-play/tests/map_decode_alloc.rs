@@ -1,5 +1,7 @@
+use std::alloc::Layout;
 use std::cell::Cell;
 use std::num::NonZeroU32;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -66,6 +68,35 @@ fn declared_charge(png_bytes: usize) -> WorkCharge {
 
 fn maximum_declared_charge() -> WorkCharge {
     declared_charge(WALK_MAP_DECODE_PNG_LIMIT)
+}
+
+fn shared_png_allocation_bytes(png_bytes: usize) -> usize {
+    Layout::new::<[AtomicUsize; 2]>()
+        .extend(Layout::array::<u8>(png_bytes).expect("bounded PNG layout"))
+        .expect("bounded PNG Arc layout")
+        .0
+        .pad_to_align()
+        .size()
+}
+
+#[test]
+fn input_charge_covers_shared_png_alignment() {
+    let bytes = [0u8; 64];
+    for png_bytes in 1..=bytes.len() {
+        let mut held = None;
+        let allocations = allocation_counter::measure(|| {
+            held = Some(Arc::<[u8]>::from(&bytes[..png_bytes]));
+        });
+        let expected = shared_png_allocation_bytes(png_bytes);
+        assert_eq!(allocations.count_total, 1);
+        assert_eq!(allocations.bytes_total, expected as u64);
+        assert!(
+            expected + std::mem::size_of::<WalkMapDecodeJob>()
+                <= png_bytes + WALK_MAP_DECODE_INPUT_OVERHEAD,
+            "input charge must cover the Arc allocation and inline job"
+        );
+        drop(held);
+    }
 }
 
 fn published_manifest() -> (std::path::PathBuf, ImageManifest) {
@@ -136,8 +167,8 @@ fn largest_png_loads_directly_into_one_shared_allocation() {
     );
     assert_eq!(
         allocations.bytes_total - overhead.bytes_total,
-        u64::from(receipt.payload.bytes) + 2 * std::mem::size_of::<usize>() as u64,
-        "the PNG allocation includes exactly the two Arc reference counts"
+        shared_png_allocation_bytes(receipt.payload.bytes as usize) as u64,
+        "the PNG allocation includes refcounts and their alignment padding"
     );
     eprintln!(
         "direct PNG={}B, allocations={}, total={}B, path/open overhead={}B",
@@ -219,10 +250,11 @@ fn largest_producer_png_peak_and_release_fit_declared_charge() {
         actual_charge.total_bytes()
     );
     eprintln!(
-        "largest producer PNG={}B, peak job allocations={}B, declared max charge={:?}",
+        "largest producer PNG={}B, peak job allocations={}B, declared max charge={:?}, elapsed={:?}",
         png_bytes,
         allocations.bytes_max,
-        maximum_charge.total_bytes()
+        maximum_charge.total_bytes(),
+        start.elapsed()
     );
 }
 
@@ -328,6 +360,7 @@ fn expect_bounded_decode(label: &str, png: Vec<u8>, expected_pixels: &[u8]) {
         png.len() <= WALK_MAP_DECODE_PNG_LIMIT,
         "{label} PNG exceeds input bound"
     );
+    let png_bytes = png.len();
     let input: Arc<[u8]> = Arc::from(png);
     let keep_input_alive = Arc::clone(&input);
     let actual_charge = declared_charge(input.len());
@@ -366,6 +399,12 @@ fn expect_bounded_decode(label: &str, png: Vec<u8>, expected_pixels: &[u8]) {
         "{label} PNG peak {}B exceeds charged scratch + result {}B",
         allocations.bytes_max,
         charged_live_peak
+    );
+    eprintln!(
+        "{label} PNG={png_bytes}B, peak={}B, retained={}B, elapsed={:?}",
+        allocations.bytes_max,
+        allocations.bytes_current,
+        start.elapsed()
     );
 }
 
@@ -417,8 +456,17 @@ fn ancillary_metadata_preserves_pixels_with_bounded_allocations() {
     let ztxt = encode_ztxt_bomb(large_text);
     let iccp = encode_iccp_bomb(&ztxt);
     let exif = encode_exif_png(&exif_description(500 * 1024));
+    let minimum_exif = encode_exif_png(&exif_description(27));
+    let maximum_exif_bytes = 27 + WALK_MAP_DECODE_PNG_LIMIT - minimum_exif.len();
+    let maximum_exif = encode_exif_png(&exif_description(maximum_exif_bytes));
+    assert_eq!(maximum_exif.len(), WALK_MAP_DECODE_PNG_LIMIT);
 
-    for (label, png) in [("zTXt", ztxt), ("iCCP", iccp), ("eXIf", exif)] {
+    for (label, png) in [
+        ("zTXt", ztxt),
+        ("iCCP", iccp),
+        ("eXIf", exif),
+        ("format-max eXIf", maximum_exif),
+    ] {
         expect_bounded_decode(label, png, &expected_pixels);
     }
 }
