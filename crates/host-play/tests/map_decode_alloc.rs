@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use api::identity::Deadline;
 use api::work::{
     CooperativeJob, MonotonicClock, SharedCancellation, SliceBudget, StepContext, StepOutcome,
-    WorkCharge, WalkMapDecodePhase,
+    WalkMapDecodePhase, WorkCharge,
 };
 use host_play::map_bind::{
     WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_PNG_LIMIT,
@@ -125,16 +125,10 @@ fn largest_producer_png_peak_and_release_fit_declared_charge() {
         reads: Cell::new(0),
     };
     let fixed_clock = FixedClock(start);
-    let mut first = StepContext::<WalkMapDecodePhase>::new(
-        &yield_clock,
-        slice_budget(start),
-        &cancellation,
-    );
-    let mut second = StepContext::<WalkMapDecodePhase>::new(
-        &fixed_clock,
-        slice_budget(start),
-        &cancellation,
-    );
+    let mut first =
+        StepContext::<WalkMapDecodePhase>::new(&yield_clock, slice_budget(start), &cancellation);
+    let mut second =
+        StepContext::<WalkMapDecodePhase>::new(&fixed_clock, slice_budget(start), &cancellation);
     let mut output_len = None;
     let allocations = allocation_counter::measure(|| {
         assert!(matches!(job.step(&mut first), StepOutcome::Yielded));
@@ -153,12 +147,17 @@ fn largest_producer_png_peak_and_release_fit_declared_charge() {
     drop(keep_input_alive);
 
     assert_eq!(output_len, Some(TILE_RGBA_BYTES));
-    assert_eq!(allocations.bytes_current, 0, "result and decoder scratch are released");
-    assert_eq!(allocations.count_current, 0, "decoder allocations are released");
-    let charged_live_peak = u64::try_from(
-        actual_charge.scratch_bytes() + actual_charge.result_bytes(),
-    )
-    .expect("decoder live charge fits u64");
+    assert_eq!(
+        allocations.bytes_current, 0,
+        "result and decoder scratch are released"
+    );
+    assert_eq!(
+        allocations.count_current, 0,
+        "decoder allocations are released"
+    );
+    let charged_live_peak =
+        u64::try_from(actual_charge.scratch_bytes() + actual_charge.result_bytes())
+            .expect("decoder live charge fits u64");
     assert!(
         allocations.bytes_max <= charged_live_peak,
         "production job peak {}B exceeds charged scratch + result {}B (total charge {:?})",
@@ -283,11 +282,8 @@ fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
     let start = Instant::now();
     let clock = FixedClock(start);
     let cancellation = SharedCancellation::default();
-    let mut context = StepContext::<WalkMapDecodePhase>::new(
-        &clock,
-        slice_budget(start),
-        &cancellation,
-    );
+    let mut context =
+        StepContext::<WalkMapDecodePhase>::new(&clock, slice_budget(start), &cancellation);
     let allocations = allocation_counter::measure(|| {
         match job.step(&mut context) {
             StepOutcome::Completed(rgba) => assert_eq!(rgba.as_slice(), expected_pixels),
@@ -298,12 +294,14 @@ fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
     });
     drop(keep_input_alive);
 
-    assert_eq!(allocations.bytes_current, 0, "result and parser allocations are released");
+    assert_eq!(
+        allocations.bytes_current, 0,
+        "result and parser allocations are released"
+    );
     assert_eq!(allocations.count_current, 0);
-    let charged_live_peak = u64::try_from(
-        actual_charge.scratch_bytes() + actual_charge.result_bytes(),
-    )
-    .expect("metadata decode charge fits u64");
+    let charged_live_peak =
+        u64::try_from(actual_charge.scratch_bytes() + actual_charge.result_bytes())
+            .expect("metadata decode charge fits u64");
     assert!(
         allocations.bytes_max <= charged_live_peak,
         "metadata PNG peak {}B exceeds charged scratch + result {}B",
@@ -312,10 +310,7 @@ fn expect_bounded_decode(png: Vec<u8>, expected_pixels: &[u8]) {
     );
 }
 
-fn expect_rejected_without_decoder_allocations(
-    png: Vec<u8>,
-    expected: WalkMapDecodeFailure,
-) {
+fn expect_rejected_without_decoder_allocations(png: Vec<u8>, expected: WalkMapDecodeFailure) {
     assert!(png.len() <= WALK_MAP_DECODE_PNG_LIMIT);
     let input: Arc<[u8]> = Arc::from(png);
     let keep_input_alive = Arc::clone(&input);
@@ -323,11 +318,8 @@ fn expect_rejected_without_decoder_allocations(
     let start = Instant::now();
     let clock = FixedClock(start);
     let cancellation = SharedCancellation::default();
-    let mut context = StepContext::<WalkMapDecodePhase>::new(
-        &clock,
-        slice_budget(start),
-        &cancellation,
-    );
+    let mut context =
+        StepContext::<WalkMapDecodePhase>::new(&clock, slice_budget(start), &cancellation);
     let mut error = None;
     let allocations = allocation_counter::measure(|| {
         match job.step(&mut context) {
@@ -339,7 +331,10 @@ fn expect_rejected_without_decoder_allocations(
     });
     drop(keep_input_alive);
     assert_eq!(error, Some(expected));
-    assert_eq!(allocations.bytes_total, 0, "preflight must precede PNG allocations");
+    assert_eq!(
+        allocations.bytes_total, 0,
+        "preflight must precede PNG allocations"
+    );
     assert_eq!(allocations.bytes_current, 0);
 }
 

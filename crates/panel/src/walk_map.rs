@@ -107,7 +107,6 @@ struct OverlayGpu {
     h: u32,
 }
 
-
 /// One map renderer owned by the panel app, shared across every bot slot.
 pub struct WalkMapRenderer {
     generation: u64,
@@ -340,7 +339,6 @@ impl WalkMapRenderer {
         self.placed_label_ids.shrink_to_fit();
     }
 
-
     pub fn counters(&self) -> LiveCounters {
         let overlay_gpu_bytes = self
             .overlay_gpu
@@ -514,7 +512,8 @@ impl WalkMapRenderer {
         } else if !self.show_basemap {
             self.phase = MapPhase::Ready;
             parts.push(String::from("basemap off"));
-        } else if !self.slots.is_empty() && !self.decode.is_busy() && self.pending_upload.is_none() {
+        } else if !self.slots.is_empty() && !self.decode.is_busy() && self.pending_upload.is_none()
+        {
             self.phase = MapPhase::Ready;
             parts.push(format!("ready · {} tiles", self.slots.len()));
         } else {
@@ -780,9 +779,13 @@ impl WalkMapRenderer {
         }
         let generation = self.generation;
         let identity = self.identity();
-        if self.decode.pending_request().is_some_and(|(gen, image, key)| {
-            gen != generation || image != identity || !vis_contains(vis, key)
-        }) {
+        if self
+            .decode
+            .pending_request()
+            .is_some_and(|(gen, image, key)| {
+                gen != generation || image != identity || !vis_contains(vis, key)
+            })
+        {
             self.decode.discard_pending();
         }
         if let Some((gen, image, key)) = self.decode.active_request() {
@@ -801,12 +804,16 @@ impl WalkMapRenderer {
                 return;
             }
         }
-        if self.decode.active_request().is_some_and(|(gen, image, key)| {
-            self.decode.is_requested(gen, image, key)
-                && gen == generation
-                && image == identity
-                && vis_contains(vis, key)
-        }) {
+        if self
+            .decode
+            .active_request()
+            .is_some_and(|(gen, image, key)| {
+                self.decode.is_requested(gen, image, key)
+                    && gen == generation
+                    && image == identity
+                    && vis_contains(vis, key)
+            })
+        {
             return;
         }
         if self.slots.len() >= TEXTURE_CAP {
@@ -824,12 +831,7 @@ impl WalkMapRenderer {
             let Some(png) = png else {
                 continue;
             };
-            if self
-                .decode
-                .staging_bytes()
-                .saturating_add(png.len())
-                > DECODE_STAGING_CAP
-            {
+            if self.decode.staging_bytes().saturating_add(png.len()) > DECODE_STAGING_CAP {
                 continue;
             }
             #[cfg(test)]
@@ -991,7 +993,6 @@ impl WalkMapRenderer {
         self.overlay_key = Some(key);
     }
 
-
     #[cfg(test)]
     pub fn overlay_cpu(&self) -> Option<&[u8]> {
         self.overlay_cpu.as_deref()
@@ -1044,7 +1045,6 @@ impl WalkMapRenderer {
         zoom_in
     }
 }
-
 
 fn vis_contains(vis: VisibleTiles, key: TileKey) -> bool {
     key.plane == vis.plane

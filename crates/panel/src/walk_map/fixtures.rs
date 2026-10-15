@@ -9,13 +9,13 @@ use nav::map::poi::PoiRecord;
 use nav::map::spatial::{TileKey, MAX_LOD};
 
 #[cfg(test)]
-use std::io::Cursor;
-#[cfg(test)]
 use nav::map::formats::MAX_PNG_BYTES;
 #[cfg(test)]
 use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
 #[cfg(test)]
 use nav::map::MapError;
+#[cfg(test)]
+use std::io::Cursor;
 
 #[cfg(test)]
 use nav::map::formats::TileReceipt;
@@ -112,7 +112,6 @@ impl Store {
             pois: fixture_pois()?,
         })
     }
-
 
     pub fn get_arc(&self, key: TileKey) -> Option<Arc<[u8]>> {
         self.tiles.get(&key).map(Arc::clone)
