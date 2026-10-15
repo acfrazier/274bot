@@ -109,7 +109,7 @@ pub enum MapBakePrompt {
 /// Per-process bake consent for one front end. Open every WalkTo map
 /// demand through [`Self::open`]; it starts a local terrain bake only with
 /// consent (this session's accept, or [`MapBakeChoice::Always`]).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct MapBakeGate {
     choice: MapBakeChoice,
     accepted: bool,

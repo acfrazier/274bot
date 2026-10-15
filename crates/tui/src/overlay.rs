@@ -20,7 +20,7 @@ use crate::layout::{contains, Screen};
 use crate::palette::{palette_commands, render_palette, PaletteState};
 use crate::profile_import::{ImportAction, ImportView};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Modal {
     Help(HelpState),
     Palette(PaletteState),
@@ -63,14 +63,14 @@ impl Modal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Confirm {
     pub kind: ConfirmKind,
     /// Shown above the buttons (for example after the scope changed).
     pub note: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ConfirmKind {
     /// Remove this member from the fleet (the target is frozen here).
     Remove(String),

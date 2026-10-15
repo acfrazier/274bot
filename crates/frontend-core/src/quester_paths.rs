@@ -15,10 +15,10 @@ pub const QUEST_PATHS_HEADING: &str = "Quest Paths (all bots)";
 pub const QUESTER_HEADING: &str = "Quester";
 
 /// Persisted host-wide folder source for the Quester Path registry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct QuesterPathsView {
-    pub enabled: bool,
-    pub folder: PathBuf,
+    enabled: bool,
+    folder: PathBuf,
 }
 
 impl Default for QuesterPathsView {
@@ -31,6 +31,39 @@ impl Default for QuesterPathsView {
 }
 
 impl QuesterPathsView {
+    /// Whether Paths load from the configured folder.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Set whether Paths load from the configured folder.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// The configured Path folder.
+    pub fn folder(&self) -> &Path {
+        &self.folder
+    }
+
+    /// Edit the configured Path folder.
+    pub fn folder_mut(&mut self) -> &mut PathBuf {
+        &mut self.folder
+    }
+
+    /// Replace the configured Path folder.
+    pub fn set_folder(&mut self, folder: PathBuf) {
+        self.folder = folder;
+    }
+
+    /// A second owner of this view. Not [`Clone`].
+    pub fn duplicate(&self) -> Self {
+        Self {
+            enabled: self.enabled,
+            folder: self.folder.clone(),
+        }
+    }
+
     /// Read the host-wide settings object without touching any Path files.
     fn read_at(prefs_path: &Path) -> Self {
         let Some(value) = host_play::panel_ui_value_at(prefs_path, "quester_paths") else {

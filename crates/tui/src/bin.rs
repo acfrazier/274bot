@@ -1056,9 +1056,9 @@ impl TuiSession {
         self.apply_script_notice(app);
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, Instant::now(), &mut surface);
-        if let Some(next) = removal.reselected {
-            app.focused = app.names.iter().position(|n| n == &next);
-        } else if removal.selection_cleared {
+        if let Some(next) = removal.reselected() {
+            app.focused = app.names.iter().position(|n| n == next);
+        } else if removal.selection_cleared() {
             app.focused = None;
         }
         // The fleet table drops the member on the next pump.
@@ -1137,7 +1137,8 @@ impl TuiSession {
         runner.set_live_names(&names);
         runner.set_obj_names(play.obj_names());
         *self.scenario.lock().unwrap() = Some(runner);
-        self.scripts.inject = scenario::settings_inject_map(settings_inject);
+        self.scripts
+            .set_inject(scenario::settings_inject_map(settings_inject));
         self.names = names.clone();
         for n in &names {
             self.load_and_login(n);
@@ -1150,12 +1151,13 @@ impl TuiSession {
         if let Some(fleet) = fleet_start {
             self.fill_rs2b0t_cards_once();
             let scripts = &mut self.scripts;
+            let (js, legacy, inject) = scripts.live_start_parts();
             let starts = live_start::fleet_catalog_starts(
                 fleet,
                 &names,
-                &mut scripts.js,
-                &scripts.legacy,
-                scripts.inject.as_ref(),
+                js,
+                legacy,
+                inject,
                 &fixture_loadouts,
             )?;
             *self.pending_script.lock().unwrap() = starts;
@@ -1165,13 +1167,13 @@ impl TuiSession {
                 .ok_or_else(|| format!("no in-tree example {file_name}"))?;
             let loaded = self
                 .scripts
-                .js
+                .js_mut()
                 .load(&path)
                 .map_err(|e| format!("load {file_name}: {e}"))?;
             let identity = loaded.identity_id();
             let card = self
                 .scripts
-                .js
+                .js()
                 .get(script::ScriptSource::File, &identity)
                 .cloned()
                 .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
@@ -1203,12 +1205,12 @@ impl TuiSession {
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.scripts
-                    .js
+                    .js_mut()
                     .ensure_js(script::ScriptSource::Catalog, card_name)
                     .map_err(|e| format!("transpile {card_name}: {e}"))?;
                 let card = self
                     .scripts
-                    .js
+                    .js()
                     .get(script::ScriptSource::Catalog, card_name)
                     .cloned()
                     .ok_or_else(|| {
@@ -1263,7 +1265,7 @@ impl TuiSession {
         &self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        live_start::card_siblings(&self.scripts.js, card)
+        live_start::card_siblings(self.scripts.js(), card)
     }
 
     fn map_members(&self) -> bool {
@@ -1644,20 +1646,16 @@ impl TuiSession {
         let report = frontend_core::walk_marked(
             &app.table.selection,
             &self.core,
-            frontend_core::MarkedWalk {
-                prepared,
-                destination,
-                options,
-                arms: &self.travellers,
-            },
-            |name| frontend_core::WalkInputs {
-                state: self.focused_walk_state(&Some(name.to_string())),
-                bank: self
-                    .core
-                    .play()
-                    .map(|play| play.bank_rows(name))
-                    .unwrap_or_default(),
-                risk_input: self.walk_risk_input(Some(name)),
+            frontend_core::MarkedWalk::new(prepared, destination, options, &self.travellers),
+            |name| {
+                frontend_core::WalkInputs::new(
+                    self.focused_walk_state(&Some(name.to_string())),
+                    self.core
+                        .play()
+                        .map(|play| play.bank_rows(name))
+                        .unwrap_or_default(),
+                    self.walk_risk_input(Some(name)),
+                )
             },
         );
         if report.done_count() > 0 {
@@ -1922,12 +1920,12 @@ impl TuiSession {
         });
         let visible_prompt = app.modal.as_ref().and_then(|modal| match modal {
             Modal::Confirm(confirm) => match &confirm.kind {
-                ConfirmKind::RestartSettings(prompt) => Some(prompt.clone()),
+                ConfirmKind::RestartSettings(prompt) => Some(prompt.duplicate()),
                 _ => None,
             },
             _ => None,
         });
-        let pending_prompt = self.scripts.pending_restart_prompt().cloned();
+        let pending_prompt = self.scripts.pending_restart_prompt().map(|p| p.duplicate());
         match (visible_prompt, pending_prompt) {
             (Some(current), Some(next)) if current == next => {}
             (Some(_), Some(next)) => app.confirm(ConfirmKind::RestartSettings(next)),
@@ -2062,7 +2060,7 @@ impl TuiSession {
         let script::ScriptSel::Loaded(source, lookup) = app.params_card()? else {
             return None;
         };
-        let card = self.scripts.js.get(source, &lookup)?;
+        let card = self.scripts.js().get(source, &lookup)?;
         Some((source, card.name.clone(), card.path.clone()))
     }
 
@@ -2218,14 +2216,14 @@ impl TuiSession {
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
-        match self.scripts.js.load(path) {
+        match self.scripts.js_mut().load(path) {
             Ok(card) => {
                 app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
                 app.browse_changed = true;
-                app.error = if self.scripts.js.load_failures().is_empty() {
+                app.error = if self.scripts.js().load_failures().is_empty() {
                     None
                 } else {
-                    Some(self.scripts.js.named_failure_output())
+                    Some(self.scripts.js().named_failure_output())
                 };
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
@@ -2233,8 +2231,8 @@ impl TuiSession {
                 }
             }
             Err(e) => {
-                app.error = if self.scripts.js.load_failures().len() > 1 {
-                    Some(self.scripts.js.named_failure_output())
+                app.error = if self.scripts.js().load_failures().len() > 1 {
+                    Some(self.scripts.js().named_failure_output())
                 } else {
                     Some(format!("script: {e}"))
                 };
@@ -2422,11 +2420,11 @@ impl TuiSession {
                 .unwrap_or_else(host_play::panel_ui_path);
             let _ = app.quester_paths_controller.apply_changed_at(
                 &path,
-                app.quester_paths.clone(),
+                app.quester_paths.duplicate(),
                 selected.clone(),
                 self.persist_ui,
             );
-            app.quester_paths = app.quester_paths_controller.settings().clone();
+            app.quester_paths = app.quester_paths_controller.settings().duplicate();
         }
         app.quester_paths_controller.advance(selected);
     }
@@ -2599,7 +2597,7 @@ impl TuiSession {
         app.params_unavailable = None;
         match &app.script_sel {
             Some(script::ScriptSel::Loaded(source, name)) => {
-                if let Some(card) = self.scripts.js.get(*source, name) {
+                if let Some(card) = self.scripts.js().get(*source, name) {
                     app.params_schema.clone_from(&card.settings_schema);
                 } else {
                     app.params_schema.clear();
@@ -2771,10 +2769,10 @@ impl TuiSession {
         // came from. A failed write put the profile back, so that popup
         // shows what is saved rather than the edit that did not land.
         for settled in app.settings_save.settle(&mut self.core) {
-            let frontend_core::FormSettled::Failed(failed) = settled else {
+            let Some(failed) = settled.as_failed() else {
                 continue;
             };
-            if !failed.same_form {
+            if !failed.same_form() {
                 continue;
             }
             if let Some(saved) = app
@@ -3026,7 +3024,7 @@ impl TuiSession {
         }
         let meter = self.core.resource_generation();
         if self.copied_meter.replace(meter) != Some(meter) {
-            app.resources.clone_from(self.core.resources());
+            app.resources.copy_from(self.core.resources());
         }
         let capacity = self.core.capacity_generation();
         if self.copied_capacity.replace(capacity) != Some(capacity) {
@@ -3516,10 +3514,10 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             session.rs2b0t_catalog_dir = root.clone();
             app.error = match session.import_rs2b0t_catalog(app, &root) {
                 Ok(_) => {
-                    if session.scripts.js.load_failures().is_empty() {
+                    if session.scripts.js().load_failures().is_empty() {
                         None
                     } else {
-                        Some(session.scripts.js.named_failure_output())
+                        Some(session.scripts.js().named_failure_output())
                     }
                 }
                 Err(e) => Some(e),

@@ -233,9 +233,9 @@ impl<'a> SettingsPane<'a> {
                 let Some(paths) = self.quester_paths.as_deref_mut() else {
                     return SettingsKey::Consumed;
                 };
-                let mut folder = paths.folder.to_string_lossy().into_owned();
+                let mut folder = paths.folder().to_string_lossy().into_owned();
                 if folder.pop().is_some() {
-                    paths.folder = folder.into();
+                    paths.set_folder(folder.into());
                     self.state.folder_changed = true;
                 }
                 SettingsKey::Consumed
@@ -246,9 +246,9 @@ impl<'a> SettingsPane<'a> {
                 ) =>
             {
                 if let Some(paths) = self.quester_paths.as_deref_mut() {
-                    let mut folder = paths.folder.to_string_lossy().into_owned();
+                    let mut folder = paths.folder().to_string_lossy().into_owned();
                     folder.push(character);
-                    paths.folder = folder.into();
+                    paths.set_folder(folder.into());
                     self.state.folder_changed = true;
                 }
                 SettingsKey::Consumed
@@ -297,7 +297,7 @@ impl<'a> SettingsPane<'a> {
                 let Some(paths) = self.quester_paths.as_deref_mut() else {
                     return SettingsKey::Consumed;
                 };
-                paths.enabled = !paths.enabled;
+                paths.set_enabled(!paths.enabled());
                 SettingsKey::QuesterPathsChanged
             }
             13 => {
@@ -384,12 +384,12 @@ impl Widget for SettingsPane<'_> {
         let path_folder = self
             .quester_paths
             .as_deref()
-            .map(|paths| paths.folder.display().to_string())
+            .map(|paths| paths.folder().display().to_string())
             .unwrap_or_else(|| "unavailable".into());
         let paths_enabled = self
             .quester_paths
             .as_deref()
-            .is_some_and(|paths| paths.enabled);
+            .is_some_and(|paths| paths.enabled());
         let reload = if self.quester_paths_reloading {
             format!("{} (reloading…)", RELOAD_PATHS_LABEL)
         } else {

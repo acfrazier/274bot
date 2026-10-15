@@ -213,14 +213,14 @@ impl TuiApp {
         let name = &self.names[index];
         let row = member_row(&self.names, &self.fleet, index);
         let world = row
-            .and_then(|row| row.world)
+            .and_then(|row| row.world())
             .map_or("local".to_string(), |w| format!("w{w}"));
         let mut line = if compact {
             format!("BOT {name} @{world} {}", state_label(row))
         } else {
             format!(
                 "BOT {name} │ {world} │ {} │ script {}",
-                row.map_or(Phase::Offline, |row| row.phase).label(),
+                row.map_or(Phase::Offline, |row| row.phase()).label(),
                 script_status_label(
                     self.script_state,
                     self.focused_detail()
@@ -250,12 +250,20 @@ impl TuiApp {
         let tail = if compact {
             format!(
                 " │ {}/{} ready Q:{} Err:{} │ {}",
-                counts.ready, counts.loaded, counts.queued, counts.failed, self.resources.brief
+                counts.ready,
+                counts.loaded,
+                counts.queued,
+                counts.failed,
+                self.resources.brief()
             )
         } else {
             format!(
                 " │ loaded {} ready {} queued {} failed {} │ {}",
-                counts.loaded, counts.ready, counts.queued, counts.failed, self.resources.brief
+                counts.loaded,
+                counts.ready,
+                counts.queued,
+                counts.failed,
+                self.resources.brief()
             )
         };
         let tail_w = tail.chars().count() as u16;

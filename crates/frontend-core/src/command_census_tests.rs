@@ -83,6 +83,11 @@ const CORE: &[(&str, Decision)] = &[
     // log.rs: the log store and its read projection.
     ("log.rs::LogEntry::write_line", Excluded(PROJECTION)),
     ("log.rs::LogFilter::set_source", Excluded(LOG_VIEW)),
+    ("log.rs::LogFilter::set_min_level", Excluded(LOG_VIEW)),
+    ("log.rs::LogFilter::set_sources", Excluded(LOG_VIEW)),
+    ("log.rs::LogFilter::set_text", Excluded(LOG_VIEW)),
+    ("log.rs::LogFilter::text_mut", Excluded(LOG_VIEW)),
+    ("log.rs::LogView::set_follow", Excluded(LOG_VIEW)),
     ("log.rs::LogView::follow_slot", Excluded(LOG_VIEW)),
     ("log.rs::LogView::set_scope", Excluded(LOG_VIEW)),
     ("log.rs::LogView::edit_filter", Excluded(LOG_VIEW)),
@@ -202,6 +207,9 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::format_bots", Excluded(FORMAT)),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
+    ("resources.rs::ResourceView::copy_from", Excluded(PROJECTION)),
+    ("resources.rs::ResourceView::set_brief", Excluded(PROJECTION)),
+    ("resources.rs::ResourceView::set_counts", Excluded(PROJECTION)),
     // rs2b0t_import.rs
     (
         "rs2b0t_import.rs::parse_profile_file",
@@ -286,6 +294,18 @@ const CORE: &[(&str, Decision)] = &[
         "quester_paths.rs::QuesterPathsController::clear_notice",
         Row(C::AcknowledgeNotice),
     ),
+    (
+        "quester_paths.rs::QuesterPathsView::folder_mut",
+        Excluded(ACCESSOR),
+    ),
+    (
+        "quester_paths.rs::QuesterPathsView::set_enabled",
+        Excluded("draft mutation of the paths form; persist is SetQuesterPaths"),
+    ),
+    (
+        "quester_paths.rs::QuesterPathsView::set_folder",
+        Excluded("draft mutation of the paths form; persist is SetQuesterPaths"),
+    ),
     // scripts/mod.rs: the script coordinator.
     (
         "scripts/mod.rs::Notice::apply",
@@ -346,6 +366,22 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/mod.rs::Scripts::start_selected", Row(C::StartScript)),
     ("scripts/mod.rs::Scripts::start_all", Row(C::StartScript)),
     ("scripts/mod.rs::Scripts::stop_all", Row(C::StopScript)),
+    ("scripts/mod.rs::Scripts::set_js", Excluded(STARTUP)),
+    ("scripts/mod.rs::Scripts::set_legacy", Excluded(STARTUP)),
+    ("scripts/mod.rs::Scripts::js_mut", Excluded(ACCESSOR)),
+    ("scripts/mod.rs::Scripts::legacy_mut", Excluded(ACCESSOR)),
+    (
+        "scripts/mod.rs::Scripts::live_start_parts",
+        Excluded(ACCESSOR),
+    ),
+    (
+        "scripts/mod.rs::Scripts::set_inject",
+        Excluded("harness inject bag; no operator decision"),
+    ),
+    (
+        "scripts/mod.rs::Scripts::set_fail_reload_start_for",
+        Excluded("test injection of a replacement Start failure"),
+    ),
     ("scripts/mod.rs::Scripts::poll", Excluded(PUMP)),
     (
         "scripts/mod.rs::Scripts::publish_start_places",
@@ -578,6 +614,23 @@ const CORE: &[(&str, Decision)] = &[
     ("views.rs::FleetRow::write_world_login", Excluded(PROJECTION)),
     ("views.rs::FleetView::copy_rows_into", Excluded(PROJECTION)),
     ("views.rs::FleetView::copy_detail_into", Excluded(PROJECTION)),
+    ("views.rs::FleetRow::copy_from", Excluded(PROJECTION)),
+    ("views.rs::FleetRow::set_error", Excluded(PROJECTION)),
+    ("views.rs::FleetRow::set_last_op", Excluded(PROJECTION)),
+    ("views.rs::FleetRow::set_phase", Excluded(PROJECTION)),
+    ("views.rs::FleetRow::set_script", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::copy_from", Excluded(PROJECTION)),
+    (
+        "views.rs::SlotDetail::row_mut",
+        Excluded("projection: mutates the nested fleet row in a detail buffer"),
+    ),
+    ("views.rs::SlotDetail::set_manual_walk_risk", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_modal", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_player", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_ready_tile", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_row", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_state", Excluded(PROJECTION)),
+    ("views.rs::SlotDetail::set_tile", Excluded(PROJECTION)),
     ("views.rs::random_kind_name", Excluded(FORMAT)),
     ("views.rs::run_state_label", Excluded(FORMAT)),
     ("views.rs::script_status_label", Excluded(FORMAT)),

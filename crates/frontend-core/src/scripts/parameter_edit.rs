@@ -1,21 +1,36 @@
 use super::Scripts;
-use crate::operations::{OperationId, Outcome};
+use crate::operations::OperationId;
 use crate::session::OperatorSession;
 use serde_json::Value;
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParameterOptions {
-    pub values: Vec<String>,
-    pub labels: Vec<String>,
+    values: Vec<String>,
+    labels: Vec<String>,
     /// Number of trailing display-only values that are not picker choices.
-    pub preserved: usize,
+    preserved: usize,
     aliases: Vec<(String, String)>,
     case_insensitive: bool,
 }
 
 impl ParameterOptions {
+    /// Stored option keys, including preserved display-only rows.
+    pub fn values(&self) -> &[String] {
+        &self.values
+    }
+
+    /// Labels parallel to [`Self::values`].
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Number of trailing display-only values that are not picker choices.
+    pub fn preserved(&self) -> usize {
+        self.preserved
+    }
+
     fn canonical_option<'a>(&'a self, value: &'a str) -> &'a str {
         if self.values.iter().any(|option| option == value) {
             return value;
@@ -482,7 +497,7 @@ fn setting_values(def: &script::SettingDef, bag: &serde_json::Map<String, Value>
 }
 
 /// Identity of one editable field in one profile's selected card.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ParameterEditKey {
     profile: Option<String>,
     card: String,
@@ -529,6 +544,15 @@ impl ParameterEditKey {
             .and_then(|rest| rest.strip_prefix(':'))
             == Some(identity)
     }
+
+    /// A second owner of this key (HashMap insert/remove). Not [`Clone`].
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            profile: self.profile.clone(),
+            card: self.card.clone(),
+            field: self.field.clone(),
+        }
+    }
 }
 
 fn cached_parameter_key<'a>(
@@ -564,7 +588,7 @@ fn edit_mut_or_insert<'a>(
 ) -> &'a mut ParameterEdit {
     if !edits.contains_key(key) {
         edits.insert(
-            key.clone(),
+            key.duplicate(),
             ParameterEdit::new(initial_text, baseline_value.clone()),
         );
     }
@@ -720,7 +744,7 @@ impl Scripts {
     ) -> &mut String {
         let edit = self
             .parameter_edits
-            .entry(key.clone())
+            .entry(key.duplicate())
             .or_insert_with(|| ParameterEdit::new(initial_text, baseline_value.clone()));
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
@@ -773,7 +797,7 @@ impl Scripts {
     ) -> Result<Value, String> {
         let edit = self
             .parameter_edits
-            .entry(key.clone())
+            .entry(key.duplicate())
             .or_insert_with(|| ParameterEdit::new(baseline_text, baseline_value));
         validate_edit(edit, def, options)
     }
@@ -880,7 +904,7 @@ impl Scripts {
         {
             let edit = self
                 .parameter_edits
-                .entry(key.clone())
+                .entry(key.duplicate())
                 .or_insert_with(|| ParameterEdit::new(&baseline_text, current.clone()));
             if edit.text != raw {
                 edit.text.clone_from(&raw);
@@ -982,42 +1006,36 @@ impl Scripts {
             let Some(outcome) = core
                 .operation(*op)
                 .and_then(|report| report.outcome(key.profile.as_deref()?))
-                .cloned()
             else {
                 continue;
             };
-            if matches!(outcome, Outcome::Pending) {
+            if outcome.is_pending() {
                 continue;
             }
             let value = value.clone();
             let submitted_text = submitted_text.clone();
             edit.pending = None;
-            match outcome {
-                Outcome::Completed => {
-                    edit.baseline_value = Some(value);
-                    edit.baseline_text = submitted_text.clone();
-                    edit.error = None;
-                    if edit.discard_after_pending || edit.text == submitted_text {
-                        remove.push(key.clone());
-                    } else {
-                        edit.dirty = edit.text != edit.baseline_text;
-                    }
-                }
-                Outcome::Failed(error) | Outcome::Skipped(error) => {
-                    edit.error = Some(error);
+            if outcome.is_completed() {
+                edit.baseline_value = Some(value);
+                edit.baseline_text = submitted_text.clone();
+                edit.error = None;
+                if edit.discard_after_pending || edit.text == submitted_text {
+                    remove.push(key.duplicate());
+                } else {
                     edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
                 }
-                Outcome::Cancelled => {
-                    edit.error = Some("settings save was cancelled".into());
-                    edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
+            } else if outcome.is_failed() || outcome.is_skipped() {
+                edit.error = Some(outcome.reason().unwrap_or_default().to_owned());
+                edit.dirty = edit.text != edit.baseline_text;
+                if edit.discard_after_pending {
+                    remove.push(key.duplicate());
                 }
-                Outcome::Pending => unreachable!(),
+            } else if outcome.is_cancelled() {
+                edit.error = Some("settings save was cancelled".into());
+                edit.dirty = edit.text != edit.baseline_text;
+                if edit.discard_after_pending {
+                    remove.push(key.duplicate());
+                }
             }
             edit.discard_after_pending = false;
         }

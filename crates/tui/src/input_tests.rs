@@ -591,7 +591,7 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
     let log = app.regions.log_rows;
     app.on_mouse(mouse(MouseEventKind::ScrollUp, log.x + 2, log.y));
     assert!(
-        !app.log.view.follow,
+        !app.log.view.follow(),
         "wheel up over the drawer pauses follow"
     );
     assert_eq!(app.log.scroll, 3);

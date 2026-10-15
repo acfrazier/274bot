@@ -37,10 +37,10 @@ fn member(name: &str, phase: Phase) -> FleetRow {
 /// The selected slot's projected detail while it is in game on `tile`.
 fn ready_detail(name: &str, tile: (i32, i32, i32)) -> SlotDetail {
     let mut detail = SlotDetail::default();
-    detail.row = member(name, Phase::Ready);
-    detail.state = "ingame scene 2".into();
-    detail.tile = tile;
-    detail.ready_tile = Some(tile);
+    detail.set_row(member(name, Phase::Ready));
+    detail.set_state("ingame scene 2");
+    detail.set_tile(tile);
+    detail.set_ready_tile(Some(tile));
     detail
 }
 
@@ -343,7 +343,7 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
     let mut app = crate::test_support::fleet_app(&["alice"]);
     app.show_screen(Screen::Overview);
     let mut detail = crate::test_support::ready_detail("alice");
-    detail.row.script = RunState::Running;
+    detail.row_mut().set_script(RunState::Running);
     let status = ScriptStatus {
         run: api::selected::RunKey {
             slot: 1,
@@ -652,9 +652,9 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             text(&rows).contains(frontend_core::quester_paths::LOAD_PATHS_LABEL),
             "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
         );
-        assert!(!app.quester_paths.enabled, "folder Paths start disabled");
+        assert!(!app.quester_paths.enabled(), "folder Paths start disabled");
         assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
-        assert!(app.quester_paths.enabled, "the gate toggles on");
+        assert!(app.quester_paths.enabled(), "the gate toggles on");
 
         app.on_key(key(KeyCode::Down));
         let rows = draw(&mut app, width, height);
@@ -663,7 +663,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "the folder field stays visible at {width}x{height}: {rows:?}"
         );
         assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
-        let previous = app.quester_paths.folder.to_string_lossy().chars().count();
+        let previous = app.quester_paths.folder().to_string_lossy().chars().count();
         for _ in 0..previous {
             app.on_key(key(KeyCode::Backspace));
         }
@@ -677,7 +677,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Enter commits the editable folder field"
         );
         assert_eq!(
-            app.quester_paths.folder,
+            app.quester_paths.folder(),
             std::path::PathBuf::from(selected_folder)
         );
 
