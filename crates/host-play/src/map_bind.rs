@@ -213,9 +213,10 @@ pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize =
 /// WorkAdmission scratch for png 0.18.1. Text/ICC chunks are skipped; the 512 KiB whole-file
 /// input cap bounds the only unbounded copied chunk (eXIf) and its Info clone (both ≤512 KiB).
 /// Include their overlap, ≤128 KiB unfilter data, ≤1,033-byte row scratch, and bounded inflater
-/// tables; png::Limits separately caps its accounted parser allocations at 512 KiB.
+/// tables; png::Limits allows the input cap plus one raw RGBA row (including its filter byte).
 pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
-const PNG_DECODER_LIMIT_BYTES: usize = 512 * 1024;
+const PNG_DECODER_LIMIT_BYTES: usize =
+    WALK_MAP_DECODE_PNG_LIMIT + nav::map::spatial::TILE_PIXELS as usize * 4 + 1;
 
 /// Stable, allocation-free failures from the bounded walk-map PNG decoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
