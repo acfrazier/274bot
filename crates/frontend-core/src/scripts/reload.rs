@@ -976,10 +976,7 @@ impl Scripts {
         }
         let diff = match self.js.diff_catalog(&root) {
             Ok(d) => d,
-            Err(e) => {
-                self.reload.install(pending);
-                return ReloadOutcome::failed(e);
-            }
+            Err(e) => return ReloadOutcome::failed(e),
         };
         let failed = pending
             .kind
