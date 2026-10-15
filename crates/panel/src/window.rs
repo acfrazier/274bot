@@ -1750,8 +1750,16 @@ where
         if event_loop.exiting() {
             return;
         }
+        // The independent render pump runs on every loop turn, and the loop
+        // wakes for its next deadline, so a render grant whose head stops
+        // consuming expires on time even when no frame is drawn. It never
+        // renders on this thread.
+        let render_due = host::render_head::pump(Instant::now()).map(|deadline| deadline.instant());
         if self.poll_gpu(event_loop) {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + GPU_INIT_POLL));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(earliest(
+                Instant::now() + GPU_INIT_POLL,
+                render_due,
+            )));
             return;
         }
         match self.cfg.redraw {
@@ -1762,7 +1770,10 @@ where
                 }
             }
             RedrawMode::Wait => {
-                event_loop.set_control_flow(ControlFlow::Wait);
+                event_loop.set_control_flow(match render_due {
+                    Some(due) => ControlFlow::WaitUntil(due),
+                    None => ControlFlow::Wait,
+                });
             }
             RedrawMode::WaitUntil { fps } => {
                 let frame = Duration::from_secs_f32(1.0f32 / fps.max(1.0));
@@ -1775,10 +1786,16 @@ where
                         window.window.request_redraw();
                     }
                 }
-                event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
+                event_loop
+                    .set_control_flow(ControlFlow::WaitUntil(earliest(next_wake, render_due)));
             }
         }
     }
+}
+
+/// The earlier of the window's own wake and the render pump's deadline.
+fn earliest(wake: Instant, render_due: Option<Instant>) -> Instant {
+    render_due.map_or(wake, |due| due.min(wake))
 }
 
 /// Run the panel window loop. `ui_frame` is called every frame with the Ui

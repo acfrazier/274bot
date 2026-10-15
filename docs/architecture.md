@@ -206,9 +206,10 @@ unchanged manifest; compression does not change selected-content identities.
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
-| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; inactive until T4.2 |
+| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; one process instance, owned by `render_head.rs` |
+| `render_head.rs` | per-slot render heads over the process `RenderService` (T4.2 wrap) | `HeadLease` per drawing slot; GPU scene submissions under a `FrameLease` through the client's scene-workspace hook, CPU heads take none; the client's `GPU_SCENE_LOCK` wait is retained until T4.4 |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
-| `slot_io.rs` | frame and input channels | mailbox, input, park and wake |
+| `slot_io.rs` | frame and input channels | mailbox (accepts only its attached head's frames), input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
 | `auto_run.rs` | auto-run toggle | run-energy threshold |
 | `performance_profile.rs` | per-slot host work timers | opt-in, `performance-profile` feature |
