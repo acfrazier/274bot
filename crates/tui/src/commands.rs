@@ -5,6 +5,7 @@
 //! shortcuts: each table below is routed only while its pane has keyboard
 //! focus, so no letter leaks into another pane or a text field.
 
+use frontend_core::{marked_availability, MarkedAction, MarkedBlock};
 use script::RunState;
 
 use crate::app::{TuiApp, WalkSendMode};
@@ -507,27 +508,38 @@ impl Command {
                 .ok_or("no reload awaiting confirmation"),
             Command::ScriptStartAll | Command::ScriptStopAll => members(),
             Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
-                if app.table.selection.is_empty() {
-                    Err("mark fleet rows first (Space)")
+                let action = if self == Command::ScriptAssignMarked {
+                    MarkedAction::Assign
                 } else {
-                    app.script_sel
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or("browse to pick a script first")
+                    MarkedAction::AssignAndRestart
+                };
+                match marked_availability(
+                    action,
+                    app.table.selection.len(),
+                    app.script_sel.is_some(),
+                    app.focused_name().is_some(),
+                ) {
+                    Ok(()) => Ok(()),
+                    Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
+                    Err(MarkedBlock::NoFocusedBot) => {
+                        Err("no bot selected (Fleet: Enter or click a row)")
+                    }
+                    Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
                 }
             }
-            Command::ScriptApplyMarked => {
-                if app.table.selection.is_empty() {
-                    Err("mark fleet rows first (Space)")
-                } else if app.focused_name().is_none() {
+            Command::ScriptApplyMarked => match marked_availability(
+                MarkedAction::ApplySettings,
+                app.table.selection.len(),
+                app.script_sel.is_some(),
+                app.focused_name().is_some(),
+            ) {
+                Ok(()) => Ok(()),
+                Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
+                Err(MarkedBlock::NoFocusedBot) => {
                     Err("no bot selected (Fleet: Enter or click a row)")
-                } else {
-                    app.script_sel
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or("browse to pick a script first")
                 }
-            }
+                Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
+            },
             Command::ToggleGameChat => app
                 .chat_data
                 .script_paint

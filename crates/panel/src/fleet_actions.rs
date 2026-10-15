@@ -10,7 +10,7 @@ impl Session {
     /// starting it, so each bot's settings can be adjusted first.
     pub fn fleet_assign_selected(&mut self) {
         let Some(card) = self.script_sel.clone() else {
-            self.fleet_report = Some("Assign: select a card in Scripts first".into());
+            self.fleet_report = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();
@@ -38,7 +38,7 @@ impl Session {
     pub fn fleet_assign_restart_selected(&mut self) {
         self.fleet_restart_confirm = false;
         let Some(card) = self.script_sel.clone() else {
-            self.fleet_report = Some("Assign & restart: select a card in Scripts first".into());
+            self.fleet_report = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();

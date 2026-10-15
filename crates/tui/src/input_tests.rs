@@ -447,7 +447,14 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
         let all = text(&draw(&mut app, 120, 40));
         let label = app.script_sel.as_ref().unwrap().label();
         assert!(all.contains(&label), "{all}");
-        assert!(all.contains("1 marked bot"), "{all}");
+        if command == Command::ScriptRestartMarked {
+            assert!(
+                all.contains("Start the card on 1 idle bot: alice"),
+                "the restart confirmation names the starting bots: {all}"
+            );
+        } else {
+            assert!(all.contains("1 marked bot"), "{all}");
+        }
         let expected = match command {
             Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
             _ => AppAction::ScriptRestartMarked,

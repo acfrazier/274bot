@@ -989,7 +989,9 @@ pub struct Session {
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
     pub fleet_filter: String,
-    pub fleet_sort: crate::fleet::FleetSort,
+    pub fleet_sort: frontend_core::FleetOrder,
+    /// Reused buffer for the Fleet window's shown-row indices.
+    pub(crate) fleet_shown: Vec<usize>,
     pub fleet_report: Option<String>,
     /// Set by a marked Start: the fleet report follows the running Start
     /// report (and a later Stop all) until the next marked Stop.
@@ -1463,7 +1465,8 @@ impl Session {
             fleet_open: false,
             fleet_selection: frontend_core::MarkedSelection::default(),
             fleet_filter: String::new(),
-            fleet_sort: crate::fleet::FleetSort::Name,
+            fleet_sort: frontend_core::FleetOrder::Name,
+            fleet_shown: Vec::new(),
             fleet_report: None,
             fleet_report_follows_start: false,
             fleet_restart_confirm: false,
@@ -3464,10 +3467,7 @@ impl Session {
             .profile_names()
             .into_iter()
             .map(|name| {
-                let identity = self
-                    .core
-                    .profile_identity(&name)
-                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&name));
+                let identity = self.core.profile_identity_or_synthetic(&name);
                 (identity, name)
             })
             .collect()
@@ -4872,9 +4872,7 @@ impl Session {
     }
 
     fn fleet_identity(&self, name: &str) -> frontend_core::ProfileIdentity {
-        self.core
-            .profile_identity(name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+        self.core.profile_identity_or_synthetic(name)
     }
 
     pub fn refresh_walk_send(&mut self) {

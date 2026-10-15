@@ -1977,18 +1977,21 @@ impl TuiSession {
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
-        if !app.table.selection.is_empty() {
-            frontend_core::start_marked(
-                &app.table.selection,
-                &mut self.core,
-                &mut self.scripts,
-                app.script_sel.as_ref(),
-                root.as_deref(),
-            );
-            self.apply_script_notice(app);
-        } else {
-            self.scripts.start_all(&mut self.core, root.as_deref());
-            self.apply_script_notice(app);
+        match frontend_core::combined_bulk_scope(!app.table.selection.is_empty()) {
+            frontend_core::BulkScope::Marked => {
+                frontend_core::start_marked(
+                    &app.table.selection,
+                    &mut self.core,
+                    &mut self.scripts,
+                    app.script_sel.as_ref(),
+                    root.as_deref(),
+                );
+                self.apply_script_notice(app);
+            }
+            frontend_core::BulkScope::All => {
+                self.scripts.start_all(&mut self.core, root.as_deref());
+                self.apply_script_notice(app);
+            }
         }
     }
 
@@ -1996,6 +1999,7 @@ impl TuiSession {
     /// one bulk report names each bot that could not take it.
     fn script_assign_marked(&mut self, app: &mut TuiApp) {
         let Some(card) = app.script_sel.clone() else {
+            app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();
@@ -2014,6 +2018,7 @@ impl TuiSession {
     /// through the paced Start permit; the running Start report follows.
     fn script_restart_marked(&mut self, app: &mut TuiApp) {
         let Some(card) = app.script_sel.clone() else {
+            app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
         let root = self.start_catalog_root();
@@ -2064,16 +2069,22 @@ impl TuiSession {
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
-        if !app.table.selection.is_empty() {
-            let report =
-                frontend_core::stop_marked(&app.table.selection, &mut self.core, &mut self.scripts);
-            app.reload_confirm = self.scripts.reload_awaiting_confirm();
-            self.apply_script_notice(app);
-            app.error = Some(report.summary());
-        } else {
-            self.scripts.stop_all(&mut self.core);
-            app.reload_confirm = self.scripts.reload_awaiting_confirm();
-            self.apply_script_notice(app);
+        match frontend_core::combined_bulk_scope(!app.table.selection.is_empty()) {
+            frontend_core::BulkScope::Marked => {
+                let report = frontend_core::stop_marked(
+                    &app.table.selection,
+                    &mut self.core,
+                    &mut self.scripts,
+                );
+                app.reload_confirm = self.scripts.reload_awaiting_confirm();
+                self.apply_script_notice(app);
+                app.error = Some(report.summary());
+            }
+            frontend_core::BulkScope::All => {
+                self.scripts.stop_all(&mut self.core);
+                app.reload_confirm = self.scripts.reload_awaiting_confirm();
+                self.apply_script_notice(app);
+            }
         }
     }
 
