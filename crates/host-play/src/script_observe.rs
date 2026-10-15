@@ -1278,9 +1278,18 @@ pub(crate) fn script_observe_cached_with_channels(
                                             && *bank_generation == trace.generation
                                     );
                                     if matches {
-                                        dispatch_native_bank_deposit(
-                                            driver, snapshot, trace, name, &authority, tick,
-                                        )
+                                        #[cfg(test)]
+                                        if super::gatherer_recovery_live::refuse_deposit_once(
+                                            name, &authority, trace, tick,
+                                        ) {
+                                            return BankDepositDispatch {
+                                                accepted: false,
+                                                refusal: Some(
+                                                    "bank deposit dispatch was refused".to_owned(),
+                                                ),
+                                            };
+                                        }
+                                        dispatch_native_bank_deposit(driver, snapshot, trace)
                                     } else {
                                         BankDepositDispatch {
                                             accepted: false,
