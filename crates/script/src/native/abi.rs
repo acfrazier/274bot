@@ -76,8 +76,12 @@ pub enum HookOrder {
     AwaitedPollBeforeStep,
     /// Invoke at the synchronous call site in the current row step.
     SynchronousAtCallSite,
-    /// Deliver queued Hunt notifications in event order before the decision.
+    /// Deliver queued Hunt notes in event order before the decision.
     HuntNotificationsBeforeDecision,
+    /// Deliver FIFO log/partner notifications before the next decision.
+    QueuedNotificationsBeforeDecision,
+    /// Deliver an effect hook after its notes and before applying the effect.
+    HuntEffectAfterNotes,
 }
 
 /// Multiplicity of one callback within a row's current execution.
@@ -85,8 +89,12 @@ pub enum HookOrder {
 pub enum HookMultiplicity {
     /// One invocation each time the machine reaches this call site.
     PerReachedCallSite,
-    /// One invocation per queued notification; events are not coalesced.
+    /// One invocation per queued Hunt note; notes are not coalesced.
     PerQueuedHuntEvent,
+    /// One invocation per queued FIFO notification.
+    PerQueuedNotification,
+    /// One invocation per occurrence of its Hunt effect.
+    PerHuntEffect,
 }
 
 /// Current versus frozen call form; proposals do not select a future path.
@@ -134,54 +142,85 @@ impl HookCharacterization {
     }
 
     /// Callback order in the current row pass.
-    pub fn order(&self) -> HookOrder {
+    pub fn order(&self, family: &str) -> HookOrder {
         if self.path == HookPath::Awaited {
             HookOrder::AwaitedPollBeforeStep
-        } else if self.is_ordered_hunt_notification() {
+        } else if self.is_queued_notification(family) {
+            HookOrder::QueuedNotificationsBeforeDecision
+        } else if self.is_ordered_hunt_notification(family) {
             HookOrder::HuntNotificationsBeforeDecision
+        } else if self.is_hunt_effect(family) {
+            HookOrder::HuntEffectAfterNotes
         } else {
             HookOrder::SynchronousAtCallSite
         }
     }
     /// Callback multiplicity in the current row pass.
-    pub fn multiplicity(&self) -> HookMultiplicity {
-        if self.is_ordered_hunt_notification() {
+    pub fn multiplicity(&self, family: &str) -> HookMultiplicity {
+        if self.is_queued_notification(family) {
+            HookMultiplicity::PerQueuedNotification
+        } else if self.is_ordered_hunt_notification(family) {
             HookMultiplicity::PerQueuedHuntEvent
+        } else if self.is_hunt_effect(family) {
+            HookMultiplicity::PerHuntEffect
         } else {
             HookMultiplicity::PerReachedCallSite
         }
     }
 
     /// Source-backed frequency statement for this member's current call sites.
-    pub fn cadence_note(&self) -> &'static str {
-        if self.is_ordered_hunt_notification() {
-            "Once per queued Hunt event; event notes are delivered in sequence before the decision."
+    pub fn cadence_note(&self, family: &str) -> &'static str {
+        if self.is_ordered_hunt_notification(family) {
+            "Once per queued Hunt note; notes are delivered in sequence before the decision."
+        } else if self.is_queued_notification(family) {
+            "Once per queued notification; FIFO delivery precedes the next decision."
+        } else if self.is_hunt_effect(family) {
+            "Once per occurrence of this Hunt effect, after its notes and before applying it."
+        } else if self.member == "sustain" && family == "hunt-fight" {
+            "The Hunt fight stepper emits sustain at least once per tick."
+        } else if self.member == "sustain" && family.starts_with("hunt-") {
+            "Per reached Hunt sustain call site; no per-tick minimum is asserted."
         } else if self.member == "sustain" {
-            "Per reached call site; the Hunt fight stepper emits sustain at least once per tick."
+            "Non-Hunt movement drivers invoke sustain at reached pump call sites; no Hunt tick cadence applies."
         } else if self.path == HookPath::Awaited {
-            "One callback invocation per reached call site; the same Promise is polled while pending."
+            "One invocation per reached call site; the same Promise is polled while pending."
         } else {
-            "Once per reached synchronous call site; a site may be reached repeatedly in a step or tick."
+            "One invocation per reached synchronous call site; sites may be reached repeatedly."
         }
     }
-    fn is_ordered_hunt_notification(&self) -> bool {
+    fn is_queued_notification(&self, family: &str) -> bool {
+        self.path == HookPath::CallSync
+            && ((family == "partner-trade"
+                && matches!(
+                    self.member,
+                    "setStatus" | "log" | "onComplete" | "onDecline"
+                ))
+                || (self.member == "log"
+                    && matches!(
+                        family,
+                        "walk-resilient"
+                            | "walk-opening"
+                            | "walk-to"
+                            | "return-to-anchor"
+                            | "walk-hops"
+                    )))
+    }
+    fn is_ordered_hunt_notification(&self, family: &str) -> bool {
         self.path == HookPath::Ask
-            && self
-                .families
-                .iter()
-                .any(|family| family.starts_with("hunt-"))
+            && family.starts_with("hunt-")
+            && matches!(self.member, "countKill" | "setStatus" | "vlog" | "log")
+    }
+    fn is_hunt_effect(&self, family: &str) -> bool {
+        self.path == HookPath::Ask
+            && family.starts_with("hunt-")
             && matches!(
                 self.member,
-                "countKill"
-                    | "countBurial"
+                "countBurial"
                     | "countBankTrip"
                     | "setSafespotIndex"
                     | "setTarget"
                     | "parkFor"
                     | "pickWeapon"
-                    | "setStatus"
-                    | "vlog"
-                    | "log"
             )
     }
     /// Fulfilled-value axis.
@@ -317,7 +356,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:314; $S/hunt.rs:623",
+        "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623",
     ),
     hook(
         HUNT_FAMILIES,
@@ -326,7 +365,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/supply.ts:542; $S/hunt.rs:700-702",
+        "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702",
     ),
     hook(
         &["reach-entity-op"],
@@ -335,7 +374,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:596-601",
+        "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:603-607",
     ),
     // Awaited / ignored. §28.1 applies V5-07: armSpecial, sustain and afterDeposit are ignored.
     hook(
@@ -345,7 +384,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:402; $S/hunt.rs:624-629",
+        "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629",
     ),
     hook(
         SUSTAIN_FAMILIES,
@@ -354,7 +393,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:635,675; $S/hunt.rs:627-629; $S/walk.rs:1592-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1036-1042",
+        "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048",
     ),
     hook(
         &["bank_nearest", "periodic_bank"],
@@ -363,7 +402,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Banking.ts:296; $S/periodic_bank.rs:268-282,384-410,474-493",
+        "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493",
     ),
     hook(
         &["death_recovery"],
@@ -409,7 +448,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/shop/Shop.ts:124; $S/shop.rs:217-221; crates/script/tests/shop.rs:468",
+        "$TS/api/shop/Shop.ts:124; $S/shop.rs:550-554; crates/script/tests/shop.rs:468",
     ),
     hook(
         &["trade"],
@@ -427,7 +466,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524; $S/banking_open.rs:52-70",
+        "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524,529-536",
     ),
     hook(
         &["periodic_bank"],
@@ -454,7 +493,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/reach_entity.rs:478-483",
+        "$S/reach_entity.rs:570-579,599-603,613-617,661",
     ),
     hook(
         &["reach-entity-op"],
@@ -463,7 +502,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/reach_entity.rs:478-483",
+        "$S/reach_entity.rs:578,626",
     ),
     hook(
         &["partner-trade"],
@@ -563,7 +602,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:352-353; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:479-483,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:166-170; $S/reach.rs:202-205; $S/reach_entity.rs:484-490,994-996; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
@@ -798,7 +837,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2163-2167",
+        "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166",
     ),
     hook(
         HUNT_FAMILIES,
@@ -807,7 +846,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167",
+        "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168",
     ),
     hook(
         HUNT_FAMILIES,
@@ -843,7 +882,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137; $S/hunt_fight.rs:2229-2243",
+        "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137",
     ),
     hook(
         HUNT_FAMILIES,
@@ -862,12 +901,12 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$TS/api/combat/hunting/combat.ts:521-522; $S/hunt.rs:798-821",
+        "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821",
     ),
     hook(
         HUNT_FAMILIES,
         "countBurial",
-        "Hunt burial progress notification",
+        "Hunt count-burial effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -876,7 +915,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "countBankTrip",
-        "Hunt bank-trip progress notification",
+        "Hunt count-bank-trip effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -885,7 +924,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "setSafespotIndex",
-        "Hunt safespot progress notification",
+        "Hunt safespot effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -894,7 +933,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "setTarget",
-        "Hunt target progress notification",
+        "Hunt target effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -903,7 +942,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "parkFor",
-        "Hunt park progress notification",
+        "Hunt park-for effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -912,7 +951,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
     hook(
         HUNT_FAMILIES,
         "pickWeapon",
-        "Hunt weapon-pick progress notification",
+        "Hunt pick-weapon effect hook",
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
@@ -979,7 +1018,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:121,193,304",
+        "$S/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:126-130,345-346",
     ),
     // Clue's ordinary callbacks use Step::Call and are a separate Q5 row-14 discrepancy.
     hook(
@@ -989,7 +1028,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:121,193,304",
+        "$S/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:211-213",
     ),
     hook(
         &["clue"],
@@ -998,7 +1037,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:121,193,304",
+        "$S/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:232-233,343-346,433-434",
     ),
     hook(
         &["clue"],
@@ -1007,7 +1046,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:121,193,304",
+        "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:278-280,343-345,433-434",
     ),
 ];
 
@@ -1040,13 +1079,28 @@ mod tests {
             HookOrder::AwaitedPollBeforeStep => "awaited-poll-before-step",
             HookOrder::SynchronousAtCallSite => "synchronous-at-call-site",
             HookOrder::HuntNotificationsBeforeDecision => "hunt-notifications-before-decision",
+            HookOrder::QueuedNotificationsBeforeDecision => {
+                "queued-notifications-before-next-decision"
+            }
+            HookOrder::HuntEffectAfterNotes => "hunt-effect-after-notes",
         }
     }
 
-    fn multiplicity_name(multiplicity: HookMultiplicity) -> &'static str {
-        match multiplicity {
-            HookMultiplicity::PerReachedCallSite => "per-reached-call-site",
-            HookMultiplicity::PerQueuedHuntEvent => "per-queued-hunt-event",
+    fn multiplicity_name(multiplicity: HookMultiplicity, path: HookPath) -> &'static str {
+        match (multiplicity, path) {
+            (HookMultiplicity::PerReachedCallSite, HookPath::Ask) => {
+                "per-reached-call-site; ASKS_PER_STEP=512 per step"
+            }
+            (HookMultiplicity::PerQueuedHuntEvent, _) => {
+                "per-queued-hunt-event; ASKS_PER_STEP=512 per step"
+            }
+            (HookMultiplicity::PerHuntEffect, _) => "per-hunt-effect; ASKS_PER_STEP=512 per step",
+            (HookMultiplicity::PerReachedCallSite, _) => {
+                "per-reached-call-site; CALLS_PER_TICK=256 per row per tick"
+            }
+            (HookMultiplicity::PerQueuedNotification, _) => {
+                "per-queued-notification; CALLS_PER_TICK=256 per row per tick"
+            }
         }
     }
 
@@ -1087,24 +1141,34 @@ mod tests {
         let rows = HOOK_CHARACTERIZATIONS
             .iter()
             .map(|row| {
+                let family_semantics = row
+                    .families()
+                    .iter()
+                    .map(|family| {
+                        json!({
+                            "family": family,
+                            "order": order_name(row.order(family)),
+                            "multiplicity": multiplicity_name(row.multiplicity(family), row.path()),
+                            "cadence": row.cadence_note(family),
+                        })
+                    })
+                    .collect::<Vec<_>>();
                 json!({
                     "families": row.families(),
+                    "family_semantics": family_semantics,
                     "member": row.member(),
                     "call_site": row.call_site(),
                     "path": path_name(row.path()),
                     "value": value_name(row.value()),
                     "promise": promise_name(row.promise()),
                     "thrown": thrown_name(row.thrown()),
-                    "order": order_name(row.order()),
-                    "multiplicity": multiplicity_name(row.multiplicity()),
-                    "cadence": row.cadence_note(),
                     "frozen_path": frozen_path_value(row),
                     "evidence": row.evidence(),
                 })
             })
             .collect::<Vec<_>>();
         let mut output = serde_json::to_string_pretty(&json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "source": "crates/script/src/native/abi.rs::HOOK_CHARACTERIZATIONS",
             "rows": rows,
         }))
@@ -1119,6 +1183,103 @@ mod tests {
             callback_snapshot(),
             include_str!("../../compat-js/abi-callbacks.json"),
             "Regenerate with: cargo test -p script --lib regenerate_callback_snapshot -- --ignored"
+        );
+    }
+    fn callback_for(family: &'static str, member: &'static str) -> &'static HookCharacterization {
+        HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.member() == member && row.families().contains(&family))
+            .unwrap_or_else(|| panic!("missing callback {family}/{member}"))
+    }
+
+    #[test]
+    fn queued_notifications_and_hunt_effects_keep_their_code_order() {
+        for member in ["setStatus", "log", "onComplete", "onDecline"] {
+            let row = callback_for("partner-trade", member);
+            assert_eq!(
+                row.order("partner-trade"),
+                HookOrder::QueuedNotificationsBeforeDecision,
+                "partner-trade/{member} is drained from the FIFO before the next decision"
+            );
+            assert_eq!(
+                row.multiplicity("partner-trade"),
+                HookMultiplicity::PerQueuedNotification
+            );
+        }
+        let missing = callback_for("partner-trade", "onMissingPartner");
+        assert_eq!(
+            missing.order("partner-trade"),
+            HookOrder::SynchronousAtCallSite
+        );
+        assert_eq!(
+            missing.multiplicity("partner-trade"),
+            HookMultiplicity::PerReachedCallSite
+        );
+
+        for family in [
+            "walk-resilient",
+            "walk-opening",
+            "walk-to",
+            "return-to-anchor",
+            "walk-hops",
+        ] {
+            let row = callback_for(family, "log");
+            assert_eq!(
+                row.order(family),
+                HookOrder::QueuedNotificationsBeforeDecision,
+                "{family} drains walk log lines before the next decision"
+            );
+            assert_eq!(
+                row.multiplicity(family),
+                HookMultiplicity::PerQueuedNotification
+            );
+        }
+
+        for member in [
+            "setSafespotIndex",
+            "setTarget",
+            "countBurial",
+            "countBankTrip",
+            "parkFor",
+            "pickWeapon",
+        ] {
+            let row = callback_for("hunt-fight", member);
+            assert_eq!(row.order("hunt-fight"), HookOrder::HuntEffectAfterNotes);
+            assert_eq!(
+                row.multiplicity("hunt-fight"),
+                HookMultiplicity::PerHuntEffect
+            );
+        }
+        for member in ["countKill", "setStatus", "vlog", "log"] {
+            let row = callback_for("hunt-fight", member);
+            assert_eq!(
+                row.order("hunt-fight"),
+                HookOrder::HuntNotificationsBeforeDecision
+            );
+            assert_eq!(
+                row.multiplicity("hunt-fight"),
+                HookMultiplicity::PerQueuedHuntEvent
+            );
+        }
+    }
+
+    #[test]
+    fn walk_sustain_cadence_does_not_inherit_the_hunt_note() {
+        let sustain = HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.member() == "sustain")
+            .expect("sustain hook row");
+        assert_eq!(
+            sustain.cadence_note("hunt-fight"),
+            "The Hunt fight stepper emits sustain at least once per tick."
+        );
+        assert_eq!(
+            sustain.cadence_note("walk-resilient"),
+            "Non-Hunt movement drivers invoke sustain at reached pump call sites; no Hunt tick cadence applies."
+        );
+        assert_eq!(
+            sustain.cadence_note("hunt-bank"),
+            "Per reached Hunt sustain call site; no per-tick minimum is asserted."
         );
     }
 

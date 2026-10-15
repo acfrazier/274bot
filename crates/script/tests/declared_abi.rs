@@ -750,7 +750,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
             .map(|row| row.as_str().expect("canonical predecessor"))
             .collect();
         let expected_canonical: Vec<_> = if id == "bank" {
-            vec!["F0", "T1.3", "T2.2"]
+            vec!["F0", "T1.3", "T2.2", "T5.1"]
         } else {
             predecessors
                 .iter()
