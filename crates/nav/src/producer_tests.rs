@@ -103,13 +103,14 @@ fn bind_records_the_pack_digest_once() {
     ));
     let content = PackDigest::of(b"pack bytes");
     let bound = bind(&world, content).unwrap();
-    assert_eq!(bound.identity().content(), content);
-    assert_eq!(bind(&world, content).unwrap().identity(), bound.identity());
+    assert_eq!(bound.content(), content);
+    assert_eq!(bind(&world, content).unwrap(), bound);
     assert_eq!(
         bind(&world, PackDigest::of(b"other bytes")).unwrap_err(),
         ContractError::PackMismatch
     );
-    assert_eq!(identity(&world).unwrap(), bound.identity());
+    assert_eq!(identity(&world).unwrap(), bound);
+    assert_eq!(lease(&world).unwrap().identity(), bound);
 }
 
 #[test]
@@ -161,9 +162,25 @@ fn route_view_borrows_the_owner_route_under_the_world_identity() {
         dest: tile(3, 3, 0),
         ticks: 2.5,
     };
-    let view = route_view(&world, &route).unwrap();
+    let view = route_view(&*world, &route).unwrap();
     assert_eq!(view.pack(), identity(&world).unwrap().pack());
+    assert_eq!(view.pack(), zones_view(&world).unwrap().unwrap().pack());
+    let world_lease = lease(&world).unwrap();
+    assert_eq!(view.pack(), world_lease.zones().unwrap().pack());
+    assert_eq!(
+        route_view(&world_lease, &route).unwrap().pack(),
+        view.pack(),
+        "the lease serves the same identity as the world"
+    );
     assert_ne!(view.pack(), identity(&other).unwrap().pack());
+    assert_ne!(
+        view.pack(),
+        NavLease::wrap(Arc::clone(&world), PackDigest::of(b"x"))
+            .unwrap()
+            .identity()
+            .pack(),
+        "a wrapped lease is its own identity, not the world's"
+    );
     assert_eq!(view.destination(), route.dest);
     assert_eq!(view.ticks(), 2.5);
     assert_eq!(view.leg_count(), 2);
@@ -232,9 +249,16 @@ fn views_of_a_legacy_world_have_no_zone_table() {
     let world = Arc::new(NavWorld::from_grid(
         &crate::grid::StepGrid::fixture_open_3x3(),
     ));
+    let legacy = lease(&world).unwrap();
+    assert!(legacy.zones().is_none());
     assert!(zones_view(&world).unwrap().is_none());
     let wild = wilderness_view(&world).unwrap();
     assert!(!wild.contains(tile(1, 1, 0)));
     assert_eq!(wild.level(tile(1, 1, 0)), 0);
     assert!(collision_view(&world).unwrap().standable(tile(1, 1, 0)));
+    assert_eq!(
+        collision_view(&world).unwrap().pack(),
+        legacy.identity().pack(),
+        "the per-tick view and the lease share the world's identity"
+    );
 }

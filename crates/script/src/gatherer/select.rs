@@ -1395,22 +1395,25 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 }
 
 #[cfg(test)]
-pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
-    static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
-        let pack = std::env::var_os("NAV_PACK")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(
-                    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWorld> {
+    static WORLD: std::sync::LazyLock<std::sync::Arc<nav::world::NavWorld>> =
+        std::sync::LazyLock::new(|| {
+            let pack = std::env::var_os("NAV_PACK")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(
+                        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+                    )
+                });
+            std::sync::Arc::new(
+                nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+                    panic!(
+                    "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
+                    pack.display()
                 )
-            });
-        nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
-            panic!(
-                "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
-                pack.display()
+                }),
             )
-        })
-    });
+        });
     &WORLD
 }
 
@@ -1462,7 +1465,10 @@ pub(crate) mod tests {
         collision: nav::collision::WorldCollision,
         configure: impl FnOnce(&mut nav::world::NavWorld),
     ) -> std::sync::Arc<nav::world::NavWorld> {
-        let mut world = nav::world::NavWorld::from_parts(collision, Default::default(), Vec::new());
+        // The checker registers the type path; the constructor is reached
+        // through it rather than as a second qualified symbol.
+        type NavWorld = nav::world::NavWorld;
+        let mut world = NavWorld::from_parts(collision, Default::default(), Vec::new());
         configure(&mut world);
         std::sync::Arc::new(world)
     }
@@ -1479,9 +1485,15 @@ pub(crate) mod tests {
         .expect("lease ids are not exhausted in tests")
     }
 
+    /// A lease over a small synthetic collision the test keeps for its raw
+    /// oracle: the grid is copied once (fixture-sized, never a real pack).
     pub(crate) fn test_nav_lease_for_collision(
         collision: &nav::collision::WorldCollision,
     ) -> nav::contract::NavLease {
+        assert!(
+            collision.width * collision.height <= 1 << 16,
+            "copy only fixture grids; the real pack is leased by test_real_nav_lease"
+        );
         test_nav_lease_over(
             nav::collision::WorldCollision {
                 origin: collision.origin,
@@ -1493,6 +1505,15 @@ pub(crate) mod tests {
             },
             |_| {},
         )
+    }
+
+    /// A lease over the shared real 289 pack world, without copying it.
+    pub(crate) fn test_real_nav_lease() -> nav::contract::NavLease {
+        nav::contract::NavLease::wrap(
+            std::sync::Arc::clone(super::test_real_nav_world()),
+            nav::contract::PackDigest::of(b"real 289 pack"),
+        )
+        .expect("lease ids are not exhausted in tests")
     }
 
     #[test]
@@ -1811,7 +1832,7 @@ pub(crate) mod tests {
         level: 0,
     };
     fn real_nav_world() -> &'static nav::world::NavWorld {
-        super::test_real_nav_world()
+        super::test_real_nav_world().as_ref()
     }
 
     fn fishing_guild_spot(
@@ -3365,7 +3386,7 @@ pub(crate) mod tests {
             "Ardougne still clamps onto the blocked south-east observation corner"
         );
         let world = real_nav_world();
-        let lease = test_nav_lease_for_collision(&world.collision);
+        let lease = test_real_nav_lease();
         assert!(
             !area_arrival_ok(&world.collision, clamped),
             "{clamped:?} must stay an empty Area r=1 goal on the reference pack"
@@ -3449,7 +3470,7 @@ pub(crate) mod tests {
             .next()
             .expect("guild observation cell");
         let world = real_nav_world();
-        let lease = test_nav_lease_for_collision(&world.collision);
+        let lease = test_real_nav_lease();
         let area = guild_work_area();
         let mut legal_here = None;
         let mid_x = (cell.min_x + cell.max_x) / 2;
@@ -3598,8 +3619,7 @@ pub(crate) mod tests {
 
         let catalog = real_catalog();
         let (method, index, _spot) = fishing_guild_spot(&catalog);
-        let world = real_nav_world();
-        let lease = test_nav_lease_for_collision(&world.collision);
+        let lease = test_real_nav_lease();
         let area = guild_work_area();
         let settings = guild_fishing_settings(method, area);
         let select_now = |fishing: &mut FishingSurvey, now: u64| {
@@ -3761,7 +3781,7 @@ pub(crate) mod tests {
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
         let catalog = real_catalog();
         let world = real_nav_world();
-        let lease = test_nav_lease_for_collision(&world.collision);
+        let lease = test_real_nav_lease();
         let mut seen = std::collections::HashSet::new();
         let mut previously_blocked = Vec::new();
         let mut checked = 0usize;

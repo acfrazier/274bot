@@ -23,6 +23,9 @@ pub enum UnknownWhy {
     InputLock,
     Poison,
     Overflow,
+    /// The route, plan, zone key or exemption belongs to another nav pack,
+    /// or names a row this pack does not have (`nav::contract` refused it).
+    NavIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -11,15 +11,16 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav::router::Route;
-use nav::transport::WildernessRules;
-use nav::zones::ZoneExempt;
+use nav::contract::{BoundZoneExempt, BoundZoneKey, LegView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 
+/// The owner-boundary facts an assessment runs over: the pack's zone table
+/// and wilderness views (both of the route's pack), the risk facts built
+/// for that pack, and the selected combat tables.
 #[derive(Clone, Copy)]
 pub struct Estimate<'a> {
-    pub zones: Option<&'a ZoneTable>,
-    pub wilderness: &'a WildernessRules,
+    pub zones: Option<ZoneTableView<'a>>,
+    pub wilderness: WildernessView<'a>,
     pub risks: &'a RiskTables,
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
@@ -675,21 +676,35 @@ fn bounded_hp(hp: i32) -> Result<u8, UnknownWhy> {
     u8::try_from(hp.max(0)).map_err(|_| UnknownWhy::Overflow)
 }
 
+/// Whether every row of `crossing` is granted (`zone_granted` is fallible:
+/// a key from another pack refuses the whole admission).
+fn crossing_granted(
+    plan: &RoutePlan,
+    crossing: &CrossingGeom,
+    zone_granted: &impl Fn(BoundZoneKey) -> Result<bool, UnknownWhy>,
+) -> Result<bool, UnknownWhy> {
+    for row in rows(plan, crossing) {
+        if !zone_granted(row.zone)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Copies the plan only when granted unknown rows must be omitted from replay.
 /// The retained assessment stays complete and the all-known path stays borrowed.
 fn omit_granted_unknowns(
     plan: &RoutePlan,
-    zone_granted: &impl Fn(u16) -> bool,
+    zone_granted: &impl Fn(BoundZoneKey) -> Result<bool, UnknownWhy>,
 ) -> Result<Option<RoutePlan>, UnknownWhy> {
-    let granted = |crossing: &CrossingGeom| {
-        rows(plan, crossing)
-            .iter()
-            .all(|row| zone_granted(row.zone))
-    };
-    let has_granted_unknown = plan.crossings.iter().any(|crossing| {
+    let mut has_granted_unknown = false;
+    for crossing in &plan.crossings {
         let rows = rows(plan, crossing);
-        granted(crossing) && rows.iter().any(|row| row.unknown())
-    });
+        if crossing_granted(plan, crossing, zone_granted)? && rows.iter().any(|row| row.unknown()) {
+            has_granted_unknown = true;
+            break;
+        }
+    }
     if !has_granted_unknown {
         return Ok(None);
     }
@@ -702,7 +717,7 @@ fn omit_granted_unknowns(
         .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
     intervals.extend_from_slice(&plan.intervals[..escape_end]);
     for crossing in &plan.crossings {
-        let granted = granted(crossing);
+        let granted = crossing_granted(plan, crossing, zone_granted)?;
         let start = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
         intervals.extend(
             rows(plan, crossing)
@@ -718,6 +733,7 @@ fn omit_granted_unknowns(
 
     Ok(Some(RoutePlan {
         complete: plan.complete,
+        pack: plan.pack,
         intervals: intervals.into_boxed_slice(),
         crossings: crossings.into_boxed_slice(),
     }))
@@ -726,14 +742,16 @@ fn omit_granted_unknowns(
 /// The zones enforcing admission treats as granted for one found route.
 #[derive(Clone, Copy)]
 pub struct Grants<'a> {
-    /// The request's router exemptions: named `cross` keys, or `all()`.
-    pub named: ZoneExempt,
-    /// When set, zones engaged at the route's endpoint are granted as well.
-    pub endpoint: Option<&'a WildernessRules>,
+    /// The request's router exemptions, bound to the route's pack: named
+    /// `cross` keys, or `all()`.
+    pub named: BoundZoneExempt,
+    /// When set, and the request named grants, zones engaged at the route's
+    /// endpoint are granted as well.
+    pub endpoint: Option<WildernessView<'a>>,
 }
 impl<'a> Grants<'a> {
     /// Only the request's exemptions; an endpoint crossing is judged.
-    pub const fn named(named: ZoneExempt) -> Self {
+    pub const fn named(named: BoundZoneExempt) -> Self {
         Self {
             named,
             endpoint: None,
@@ -743,10 +761,12 @@ impl<'a> Grants<'a> {
     /// endpoint completion for the zone it ends in: its destination zones
     /// are admitted with its named ones. Without named grants, endpoint
     /// crossings stay judged; transit through any unnamed zone always is.
-    pub fn request(named: ZoneExempt, wilderness: &'a WildernessRules) -> Self {
+    /// (Whether grants were named is decided against the pack's table in
+    /// [`admission_passes`]; a bound exemption does not expose its keys.)
+    pub const fn request(named: BoundZoneExempt, wilderness: WildernessView<'a>) -> Self {
         Self {
             named,
-            endpoint: (named != ZoneExempt::NONE).then_some(wilderness),
+            endpoint: Some(wilderness),
         }
     }
 }
@@ -755,11 +775,12 @@ impl<'a> Grants<'a> {
 /// granted crossing is exempt from refusal; unknown physics in a mixed
 /// crossing is not. Known granted damage remains in every subsequent floor.
 /// A failed assessment's incomplete plan is never admitted: replaying its
-/// empty plan would certify nothing.
+/// empty plan would certify nothing. The route, plan and grants must all
+/// belong to `zones`'s pack ([`UnknownWhy::NavIdentity`] otherwise).
 pub fn admission_passes(
-    route: &Route,
+    route: RouteView<'_>,
     assessment: &RouteAssessment,
-    zones: &ZoneTable,
+    zones: ZoneTableView<'_>,
     tables: &CombatTables,
     allow: WalkAllow,
     grants: Grants<'_>,
@@ -771,22 +792,53 @@ pub fn admission_passes(
             _ => UnknownWhy::MissingFacts,
         });
     }
-    let zone_granted = |zone: u16| {
-        grants.named.contains_zone(zone, zones)
-            || grants.endpoint.is_some_and(|wilderness| {
-                super::geometry::engaged_at(zones, zone, &assessment.input, wilderness, route.dest)
-            })
+    if plan.pack != Some(zones.pack())
+        || route.pack() != zones.pack()
+        || grants.named.pack() != zones.pack()
+    {
+        return Err(UnknownWhy::NavIdentity);
+    }
+    // Endpoint grants apply only when the request named any exemption.
+    let none = zones.exempt(&[]).map_err(nav_identity)?;
+    let endpoint = grants.endpoint.filter(|_| grants.named != none);
+    let zone_granted = |zone: BoundZoneKey| -> Result<bool, UnknownWhy> {
+        if zones
+            .exemption_contains(grants.named, zone)
+            .map_err(nav_identity)?
+        {
+            return Ok(true);
+        }
+        let Some(wilderness) = endpoint else {
+            return Ok(false);
+        };
+        let view = zones.zone(zone).map_err(nav_identity)?;
+        Ok(super::geometry::engaged_at(
+            view,
+            &assessment.input,
+            wilderness,
+            route.destination(),
+        ))
     };
-    let granted = |c: &CrossingGeom| rows(plan, c).iter().all(|row| zone_granted(row.zone));
-    if plan.crossings.is_empty() || plan.crossings.iter().all(granted) {
+    let granted = |c: &CrossingGeom| crossing_granted(plan, c, &zone_granted);
+    let mut all_granted = true;
+    for crossing in &plan.crossings {
+        if !granted(crossing)? {
+            all_granted = false;
+            break;
+        }
+    }
+    if all_granted {
         return Ok(true);
     }
     if let Some(why) = input_problem(&assessment.input, tables) {
         return Err(why);
     }
-    for crossing in plan.crossings.iter().filter(|crossing| !granted(crossing)) {
+    for crossing in &plan.crossings {
+        if granted(crossing)? {
+            continue;
+        }
         if let Some(row) = rows(plan, crossing).iter().find(|row| row.unknown()) {
-            return Err(UnknownWhy::Kind(zones.zones()[usize::from(row.zone)].kind));
+            return Err(UnknownWhy::Kind(row.kind));
         }
         if matches!(assessment.input.poison, PoisonState::Unknown { .. }) {
             return Err(UnknownWhy::Poison);
@@ -804,14 +856,21 @@ pub fn admission_passes(
         tables,
         allow,
         None,
-        |index, _| !granted(&plan.crossings[index]),
+        // Identity was checked above, so `granted` cannot fail here; an
+        // impossible refusal still judges the crossing (must pass).
+        |index, _| !matches!(granted(&plan.crossings[index]), Ok(true)),
         |_, _, _, _, _| {},
     )
     .map(|result| result.passed)
 }
 
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
-pub fn assess(route: &Route, context: &Estimate<'_>, input: RiskInput) -> Arc<RouteAssessment> {
+/// `route` and `context.zones` must be views of the same pack.
+pub fn assess(
+    route: RouteView<'_>,
+    context: &Estimate<'_>,
+    input: RiskInput,
+) -> Arc<RouteAssessment> {
     let mut reason = Reason::new();
     let result = assess_inner(route, context, input, &mut reason);
     match result {
@@ -834,7 +893,7 @@ pub fn assess(route: &Route, context: &Estimate<'_>, input: RiskInput) -> Arc<Ro
     }
 }
 fn assess_inner(
-    route: &Route,
+    route: RouteView<'_>,
     context: &Estimate<'_>,
     input: RiskInput,
     reason: &mut Reason,
@@ -845,7 +904,7 @@ fn assess_inner(
     let mut unknown = input_problem(&input, context.combat);
     for row in &plan.intervals {
         if row.unknown() {
-            let kind = zones.zones()[usize::from(row.zone)].kind;
+            let kind = row.kind;
             let class = context
                 .risks
                 .kind(kind)
@@ -853,7 +912,7 @@ fn assess_inner(
             let _ = write!(
                 reason,
                 "{}: {:?}; ",
-                zones.kinds()[usize::from(kind)].label,
+                zones.zone(row.zone).map_err(nav_identity)?.kind().label(),
                 class
             );
             if unknown.is_none() {
@@ -939,7 +998,7 @@ fn assess_inner(
         if display.len() < 8 {
             let first = rows(&plan, c)[0];
             display.push(Crossing {
-                key: first.key(zones),
+                key: first.key(zones)?,
                 first: c.first,
                 last: c.last,
                 ticks,
@@ -1085,13 +1144,13 @@ fn assess_inner(
     }
     if let Some(c) = no_way_out {
         let ending = rows(&plan, c).last().ok_or(UnknownWhy::Overflow)?;
-        let kind = &zones.kinds()[usize::from(zones.zones()[usize::from(ending.zone)].kind)];
-        let _ = write!(reason, "NoWayOut: ends inside {}; ", kind.label);
-        if let Some(nav::router::Leg::Transport { edge }) = usize::from(c.leg)
+        let kind = zones.zone(ending.zone).map_err(nav_identity)?.kind();
+        let _ = write!(reason, "NoWayOut: ends inside {}; ", kind.label());
+        if let Some(LegView::Transport(hop)) = usize::from(c.leg)
             .checked_sub(1)
-            .and_then(|leg| route.legs.get(leg))
+            .and_then(|leg| route.leg(leg).ok())
         {
-            let _ = write!(reason, "entered by {:?}; ", edge.kind);
+            let _ = write!(reason, "entered by {:?}; ", hop.kind());
         } else {
             let _ = write!(reason, "standing inside or transport-entered; ");
         }
@@ -1106,7 +1165,7 @@ fn assess_inner(
         );
     }
     if let Some(row) = plan.intervals.first() {
-        let kind = &zones.kinds()[usize::from(zones.zones()[usize::from(row.zone)].kind)];
+        let kind = zones.zone(row.zone).map_err(nav_identity)?.kind();
         let _ = write!(
             reason,
             "{}{} at {},{}; ",
@@ -1115,7 +1174,7 @@ fn assess_inner(
             } else {
                 "Route crosses "
             },
-            kind.label,
+            kind.label(),
             row.spawn.tile().x,
             row.spawn.tile().z
         );

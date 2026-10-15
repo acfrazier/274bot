@@ -91,7 +91,7 @@ fn fixture_world(
         .expect("valid synthetic zone table"),
     );
     let world = NavWorld::from_parts(collision, graph, Vec::new());
-    let risks = RiskTables::build(world.graph.zones.as_ref().unwrap(), &combat);
+    let risks = risk_tables(world.graph.zones.as_ref().unwrap(), &combat);
     world.risk_facts(|| Some(Tables { combat, risks }));
     world
 }
@@ -2170,14 +2170,15 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
         );
         assert!((route.dest.x - to.x).abs() <= 1 && (route.dest.z - to.z).abs() <= 1);
         assert_eq!(assessment.input.poison, PoisonState::Unknown { since: 0 });
+        let zones = producer::zones_view(&world).unwrap().unwrap();
         let named_only = assessment.plan.crossings.is_empty()
             || risk::admission_passes(
-                route,
+                producer::route_view(&*world, route).unwrap(),
                 assessment,
-                world.graph.zones.as_ref().unwrap(),
+                zones,
                 &tables(&world).unwrap().combat,
                 WalkAllow::default(),
-                risk::Grants::named(grants),
+                risk::Grants::named(producer::bind_exempt(zones, grants).unwrap()),
             )
             .unwrap_or(false);
         assert_eq!(

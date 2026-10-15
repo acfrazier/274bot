@@ -3747,7 +3747,7 @@ mod tests {
             level: 0,
         };
         let world = crate::gatherer::select::test_real_nav_world();
-        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&world.collision);
+        let lease = crate::gatherer::select::tests::test_real_nav_lease();
         assert!(
             !world.collision.walkable(blocked_away),
             "S10 away tile must stay blocked on the reference pack"
