@@ -12,6 +12,20 @@ use std::path::{Path, PathBuf};
 use crate::js_cache::{CacheMeta, JsCache};
 use crate::rs2b0t_registry::ScriptSource;
 
+/// Existing source bound applied to operator-loaded script bodies.
+pub(crate) const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+/// A reload resolves a finite module graph and charges all raw source bytes
+/// together, not merely each file independently.
+pub(crate) const MAX_PREPARATION_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_PREPARATION_SIBLINGS: usize = 128;
+pub(crate) const MAX_PREPARATION_RESULT_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(feature = "load")]
+fn read_preparation_source(path: &Path) -> Result<String, String> {
+    vault::read_regular_file(path, MAX_SOURCE_BYTES)
+        .map_err(|error| format!("read {}: {error}", path.display()))
+}
+
 /// Which loader a JS source belongs to.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LoadShape {
@@ -578,28 +592,47 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
-/// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
-/// for extra rustyscript modules at Start.
+/// One sibling graph node in discovery order: relative import, module URL,
+/// disk path, and bounded UTF-8 source.
 #[cfg(feature = "load")]
-pub fn resolve_sibling_modules(
+type PreparationSibling = (String, String, PathBuf, String);
+
+#[cfg(feature = "load")]
+fn collect_preparation_siblings(
     card_path: &Path,
     origin: &str,
-    cache: &JsCache,
-    meta: CacheMeta,
-) -> Result<Vec<(String, String)>, String> {
+    source_limit: usize,
+) -> Result<Vec<PreparationSibling>, String> {
+    let source_limit = source_limit.min(MAX_PREPARATION_SOURCE_BYTES);
+    if origin.len() > source_limit {
+        return Err("script and sibling sources exceed the 8 MiB preparation limit".into());
+    }
     let card_dir = card_path
         .parent()
         .ok_or_else(|| format!("no parent dir for {}", card_path.display()))?;
-    let mut pending: Vec<String> = scan_same_folder_js_imports(origin)
+    let mut pending = Vec::new();
+    let mut queued = HashSet::new();
+    for import_rel in scan_same_folder_js_imports(origin)
         .into_iter()
         .chain(scan_scripts_sibling_js_imports(origin))
-        .collect();
+    {
+        if queued.insert(import_rel.clone()) {
+            if queued.len() > MAX_PREPARATION_SIBLINGS {
+                return Err("script has more than 128 sibling modules".into());
+            }
+            pending.push(import_rel);
+        }
+    }
     let mut seen = HashSet::new();
-    let mut nodes: Vec<(String, String, String, String)> = Vec::new();
+    let mut nodes = Vec::new();
+    let mut source_bytes = origin.len();
     while let Some(import_rel) = pending.pop() {
+        queued.remove(&import_rel);
         if !seen.insert(import_rel.clone()) {
             continue;
+        }
+        if seen.len() > MAX_PREPARATION_SIBLINGS {
+            return Err("script has more than 128 sibling modules".into());
         }
         let Some(url) = sibling_module_url(&import_rel) else {
             continue;
@@ -610,14 +643,133 @@ pub fn resolve_sibling_modules(
         if same_path(&path, card_path) {
             continue;
         }
-        let bytes = std::fs::read(&path).map_err(|e| format!("sibling {}: {e}", path.display()))?;
-        let origin_text = String::from_utf8_lossy(&bytes).into_owned();
-        pending.extend(scan_same_folder_js_imports(&origin_text));
-        pending.extend(scan_scripts_sibling_js_imports(&origin_text));
-        let cached = cache.get_or_transpile(&path, &bytes, meta.clone())?;
-        nodes.push((import_rel, url, cached.js, origin_text));
+        let origin_text = read_preparation_source(&path)
+            .map_err(|error| format!("sibling {}: {error}", path.display()))?;
+        source_bytes = source_bytes
+            .checked_add(origin_text.len())
+            .filter(|bytes| *bytes <= source_limit)
+            .ok_or_else(|| {
+                "script and sibling sources exceed the 8 MiB preparation limit".to_string()
+            })?;
+        let mut imports = scan_same_folder_js_imports(&origin_text);
+        imports.extend(scan_scripts_sibling_js_imports(&origin_text));
+        for dependency in imports {
+            if queued.insert(dependency.clone()) {
+                if queued.len() + seen.len() > MAX_PREPARATION_SIBLINGS {
+                    return Err("script has more than 128 sibling modules".into());
+                }
+                pending.push(dependency);
+            }
+        }
+        nodes.push((import_rel, url, path, origin_text));
     }
-    Ok(order_siblings_deps_first(nodes))
+    Ok(nodes)
+}
+
+#[cfg(feature = "load")]
+fn cached_preparation_js(
+    cache: &JsCache,
+    path: &Path,
+    source: &str,
+    meta: &CacheMeta,
+    current_result_bytes: usize,
+) -> Result<String, String> {
+    let remaining = MAX_PREPARATION_RESULT_BYTES
+        .checked_sub(current_result_bytes)
+        .ok_or_else(|| "prepared JavaScript exceeds the 16 MiB result limit".to_string())?;
+    let object = cache.object_path(&JsCache::origin_sha(source.as_bytes()));
+    if std::fs::metadata(&object)
+        .is_ok_and(|metadata| metadata.len() > remaining as u64)
+    {
+        return Err("cached JavaScript exceeds the 16 MiB result limit".into());
+    }
+    let cached = cache.get_or_transpile(path, source.as_bytes(), meta.clone())?;
+    if cached.js.len() > remaining {
+        return Err("prepared JavaScript exceeds the 16 MiB result limit".into());
+    }
+    Ok(cached.js)
+}
+
+/// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
+/// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
+/// for extra rustyscript modules at Start.
+#[cfg(feature = "load")]
+pub fn resolve_sibling_modules(
+    card_path: &Path,
+    origin: &str,
+    cache: &JsCache,
+    meta: CacheMeta,
+) -> Result<Vec<(String, String)>, String> {
+    resolve_sibling_modules_bounded(
+        card_path,
+        origin,
+        cache,
+        meta,
+        0,
+        MAX_PREPARATION_SOURCE_BYTES,
+    )
+}
+
+/// Resolve the supported sibling graph with source and result bounds. The
+/// entry script's JavaScript output is included in `current_result_bytes`.
+#[cfg(feature = "load")]
+pub(crate) fn resolve_sibling_modules_bounded(
+    card_path: &Path,
+    origin: &str,
+    cache: &JsCache,
+    meta: CacheMeta,
+    current_result_bytes: usize,
+    source_limit: usize,
+) -> Result<Vec<(String, String)>, String> {
+    let nodes = collect_preparation_siblings(card_path, origin, source_limit)?;
+    let mut used_result_bytes = current_result_bytes;
+    let mut compiled = Vec::with_capacity(nodes.len());
+    for (rel, url, path, source) in nodes {
+        let js = cached_preparation_js(cache, &path, &source, &meta, used_result_bytes)?;
+        used_result_bytes += js.len();
+        compiled.push((rel, url, js, source));
+    }
+    Ok(order_siblings_deps_first(compiled))
+}
+
+/// Raw entry plus the supported sibling graph fingerprint, under the same
+/// source/count limits as candidate preparation.
+#[cfg(feature = "load")]
+pub(crate) fn raw_content_fingerprint_bounded(
+    card_path: &Path,
+    origin: &str,
+    source_limit: usize,
+) -> Result<String, String> {
+    let siblings = collect_preparation_siblings(card_path, origin, source_limit)?
+        .into_iter()
+        .map(|(relative, _, _, text)| (relative, crate::identity::raw_sha(text.as_bytes())))
+        .collect::<Vec<_>>();
+    let entry = crate::identity::raw_sha(origin.as_bytes());
+    Ok(crate::identity::combine_fingerprints(&entry, &siblings))
+}
+
+/// Bounded counterpart used only while preparing or revalidating a reload.
+#[cfg(feature = "load")]
+pub(crate) fn first_unloadable_for_card_bounded(
+    origin: &str,
+    card_path: &Path,
+    source_limit: usize,
+) -> Result<Option<String>, String> {
+    if let Some(spec) = first_unloadable_specifier(origin) {
+        return Ok(Some(spec));
+    }
+    let siblings = collect_preparation_siblings(card_path, origin, source_limit)?;
+    for import_rel in scan_same_folder_js_imports(origin)
+        .into_iter()
+        .chain(scan_scripts_sibling_js_imports(origin))
+    {
+        if let Some((_, _, _, source)) = siblings.iter().find(|(relative, _, _, _)| relative == &import_rel) {
+            if let Some(spec) = first_unloadable_specifier(source) {
+                return Ok(Some(spec));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Raw entry + supported sibling hashes, no transpile.

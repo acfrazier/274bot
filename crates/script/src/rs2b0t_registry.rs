@@ -129,56 +129,164 @@ pub fn parse_registry_with_sources(
     index_ts: &str,
     sources: &HashMap<String, String>,
 ) -> Result<Vec<RegistryCard>, String> {
-    let imports = scan_imports(index_ts);
-    let registers = scan_registers(index_ts);
-    if registers.is_empty() {
-        return Err("no ScriptRegistry.register calls".to_string());
+    RegistryIndex::parse(index_ts)?.cards_with_sources(sources)
+}
+
+/// Parse only one named registration and resolve only that registration's
+/// settings schema. Catalogue preparation uses this to avoid materializing
+/// every other card's schema for each changed card.
+pub fn parse_registry_card_with_sources(
+    index_ts: &str,
+    sources: &HashMap<String, String>,
+    name: &str,
+) -> Result<RegistryCard, String> {
+    RegistryIndex::parse(index_ts)?.card_with_sources(sources, name)
+}
+
+
+/// Parsed registry index retained while a bounded catalogue refresh prepares
+/// each changed card without rescanning the registry for every candidate.
+pub(crate) struct RegistryIndex {
+    imports: HashMap<String, ImportBinding>,
+    registers: Vec<RegisterInfo>,
+}
+
+impl RegistryIndex {
+    pub(crate) fn parse(index_ts: &str) -> Result<Self, String> {
+        let imports = scan_imports(index_ts);
+        let registers = scan_registers(index_ts);
+        if registers.is_empty() {
+            return Err("no ScriptRegistry.register calls".to_string());
+        }
+        Ok(Self {
+            imports,
+            registers,
+        })
     }
+
+    pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
+        self.cards_with_sources(&HashMap::new())
+    }
+
+    fn cards_with_sources(
+        &self,
+        sources: &HashMap<String, String>,
+    ) -> Result<Vec<RegistryCard>, String> {
+        parse_registry_with_sources_selected(
+            &self.imports,
+            &self.registers,
+            sources,
+            None,
+            None,
+        )
+    }
+
+    fn card_with_sources(
+        &self,
+        sources: &HashMap<String, String>,
+        name: &str,
+    ) -> Result<RegistryCard, String> {
+        parse_registry_with_sources_selected(
+            &self.imports,
+            &self.registers,
+            sources,
+            Some(name),
+            None,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("catalog {name}: registry entry no longer resolves"))
+    }
+
+    pub(crate) fn card_with_sources_bounded(
+        &self,
+        sources: &HashMap<String, String>,
+        name: &str,
+        schema_source_limit: usize,
+    ) -> Result<RegistryCard, String> {
+        parse_registry_with_sources_selected(
+            &self.imports,
+            &self.registers,
+            sources,
+            Some(name),
+            Some(schema_source_limit),
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("catalog {name}: registry entry no longer resolves"))
+    }
+}
+
+fn parse_registry_with_sources_selected(
+    imports: &HashMap<String, ImportBinding>,
+    registers: &[RegisterInfo],
+    sources: &HashMap<String, String>,
+    target: Option<&str>,
+    schema_source_limit: Option<usize>,
+) -> Result<Vec<RegistryCard>, String> {
     let mut cards = Vec::new();
     for reg in registers {
+        if target.is_some_and(|name| reg.name != name) {
+            continue;
+        }
         let Some(path) = imports.get(&reg.ctor).map(|b| b.rel_path.clone()) else {
             continue;
         };
         let settings_schema = match reg.settings_schema_ident.as_ref() {
             Some(ident) => match imports.get(ident) {
-                Some(binding) => match settings_blob(sources, &binding.rel_path) {
-                    Some(src) => parse_settings_export(&src, &binding.export_name, Some(sources))
-                        .map_err(|err| format!("{}: {err}", reg.name))?,
-                    None => Vec::new(),
-                },
+                Some(binding) => {
+                    let blob = if let Some(limit) = schema_source_limit {
+                        settings_blob_bounded(sources, &binding.rel_path, limit)
+                            .map_err(|error| format!("{}: {error}", reg.name))?
+                    } else {
+                        settings_blob(sources, &binding.rel_path)
+                    };
+                    match blob {
+                        Some(src) => parse_settings_export(&src, &binding.export_name, Some(sources))
+                            .map_err(|err| format!("{}: {err}", reg.name))?,
+                        None => Vec::new(),
+                    }
+                }
                 None => Vec::new(),
             },
             None => Vec::new(),
         };
         cards.push(RegistryCard {
-            name: reg.name,
+            name: reg.name.clone(),
             rel_path: path,
-            description: reg.description,
-            category: reg.category,
-            tags: reg.tags,
-            version: reg.version,
+            description: reg.description.clone(),
+            category: reg.category.clone(),
+            tags: reg.tags.clone(),
+            version: reg.version.clone(),
             settings_schema,
             kind: ScriptKind::Compat,
             source: ScriptSource::Catalog,
         });
     }
-    if cards.is_empty() {
+    if target.is_none() && cards.is_empty() {
         return Err("register matched no import".to_string());
     }
     Ok(cards)
 }
 
-fn lookup_source(sources: &HashMap<String, String>, rel_path: &str) -> Option<String> {
+fn lookup_source_ref<'a>(
+    sources: &'a HashMap<String, String>,
+    rel_path: &str,
+) -> Option<&'a str> {
     if let Some(src) = sources.get(rel_path) {
-        return Some(src.clone());
+        return Some(src);
     }
     if let Some(stem) = rel_path.strip_suffix(".js") {
         let ts_path = format!("{stem}.ts");
         if let Some(src) = sources.get(&ts_path) {
-            return Some(src.clone());
+            return Some(src);
         }
     }
     None
+}
+
+fn lookup_source(sources: &HashMap<String, String>, rel_path: &str) -> Option<String> {
+    lookup_source_ref(sources, rel_path).map(str::to_owned)
 }
 
 fn rel_dir(rel: &str) -> Option<&str> {
@@ -188,21 +296,49 @@ fn rel_dir(rel: &str) -> Option<&str> {
 
 /// Script text plus same-directory siblings (BankFletcherLogic, AlcherLogic).
 fn settings_blob(sources: &HashMap<String, String>, rel_path: &str) -> Option<String> {
-    let primary = lookup_source(sources, rel_path)?;
-    let Some(dir) = rel_dir(rel_path) else {
-        return Some(primary);
+    settings_blob_bounded(sources, rel_path, usize::MAX)
+        .ok()
+        .flatten()
+}
+
+fn settings_blob_bounded(
+    sources: &HashMap<String, String>,
+    rel_path: &str,
+    max_bytes: usize,
+) -> Result<Option<String>, String> {
+    let Some(primary) = lookup_source_ref(sources, rel_path) else {
+        return Ok(None);
     };
-    let mut blob = primary;
-    for (path, text) in sources {
-        if path == rel_path {
-            continue;
-        }
-        if rel_dir(path) == Some(dir) {
-            blob.push('\n');
-            blob.push_str(text);
+    let dir = rel_dir(rel_path);
+    let mut bytes = primary.len();
+    if bytes > max_bytes {
+        return Err("settings schema sources exceed the preparation byte bound".into());
+    }
+    if let Some(dir) = dir {
+        for (path, text) in sources {
+            if path == rel_path || rel_dir(path) != Some(dir) {
+                continue;
+            }
+            bytes = bytes
+                .checked_add(1)
+                .and_then(|bytes| bytes.checked_add(text.len()))
+                .filter(|bytes| *bytes <= max_bytes)
+                .ok_or_else(|| {
+                    "settings schema sources exceed the preparation byte bound".to_string()
+                })?;
         }
     }
-    Some(blob)
+    let mut blob = String::with_capacity(bytes);
+    blob.push_str(primary);
+    if let Some(dir) = dir {
+        for (path, text) in sources {
+            if path != rel_path && rel_dir(path) == Some(dir) {
+                blob.push('\n');
+                blob.push_str(text);
+            }
+        }
+    }
+    Ok(Some(blob))
 }
 
 #[cfg(feature = "load")]
