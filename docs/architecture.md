@@ -19,14 +19,21 @@ or optional rename.
 
 ## Local command
 
-Python **3.11+** (stdlib `tomllib`). No Rust rebuild. The checker and its
-rules live only in [`acfrazier/274bot-arch`](https://github.com/acfrazier/274bot-arch)
+Python **3.11+** (stdlib `tomllib`). No Rust rebuild. The checker, its
+tests, and the graph-creating policy live only in [`acfrazier/274bot-arch`](https://github.com/acfrazier/274bot-arch)
 `main`, as decided in ADR 0010. See the
 [checker README](https://github.com/acfrazier/274bot-arch/blob/main/README.md)
-for its runtime pins and rule-change process. This repo holds only the
+for its runtime pins and rule-change process. This repo holds the
 runner `tools/architecture/run.sh`, which fetches `274bot-arch` `main` into
-a local cache and runs it against a tree. Agents and Main use the same
-runner locally.
+a local cache and runs it against a tree. The fine data the checker reads —
+exactly `tools/architecture/ownership.json`,
+`tools/architecture/inventories.json`, and
+`tools/architecture/foreign_types.json` — stays in this repo beside the
+runner and is reviewed like code. Everything that creates or activates the
+graph stays protected: workspace members, edges/kinds/migrations, the
+configuration feature/activation fields (including optional-dependency
+activation), and the graph provenance baseline.
+Agents and Main use the same runner locally.
 
 ```bash
 tools/architecture/run.sh
@@ -60,13 +67,19 @@ pull requests in one `architecture` job. It also installs the pinned
 `flatc --rust` of `crates/script/schema/isolate.fbs`. That job
 does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
 
-The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml),
-with [`ownership.json`](https://github.com/acfrazier/274bot-arch/blob/main/ownership.json)
-and [`inventories.json`](https://github.com/acfrazier/274bot-arch/blob/main/inventories.json)
-beside it.
-Every workspace member must appear there, and every edge the manifests
-declare needs an `[[allow]]` with its kind. Unknown members and unlisted
-edges fail closed. crates.io and other non-path crates are ignored. `client`
+The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
+workspace members, edges with their kinds and migrations, and the
+configuration feature/activation fields, all protected. The fine data lives
+beside the runner and is reviewed like code:
+[`tools/architecture/ownership.json`](../tools/architecture/ownership.json),
+[`tools/architecture/inventories.json`](../tools/architecture/inventories.json),
+[`tools/architecture/foreign_types.json`](../tools/architecture/foreign_types.json).
+The checker loads that data from the checked tree, refuses malformed or
+stale data, and cannot widen the protected edge policy.
+Every workspace member must appear in protected `policy.toml`. Every edge
+the manifests declare needs an `[[allow]]` or migration with its kind.
+Unknown members and unlisted edges fail closed. crates.io and other
+non-path crates are ignored. `client`
 is a workspace *alias* to `vendor/fr-client-rust/crates/client`, not a 274bot
 workspace member; it is listed as an architecture external.
 
@@ -135,9 +148,11 @@ claim that `e2e` owns those crates' production behavior.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 
-If a future change needs a new edge or kind, propose the `274bot-arch`
-policy edit (a patch or branch bundle for the operator to review and push —
-agents cannot push that repo), update this page, and get review. Do not add
+If a future change needs a new edge, kind, migration, or configuration
+activation, propose the `274bot-arch` policy edit (a patch or branch bundle
+for the operator to review and push — agents cannot push that repo), update
+this page, and get review. Ownership, inventory, and foreign-type rows
+change as ordinary product diffs beside the runner. Do not add
 a second hidden graph.
 
 ## Cargo features
@@ -758,13 +773,16 @@ nav, rendering, or the isolate.
 
 ## Changing a boundary
 
-1. Prepare the `274bot-arch` rule change — the new or removed `[[allow]]`,
-   ownership row, inventory row, or foreign-type row, with a reason — as a
-   patch or branch bundle. Only the operator can push `274bot-arch`;
-   agents cannot. If the product change needs a new allowance first (a
-   crate edge, an ownership row, a seam type), the operator pushes that
-   rule change before the product change lands.
+1. If the change needs a new graph allowance (a crate edge or kind, a
+   migration, a configuration activation), prepare the `274bot-arch`
+   policy edit as a patch or branch bundle. Only the operator can push
+   `274bot-arch`; agents cannot. The operator pushes that policy change
+   before the product change lands. Fine-data changes (ownership rows,
+   inventory rows, foreign-type rows) are ordinary product diffs in
+   `tools/architecture/`, reviewed like code: the checker loads them from
+   the checked tree, refuses malformed or stale data, and cannot widen the
+   protected edge policy.
 2. Update the tables on this page so the public description matches.
 3. Run the local command above (point `ARCH_REPO` at a local `274bot-arch`
-   clone to prove an unpushed rule change before review).
+   clone to prove an unpushed policy change before review).
 4. Get review. Do not land a graph change as a drive-by import.

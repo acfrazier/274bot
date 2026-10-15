@@ -141,23 +141,29 @@ cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-
 cargo test --workspace
 cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
 
-# Crate-graph ownership (Python 3.11+). Does not replace fmt/clippy/test.
-# The checker and its rules live in operator-owned `274bot-arch` `main`;
-# `run.sh` fetches them into a bare-Git cache (`ARCH_CACHE_DIR`, default
+# Crate-graph ownership (local Python 3.11+ minimum; CI pins 3.14.8). Does
+# not replace fmt/clippy/test. The checker and the graph-creating policy
+# live in operator-owned `274bot-arch` `main`; `run.sh` fetches them into a
+# bare-Git cache (`ARCH_CACHE_DIR`, default
 # `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`) and runs them against a
-# tree (`--root`, default the product root). `ARCH_REPO` takes a URL
+# tree (`--root`, default the product root), reading the fine data
+# (`tools/architecture/ownership.json`, `inventories.json`,
+# `foreign_types.json`) from the checked tree. `ARCH_REPO` takes a URL
 # (always `main`) or a local clone (its local `HEAD`, for pre-push proof).
 tools/architecture/run.sh
 tools/architecture/run.sh --root /path/to/tree
 ```
 
-Crate edges are an explicit allowlist in the operator-owned
-[`274bot-arch`](https://github.com/acfrazier/274bot-arch) repo
-([`policy.toml`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml),
-[docs/architecture.md](docs/architecture.md)). Rule changes are proposed as
-a patch or branch bundle for the operator to push; agents cannot push that
-repo. New reverse or convenience dependencies, workspace aliases, target
-tables, and unknown workspace members fail closed. Optional-only allows do
+Crate edges are an explicit allowlist: the protected
+[`policy.toml`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
+in the operator-owned [`274bot-arch`](https://github.com/acfrazier/274bot-arch)
+repo (workspace members, edges/kinds/migrations, configuration
+feature/activation — see [docs/architecture.md](docs/architecture.md)).
+Edge-policy changes are proposed as a patch or branch bundle for the
+operator to push; agents cannot push that repo. Ownership, inventory, and
+foreign-type rows are ordinary product diffs, reviewed like code. New reverse
+or convenience dependencies, workspace aliases, target tables, and unknown
+workspace members fail closed. Optional-only allows do
 not accept a required target dependency. Membership is the explicit
 `workspace.members` paths plus a root `[package]` if present; globs are
 unsupported and fail closed. Lifecycle, FlatBuffer isolate/host wire,
