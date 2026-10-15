@@ -1554,7 +1554,7 @@ impl SelectedGameData {
         None
     }
 
-    /// Cache-only: the prepared gathering catalog if some user still holds it. Never decodes.
+    /// Cache-only: the prepared gathering catalog after its first process decode. Never decodes.
     pub fn try_gathering(&self) -> Option<Arc<crate::gather_methods::GatherCatalog>> {
         crate::gather_methods::cached(self)
     }
