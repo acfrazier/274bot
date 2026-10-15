@@ -107,8 +107,23 @@ STEP_DEADLINE_S = {
     "lanes": int(os.environ.get("NIGHTLY_LANES_DEADLINE_S", "10800")),
     "build": int(os.environ.get("NIGHTLY_BUILD_DEADLINE_S", "5400")),
     "panel": int(os.environ.get("NIGHTLY_PANEL_DEADLINE_S", "12600")),
-    "tui": int(os.environ.get("NIGHTLY_TUI_DEADLINE_S", "12600")),
+    "tui": int(os.environ.get("NIGHTLY_TUI_DEADLINE_S", "21600")),
 }
+# The whole night: no step runs past it, so the summary and DONE are always written
+# before the scheduled task's own limit (11 h). 0 = no bound (the Linux VM).
+RUN_DEADLINE_S = int(os.environ.get("NIGHTLY_RUN_DEADLINE_S", "30600" if IS_WINDOWS else "0"))
+_run_deadline = float("inf")
+
+
+def step_deadline(name: str, start: float) -> float:
+    return min(start + STEP_DEADLINE_S[name], _run_deadline)
+
+
+def deadline_text(name: str) -> str:
+    night = f", night {RUN_DEADLINE_S} s" if RUN_DEADLINE_S else ""
+    return f"deadline (step {name} {STEP_DEADLINE_S[name]} s{night})"
+
+
 PANEL_PARALLEL = int(os.environ.get("NIGHTLY_PANEL_PARALLEL", "3"))
 # Cells whose name matches draw with the GPU renderer; every other cell gets BOT_CPU=1.
 GPU_CELLS = re.compile(os.environ.get("NIGHTLY_GPU_CELLS", "^render_" if IS_WINDOWS else "(?!)"))
@@ -448,7 +463,7 @@ def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: 
 
 
 def build(tree: Path, target: Path, run_dir: Path, build_log: Path) -> dict[str, Path]:
-    deadline = time.monotonic() + STEP_DEADLINE_S["build"]
+    deadline = step_deadline("build", time.monotonic())
     remaining = lambda: max(60.0, deadline - time.monotonic())  # noqa: E731
     bins = frontend_bins()
     if not snapshot_ready():
@@ -827,7 +842,7 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         return write_cell(cell_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
-        result.reason = f"{frontend} step deadline ({STEP_DEADLINE_S[frontend]} s) reached before this cell started"
+        result.reason = f"{deadline_text(frontend)} reached before this cell started"
         return write_cell(cell_dir, result)
     scratch = work / frontend / cell
     home = scratch / "home"
@@ -1019,7 +1034,7 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
         return write_lane(lane_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
-        result.reason = f"lanes step deadline ({STEP_DEADLINE_S['lanes']} s) reached before this lane started"
+        result.reason = f"{deadline_text('lanes')} reached before this lane started"
         return write_lane(lane_dir, result)
     scratch = work / "lanes" / name
     rmtree(scratch)
@@ -1274,7 +1289,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                 lanes, step["status"] = lane_rows("UNAVAILABLE", detail), f"unavailable: {detail}"
             else:
                 copy_engine(run_dir)
-                lanes = run_lanes(tree, run_dir, work, lane_base, step_start + STEP_DEADLINE_S["lanes"], branch,
+                lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start), branch,
                                   only_lanes)
                 step["status"] = "ran: " + counts_text(count(lanes))
         step["wall_s"] = round(time.monotonic() - step_start, 1)
@@ -1286,7 +1301,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         try:
             binaries = build(tree, target, run_dir, build_log)
         except subprocess.TimeoutExpired:
-            build_ok, build_error = False, f"build deadline ({STEP_DEADLINE_S['build']} s) reached; see build.log"
+            build_ok, build_error = False, f"build {deadline_text('build')} reached; see build.log"
         except (subprocess.CalledProcessError, OSError, RuntimeError) as error:
             build_ok, build_error = False, f"{error}"
         log(f"{branch}: build {'ok' if build_ok else 'FAILED'}")
@@ -1316,7 +1331,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             assert binary is not None
             rows += run_cells(frontend, binary, runnable, run_dir, work, cell_base,
                               parallel if frontend == "tui" else PANEL_PARALLEL,
-                              step_start + STEP_DEADLINE_S[frontend], branch)
+                              step_deadline(frontend, step_start), branch)
             step["status"] = "ran: " + counts_text(count(rows))
         elif reason_unavailable:
             step["status"] = f"unavailable: {reason_unavailable}"
@@ -1338,7 +1353,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full,
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
-        cell_cap_s=CELL_CAP_S, profile=PROFILE, interrupted=_stop.is_set(),
+        cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE, interrupted=_stop.is_set(),
         steps=steps, session=session, unavailable=unavailable,
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
@@ -1352,12 +1367,12 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     )
     write_summary(run_dir, meta, lanes, panel, results)
     wtext(run_dir / "DONE", meta["finished"] + "\n")
-    parts = [f"tui {counts_text(count(results))}"]
-    if "panel" in STEPS:
-        parts.insert(0, f"panel {counts_text(count(panel))}")
-    if "lanes" in STEPS:
-        parts.insert(0, f"lanes {counts_text(count(lanes))}")
-    log(f"{branch}: summary {meta['run']}: " + "; ".join(parts))
+    sections = {"lanes": lanes, "panel": panel, "tui": results}
+    if STEPS == ["tui"]:
+        line = counts_text(count(results))
+    else:
+        line = "; ".join(f"{name} {counts_text(count(sections[name]))}" for name in STEPS if name in sections)
+    log(f"{branch}: summary {meta['run']}: {line}")
     return run_dir
 
 
@@ -1453,6 +1468,9 @@ def main() -> int:
             run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
+    global _run_deadline
+    if RUN_DEADLINE_S:
+        _run_deadline = time.monotonic() + RUN_DEADLINE_S
     log(f"nightly start: branches {branches}, steps {STEPS}, parallel {args.parallel}")
     for branch in branches:
         if _stop.is_set():
