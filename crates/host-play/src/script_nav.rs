@@ -1785,8 +1785,9 @@ fn spawn_route_worker(
                     let (admitted, _) = pending.request.calculate_admitted();
                     let route_ticks = match &admitted.outcome {
                         RouteOutcome::Routed(route) | RouteOutcome::BankSession { route, .. } => {
-                            script::combat::risk::RoutePath::new(route)
+                            nav::producer::route_view(&*pending.request.world, route)
                                 .ok()
+                                .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
                                 .and_then(|path| u32::try_from(path.ticks()).ok())
                                 .unwrap_or(0)
                         }

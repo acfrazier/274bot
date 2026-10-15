@@ -24,23 +24,24 @@
 use std::sync::Arc;
 
 use crate::contract::{
-    BoundZoneExempt, CollisionView, ContractError, NavIdentity, NavLease, PackDigest, RouteView,
-    WildernessView, ZoneTableView,
+    BoundZoneExempt, CollisionView, ContractError, NavIdentity, NavLease, PackDigest, PackId,
+    RouteView, WildernessView, ZoneTableView,
 };
 use crate::router::Route;
 use crate::world::NavWorld;
 use crate::zones::ZoneExempt;
 
-/// Record the loaded pack's content digest on `world` and lease it. The
-/// first bind wins; a later bind with the same digest is a no-op and a
-/// different digest is refused with [`ContractError::PackMismatch`] (the
-/// caller is naming another pack's bytes).
-pub fn bind(world: &Arc<NavWorld>, content: PackDigest) -> Result<NavLease, ContractError> {
+/// Record the loaded pack's content digest on `world` and mint its
+/// identity. The first bind wins; a later bind with the same digest is a
+/// no-op and a different digest is refused with
+/// [`ContractError::PackMismatch`] (the caller is naming another pack's
+/// bytes).
+pub fn bind(world: &NavWorld, content: PackDigest) -> Result<NavIdentity, ContractError> {
     let recorded = world.content.get_or_init(|| content);
     if *recorded != content {
         return Err(ContractError::PackMismatch);
     }
-    lease(world)
+    identity(world)
 }
 
 /// The world's one facade identity, minted on first use.
@@ -56,13 +57,14 @@ pub fn identity(world: &NavWorld) -> Result<NavIdentity, ContractError> {
 }
 
 /// A lease over `world` under its one identity. Cloning the lease clones
-/// the `Arc` handle only.
+/// the `Arc` handle only. The borrowed producers below serve the same
+/// identity without `Arc` traffic.
 pub fn lease(world: &Arc<NavWorld>) -> Result<NavLease, ContractError> {
     Ok(NavLease::with_identity(Arc::clone(world), identity(world)?))
 }
 
-/// Borrowed collision view over the world's packed bake, without an `Arc`
-/// clone (the per-tick producer).
+/// Borrowed collision view over the world's packed bake (the per-tick
+/// producer).
 pub fn collision_view(world: &NavWorld) -> Result<CollisionView<'_>, ContractError> {
     Ok(CollisionView::new(
         identity(world)?.pack(),
@@ -87,12 +89,34 @@ pub fn wilderness_view(world: &NavWorld) -> Result<WildernessView<'_>, ContractE
     Ok(WildernessView::new(&world.graph.wilderness))
 }
 
-/// A [`RouteView`] over a route the owner retains for `world`. The view
-/// borrows the route (no copy, no `Arc` traffic) and carries the world's
-/// pack identity, so it is accepted only against that world's other views.
-/// Plan publication under a work identity is T5.W(route).
-pub fn route_view<'a>(world: &NavWorld, route: &'a Route) -> Result<RouteView<'a>, ContractError> {
-    Ok(RouteView::borrowed(identity(world)?.pack(), route))
+/// What a borrowed route view is served under: the loaded world (its one
+/// identity) or a lease minted for it. Both name the same pack.
+pub trait ViewSource {
+    /// The pack identity the view is bound to.
+    fn pack(&self) -> Result<PackId, ContractError>;
+}
+
+impl ViewSource for NavWorld {
+    fn pack(&self) -> Result<PackId, ContractError> {
+        identity(self).map(NavIdentity::pack)
+    }
+}
+
+impl ViewSource for NavLease {
+    fn pack(&self) -> Result<PackId, ContractError> {
+        Ok(self.identity().pack())
+    }
+}
+
+/// A [`RouteView`] over a route the owner retains, under `source`'s
+/// identity. The view borrows the route (no copy, no `Arc` traffic) and
+/// is accepted only against that identity's other views. Plan publication
+/// under a work identity is T5.W(route).
+pub fn route_view<'a>(
+    source: &impl ViewSource,
+    route: &'a Route,
+) -> Result<RouteView<'a>, ContractError> {
+    Ok(RouteView::borrowed(source.pack()?, route))
 }
 
 /// Bind a request's raw exemption to the pack behind `zones`. Every named

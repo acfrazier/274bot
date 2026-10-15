@@ -8,11 +8,22 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use api::game_data::{NpcAttackKind, NpcNameRow};
-use nav::zones::{ZoneKind, ZoneTable};
 
 use super::super::select::facts::npc_max_hit;
 use super::super::tables::CombatTables;
 use super::Style;
+
+/// One zone kind's owner-boundary facts, read from the pack's kind rows by
+/// the host (`nav::contract::ZoneKindView` semantics): the packed NPC id, or
+/// for a hazard its curated damage. Script never reads the pack's kind
+/// storage itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindSource {
+    /// The NPC id, or `None` for a non-NPC hazard (the pack's `-1`).
+    pub npc_id: Option<i32>,
+    /// Curated hazard damage, unknown when absent. Ignored for an NPC kind.
+    pub hazard_damage: Option<u8>,
+}
 
 /// Why a kind is not supported by the bounded risk model.
 ///
@@ -286,13 +297,16 @@ struct NpcRows {
     len: u16,
 }
 
-/// Immutable per-zone-kind risk facts and an allocation-free NPC→zone-row index.
+/// Immutable per-zone-kind risk facts, the zone-row → kind map the facade
+/// does not expose, and an allocation-free NPC→zone-row index.
 #[derive(Debug)]
 pub struct RiskTables {
-    /// Same order and length as `ZoneTable::kinds()`.
+    /// Same order and length as the pack's kind rows.
     pub kinds: Box<[KindRisk]>,
     /// Maximum unknown-poison pulse from every selected NPC row, not only zoned kinds.
     pub poison_unknown_v: u8,
+    /// Kind index of each zone row, in pack row order.
+    row_kinds: Box<[u16]>,
     rows_by_kind: Box<[NpcRows]>,
     row_indices: Box<[u16]>,
 }
@@ -311,26 +325,33 @@ impl RiskTables {
         Self {
             kinds: Box::new([]),
             poison_unknown_v: poison_unknown_v(combat),
+            row_kinds: Box::new([]),
             rows_by_kind: Box::new([]),
             row_indices: Box::new([]),
         }
     }
 
-    /// Build once from all zone kinds and the full selected NPC extract.
-    pub fn build(zones: &ZoneTable, combat: &CombatTables) -> Self {
+    /// Build once from the pack's kind rows (in kind order), each zone row's
+    /// kind index (in row order) and the full selected NPC extract. The host
+    /// supplies both sequences from the storage it owns.
+    pub fn build(
+        kinds: impl IntoIterator<Item = KindSource>,
+        row_kinds: impl IntoIterator<Item = u16>,
+        combat: &CombatTables,
+    ) -> Self {
         #[cfg(test)]
         RISK_TABLE_BUILD_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        let kinds = zones
-            .kinds()
-            .iter()
-            .map(|kind| build_kind(kind, combat))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        let (rows_by_kind, row_indices) = build_row_index(zones);
+        let (kinds, npc_ids): (Vec<KindRisk>, Vec<Option<i32>>) = kinds
+            .into_iter()
+            .map(|kind| (build_kind(kind, combat), kind.npc_id))
+            .unzip();
+        let row_kinds: Box<[u16]> = row_kinds.into_iter().collect();
+        let (rows_by_kind, row_indices) = build_row_index(&row_kinds, &npc_ids);
         Self {
-            kinds,
+            kinds: kinds.into_boxed_slice(),
             poison_unknown_v: poison_unknown_v(combat),
+            row_kinds,
             rows_by_kind,
             row_indices,
         }
@@ -338,6 +359,17 @@ impl RiskTables {
 
     pub fn kind(&self, index: u16) -> Option<&KindRisk> {
         self.kinds.get(usize::from(index))
+    }
+
+    /// The kind index of zone row `zone`, when the row exists.
+    pub fn row_kind(&self, zone: u16) -> Option<u16> {
+        self.row_kinds.get(usize::from(zone)).copied()
+    }
+
+    /// The kind facts of zone row `zone`; `None` for an unknown row or a
+    /// row whose kind the pack does not describe (missing facts).
+    pub fn row(&self, zone: u16) -> Option<&KindRisk> {
+        self.kind(self.row_kind(zone)?)
     }
 
     /// Every zone row for this packed NPC id, including rows not engaged by a route.
@@ -355,26 +387,28 @@ impl RiskTables {
     }
 }
 
-fn build_kind(kind: &ZoneKind, combat: &CombatTables) -> KindRisk {
+fn build_kind(kind: KindSource, combat: &CombatTables) -> KindRisk {
     match kind.npc_id {
-        -1 => KindRisk::from_hazard(nav::zones::curated::hazard_damage(kind.id.as_ref())),
-        id if id >= 0 => combat
+        None => KindRisk::from_hazard(kind.hazard_damage),
+        Some(id) if id >= 0 => combat
             .npc(id)
             .map(|row| KindRisk::from_npc(row, combat))
             .unwrap_or_else(KindRisk::missing_facts),
-        _ => KindRisk::missing_facts(),
+        Some(_) => KindRisk::missing_facts(),
     }
 }
 
-fn build_row_index(zones: &ZoneTable) -> (Box<[NpcRows]>, Box<[u16]>) {
-    let mut by_npc = Vec::with_capacity(zones.zones().len());
-    for (index, zone) in zones.zones().iter().enumerate() {
-        let kind = &zones.kinds()[usize::from(zone.kind)];
-        if kind.npc_id < 0 {
+fn build_row_index(row_kinds: &[u16], npc_ids: &[Option<i32>]) -> (Box<[NpcRows]>, Box<[u16]>) {
+    let mut by_npc = Vec::with_capacity(row_kinds.len());
+    for (index, kind) in row_kinds.iter().enumerate() {
+        let Some(Some(npc_id)) = npc_ids.get(usize::from(*kind)) else {
+            continue;
+        };
+        if *npc_id < 0 {
             continue;
         }
         let index = u16::try_from(index).expect("validated zone rows fit u16");
-        by_npc.push((kind.npc_id, index));
+        by_npc.push((*npc_id, index));
     }
     by_npc.sort_unstable();
 
@@ -429,10 +463,6 @@ mod tests {
     use super::*;
     use api::game_data::{DragonfireKind, NpcAttackKind};
     use api::selected::ClientRevision;
-    use api::WorldTile;
-    use nav::router::AvoidRect;
-    use nav::transport::WildernessRules;
-    use nav::zones::{Zone, ZoneClass};
     use std::sync::Arc;
 
     fn combat() -> Arc<CombatTables> {
@@ -471,42 +501,16 @@ mod tests {
         }
     }
 
-    fn tile(x: i32) -> WorldTile {
-        WorldTile {
-            x,
-            z: 100,
-            level: 0,
+    fn npc_kind(id: i32) -> KindSource {
+        KindSource {
+            npc_id: Some(id),
+            hazard_damage: None,
         }
     }
 
-    fn zone_table(zones: Vec<Zone>, kinds: Vec<ZoneKind>) -> ZoneTable {
-        ZoneTable::from_parts(
-            zones,
-            kinds,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            4096,
-            4096,
-            &WildernessRules::default(),
-        )
-        .unwrap()
-    }
-
-    fn npc_kind(id: i32, kind_id: &str) -> ZoneKind {
-        ZoneKind::new(kind_id, kind_id, id, 1, false, false)
-    }
-
-    fn one_npc_zone(npc_id: i32, kind_id: &str) -> ZoneTable {
-        zone_table(
-            vec![Zone::npc(tile(120), 1, ZoneClass::Always, u16::MAX, 0)],
-            vec![npc_kind(npc_id, kind_id)],
-        )
+    /// One zone row of one NPC kind.
+    fn one_npc_zone(npc_id: i32) -> RiskTables {
+        RiskTables::build([npc_kind(npc_id)], [0], &combat())
     }
 
     #[test]
@@ -637,7 +641,7 @@ mod tests {
             UnknownKind::Overflow
         );
 
-        let missing = RiskTables::build(&one_npc_zone(i32::MAX, "missing"), &combat);
+        let missing = one_npc_zone(i32::MAX);
         assert_eq!(missing.kind(0).unwrap().unknown, UnknownKind::MissingFacts);
         assert_eq!(
             missing.kind(0).unwrap().unknown_for(false),
@@ -648,37 +652,22 @@ mod tests {
 
     #[test]
     fn u2_curated_hazards_keep_known_damage_and_unknown_absence() {
-        let zones = zone_table(
-            vec![
-                Zone::hazard(
-                    AvoidRect {
-                        min_x: 100,
-                        max_x: 100,
-                        min_z: 100,
-                        max_z: 100,
-                        level: Some(0),
-                    },
-                    0,
-                    0,
-                ),
-                Zone::hazard(
-                    AvoidRect {
-                        min_x: 101,
-                        max_x: 101,
-                        min_z: 100,
-                        max_z: 100,
-                        level: Some(0),
-                    },
-                    0,
-                    1,
-                ),
+        // The host reads curated damage through `ZoneKindView::hazard_damage`
+        // (`ikov-lava-bridge` is 20; an uncurated hazard is unknown).
+        let risk = RiskTables::build(
+            [
+                KindSource {
+                    npc_id: None,
+                    hazard_damage: Some(20),
+                },
+                KindSource {
+                    npc_id: None,
+                    hazard_damage: None,
+                },
             ],
-            vec![
-                ZoneKind::new("ikov-lava-bridge", "Ikov lava", -1, 0, false, false),
-                ZoneKind::new("unknown-hazard", "Unknown hazard", -1, 0, false, false),
-            ],
+            [0, 1],
+            &combat(),
         );
-        let risk = RiskTables::build(&zones, &combat());
         let known = risk.kind(0).unwrap();
         assert_eq!(known.max_hit, 20);
         assert_eq!(known.rate, 1);
@@ -687,19 +676,34 @@ mod tests {
         let unknown = risk.kind(1).unwrap();
         assert_eq!(unknown.unknown, UnknownKind::HazardDamage);
         assert_eq!(unknown.unknown_for(false), Some(UnknownKind::HazardDamage));
+        assert_eq!(risk.row(0), risk.kind(0));
+        assert_eq!(risk.row(1), risk.kind(1));
+        assert!(risk.row(2).is_none());
+        assert!(risk.rows_for_npc(-1).is_empty());
     }
 
     #[test]
     fn u2_rows_cover_every_zone_and_poison_bound_uses_all_selected_npcs() {
         let combat = combat();
         let ice = combat.selected().npc_by_config("icewarrior").unwrap();
-        let zones = zone_table(
-            (0..4)
-                .map(|index| Zone::npc(tile(120 + index * 10), 1, ZoneClass::Always, u16::MAX, 0))
-                .collect(),
-            vec![npc_kind(ice.id, "icewarrior")],
+        let risk = RiskTables::build(
+            [
+                npc_kind(ice.id),
+                KindSource {
+                    npc_id: Some(-7),
+                    hazard_damage: None,
+                },
+            ],
+            [0, 0, 0, 0, 1],
+            &combat,
         );
-        let risk = RiskTables::build(&zones, &combat);
+        assert_eq!(
+            risk.kind(1).unwrap().unknown,
+            UnknownKind::MissingFacts,
+            "an NPC id below -1 is unsupported, not a hazard"
+        );
+        assert_eq!(risk.row_kind(4), Some(1));
+        assert!(risk.row_kind(5).is_none());
         assert_eq!(risk.rows_for_npc(ice.id), &[0, 1, 2, 3]);
         assert!(risk.rows_for_npc(-1).is_empty());
         assert!(risk.rows_for_npc(i32::MAX).is_empty());

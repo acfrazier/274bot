@@ -1,14 +1,22 @@
 //! One host route-admission seam. The estimate is advisory under Proceed;
 //! no runtime net or poison-clear observer is claimed before S2c integration.
+//!
+//! This is the owner boundary for script's risk module (T5.1): the route,
+//! zone table, wilderness and exemptions it judges are served here as
+//! `nav::contract` views over the storage host-play retains, and the risk
+//! tables are built from the pack's kind rows read here.
 use std::sync::Arc;
 
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
+use nav::producer;
 use nav::router::{AvoidRect, FindOptions, Route};
 use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneKey};
+use nav::zones::{ZoneExempt, ZoneKey, ZoneTable};
 use script::combat::frame::Frame;
-use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
+use script::combat::risk::{
+    self, Estimate, KindSource, RiskTables, RouteAssessment, UnknownWhy, Verdict,
+};
 pub use script::combat::risk::{PoisonState, RiskInput};
 use script::combat::{CombatTables, ThreatSet};
 use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
@@ -171,12 +179,46 @@ fn tables(world: &NavWorld) -> Option<&Tables> {
         .risk_facts(|| {
             let combat = script::combat::guard::shared_tables().ok()?;
             let risks = match world.graph.zones.as_ref() {
-                Some(zones) => RiskTables::build(zones, &combat),
+                Some(zones) => risk_tables(zones, &combat),
                 None => RiskTables::without_zones(&combat),
             };
             Some(Tables { combat, risks })
         })
         .as_ref()
+}
+
+/// Script's per-kind risk facts from the pack's kind rows and each zone
+/// row's kind, read here at the owner boundary with the facade's kind
+/// semantics (`ZoneKindView::npc_id` / `hazard_damage`); script never reads
+/// zone storage.
+pub fn risk_tables(zones: &ZoneTable, combat: &CombatTables) -> RiskTables {
+    RiskTables::build(
+        zones.kinds().iter().map(|kind| KindSource {
+            npc_id: (kind.npc_id != -1).then_some(kind.npc_id),
+            hazard_damage: nav::zones::curated::hazard_damage(kind.id.as_ref()),
+        }),
+        zones.zones().iter().map(|zone| zone.kind),
+        combat,
+    )
+}
+
+fn unknown_assessment(
+    why: UnknownWhy,
+    reason: &'static str,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
+    Arc::new(RouteAssessment {
+        verdict: Verdict::Unknown(why),
+        plan: Default::default(),
+        crossings: Box::new([]),
+        more: 0,
+        supplies: Box::new([]),
+        hp_after: admission.input.hp,
+        volley: u8::MAX,
+        input: admission.input,
+        generation: admission.generation,
+        reason: Arc::from(reason),
+    })
 }
 
 /// Absent observations are missing facts, not witnessed overflow or damage.
@@ -224,24 +266,28 @@ pub fn capture(
 
 pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<RouteAssessment> {
     let Some(tables) = tables(world) else {
-        return Arc::new(RouteAssessment {
-            verdict: Verdict::Unknown(UnknownWhy::MissingFacts),
-            plan: Default::default(),
-            crossings: Box::new([]),
-            more: 0,
-            supplies: Box::new([]),
-            hp_after: admission.input.hp,
-            volley: u8::MAX,
-            input: admission.input,
-            generation: admission.generation,
-            reason: Arc::from("Route assessment unknown: selected combat facts unavailable"),
-        });
+        return unknown_assessment(
+            UnknownWhy::MissingFacts,
+            "Route assessment unknown: selected combat facts unavailable",
+            admission,
+        );
+    };
+    let (Ok(route), Ok(zones), Ok(wilderness)) = (
+        producer::route_view(world, route),
+        producer::zones_view(world),
+        producer::wilderness_view(world),
+    ) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
     };
     risk::assess(
         route,
         &Estimate {
-            zones: world.graph.zones.as_ref(),
-            wilderness: &world.graph.wilderness,
+            zones,
+            wilderness,
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
@@ -273,7 +319,15 @@ pub fn permits(
     if assessment.plan.crossings.is_empty() {
         return true;
     }
-    let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {
+    let (Ok(Some(zones)), Some(tables), Ok(route), Ok(wilderness)) = (
+        producer::zones_view(world),
+        tables(world),
+        producer::route_view(world, route),
+        producer::wilderness_view(world),
+    ) else {
+        return false;
+    };
+    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
         return false;
     };
     risk::admission_passes(
@@ -282,7 +336,7 @@ pub fn permits(
         zones,
         &tables.combat,
         admission.allow,
-        risk::Grants::request(admission.grants, &world.graph.wilderness),
+        risk::Grants::request(named, wilderness),
     )
     .unwrap_or(false)
 }
@@ -402,14 +456,15 @@ pub fn escape_reason(escape: script::combat::guard::Escape) -> String {
 }
 
 pub(crate) fn assessment_keys(world: &NavWorld, assessment: &RouteAssessment) -> Vec<ZoneKey> {
-    let Some(zones) = world.graph.zones.as_ref() else {
+    let Ok(Some(zones)) = producer::zones_view(world) else {
         return Vec::new();
     };
+    // A key from another pack cannot name a row here; it is not reported.
     let mut keys: Vec<_> = assessment
         .plan
         .intervals
         .iter()
-        .map(|interval| interval.key(zones))
+        .filter_map(|interval| interval.key(zones).ok())
         .collect();
     keys.sort_unstable_by_key(|key| match *key {
         ZoneKey::Zone(index) => u32::from(index),
