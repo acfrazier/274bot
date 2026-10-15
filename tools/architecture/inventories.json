@@ -474,14 +474,6 @@
       "reason": "0.2.3 confirmed import owns writes, skipped items and its private settled-result cache."
     },
     {
-      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|JsonType",
-      "path": "crates/frontend-core/src/rs2b0t_import.rs",
-      "symbol": "JsonType",
-      "classification": "scalar",
-      "owner": "T3",
-      "reason": "0.2.3 parser error category is a Copy JSON-kind discriminator without file text."
-    },
-    {
       "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|ProfileImport",
       "path": "crates/frontend-core/src/rs2b0t_import.rs",
       "symbol": "ProfileImport",
@@ -504,14 +496,6 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "0.2.3 shared import stage is a Copy discriminator without a payload."
-    },
-    {
-      "id": "seam_type|crates/frontend-core/src/rs2b0t_import.rs|StorageOwner",
-      "path": "crates/frontend-core/src/rs2b0t_import.rs",
-      "symbol": "StorageOwner",
-      "classification": "scalar",
-      "owner": "T3",
-      "reason": "0.2.3 parser storage owner is a Copy account index or unlisted discriminator."
     },
     {
       "id": "seam_type|crates/frontend-core/src/scripts/mod.rs|BrowseCard",

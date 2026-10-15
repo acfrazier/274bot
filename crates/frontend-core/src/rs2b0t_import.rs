@@ -88,7 +88,7 @@ const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 /// Errors carry this, never the value: a malformed header may hold
 /// anything, a password included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonType {
+enum JsonType {
     Missing,
     Null,
     Boolean,
@@ -173,6 +173,9 @@ impl From<ImportFailure> for ImportError {
     }
 }
 
+/// Why an import failed. No variant carries a password or the file's text:
+/// a malformed export can hold anything, so errors name only paths, entry
+/// numbers and JSON types.
 #[derive(Debug, thiserror::Error)]
 enum ImportFailure {
     #[error("cannot read {}: {source}", path.display())]
@@ -225,7 +228,7 @@ enum ImportFailure {
 /// 1-based number in the list) or another key. Neither shows the key: a
 /// damaged file can put any text there, a password included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageOwner {
+enum StorageOwner {
     Listed(usize),
     Unlisted,
 }
