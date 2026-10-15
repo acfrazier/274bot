@@ -814,8 +814,8 @@ impl JsLibrary {
             Some(&prepared.card.origin),
             Some(prepared.card.api_family),
         );
-        // PreparedCard::validate is the typed runtime boundary; diagnostic
-        // wording does not decide whether this was a transpile failure.
+        // The validation batch result is the typed runtime boundary;
+        // diagnostic wording does not decide whether this was a transpile failure.
         failure.stage = LoadStage::RuntimeLoad;
         self.record_failure(failure);
     }
@@ -922,17 +922,6 @@ pub struct PreparedCard {
     pub card: JsCard,
     pub siblings: Vec<(String, String)>,
     pub fingerprint: String,
-}
-
-#[cfg(all(feature = "load", test))]
-impl PreparedCard {
-    /// Synchronous test-compatibility helper (`#[cfg(test)]` only). Product
-    /// refreshes submit a cancellable batch through
-    /// `LoadIsolate::validate_prepared_batch` instead of blocking on one card.
-    pub fn validate(&self) -> Result<(), String> {
-        crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
-            .map_err(|error| format!("prepare {}: {error}", self.card.name))
-    }
 }
 
 #[cfg(feature = "load")]

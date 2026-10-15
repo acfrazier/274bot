@@ -75,21 +75,10 @@ impl Drop for ValidationBatch {
     }
 }
 
-enum Job {
-    /// Synchronous one-off validation. Test-only: product refreshes submit
-    /// a cancellable `Batch` through `validate_batch` instead.
-    #[cfg(test)]
-    Single {
-        js: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        reply: mpsc::Sender<Result<(), String>>,
-    },
-    Batch {
-        cards: Vec<PreparedCard>,
-        reply: mpsc::Sender<Batch>,
-        cancelled: Arc<AtomicBool>,
-    },
+struct Job {
+    cards: Vec<PreparedCard>,
+    reply: mpsc::Sender<Batch>,
+    cancelled: Arc<AtomicBool>,
 }
 
 static EMPTY_BANKS: LazyLock<std::sync::Arc<api::named_banks::NamedBankFacts>> =
@@ -103,45 +92,6 @@ static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
         .map_err(|error| error.to_string())?;
     Ok(tx)
 });
-
-/// Synchronous test-compatibility helper (including its queue-full refusal).
-/// Product refreshes submit a cancellable batch through `validate_batch`.
-#[cfg(test)]
-pub(super) fn validate(
-    js: &str,
-    shape: LoadShape,
-    siblings: &[(String, String)],
-) -> Result<(), String> {
-    super::super::platform::require_v8_platform().map_err(|error| error.to_string())?;
-    if js.len() > SOURCE_CAP || siblings.len() > SIBLING_CAP {
-        return Err("validation input exceeds the seat limit".into());
-    }
-    let total = siblings.iter().try_fold(js.len(), |bytes, (name, source)| {
-        bytes.checked_add(name.len())?.checked_add(source.len())
-    });
-    if total.is_none_or(|bytes| bytes > INPUT_CAP) {
-        return Err("validation input exceeds the seat byte limit".into());
-    }
-    let seat = SEAT
-        .as_ref()
-        .map_err(|error| format!("validation coordinator: {error}"))?;
-    let (tx, rx) = mpsc::channel();
-    let job = Job::Single {
-        js: js.to_owned(),
-        shape,
-        siblings: siblings.to_vec(),
-        reply: tx,
-    };
-    match seat.try_send(job) {
-        Ok(()) => {}
-        Err(TrySendError::Full(_)) => return Err("validation queue is full".into()),
-        Err(TrySendError::Disconnected(_)) => {
-            return Err("validation coordinator unavailable".into())
-        }
-    }
-    rx.recv_timeout(VALIDATION_TIMEOUT + JOIN_TIMEOUT + Duration::from_secs(2))
-        .unwrap_or_else(|_| Err("validation coordinator did not settle within its deadline".into()))
-}
 
 /// Submit one complete reload validation transaction without a per-reload
 /// thread. A full worker queue leaves the batch on its receipt for a later
@@ -172,7 +122,7 @@ pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch
         .map_err(|error| ValidationError::Coordinator(error.clone()))?;
     let (reply, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    let pending = match seat.try_send(Job::Batch {
+    let pending = match seat.try_send(Job {
         cards,
         reply,
         cancelled: Arc::clone(&cancelled),
@@ -192,50 +142,37 @@ fn run(rx: Receiver<Job>) {
     // Validation admission stays occupied through a credited quarantine.
     let mut retiring: Option<Receiver<Vec<String>>> = None;
     for job in rx {
-        if matches!(&job, Job::Batch { cancelled, .. } if cancelled.load(Ordering::Acquire)) {
+        if job.cancelled.load(Ordering::Acquire) {
             continue;
         }
         if retiring_pending(&mut retiring) {
             refuse(job, "validation isolate is still retiring");
             continue;
         }
-        match job {
-            #[cfg(test)]
-            Job::Single {
-                js,
-                shape,
-                siblings,
-                reply,
-            } => {
-                let result = validate_one(js, shape, siblings, &mut retiring);
-                let _ = reply.send(result);
+        let Job {
+            cards,
+            reply,
+            cancelled,
+        } = job;
+        let mut results = Vec::with_capacity(cards.len());
+        for card in cards {
+            if cancelled.load(Ordering::Acquire) {
+                break;
             }
-            Job::Batch {
-                cards,
-                reply,
-                cancelled,
-            } => {
-                let mut results = Vec::with_capacity(cards.len());
-                for card in cards {
-                    if cancelled.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let outcome = if retiring_pending(&mut retiring) {
-                        Err("validation isolate is still retiring".into())
-                    } else {
-                        validate_one(
-                            card.card.js.clone(),
-                            card.card.shape,
-                            card.siblings.clone(),
-                            &mut retiring,
-                        )
-                    }
-                    .map_err(|error| format!("prepare {}: {error}", card.card.name));
-                    results.push((card, outcome));
-                }
-                let _ = reply.send(results);
+            let outcome = if retiring_pending(&mut retiring) {
+                Err("validation isolate is still retiring".into())
+            } else {
+                validate_one(
+                    card.card.js.clone(),
+                    card.card.shape,
+                    card.siblings.clone(),
+                    &mut retiring,
+                )
             }
+            .map_err(|error| format!("prepare {}: {error}", card.card.name));
+            results.push((card, outcome));
         }
+        let _ = reply.send(results);
     }
 }
 
@@ -253,22 +190,15 @@ fn retiring_pending(retiring: &mut Option<Receiver<Vec<String>>>) -> bool {
 }
 
 fn refuse(job: Job, reason: &str) {
-    match job {
-        #[cfg(test)]
-        Job::Single { reply, .. } => {
-            let _ = reply.send(Err(reason.into()));
-        }
-        Job::Batch { cards, reply, .. } => {
-            let rows = cards
-                .into_iter()
-                .map(|card| {
-                    let error = format!("prepare {}: {reason}", card.card.name);
-                    (card, Err(error))
-                })
-                .collect();
-            let _ = reply.send(rows);
-        }
-    }
+    let rows = job
+        .cards
+        .into_iter()
+        .map(|card| {
+            let error = format!("prepare {}: {reason}", card.card.name);
+            (card, Err(error))
+        })
+        .collect();
+    let _ = job.reply.send(rows);
 }
 
 fn validate_one(
@@ -310,7 +240,7 @@ mod tests {
 
     fn batch_job() -> Job {
         let (reply, _) = mpsc::channel();
-        Job::Batch {
+        Job {
             cards: Vec::new(),
             reply,
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -328,7 +258,7 @@ mod tests {
         drop(rx.try_recv().unwrap());
         try_admit_pending(&seat, &pending).unwrap();
         assert!(pending.borrow_mut().take().is_none());
-        assert!(matches!(rx.try_recv(), Ok(Job::Batch { .. })));
+        assert!(rx.try_recv().is_ok());
     }
 
     #[test]
@@ -344,7 +274,7 @@ mod tests {
         let batch = ValidationBatch {
             receiver,
             cancelled: Arc::clone(&cancelled),
-            pending: RefCell::new(Some(Job::Batch {
+            pending: RefCell::new(Some(Job {
                 cards: Vec::new(),
                 reply,
                 cancelled: Arc::clone(&cancelled),
@@ -360,12 +290,13 @@ mod tests {
         drop(rx.try_recv().unwrap());
         assert!(matches!(batch.try_recv_on(&seat), Err(TryRecvError::Empty)));
         assert!(batch.pending.borrow().is_none());
-        assert!(matches!(rx.try_recv(), Ok(Job::Batch { .. })));
+        let queued = rx.try_recv().unwrap();
 
         // Dropping the receipt flags cancellation for the worker, which
         // skips the queued batch; the held-or-queued batch never delivers.
         drop(batch);
         assert!(cancelled.load(Ordering::Acquire));
+        assert!(queued.cancelled.load(Ordering::Acquire));
     }
 
     #[test]
