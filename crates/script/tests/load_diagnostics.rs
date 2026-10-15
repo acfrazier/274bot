@@ -4,9 +4,11 @@
 //! card's error. A failed replacement keeps the working registration.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, Instant};
 
-use script::load::{CardPreparationOutcome, JsLibrary, LoadIsolate, LoadStage};
-use script::{ApiFamily, ScriptSource};
+use script::load::{CardPreparationOutcome, JsLibrary, LoadStage, PreparedCard};
+use script::{ApiFamily, LoadIsolate, ScriptSource};
 
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const GOOD_V2: &str = "export const apiVersion = 2;\nexport function tick(api) { api._n = 1; }\n";
@@ -109,23 +111,6 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     assert_eq!(candidate.fingerprint, reference.fingerprint);
 }
 
-fn validate_prepared(
-    cards: Vec<script::PreparedCard>,
-) -> Vec<(script::PreparedCard, Result<(), String>)> {
-    let _guard = VALIDATION_TEST_LOCK
-        .lock()
-        .expect("validation test lock poisoned");
-    let batch = LoadIsolate::validate_prepared_batch(cards).expect("start validation batch");
-    loop {
-        match batch.try_recv() {
-            Ok(batch) => return batch,
-            Err(std::sync::mpsc::TryRecvError::Empty) => std::thread::yield_now(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                panic!("validation worker exited without a result")
-            }
-        }
-    }
-}
 
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
@@ -146,6 +131,26 @@ fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
         ));
     }
     std::fs::write(scripts.join("index.ts"), index).unwrap();
+}
+
+/// Drive the same cancellable validation transaction that product reload
+/// uses, rather than bypassing its bounded admission with a synchronous card.
+fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), String>)> {
+    let _guard = VALIDATION_TEST_LOCK
+        .lock()
+        .expect("validation test lock poisoned");
+    let batch = LoadIsolate::validate_prepared_batch(cards).unwrap();
+    let until = Instant::now() + Duration::from_secs(45);
+    loop {
+        match batch.try_recv() {
+            Ok(rows) => return rows,
+            Err(TryRecvError::Empty) => {
+                assert!(Instant::now() < until, "validation batch did not settle");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(TryRecvError::Disconnected) => panic!("validation coordinator disconnected"),
+        }
+    }
 }
 
 #[test]
@@ -243,7 +248,7 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
             panic!("changed candidate was not prepared")
         }
     };
-    let (prepared, result) = validate_prepared(vec![prepared])
+    let (prepared, result) = validate_cards(vec![prepared])
         .pop()
         .expect("one validation result");
     let err = result.unwrap_err();
@@ -306,7 +311,7 @@ fn catalog_mixed_batch_retains_named_failures() {
     for name in &diff.changed {
         match prepare_snapshot(&js, ScriptSource::Catalog, name) {
             CardPreparationOutcome::Prepared(candidate) => {
-                let (candidate, result) = validate_prepared(vec![candidate])
+                let (candidate, result) = validate_cards(vec![candidate])
                     .pop()
                     .expect("one validation result");
                 match result {
