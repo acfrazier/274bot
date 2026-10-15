@@ -299,12 +299,12 @@ impl Scripts {
                         return;
                     }
                 };
-                let worker_snapshot = Arc::clone(&snapshot);
-                match script::preparation::submit(
+                let work = Arc::clone(&snapshot).cooperative_prepare();
+                match script::preparation::submit_cooperative(
                     script::preparation::PreparationKind::Catalogue,
                     api::identity::Scope::Process,
                     input,
-                    move |_| worker_snapshot.prepare(),
+                    work,
                 ) {
                     Ok(task) => {
                         self.reload.preparation =
@@ -335,12 +335,12 @@ impl Scripts {
                         return;
                     }
                 };
-                let worker_snapshot = Arc::clone(&snapshot);
-                match script::preparation::submit(
+                let work = Arc::clone(&snapshot).cooperative_diff();
+                match script::preparation::submit_cooperative(
                     script::preparation::PreparationKind::Catalogue,
                     api::identity::Scope::Process,
                     input,
-                    move |_| worker_snapshot.diff(),
+                    work,
                 ) {
                     Ok(task) => {
                         self.reload.preparation =
