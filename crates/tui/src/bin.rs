@@ -484,7 +484,9 @@ pub struct TuiSession {
     profile_import: frontend_core::rs2b0t_import::ProfileImport,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
-    /// Process-wide loadout presets (`~/.274bot/loadouts.json`).
+    /// Process-wide loadout presets: the form's editor over the explicit
+    /// `<state root>/loadouts.json` path (slots read the same file through
+    /// the local-state service).
     loadouts: script::LoadoutsStore,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,

@@ -580,3 +580,69 @@ fn durable_receipts_are_exact_to_account_and_accounts_have_independent_versions(
     assert!(service.wait_quiescent(&alice, WAIT));
     assert!(service.wait_quiescent(&bob, WAIT));
 }
+
+/// The composition's Start-time lease: what `ScriptStartHandle` posts as
+/// the operator's rows. A row the frontend's form saved after the service
+/// hydrated is seen (the readback), the slot's capability carries the
+/// account the server would log in, and a name the server would refuse
+/// gets neither rows nor a capability.
+#[test]
+fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_names() {
+    let scratch = IsolatedEnv::enter("local-state-composition");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    let service = LocalStateService::open(
+        root,
+        &[
+            LocalStateDomain::LoadoutsReferences,
+            LocalStateDomain::BankHints,
+        ],
+        Arc::new(RequestIdMinter::new()),
+    );
+    let composition = StateComposition::new(
+        service,
+        PROFILE,
+        ContentScope::try_new(client::io::ClientRevision::R289, CONTENT).unwrap(),
+    );
+    // Hydrated with no file: a Start posts no rows.
+    assert_eq!(
+        composition.operator_loadouts("Alice Smith").unwrap(),
+        Vec::new()
+    );
+
+    // The frontend's form writes the file directly (T5.5 moves it to the
+    // port); the next Start's readback sees the row.
+    let melee = Loadout::new("melee").with_slot("righthand", "Rune scimitar");
+    let mut form = script::LoadoutsStore::at(path);
+    form.upsert(melee.clone());
+    form.save().unwrap();
+    assert_eq!(
+        composition.operator_loadouts("Alice Smith").unwrap(),
+        vec![melee.clone()]
+    );
+
+    // The slot's capability leases the same rows under the login identity.
+    let state = composition.slot_state("Alice Smith").expect("a login name");
+    assert_eq!(state.account().profile(), PROFILE);
+    assert_eq!(state.account().account(), "alice_smith");
+    let leased = state.operator_loadouts().unwrap();
+    assert_eq!(leased.rows(), std::slice::from_ref(&melee));
+    assert_eq!(
+        leased.version(),
+        composition
+            .service()
+            .lease(&state.identity(LocalStateDomain::LoadoutsReferences))
+            .unwrap()
+            .version()
+    );
+
+    // A name the server refuses at login is refused here, not keyed.
+    assert!(composition.slot_state("ab3456789xyz1").is_none());
+    assert!(composition
+        .operator_loadouts("ab3456789xyz1")
+        .unwrap_err()
+        .contains("login identity"));
+    assert!(composition
+        .identity(LocalStateDomain::BankHints, "a/b")
+        .is_err());
+}
