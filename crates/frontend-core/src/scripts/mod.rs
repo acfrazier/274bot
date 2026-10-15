@@ -100,17 +100,6 @@ impl LiveSettings {
     pub fn prepared(&self) -> Option<&script::native::PreparedConfig> {
         self.prepared.as_deref()
     }
-
-    /// A second owner of this fence. Not [`Clone`].
-    pub(crate) fn duplicate(&self) -> Self {
-        Self {
-            identity: self.identity.clone(),
-            generation: self.generation,
-            run: self.run,
-            bag: Arc::clone(&self.bag),
-            prepared: self.prepared.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -570,6 +559,7 @@ impl Scripts {
     }
 
     /// Legacy global per-card overrides.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn legacy(&self) -> &script::ScriptSettingsStore {
         &self.legacy
     }

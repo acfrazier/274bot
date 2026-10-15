@@ -2468,7 +2468,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn settle_write(&mut self, written: Written) {
-        let Some(pending) = self.writes.remove(&written.op) else {
+        let Some(mut pending) = self.writes.remove(&written.op) else {
             return;
         };
         // Profiles whose newest queued write this is: only those may be put
@@ -2532,16 +2532,22 @@ impl<Io> OperatorSession<Io> {
                     };
                     self.saves.settle(written.op, saved);
                 }
-                if let ArmMirrorKind::Remember(Some(live)) = &pending.mirror.0 {
-                    if live.run.is_some() {
-                        if let Some(play) = self.play.as_mut() {
-                            if let Some(profile) = committed {
-                                play.remember_profile(profile);
-                            }
+                if matches!(
+                    &pending.mirror.0,
+                    ArmMirrorKind::Remember(Some(live)) if live.run.is_some()
+                ) {
+                    let ArmMirrorKind::Remember(Some(live)) =
+                        std::mem::replace(&mut pending.mirror, ArmMirror::none()).0
+                    else {
+                        unreachable!("Remember(Some) with a run was matched above");
+                    };
+                    if let Some(play) = self.play.as_mut() {
+                        if let Some(profile) = committed {
+                            play.remember_profile(profile);
                         }
-                        self.queue_native_delivery(written.op, member, live.duplicate());
-                        return;
                     }
+                    self.queue_native_delivery(written.op, member, live);
+                    return;
                 }
                 // Operation IDs order profile saves across commits, not just
                 // within a writer batch. A late memory completion must never

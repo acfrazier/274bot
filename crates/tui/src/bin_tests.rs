@@ -3314,7 +3314,7 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         Some(crate::overlay::Modal::Confirm(confirm))
             if matches!(
                 &confirm.kind,
-                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown }
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
                     if *shown_op == op && shown == &summary
             )
     ));
@@ -3340,6 +3340,132 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
             "{width}x{height}: missing Later action: {text}"
         );
     }
+    session.scripts.dismiss_restart_prompt();
+}
+
+#[test]
+fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
+    let iso = IsolatedEnv::enter("tui-restart-settings-stale-summary");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    session.core.play_mut().unwrap().bind_script_test_data(data);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob"] {
+        assert!(session.scripts.persist_assignment(
+            &mut session.core,
+            name,
+            script::compiled_assignment(id)
+        ));
+    }
+    session.core.flush_writes();
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .set_compiled_setting(
+                &mut session.core,
+                name,
+                id,
+                "skill",
+                serde_json::json!("Fishing"),
+            )
+            .unwrap();
+    }
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .start_profile(&mut session.core, name, None)
+            .unwrap();
+    }
+    settle_starts(&mut session, &mut app);
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play().unwrap(),
+            name,
+            script::RunState::Running,
+        );
+    }
+
+    for name in ["alice", "bob"] {
+        session
+            .scripts
+            .set_compiled_setting(
+                &mut session.core,
+                name,
+                id,
+                "skill",
+                serde_json::json!("Mining"),
+            )
+            .unwrap();
+    }
+    session.core.flush_writes();
+    session.poll_scripts(&mut app);
+    let prompt = session.scripts.pending_restart_prompt().unwrap();
+    let op = prompt.operation();
+    let summary = prompt.summary();
+    assert_eq!(
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
+        ["alice", "bob"]
+    );
+    assert!(
+        summary.contains("alice") && summary.contains("bob"),
+        "{summary}"
+    );
+    assert!(matches!(
+        app.modal.as_ref(),
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(
+                &confirm.kind,
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
+                    if *shown_op == op && shown == &summary
+            )
+    ));
+
+    session.core.play().unwrap().script_stop("alice");
+    wait_script_state(
+        session.core.play().unwrap(),
+        "alice",
+        script::RunState::Idle,
+    );
+    session.poll_scripts(&mut app);
+
+    let prompt = session
+        .scripts
+        .pending_restart_prompt()
+        .expect("bob remains");
+    assert_eq!(prompt.operation(), op);
+    assert_eq!(
+        prompt.profiles().map(String::as_str).collect::<Vec<_>>(),
+        ["bob"]
+    );
+    let summary = prompt.summary();
+    assert!(
+        !summary.contains("alice"),
+        "live prompt dropped alice: {summary}"
+    );
+    assert!(summary.contains("bob"), "{summary}");
+    assert!(matches!(
+        app.modal.as_ref(),
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(
+                &confirm.kind,
+                crate::overlay::ConfirmKind::RestartSettings { op: shown_op, summary: shown, .. }
+                    if *shown_op == op && shown == &summary
+            )
+    ));
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| app.draw_modal(frame)).unwrap();
+    let text = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(!text.contains("alice"), "modal still names alice: {text}");
+    assert!(text.contains("bob"), "{text}");
     session.scripts.dismiss_restart_prompt();
 }
 

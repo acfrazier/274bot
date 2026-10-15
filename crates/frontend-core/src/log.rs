@@ -283,15 +283,6 @@ impl LogFilter {
         self.text = text.into();
     }
 
-    /// A retained copy of this filter. Not [`Clone`].
-    pub(crate) fn duplicate(&self) -> Self {
-        Self {
-            min_level: self.min_level,
-            sources: self.sources,
-            text: self.text.clone(),
-        }
-    }
-
     pub fn matches(&self, entry: &LogEntry) -> bool {
         entry.level >= self.min_level
             && self.sources & entry.source.bit() != 0
@@ -390,9 +381,16 @@ impl LogView {
 
     /// Edit the filter; a change rebuilds on the next refresh.
     pub fn edit_filter(&mut self, edit: impl FnOnce(&mut LogFilter)) {
-        let before = self.filter.duplicate();
+        let min_level = self.filter.min_level;
+        let sources = self.filter.sources;
+        let text_ptr = self.filter.text.as_ptr();
+        let text_len = self.filter.text.len();
         edit(&mut self.filter);
-        if self.filter != before {
+        if self.filter.min_level != min_level
+            || self.filter.sources != sources
+            || self.filter.text.len() != text_len
+            || !std::ptr::eq(self.filter.text.as_ptr(), text_ptr)
+        {
             self.rebuild = true;
         }
     }

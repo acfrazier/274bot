@@ -2943,6 +2943,109 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
 }
 
 #[test]
+fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
+    let iso = IsolatedEnv::enter("panel-quester-paths-failed-folder-then-toggle");
+    let saved = iso.dir.join("saved-paths");
+    let uncommitted = iso.dir.join("uncommitted-paths");
+    std::fs::create_dir_all(&saved).unwrap();
+    let prefs = crate::ui_state::path();
+    std::fs::create_dir_all(prefs.parent().unwrap()).unwrap();
+    std::fs::write(
+        &prefs,
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": false,
+                "folder": saved.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    assert!(!session.quester_paths.settings().enabled());
+
+    session.quester_paths_folder_edit = uncommitted.to_string_lossy().into_owned();
+    std::fs::write(&prefs, b"[]").unwrap();
+    let failed = session.persist_quester_paths(frontend_core::QuesterPathsView::new(
+        false,
+        uncommitted.clone(),
+    ));
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    assert_eq!(
+        session.quester_paths_folder_edit,
+        uncommitted.to_string_lossy()
+    );
+
+    std::fs::write(
+        &prefs,
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": false,
+                "folder": saved.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    session
+        .persist_quester_paths_change(true, false)
+        .expect("checkbox toggle saves enabled with the already-saved folder");
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
+    assert_eq!(
+        document["quester_paths"]["folder"],
+        saved.to_string_lossy().as_ref()
+    );
+    assert_eq!(document["quester_paths"]["enabled"], true);
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[cfg(unix)]
+#[test]
+fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let iso = IsolatedEnv::enter("panel-quester-paths-non-utf8");
+    let prefs = crate::ui_state::path();
+    std::fs::create_dir_all(prefs.parent().unwrap()).unwrap();
+    std::fs::write(&prefs, b"{}").unwrap();
+
+    let mut bytes = iso.dir.clone().into_os_string().into_vec();
+    bytes.extend_from_slice(b"/paths-\xff");
+    let folder = PathBuf::from(OsString::from_vec(bytes));
+    let mut session = Session::new();
+    session
+        .persist_quester_paths(frontend_core::QuesterPathsView::new(false, folder.clone()))
+        .expect("non-UTF-8 folder can be held in memory");
+    assert_eq!(session.quester_paths.settings().folder(), folder.as_path());
+    let lossy = folder.to_string_lossy().into_owned();
+    assert_ne!(
+        PathBuf::from(lossy.as_str()),
+        folder,
+        "lossy UTF-8 must differ from the saved folder"
+    );
+    assert_eq!(session.quester_paths_folder_edit, lossy);
+
+    session
+        .persist_quester_paths_change(true, false)
+        .expect("checkbox toggle");
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(
+        session.quester_paths.settings().folder(),
+        folder.as_path(),
+        "checkbox must not replace a non-UTF-8 saved folder with the lossy edit buffer"
+    );
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[test]
 fn walk_permissions_projection_reads_only_after_peer_write() {
     let dir = TestDir::new("walk-permissions-peer-refresh");
     let path = dir.join("panel-ui.json");

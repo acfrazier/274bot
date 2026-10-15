@@ -545,7 +545,7 @@ impl ParameterEditKey {
             == Some(identity)
     }
 
-    /// A second owner of this key (HashMap insert/remove). Not [`Clone`].
+    /// Owned HashMap key for a first insert. Not [`Clone`].
     pub(crate) fn duplicate(&self) -> Self {
         Self {
             profile: self.profile.clone(),
@@ -742,10 +742,12 @@ impl Scripts {
         initial_text: &str,
         baseline_value: Option<Value>,
     ) -> &mut String {
-        let edit = self
-            .parameter_edits
-            .entry(key.duplicate())
-            .or_insert_with(|| ParameterEdit::new(initial_text, baseline_value.clone()));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            initial_text,
+            &baseline_value,
+        );
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
@@ -795,10 +797,12 @@ impl Scripts {
         def: &script::SettingDef,
         options: &[String],
     ) -> Result<Value, String> {
-        let edit = self
-            .parameter_edits
-            .entry(key.duplicate())
-            .or_insert_with(|| ParameterEdit::new(baseline_text, baseline_value));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            baseline_text,
+            &baseline_value,
+        );
         validate_edit(edit, def, options)
     }
 
@@ -902,10 +906,7 @@ impl Scripts {
                 )
             });
         {
-            let edit = self
-                .parameter_edits
-                .entry(key.duplicate())
-                .or_insert_with(|| ParameterEdit::new(&baseline_text, current.clone()));
+            let edit = edit_mut_or_insert(&mut self.parameter_edits, key, &baseline_text, &current);
             if edit.text != raw {
                 edit.text.clone_from(&raw);
                 edit.validated_text.clone_from(&raw);
@@ -998,50 +999,54 @@ impl Scripts {
     }
 
     pub(crate) fn settle_parameter_edits<Io>(&mut self, core: &OperatorSession<Io>) {
-        let mut remove = Vec::new();
-        for (key, edit) in &mut self.parameter_edits {
+        self.parameter_edits.retain(|key, edit| {
             let Some((op, value, submitted_text)) = edit.pending.as_ref() else {
-                continue;
+                return true;
+            };
+            let Some(profile) = key.profile.as_deref() else {
+                return true;
             };
             let Some(outcome) = core
                 .operation(*op)
-                .and_then(|report| report.outcome(key.profile.as_deref()?))
+                .and_then(|report| report.outcome(profile))
             else {
-                continue;
+                return true;
             };
             if outcome.is_pending() {
-                continue;
+                return true;
             }
+            let completed = outcome.is_completed();
+            let failed = outcome.is_failed() || outcome.is_skipped();
+            let cancelled = outcome.is_cancelled();
+            let failed_reason = failed.then(|| outcome.reason().unwrap_or_default().to_owned());
             let value = value.clone();
             let submitted_text = submitted_text.clone();
             edit.pending = None;
-            if outcome.is_completed() {
+            let discard = edit.discard_after_pending;
+            if completed {
                 edit.baseline_value = Some(value);
-                edit.baseline_text = submitted_text.clone();
+                edit.baseline_text.clone_from(&submitted_text);
                 edit.error = None;
-                if edit.discard_after_pending || edit.text == submitted_text {
-                    remove.push(key.duplicate());
-                } else {
-                    edit.dirty = edit.text != edit.baseline_text;
+                if discard || edit.text == submitted_text {
+                    return false;
                 }
-            } else if outcome.is_failed() || outcome.is_skipped() {
-                edit.error = Some(outcome.reason().unwrap_or_default().to_owned());
                 edit.dirty = edit.text != edit.baseline_text;
-                if edit.discard_after_pending {
-                    remove.push(key.duplicate());
+            } else if failed {
+                edit.error = Some(failed_reason.unwrap_or_default());
+                edit.dirty = edit.text != edit.baseline_text;
+                if discard {
+                    return false;
                 }
-            } else if outcome.is_cancelled() {
+            } else if cancelled {
                 edit.error = Some("settings save was cancelled".into());
                 edit.dirty = edit.text != edit.baseline_text;
-                if edit.discard_after_pending {
-                    remove.push(key.duplicate());
+                if discard {
+                    return false;
                 }
             }
             edit.discard_after_pending = false;
-        }
-        for key in remove {
-            self.parameter_edits.remove(&key);
-        }
+            true
+        });
     }
 }
 
