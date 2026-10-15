@@ -10,23 +10,31 @@
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it. The one exception is a preferences file
-//! whose content is malformed (not JSON, or JSON that is not an object):
-//! when a save reads it, the service moves it aside under its lock, byte
-//! for byte, and starts fresh preferences ([`corrupt_preferences`],
-//! [`quarantine_copy`]); every other read refuses it. A file
-//! whose content the service cannot represent whole (unknown fields, rows
-//! it cannot write back as read) is read but never rewritten
-//! ([`Rewrite::Refused`]), the same rule in every domain. What a write
-//! publishes is durable before it is acknowledged: the bytes are flushed in
-//! their staging file, renamed over the target, and then the directory
-//! entries are flushed.
+//! until a later read accepts it. Two refusals the service repairs, under
+//! the file's lock, keeping the file's exact bytes first in a new copy
+//! beside it ([`quarantine_copy`]). A loadouts file whose rows share a name
+//! (an older editor could save one; names key the rows) is renamed apart
+//! once, losing nothing, before anything leases or writes it
+//! ([`loadouts_sharing_names`], [`rename_apart`]). A preferences file whose
+//! content is malformed (not JSON, or JSON that is not an object) is moved
+//! aside when a save reads it, and fresh preferences are started
+//! ([`corrupt_preferences`]); every other read refuses it. A file whose
+//! content the service cannot represent whole (a hint field it does not
+//! know, a loadout row it cannot write back as read, a preference it
+//! cannot hold as a row) is read but never rewritten ([`Rewrite::Refused`]),
+//! the same rule in every domain: for preferences the rule is lossless
+//! representability, so a member this build does not know (a version
+//! marker among them) is held and written back like any other. What a
+//! write publishes is durable before it is acknowledged: the bytes are
+//! flushed in their staging file, renamed over the target, and then the
+//! directory entries are flushed.
 //!
 //! Every writer this product runs holds the file's [`WriteLock`] across its
 //! whole read-check-publish-verify transaction, so two services (two
 //! processes on one `HOME`, or two compositions in one process) never
 //! interleave on one file.
 
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -255,6 +263,12 @@ pub(super) enum ReadError {
     },
     #[error("rows: {0}")]
     Rows(#[from] HintRowsError),
+    /// Loadout rows that share a name with an earlier row: names key the
+    /// rows, so no edit of such a file names one row. The service renames
+    /// them apart before it leases or writes the file, and refuses it while
+    /// that cannot be done.
+    #[error("{rows} loadout row(s) share a name with an earlier row")]
+    SharedNames { rows: usize },
 }
 
 impl ReadError {
@@ -267,7 +281,8 @@ impl ReadError {
             | ReadError::NotAnArray
             | ReadError::NotAnObject
             | ReadError::Schema { .. }
-            | ReadError::Rows(_) => FailureReason::Schema,
+            | ReadError::Rows(_)
+            | ReadError::SharedNames { .. } => FailureReason::Schema,
             ReadError::Identity { .. } | ReadError::Scope { .. } => FailureReason::Identity,
         }
     }
@@ -283,7 +298,8 @@ impl ReadError {
             ReadError::Schema { .. }
             | ReadError::Rows(_)
             | ReadError::Identity { .. }
-            | ReadError::Scope { .. } => false,
+            | ReadError::Scope { .. }
+            | ReadError::SharedNames { .. } => false,
         }
     }
 }
@@ -309,7 +325,9 @@ struct HintDocument {
 }
 
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
-/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
+/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file. A
+/// loadouts file whose rows share a name is refused
+/// ([`ReadError::SharedNames`]): the service renames them apart first.
 pub(super) fn read(
     key: &StoreKey,
     root: &StateRoot,
@@ -325,31 +343,11 @@ pub(super) fn read(
     let digest = digest(raw.as_bytes());
     match key {
         StoreKey::Loadouts => {
-            let serde_json::Value::Array(elements) = serde_json::from_str(&raw)? else {
-                return Err(ReadError::NotAnArray);
-            };
-            // A row the old reader skipped (malformed) is skipped here too,
-            // so a file is never refused whole for one bad row; but then the
-            // rows read are not everything the file holds, and the service
-            // never rewrites it.
-            let mut rows = Vec::with_capacity(elements.len());
-            let (mut unreadable, mut lossy) = (0, 0);
-            for element in &elements {
-                match parse_loadout(element) {
-                    Some(row) => {
-                        if serde_json::to_value(&row).ok().as_ref() != Some(element) {
-                            lossy += 1;
-                        }
-                        rows.push(row);
-                    }
-                    None => unreadable += 1,
-                }
+            let (rows, rewrite) = loadout_rows(&raw)?;
+            let shared = shared_names(&rows);
+            if shared > 0 {
+                return Err(ReadError::SharedNames { rows: shared });
             }
-            let rewrite = if unreadable == 0 && lossy == 0 {
-                Rewrite::Lossless
-            } else {
-                Rewrite::Refused { unreadable, lossy }
-            };
             let written_len = loadouts_bytes(&rows)?.len();
             Ok(Some(ReadDocument {
                 snapshot: LeaseSnapshot::loadouts(rows),
@@ -464,6 +462,115 @@ pub(super) fn current_digest(
     }
 }
 
+/// The rows a loadouts document holds, and whether a rewrite keeps all of
+/// it. A row the old reader skipped (malformed) is skipped here too, so a
+/// file is never refused whole for one bad row; but then the rows read are
+/// not everything the file holds, and the service never rewrites it.
+fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
+    let Value::Array(elements) = serde_json::from_str(raw)? else {
+        return Err(ReadError::NotAnArray);
+    };
+    let mut rows = Vec::with_capacity(elements.len());
+    let (mut unreadable, mut lossy) = (0, 0);
+    for element in &elements {
+        match parse_loadout(element) {
+            Some(row) => {
+                if serde_json::to_value(&row).ok().as_ref() != Some(element) {
+                    lossy += 1;
+                }
+                rows.push(row);
+            }
+            None => unreadable += 1,
+        }
+    }
+    let rewrite = if unreadable == 0 && lossy == 0 {
+        Rewrite::Lossless
+    } else {
+        Rewrite::Refused { unreadable, lossy }
+    };
+    Ok((rows, rewrite))
+}
+
+/// How many of `rows` have a name an earlier row already has.
+fn shared_names(rows: &[Loadout]) -> usize {
+    let mut seen = HashSet::with_capacity(rows.len());
+    rows.iter()
+        .filter(|row| !seen.insert(row.name.as_str()))
+        .count()
+}
+
+/// The loadouts file at `path`, read again under its lock for the one-time
+/// rename of rows that share a name: its exact text and its rows. `None`
+/// when there is no file any more or every row has a name of its own
+/// (repaired meanwhile): it is read as it is. A file this build refuses,
+/// or one holding a row it cannot write back as read (a rewrite would lose
+/// that row), is an error: it is never rewritten.
+pub(super) fn loadouts_sharing_names(path: &Path) -> io::Result<Option<(String, Vec<Loadout>)>> {
+    let text = match read_private_file(path, MAX_LOADOUTS_BYTES) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let (rows, rewrite) = loadout_rows(&text)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    if shared_names(&rows) == 0 {
+        return Ok(None);
+    }
+    if let Rewrite::Refused { unreadable, lossy } = rewrite {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "the file also has {unreadable} unreadable row(s) and {lossy} row(s) that would \
+                 not write back as read, which a rewrite would lose"
+            ),
+        ));
+    }
+    Ok(Some((text, rows)))
+}
+
+/// One row [`rename_apart`] renamed: its index, its name before, and its
+/// name after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RenamedApart {
+    pub(super) row: usize,
+    pub(super) from: String,
+    pub(super) to: String,
+}
+
+/// Give every row whose name an earlier row already has a name of its own:
+/// the second row of a name becomes `<name> (2)`, the third `<name> (3)`,
+/// and so on, skipping a suffix another row (or an earlier rename) already
+/// has. The first row of each name keeps it; every row keeps its content
+/// and its place. The same rows always get the same names. The renames
+/// made, in row order.
+pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
+    let mut taken: HashSet<String> = rows.iter().map(|row| row.name.clone()).collect();
+    let mut kept = HashSet::with_capacity(rows.len());
+    // Per name, the next suffix to try: each search starts after the last
+    // one taken, so a long run of one name costs no more than its length.
+    let mut next: HashMap<String, u64> = HashMap::new();
+    let mut renamed = Vec::new();
+    for (row, loadout) in rows.iter_mut().enumerate() {
+        if kept.insert(loadout.name.clone()) {
+            continue;
+        }
+        let suffix = next.entry(loadout.name.clone()).or_insert(2);
+        let name = loop {
+            let candidate = format!("{} ({suffix})", loadout.name);
+            *suffix += 1;
+            if taken.insert(candidate.clone()) {
+                break candidate;
+            }
+        };
+        renamed.push(RenamedApart {
+            row,
+            from: std::mem::replace(&mut loadout.name, name.clone()),
+            to: name,
+        });
+    }
+    renamed
+}
+
 /// The bytes of the preferences file at `path` when its content is
 /// malformed (not UTF-8, not JSON, or JSON that is not an object): the
 /// file a reader may move aside. `None` when there is no file or it reads
@@ -515,12 +622,12 @@ pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
 /// How many quarantine names one second offers before giving up.
 const QUARANTINE_NAMES: u32 = 100;
 
-/// Keep `bytes`, the malformed content of `path`, in a new file beside it,
-/// `<name>.corrupt-<unix seconds>` (`-<n>` added while that name is
-/// taken): never over an existing file, read back to be sure it holds
-/// exactly `bytes`, and flushed. The caller flushes the directory entry
-/// before it replaces `path`. The quarantine's path.
-pub(super) fn quarantine_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+/// Keep `bytes`, what `path` holds, in a new file beside it,
+/// `<name>.<kind>-<unix seconds>` (`-<n>` added while that name is taken):
+/// never over an existing file, read back to be sure it holds exactly
+/// `bytes`, and flushed. The caller flushes the directory entry before it
+/// replaces `path`. The quarantine's path.
+pub(super) fn quarantine_copy(path: &Path, bytes: &[u8], kind: &str) -> io::Result<PathBuf> {
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
@@ -532,8 +639,8 @@ pub(super) fn quarantine_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> 
         .as_secs();
     for attempt in 0..QUARANTINE_NAMES {
         let candidate = path.with_file_name(match attempt {
-            0 => format!("{name}.corrupt-{stamp}"),
-            n => format!("{name}.corrupt-{stamp}-{n}"),
+            0 => format!("{name}.{kind}-{stamp}"),
+            n => format!("{name}.{kind}-{stamp}-{n}"),
         });
         match vault::create_private_file(&candidate, bytes) {
             Ok(()) => {
@@ -557,7 +664,7 @@ pub(super) fn quarantine_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> 
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        format!("{name}.corrupt-{stamp}: no free name"),
+        format!("{name}.{kind}-{stamp}: no free name"),
     ))
 }
 
@@ -621,7 +728,10 @@ pub(super) enum RenameRefusal {
 /// row called `from` where it stands. A removal that names no row leaves
 /// the rows as they are, and the write settles as the idempotent no-op it
 /// is. A rename never inserts a row: one whose source is gone, or whose
-/// new name another row has, is refused and nothing changes.
+/// new name another row has, is refused and nothing changes. The rows'
+/// names are their own (a read refuses a file whose rows share a name
+/// until the service has renamed them apart, and no edit gives two rows
+/// one name), so every edit names at most one row.
 pub(super) fn apply_loadout_edit(
     rows: &[Loadout],
     edit: &LoadoutEdit,

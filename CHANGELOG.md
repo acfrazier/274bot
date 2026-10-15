@@ -8,24 +8,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 ### Saved state
 
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
-  read (from another version, for another account, larger than its limit,
-  writable by other users, or a damaged bank hint or `loadouts.json`) is now
-  left untouched and named in the log with the reason. It used to be
-  treated as empty and overwritten at the next save. A JavaScript script
-  Start is refused, with the file and the reason, while `loadouts.json`
-  can't be read; a Quester stops the Path that needs it.
+  read (a bank hint from another version or for another account, a file
+  larger than its limit or writable by other users, or a damaged bank hint
+  or `loadouts.json`) is now left untouched and named in the log with the
+  reason. It used to be treated as empty and overwritten at the next save.
+  A JavaScript script Start is refused, with the file and the reason, while
+  `loadouts.json` can't be read; a Quester stops the Path that needs it.
 - A damaged `panel-ui.json` (not JSON, or JSON that isn't an object) is
   still moved aside to `panel-ui.json.corrupt-<time>` by the next
   preference save, which then starts fresh preferences, as before; until
   then, settings read from it fail closed. Now the copy keeps exactly the
   damaged file's bytes and is on disk before the file is replaced, and the
   log shows a warning and an audit line naming the copy. A `panel-ui.json`
-  refused for its permissions or size, or from another version, is never
-  moved aside: preference saves fail with a message until you repair or
-  remove it.
+  refused for its permissions or size is never moved aside: preference
+  saves fail with a message until you repair or remove it.
 - A saved file holding something this version can't write back (a field it
-  doesn't know in a bank hint, a loadout row it can't read, a preference it
-  can't hold) is read but never rewritten, so nothing in it is lost.
+  doesn't know in a bank hint, a loadout row it can't read, a setting in
+  `panel-ui.json` it can't store as it is, for example one whose name has a
+  dot or a space in it) is read but never rewritten, so nothing in it is
+  lost. `panel-ui.json` has no version of its own: one written by another
+  version is read and saved like any other, and a save keeps every setting
+  in it, including ones this version doesn't know.
 - A bank hint now records the game content it was seen under, and a hint
   from other content is not used. The log says so; remove the file to start
   a new hint.
@@ -36,8 +39,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   says so and keeps your edit for another try. Renaming a loadout to
   another loadout's name is refused with "A loadout named "…" already
   exists." (it used to leave two loadouts with one name).
-- Renaming a loadout saves it in one step, in its place in the list: a
-  failed save leaves the loadout saved under its old name, never lost.
+- If `loadouts.json` already has loadouts that share a name, 274bot renames
+  them apart when it reads the file: the second becomes "<name> (2)", the
+  third "<name> (3)", and so on, skipping a name another loadout already
+  has. Every loadout keeps its gear and its place in the list. Before
+  anything changes, the file is copied exactly as it was to
+  `loadouts.json.duplicates-<time>`, and the log shows a warning and an
+  audit line naming the copy and each renamed loadout. Before, editing,
+  renaming or removing one of those loadouts could change or remove another
+  one of the same name. If the copy or the save fails, or the file also
+  holds a loadout row this version can't write back, the file is left as it
+  was and treated as one 274bot can't read until it can be renamed.
+- Renaming a loadout saves it in one step, in its place in the list, and
+  never loses it. If the save fails before the file is replaced, the
+  loadout keeps its old name. If the file was replaced but 274bot couldn't
+  confirm it reached the disk (an error flushing its folder), the save is
+  reported as an error, and the loadout may already be saved under its new
+  name.
 - Two 274bot processes on the same home folder take turns writing each
   saved file, and a save is reported done only when the file still holds it
   after it reached the disk: a change by another program in the meantime is

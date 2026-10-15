@@ -18,7 +18,11 @@
 //!   store: its leases and submissions answer [`ErrorCode::Failed`] with the
 //!   bounded reason, and the file is never written, until a later read
 //!   accepts it. A file whose content the service cannot hold whole is read
-//!   but never rewritten, in every domain.
+//!   but never rewritten, in every domain. A loadouts file whose rows share
+//!   a name (an older editor could save one) is renamed apart by the read
+//!   that finds it, before any lease or write, under the file's lock and
+//!   losing nothing ([`Shared::dedupe_loadouts`]); while that cannot be
+//!   done the file is refused.
 //! - **Submissions** ([`LocalStatePort::submit`]) are nonblocking: a bank
 //!   hint replaces a queued hint of the same account (the replaced request
 //!   settles `Cancelled(Superseded)`, and the service remembers which
@@ -52,7 +56,9 @@
 //! - **Audit:** one `host_log!` info line ([`AuditCommit`]) per durable
 //!   write, after the bytes and their directory entries are durable and
 //!   read back; one `terminal` line per accepted write that ends any other
-//!   way (failed, conflicted, cancelled).
+//!   way (failed, conflicted, cancelled). A repair the service makes on its
+//!   own (a malformed preferences file moved aside, loadouts renamed apart)
+//!   has one info audit line of its own and a warning for the operator.
 //! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities are held;
 //!   a new one evicts the least recently used idle one, or is refused
 //!   `Busy` when none is idle. A lease is one bounded snapshot.
@@ -158,8 +164,9 @@ pub(crate) type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
 #[cfg(test)]
 pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// A test's witness of each preferences quarantine line (the operator's
-/// notice and the audit line), called where the line is logged.
+/// A test's witness of each line of a repair (a preferences quarantine,
+/// loadouts renamed apart): the operator's notice, the audit line, or why
+/// the repair could not be made. Called where the line is logged.
 #[cfg(test)]
 pub(crate) type NoticeHook = Arc<dyn Fn(Level, &str) + Send + Sync>;
 
@@ -370,7 +377,7 @@ struct Store {
     /// How many readbacks have completed: a bounded wait follows it.
     readbacks: u64,
     /// A save asked for the next readback: a preferences file whose
-    /// content is malformed is quarantined by it ([`Shared::read_recovering`]).
+    /// content is malformed is quarantined by it ([`Shared::read_repairing`]).
     recover: bool,
     /// Accepted edits not yet taken by the writer thread.
     queue: VecDeque<Queued>,
@@ -828,7 +835,7 @@ impl LocalStateService {
         self.shared.state.lock().hooks.terminal = Some(hook);
     }
 
-    /// Call `hook` with each preferences quarantine line where it is logged.
+    /// Call `hook` with each line of a repair where it is logged.
     #[cfg(test)]
     pub(crate) fn set_notice_hook(&self, hook: NoticeHook) {
         self.shared.state.lock().hooks.notice = Some(hook);
@@ -1683,11 +1690,7 @@ impl Shared {
             .get_mut(key)
             .is_some_and(|store| std::mem::take(&mut store.recover));
         let read_at = DurableTimestamp::now();
-        let read = if recover {
-            self.read_recovering(key, read_at)
-        } else {
-            files::read(key, &self.root, read_at)
-        };
+        let read = self.read_repairing(key, read_at, recover, None);
         let path = key.path(&self.root);
         let mut state = self.state.lock();
         state.adopt(key, read, read_at, &path);
@@ -1704,54 +1707,175 @@ impl Shared {
         }
     }
 
-    /// Read `key`'s file for a save ([`LocalStateService::readback_for_save`]).
-    /// A preferences file whose content is malformed (not JSON, or JSON
-    /// that is not an object) is quarantined first, under the file's
-    /// [`files::WriteLock`] ([`Self::quarantine_preferences`]), and then
-    /// read as the fresh file it leaves. Every other refusal (owner, mode,
-    /// size, an I/O error, content the service cannot hold whole) stands,
-    /// and the file is left as it is.
-    fn read_recovering(
+    /// Read `key`'s file, first repairing, under the file's
+    /// [`files::WriteLock`], what the service repairs rather than refuses:
+    /// a loadouts file whose rows share a name is renamed apart, on every
+    /// read ([`Self::dedupe_loadouts`]); a preferences file whose content is
+    /// malformed (not JSON, or JSON that is not an object) is quarantined
+    /// and started fresh, only on the read a save makes (`recover`,
+    /// [`LocalStateService::readback_for_save`];
+    /// [`Self::quarantine_preferences`]). The file is then read as the
+    /// repair left it. `held` is the lock when the caller (a write) holds it
+    /// already; otherwise the repair takes it. Every other refusal (owner,
+    /// mode, size, an I/O error, content the service cannot hold whole)
+    /// stands, and a repair that cannot be made leaves the file as it is,
+    /// refused, and says why.
+    fn read_repairing(
         &self,
         key: &StoreKey,
         read_at: DurableTimestamp,
+        recover: bool,
+        held: Option<&files::WriteLock>,
     ) -> Result<Option<ReadDocument>, ReadError> {
         let read = files::read(key, &self.root, read_at);
-        if !matches!(key, StoreKey::Preferences)
-            || !matches!(&read, Err(error) if error.is_malformed())
-        {
+        let Some(repair) = Repair::of(key, &read, recover) else {
             return read;
-        }
+        };
         let path = key.path(&self.root);
-        let _lock =
-            match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
+        let _lock = if held.is_some() {
+            None
+        } else {
+            let taken = files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned
-            }) {
-                Ok(lock) => lock,
+            });
+            match taken {
+                Ok(lock) => Some(lock),
                 Err(error) => {
-                    host_log!(
-                        Category::Lifecycle,
+                    self.notice(
                         Level::Warn,
-                        "local state: preferences file is malformed but could not be locked to \
-                     move it aside ({error:?}); it is left as it is path={}",
-                        path.display()
+                        format!(
+                            "local state: {}: its lock was not taken ({error:?}); it is left \
+                             as it is path={}",
+                            repair.unmade(),
+                            path.display()
+                        ),
                     );
                     return read;
                 }
-            };
-        match self.quarantine_preferences(&path) {
+            }
+        };
+        let repaired = match repair {
+            Repair::Dedupe => self.dedupe_loadouts(key, &path),
+            Repair::Quarantine => self.quarantine_preferences(&path),
+        };
+        match repaired {
             Ok(()) => files::read(key, &self.root, read_at),
             Err(error) => {
-                host_log!(
-                    Category::Lifecycle,
+                self.notice(
                     Level::Warn,
-                    "local state: preferences file is malformed but could not be moved aside: \
-                     {error}; it is left as it is path={}",
-                    path.display()
+                    format!(
+                        "local state: {}: {error}; it is left as it is path={}",
+                        repair.unmade(),
+                        path.display()
+                    ),
                 );
                 read
             }
         }
+    }
+
+    /// Under the loadouts file's lock: when `path` still holds rows that
+    /// share a name, rename them apart in one publication that loses
+    /// nothing (the one-time repair of a file an older editor saved with
+    /// two loadouts of one name; names key the rows, so until then no edit
+    /// of it names one row). The file's exact bytes are kept first in a new
+    /// `loadouts.json.duplicates-<time>` beside it, read back, flushed, and
+    /// its directory entry flushed. Then the same rows, each with its
+    /// content and in its place, are published with every later row of a
+    /// name renamed `<name> (2)`, `(3)`, … ([`files::rename_apart`]), only
+    /// while the file still holds the bytes kept, and the directory entry
+    /// is flushed. The operator is told (a warning naming the copy and each
+    /// rename) and the repair is audited (one info line). A failure before
+    /// the publication leaves the file as it is.
+    fn dedupe_loadouts(&self, key: &StoreKey, path: &Path) -> std::io::Result<()> {
+        let Some((text, mut rows)) = files::loadouts_sharing_names(path)? else {
+            // Repaired or removed meanwhile: read it as it is.
+            return Ok(());
+        };
+        let renamed = files::rename_apart(&mut rows);
+        let bytes = files::loadouts_bytes(&rows).map_err(std::io::Error::other)?;
+        if bytes.len() as u64 > files::MAX_LOADOUTS_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "renamed apart, its rows would take {} bytes, more than a loadouts file may \
+                     hold ({})",
+                    bytes.len(),
+                    files::MAX_LOADOUTS_BYTES
+                ),
+            ));
+        }
+        let quarantined = files::quarantine_copy(path, text.as_bytes(), "duplicates")?;
+        let kept_in = |error: std::io::Error, what: &str| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "a copy is kept in {}, but {what}: {error}",
+                    quarantined.display()
+                ),
+            )
+        };
+        let dirs: Vec<PathBuf> = path.parent().map(Path::to_path_buf).into_iter().collect();
+        self.sync_dirs(&dirs).map_err(|error| {
+            kept_in(
+                error,
+                "its directory entry did not reach the disk, so the file was not replaced",
+            )
+        })?;
+        let kept = files::digest(text.as_bytes());
+        self.publish(path, &bytes, || {
+            if self.state.lock().abandoned {
+                return Err(std::io::Error::other(
+                    "the service passed its shutdown bound",
+                ));
+            }
+            if files::current_digest(key, &self.root)? == Some(kept) {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "the file changed while its loadouts were being renamed apart",
+                ))
+            }
+        })
+        .map_err(|error| kept_in(error, "the file was not replaced"))?;
+        let renames = renamed
+            .iter()
+            .map(|rename| format!("row {} {:?} → {:?}", rename.row + 1, rename.from, rename.to))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let told = format!(
+            "local state: loadouts file {} had loadouts that share a name; its bytes are kept in \
+             {}, and each later one was renamed, keeping its gear and its place: {renames}",
+            path.display(),
+            quarantined.display()
+        );
+        match self.sync_dirs(&dirs) {
+            Ok(()) => {
+                self.notice(Level::Warn, told);
+                self.notice(
+                    Level::Info,
+                    format!(
+                        "audit domain={} action=loadouts-dedupe path={} quarantined={} \
+                         renamed=[{renames}] at={}",
+                        LocalStateDomain::LoadoutsReferences,
+                        path.display(),
+                        quarantined.display(),
+                        DurableTimestamp::now().unix_seconds()
+                    ),
+                );
+            }
+            // The renamed rows are in place, and the copy is durable: a
+            // crash that loses this entry leaves the old file, and the next
+            // read renames it apart again.
+            Err(error) => self.notice(
+                Level::Warn,
+                format!(
+                    "{told}; but its directory entry did not reach the disk ({error}), so the \
+                     renames are not durable yet"
+                ),
+            ),
+        }
+        Ok(())
     }
 
     /// Under the preferences file's lock: if `path` still holds malformed
@@ -1766,7 +1890,7 @@ impl Shared {
             // Repaired or removed meanwhile: read it as it is.
             return Ok(());
         };
-        let quarantined = files::quarantine_copy(path, &bytes)?;
+        let quarantined = files::quarantine_copy(path, &bytes, "corrupt")?;
         if let Some(dir) = path.parent() {
             self.sync_dirs(&[dir.to_path_buf()])?;
         }
@@ -1814,7 +1938,8 @@ impl Shared {
         Ok(())
     }
 
-    /// Log one quarantine line (and hand it to a test's hook).
+    /// Log one line of a repair (the operator's notice, the audit line, or
+    /// why the repair could not be made), and hand it to a test's hook.
     fn notice(&self, level: Level, line: String) {
         host_log!(Category::Lifecycle, level, "{line}");
         #[cfg(test)]
@@ -1836,7 +1961,7 @@ impl Shared {
         let domain = key.domain();
         let path = key.path(&self.root);
         let request = queued.request;
-        let _lock =
+        let guard =
             match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned
             }) {
@@ -1880,9 +2005,11 @@ impl Shared {
                     return;
                 }
             };
-        // The precondition: what the file holds now, under the lock.
+        // The precondition: what the file holds now, under the lock (rows
+        // another writer left sharing a name are renamed apart first, so
+        // this edit is never decided against them).
         let read_at = DurableTimestamp::now();
-        let read = files::read(key, &self.root, read_at);
+        let read = self.read_repairing(key, read_at, false, Some(&guard));
         let staged = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
@@ -1948,7 +2075,13 @@ impl Shared {
                     false,
                 ),
                 Some(LastCheck::Changed) => {
-                    self.conflict_on_change(key, queued, &path, "while this write was staged");
+                    self.conflict_on_change(
+                        key,
+                        queued,
+                        &path,
+                        &guard,
+                        "while this write was staged",
+                    );
                 }
                 Some(LastCheck::Io(_)) | None => {
                     host_log!(
@@ -1975,7 +2108,13 @@ impl Shared {
         // Read it back: bytes the file no longer holds are not acknowledged.
         let written = files::digest(&staged.bytes);
         if files::current_digest(key, &self.root).ok() != Some(Some(written)) {
-            self.conflict_on_change(key, queued, &path, "while its directory entry was flushed");
+            self.conflict_on_change(
+                key,
+                queued,
+                &path,
+                &guard,
+                "while its directory entry was flushed",
+            );
             return;
         }
         {
@@ -2064,12 +2203,20 @@ impl Shared {
     }
 
     /// A writer that does not take the lock changed the file during this
-    /// write: take what it left into the store (an outside change at a new
-    /// version) and settle the write as the conflict it is.
-    fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
+    /// write (which holds `lock`): take what it left into the store (an
+    /// outside change at a new version) and settle the write as the
+    /// conflict it is.
+    fn conflict_on_change(
+        &self,
+        key: &StoreKey,
+        queued: &Queued,
+        path: &Path,
+        lock: &files::WriteLock,
+        when: &str,
+    ) {
         let domain = key.domain();
         let read_at = DurableTimestamp::now();
-        let read = files::read(key, &self.root, read_at);
+        let read = self.read_repairing(key, read_at, false, Some(lock));
         let settlement = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, path);
@@ -2222,6 +2369,46 @@ enum LastCheck {
     Abandoned,
     #[error("the file could not be read before the rename: {0}")]
     Io(std::io::Error),
+}
+
+/// What a read repairs, under the file's lock, rather than refuses
+/// ([`Shared::read_repairing`]).
+#[derive(Debug, Clone, Copy)]
+enum Repair {
+    /// Loadout rows share a name: they are renamed apart
+    /// ([`Shared::dedupe_loadouts`]), on every read.
+    Dedupe,
+    /// A malformed preferences file, read for a save: it is moved aside
+    /// and fresh preferences are started ([`Shared::quarantine_preferences`]).
+    Quarantine,
+}
+
+impl Repair {
+    /// The repair a read of `key` that found `read` calls for, if any.
+    fn of(
+        key: &StoreKey,
+        read: &Result<Option<ReadDocument>, ReadError>,
+        recover: bool,
+    ) -> Option<Self> {
+        match (key, read) {
+            (StoreKey::Loadouts, Err(ReadError::SharedNames { .. })) => Some(Repair::Dedupe),
+            (StoreKey::Preferences, Err(error)) if recover && error.is_malformed() => {
+                Some(Repair::Quarantine)
+            }
+            _ => None,
+        }
+    }
+
+    /// What the file holds and that the repair was not made, for the line
+    /// saying why.
+    fn unmade(self) -> &'static str {
+        match self {
+            Repair::Dedupe => {
+                "loadouts file has loadouts that share a name, but they could not be renamed apart"
+            }
+            Repair::Quarantine => "preferences file is malformed but could not be moved aside",
+        }
+    }
 }
 
 fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
