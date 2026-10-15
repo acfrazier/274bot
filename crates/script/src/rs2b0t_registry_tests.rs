@@ -820,3 +820,35 @@ export const SETTINGS = { choice: { ...BASE, ...LATER } };
         "the later nested object replaces the earlier value instead of merging"
     );
 }
+
+#[test]
+fn selected_registry_schema_respects_source_bound() {
+    let index = r#"
+import Target from './cards/Target.js';
+import { SETTINGS } from './cards/Settings.js';
+ScriptRegistry.register({
+    name: 'Target',
+    settingsSchema: SETTINGS,
+    create: () => new Target(),
+});
+"#;
+    let mut sources = std::collections::HashMap::new();
+    sources.insert(
+        "./cards/Settings.js".into(),
+        "export const SETTINGS = { mode: { type: 'string', default: 'safe' } };".into(),
+    );
+    let registry = RegistryIndex::parse(index).expect("registry parses");
+    let unbounded = registry
+        .card_with_sources(&sources, "Target")
+        .expect("schema parses");
+    let bounded = registry
+        .card_with_sources_bounded(&sources, "Target", 8 * 1024)
+        .expect("schema fits source bound");
+    assert_eq!(bounded, unbounded);
+    assert!(
+        registry
+            .card_with_sources_bounded(&sources, "Target", 1)
+            .expect_err("oversized schema source is refused")
+            .contains("preparation byte bound")
+    );
+}

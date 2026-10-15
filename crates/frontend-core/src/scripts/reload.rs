@@ -1,12 +1,12 @@
-//! Reload and catalog refresh as one transaction: prepare the candidate on
-//! the caller (finite), validate it in throwaway isolates on a worker,
-//! then either apply it or, when running or paused runs of that card would
-//! be replaced, publish a [`ReloadWarning`] naming the exact slots and
-//! generations. A confirm re-checks the candidate against disk and the
-//! warned generations; Cancel and Stop all discard it without touching any
-//! execution. A replacement Start is queued behind the reap of the run it
-//! replaces and settles like any Start.
+//! Reload and catalog refresh as one transaction: admit bounded preparation
+//! and validation work off the caller, then either apply it or, when running
+//! or paused runs of that card would be replaced, publish a [`ReloadWarning`]
+//! naming the exact slots and generations. A confirm re-checks the candidate
+//! on a worker and the warned generations; Cancel and Stop discard in-flight
+//! work and candidates without touching any execution. A replacement Start
+//! is queued behind the reap of the run it replaces and settles like any Start.
 
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 
 use super::{PendingCard, PendingStart, Scripts, StartKind};
@@ -41,6 +41,7 @@ pub enum PendingReloadKind {
 pub struct PendingReload {
     pub warning: ReloadWarning,
     pub prepared: Vec<script::PreparedCard>,
+    pub warmed: Vec<script::PreparedCard>,
     pub kind: PendingReloadKind,
 }
 
@@ -78,7 +79,44 @@ enum ValidationKind {
     Catalog {
         root: PathBuf,
         diff: script::CatalogDiff,
+        warmed: Vec<script::PreparedCard>,
         prepare_failed: Vec<script::LoadFailure>,
+    },
+}
+
+enum PreparationRequest {
+    Manual {
+        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        manual: ManualValidation,
+        confirming: bool,
+    },
+    Catalog {
+        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        root: PathBuf,
+    },
+    CatalogConfirmation {
+        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        root: PathBuf,
+    },
+}
+
+enum PreparationJob {
+    Pending(PreparationRequest),
+    Manual {
+        epoch: u64,
+        task: script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
+        manual: ManualValidation,
+        confirming: bool,
+    },
+    Catalog {
+        epoch: u64,
+        task: script::preparation::PreparedTask<Result<script::load::CatalogPreparationResult, String>>,
+        root: PathBuf,
+    },
+    CatalogConfirmation {
+        epoch: u64,
+        task: script::preparation::PreparedTask<Result<script::CatalogDiff, String>>,
+        root: PathBuf,
     },
 }
 
@@ -87,6 +125,7 @@ enum ValidationKind {
 #[derive(Default)]
 pub(super) struct ReloadState {
     generation: u64,
+    preparation: Option<PreparationJob>,
     validation: Option<ValidationJob>,
     pending: Option<PendingReload>,
     warning: Option<ReloadWarning>,
@@ -111,14 +150,16 @@ impl ReloadState {
     /// Discard a candidate in preparation or awaiting confirmation.
     pub(super) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.preparation = None;
         self.validation = None;
         self.clear_pending();
     }
 }
 
 impl Scripts {
+    /// Whether reload preparation or validation is still running or queued.
     pub fn reload_validation_pending(&self) -> bool {
-        self.reload.validation.is_some()
+        self.reload.preparation.is_some() || self.reload.validation.is_some()
     }
 
     /// The terminal result of the latest reload or catalog refresh.
@@ -194,6 +235,331 @@ impl Scripts {
         target.is_some_and(|(source, lookup)| self.manual_pending_binds(*source, lookup))
     }
 
+    fn submit_preparation(&mut self, request: PreparationRequest) {
+        let epoch = self.reload.generation;
+        match request {
+            PreparationRequest::Manual {
+                snapshot,
+                manual,
+                confirming,
+            } => {
+                let input = match script::preparation::PreparationInput::new(
+                    epoch,
+                    snapshot.input_bytes(),
+                    snapshot.scratch_bytes(),
+                    snapshot.result_bytes(),
+                ) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        self.fail_reload("reload", error.to_string());
+                        return;
+                    }
+                };
+                let worker_snapshot = Arc::clone(&snapshot);
+                match script::preparation::submit(
+                    script::preparation::PreparationKind::Card,
+                    api::identity::Scope::Process,
+                    input,
+                    move |_| worker_snapshot.prepare(),
+                ) {
+                    Ok(task) => {
+                        self.reload.preparation = Some(PreparationJob::Manual {
+                            epoch,
+                            task,
+                            manual,
+                            confirming,
+                        });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.reload.preparation =
+                            Some(PreparationJob::Pending(PreparationRequest::Manual {
+                                snapshot,
+                                manual,
+                                confirming,
+                            }));
+                    }
+                    Err(error) => self.fail_reload("reload", error.to_string()),
+                }
+            }
+            PreparationRequest::Catalog { snapshot, root } => {
+                let input = match script::preparation::PreparationInput::new(
+                    epoch,
+                    snapshot.input_bytes(),
+                    snapshot.scratch_bytes(),
+                    snapshot.result_bytes(),
+                ) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        self.fail_reload("Refresh catalog", error.to_string());
+                        return;
+                    }
+                };
+                let worker_snapshot = Arc::clone(&snapshot);
+                match script::preparation::submit(
+                    script::preparation::PreparationKind::Catalogue,
+                    api::identity::Scope::Process,
+                    input,
+                    move |_| worker_snapshot.prepare(),
+                ) {
+                    Ok(task) => {
+                        self.reload.preparation = Some(PreparationJob::Catalog {
+                            epoch,
+                            task,
+                            root,
+                        });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.reload.preparation =
+                            Some(PreparationJob::Pending(PreparationRequest::Catalog {
+                                snapshot,
+                                root,
+                            }));
+                    }
+                    Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
+                }
+            }
+            PreparationRequest::CatalogConfirmation { snapshot, root } => {
+                let input = match script::preparation::PreparationInput::new(
+                    epoch,
+                    snapshot.input_bytes(),
+                    snapshot.scratch_bytes(),
+                    snapshot.result_bytes(),
+                ) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        self.fail_reload("Refresh catalog", error.to_string());
+                        return;
+                    }
+                };
+                let worker_snapshot = Arc::clone(&snapshot);
+                match script::preparation::submit(
+                    script::preparation::PreparationKind::Catalogue,
+                    api::identity::Scope::Process,
+                    input,
+                    move |_| worker_snapshot.diff(),
+                ) {
+                    Ok(task) => {
+                        self.reload.preparation =
+                            Some(PreparationJob::CatalogConfirmation {
+                                epoch,
+                                task,
+                                root,
+                            });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.reload.preparation = Some(PreparationJob::Pending(
+                            PreparationRequest::CatalogConfirmation { snapshot, root },
+                        ));
+                    }
+                    Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
+                }
+            }
+        }
+    }
+
+    pub(super) fn poll_reload_preparation<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        if matches!(
+            self.reload.preparation.as_ref(),
+            Some(PreparationJob::Pending(_))
+        ) {
+            if let Some(PreparationJob::Pending(request)) = self.reload.preparation.take() {
+                self.submit_preparation(request);
+            }
+        }
+        let Some(job) = self.reload.preparation.as_ref() else {
+            return;
+        };
+        let epoch = match job {
+            PreparationJob::Pending(_) => return,
+            PreparationJob::Manual { epoch, .. }
+            | PreparationJob::Catalog { epoch, .. }
+            | PreparationJob::CatalogConfirmation { epoch, .. } => *epoch,
+        };
+        if epoch != self.reload.generation {
+            self.reload.preparation = None;
+            return;
+        }
+        let finished = match job {
+            PreparationJob::Pending(_) => return,
+            PreparationJob::Manual { task, .. } => task.is_finished(),
+            PreparationJob::Catalog { task, .. } => task.is_finished(),
+            PreparationJob::CatalogConfirmation { task, .. } => task.is_finished(),
+        };
+        if !finished {
+            return;
+        }
+        let Some(job) = self.reload.preparation.take() else {
+            return;
+        };
+        match job {
+            PreparationJob::Pending(_) => unreachable!(),
+            PreparationJob::Manual {
+                task,
+                manual,
+                confirming,
+                ..
+            } => match task.join() {
+                Ok(Ok(outcome)) => {
+                    self.complete_manual_preparation(core, manual, confirming, outcome)
+                }
+                Ok(Err(error)) => {
+                    if confirming {
+                        self.reload.clear_pending();
+                    }
+                    self.fail_reload("reload", error);
+                }
+                Err(error) => {
+                    if confirming {
+                        self.reload.clear_pending();
+                    }
+                    self.fail_reload("reload", error.to_string());
+                }
+            },
+            PreparationJob::Catalog { task, root, .. } => match task.join() {
+                Ok(Ok(result)) => self.complete_catalog_preparation(core, root, result),
+                Ok(Err(error)) => self.fail_reload("Refresh catalog", error),
+                Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
+            },
+            PreparationJob::CatalogConfirmation { task, root, .. } => match task.join() {
+                Ok(Ok(diff)) => self.complete_catalog_confirmation(core, root, diff),
+                Ok(Err(error)) => self.fail_reload("Refresh catalog", error),
+                Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
+            },
+        }
+    }
+
+    fn complete_manual_preparation<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        mut manual: ManualValidation,
+        confirming: bool,
+        outcome: script::load::CardPreparationOutcome,
+    ) {
+        match outcome {
+            script::load::CardPreparationOutcome::Confirmed if confirming => {
+                let outcome = self.commit_manual_pending(core);
+                self.finish_reload(outcome);
+            }
+            script::load::CardPreparationOutcome::Confirmed => {
+                self.fail_reload("reload", "unexpected confirmation result".into());
+            }
+            script::load::CardPreparationOutcome::Unchanged => {
+                if confirming {
+                    self.reload.clear_pending();
+                }
+                self.show(script::NOTHING_CHANGED_RELOAD);
+                self.finish_reload(ReloadOutcome::NothingChanged);
+            }
+            script::load::CardPreparationOutcome::Prepared(prepared) => {
+                manual.fingerprint = prepared.fingerprint.clone();
+                match self.spawn_validation(
+                    vec![prepared],
+                    ValidationKind::Manual(manual),
+                ) {
+                    Ok(()) => self.clear_notice(),
+                    Err(error) => self.fail_reload("reload", error),
+                }
+            }
+            script::load::CardPreparationOutcome::Failed { error, failure } => {
+                self.js.record_failure(failure);
+                if confirming {
+                    self.reload.clear_pending();
+                }
+                self.fail_reload("reload", error);
+            }
+        }
+    }
+
+    fn complete_catalog_preparation<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        root: PathBuf,
+        result: script::load::CatalogPreparationResult,
+    ) {
+        let script::load::CatalogPreparationResult {
+            diff,
+            prepared,
+            warmed,
+            prepare_failed,
+        } = result;
+        if diff.is_noop()
+            && prepared.is_empty()
+            && warmed.is_empty()
+            && prepare_failed.is_empty()
+        {
+            self.reload.catalog_report = Some(script::NOTHING_CHANGED_CATALOG.into());
+            self.show(script::NOTHING_CHANGED_CATALOG);
+            self.finish_reload(ReloadOutcome::NothingChanged);
+            return;
+        }
+        for failure in &prepare_failed {
+            self.js.record_failure(failure.clone());
+        }
+        if prepared.is_empty() {
+            self.complete_catalog_validation(
+                core,
+                root,
+                diff,
+                warmed,
+                prepare_failed,
+                Vec::new(),
+            );
+            return;
+        }
+        let had_prepare_failure = !prepare_failed.is_empty();
+        let kind = ValidationKind::Catalog {
+            root,
+            diff,
+            warmed,
+            prepare_failed,
+        };
+        match self.spawn_validation(prepared, kind) {
+            Ok(()) if !had_prepare_failure => self.clear_notice(),
+            Ok(()) => {}
+            Err(error) => self.fail_reload("Refresh catalog", error),
+        }
+    }
+
+    fn complete_catalog_confirmation<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        root: PathBuf,
+        diff: script::CatalogDiff,
+    ) {
+        let confirmed = self.reload.pending.as_ref().is_some_and(|pending| {
+            if pending.warning.epoch != self.reload.generation {
+                return false;
+            }
+            let PendingReloadKind::Catalog {
+                root: pending_root,
+                added,
+                removed,
+                set_fingerprint,
+                ..
+            } = &pending.kind
+            else {
+                return false;
+            };
+            pending_root == &root
+                && added == &diff.added
+                && removed == &diff.removed
+                && set_fingerprint == &catalog_set_fingerprint(&diff)
+        });
+        if confirmed {
+            let outcome = self.commit_catalog_pending(core, diff);
+            self.finish_reload(outcome);
+        } else {
+            self.reload.clear_pending();
+            self.begin_refresh_catalog(core, &root);
+        }
+    }
+
     fn spawn_validation(
         &mut self,
         prepared: Vec<script::PreparedCard>,
@@ -242,8 +608,9 @@ impl Scripts {
             ValidationKind::Catalog {
                 root,
                 diff,
+                warmed,
                 prepare_failed,
-            } => self.complete_catalog_validation(core, root, diff, prepare_failed, batch),
+            } => self.complete_catalog_validation(core, root, diff, warmed, prepare_failed, batch),
         }
     }
 
@@ -300,6 +667,7 @@ impl Scripts {
             self.reload.install(PendingReload {
                 warning,
                 prepared: vec![prepared],
+                warmed: Vec::new(),
                 kind: PendingReloadKind::Manual,
             });
             self.finish_reload(ReloadOutcome::NeedsConfirm);
@@ -314,6 +682,7 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         root: PathBuf,
         diff: script::CatalogDiff,
+        warmed: Vec<script::PreparedCard>,
         mut prepare_failed: Vec<script::LoadFailure>,
         batch: ValidationBatch,
     ) {
@@ -341,8 +710,7 @@ impl Scripts {
             running.extend(r);
             paused.extend(p);
         }
-        let set_fingerprint =
-            catalog_set_fingerprint(&diff.added, &diff.changed, &diff.removed, &prepared);
+        let set_fingerprint = catalog_set_fingerprint(&diff);
         let affected: Vec<String> = running.iter().chain(paused.iter()).cloned().collect();
         let warning = ReloadWarning {
             identity_key: prepared
@@ -363,6 +731,7 @@ impl Scripts {
             self.reload.install(PendingReload {
                 warning,
                 prepared,
+                warmed,
                 kind: PendingReloadKind::Catalog {
                     root,
                     added: diff.added,
@@ -374,21 +743,20 @@ impl Scripts {
             self.finish_reload(ReloadOutcome::NeedsConfirm);
         } else {
             let outcome =
-                self.apply_catalog_prepared(core, diff, prepared, prepare_failed, warning);
+                self.apply_catalog_prepared(core, diff, prepared, warmed, prepare_failed, warning);
             self.finish_reload(outcome);
         }
     }
 
-    /// Reload `target` (see [`Self::reload_target`]). Preparation is finite
-    /// on the caller; throwaway V8 validation runs on a worker polled by
-    /// [`Scripts::poll`]. A second Reload of the same unchanged candidate
-    /// confirms a shown warning.
+    /// Reload `target` (see [`Self::reload_target`]). Bounded preparation and
+    /// throwaway V8 validation run off the caller, polled by [`Scripts::poll`].
+    /// A second Reload submits a bounded confirmation scan for a shown warning.
     pub fn begin_reload<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         target: Option<(script::ScriptSource, String)>,
     ) {
-        if self.reload.validation.is_some() {
+        if self.reload.preparation.is_some() || self.reload.validation.is_some() {
             return;
         }
         self.reload.outcome = None;
@@ -396,51 +764,44 @@ impl Scripts {
             self.fail_reload("reload", "no script to reload".into());
             return;
         };
-        if self.manual_pending_binds(source, &lookup) {
-            let outcome = self.commit_manual_pending(core);
-            self.finish_reload(outcome);
+        let confirming = self.manual_pending_binds(source, &lookup);
+        let confirmation_fingerprint = if confirming {
+            self.reload
+                .pending
+                .as_ref()
+                .map(|pending| pending.warning.fingerprint.clone())
+        } else {
+            None
+        };
+        let Some(card) = self.js.get(source, &lookup) else {
+            self.fail_reload("reload", format!("no script ({source:?}, {lookup})"));
             return;
-        }
-        match self.js.raw_source_changed(source, &lookup) {
-            Ok(false) => {
-                self.show(script::NOTHING_CHANGED_RELOAD);
-                if matches!(
-                    self.reload.pending.as_ref().map(|pending| &pending.kind),
-                    Some(PendingReloadKind::Manual)
-                ) {
-                    self.reload.clear_pending();
-                }
-                self.finish_reload(ReloadOutcome::NothingChanged);
-                return;
-            }
-            Ok(true) => {}
-            Err(error) => return self.fail_reload("reload", error),
-        }
-        let identity_key = self
-            .js
-            .get(source, &lookup)
-            .map(|card| card.identity_key())
-            .unwrap_or_default();
-        let fingerprint = match self.js.disk_fingerprint(source, &lookup) {
-            Ok(fingerprint) => fingerprint,
-            Err(error) => return self.fail_reload("reload", error),
         };
+        let identity_key = card.identity_key();
         let (running_before, paused_before) = slots_with_identity(core, &identity_key);
-        let prepared = match self.js.prepare_card_unvalidated(source, &lookup) {
-            Ok(prepared) => prepared,
+        let snapshot = match self.js.card_preparation_snapshot(
+            source,
+            &lookup,
+            confirmation_fingerprint,
+        ) {
+            Ok(snapshot) => Arc::new(snapshot),
             Err(error) => return self.fail_reload("reload", error),
         };
-        let kind = ValidationKind::Manual(ManualValidation {
+        let manual = ManualValidation {
             source,
             lookup,
             identity_key,
-            fingerprint,
+            fingerprint: String::new(),
             running_before,
             paused_before,
+        };
+        self.submit_preparation(PreparationRequest::Manual {
+            snapshot,
+            manual,
+            confirming,
         });
-        match self.spawn_validation(vec![prepared], kind) {
-            Ok(()) => self.clear_notice(),
-            Err(error) => self.fail_reload("reload", error),
+        if !confirming {
+            self.clear_notice();
         }
     }
 
@@ -455,19 +816,13 @@ impl Scripts {
         let Some(pending) = self.reload.pending.as_ref() else {
             return false;
         };
-        if !matches!(pending.kind, PendingReloadKind::Manual) {
+        if !matches!(&pending.kind, PendingReloadKind::Manual) {
             return false;
         }
-        let w = &pending.warning;
-        if w.epoch != self.reload.generation || w.source != source {
-            return false;
-        }
-        if !lookups_match(source, &w.lookup, lookup) {
-            return false;
-        }
-        self.js
-            .disk_fingerprint(source, lookup)
-            .is_ok_and(|fingerprint| w.fingerprint == fingerprint)
+        let warning = &pending.warning;
+        warning.epoch == self.reload.generation
+            && warning.source == source
+            && lookups_match(source, &warning.lookup, lookup)
     }
 
     fn commit_manual_pending<Io>(&mut self, core: &mut OperatorSession<Io>) -> ReloadOutcome {
@@ -503,6 +858,7 @@ impl Scripts {
                 self.reload.install(PendingReload {
                     warning,
                     prepared,
+                    warmed: Vec::new(),
                     kind: PendingReloadKind::Manual,
                 });
                 return ReloadOutcome::Failed(e);
@@ -661,114 +1017,80 @@ impl Scripts {
         (restarted, stopped_paused, failed, errors)
     }
 
-    /// Catalog Refresh from `root`. Returns the newly added card names a
-    /// front end may warm (transpile) in the background.
+    /// Queue a bounded catalogue refresh. New cards are prepared internally,
+    /// so callers receive no names to warm on the UI thread.
     pub fn begin_refresh_catalog<Io>(
         &mut self,
-        core: &mut OperatorSession<Io>,
+        _core: &mut OperatorSession<Io>,
         root: &Path,
     ) -> Vec<String> {
-        if self.reload.validation.is_some() {
+        if self.reload.preparation.is_some() || self.reload.validation.is_some() {
             return Vec::new();
         }
         self.reload.outcome = None;
         if self.catalog_pending_binds(root) {
-            let outcome = self.commit_catalog_pending(core);
-            if let ReloadOutcome::Failed(error) = &outcome {
-                self.show(format!("Refresh catalog: {error}"));
-            }
-            self.finish_reload(outcome);
+            let snapshot = match self.js.catalog_preparation_snapshot(root) {
+                Ok(snapshot) => Arc::new(snapshot),
+                Err(error) => {
+                    self.fail_reload("Refresh catalog", error);
+                    return Vec::new();
+                }
+            };
+            self.submit_preparation(PreparationRequest::CatalogConfirmation {
+                snapshot,
+                root: root.to_path_buf(),
+            });
             return Vec::new();
         }
-        let diff = match self.js.diff_catalog(root) {
-            Ok(diff) => diff,
+        if self
+            .reload
+            .pending
+            .as_ref()
+            .is_some_and(|pending| matches!(&pending.kind, PendingReloadKind::Catalog { .. }))
+        {
+            self.reload.clear_pending();
+        }
+        let snapshot = match self.js.catalog_preparation_snapshot(root) {
+            Ok(snapshot) => Arc::new(snapshot),
             Err(error) => {
                 self.fail_reload("Refresh catalog", error);
                 return Vec::new();
             }
         };
-        if diff.is_noop() {
-            self.reload.catalog_report = Some(script::NOTHING_CHANGED_CATALOG.into());
-            self.show(script::NOTHING_CHANGED_CATALOG);
-            self.finish_reload(ReloadOutcome::NothingChanged);
-            return Vec::new();
-        }
-        let added = diff.added.clone();
-        let mut prepared = Vec::new();
-        let mut prepare_failed = Vec::new();
-        for name in &diff.changed {
-            match self
-                .js
-                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
-            {
-                Ok(candidate) => prepared.push(candidate),
-                Err(error) => {
-                    if let Some(card) = self.js.get(script::ScriptSource::Catalog, name) {
-                        if let Some(failure) = self.js.load_failure(&card.identity_key()).cloned() {
-                            prepare_failed.push(failure);
-                        }
-                    }
-                    self.show(format!("catalog {name}: {error}"));
-                }
-            }
-        }
-        let had_prepare_failure = !prepare_failed.is_empty();
-        let kind = ValidationKind::Catalog {
+        self.submit_preparation(PreparationRequest::Catalog {
+            snapshot,
             root: root.to_path_buf(),
-            diff,
-            prepare_failed,
-        };
-        match self.spawn_validation(prepared, kind) {
-            Ok(()) if !had_prepare_failure => self.clear_notice(),
-            Ok(()) => {}
-            Err(error) => self.fail_reload("Refresh catalog", error),
-        }
-        added
+        });
+        self.clear_notice();
+        Vec::new()
     }
 
     fn catalog_pending_binds(&self, root: &Path) -> bool {
         let Some(pending) = self.reload.pending.as_ref() else {
             return false;
         };
-        let PendingReloadKind::Catalog {
-            root: pending_root,
-            added,
-            removed,
-            set_fingerprint,
-            ..
-        } = &pending.kind
-        else {
-            return false;
-        };
-        if pending.warning.epoch != self.reload.generation || pending_root != root {
+        if pending.warning.epoch != self.reload.generation {
             return false;
         }
-        let Ok(diff) = self.js.diff_catalog(root) else {
-            return false;
-        };
-        let mut fps = Vec::new();
-        for prepared in &pending.prepared {
-            match self
-                .js
-                .disk_fingerprint(script::ScriptSource::Catalog, &prepared.card.name)
-            {
-                Ok(fp) => fps.push((prepared.card.name.clone(), fp)),
-                Err(_) => return false,
-            }
-        }
-        let current =
-            catalog_set_fingerprint_from_diff(&diff.added, &diff.changed, &diff.removed, &fps);
-        current == *set_fingerprint && diff.added == *added && diff.removed == *removed
+        matches!(
+            &pending.kind,
+            PendingReloadKind::Catalog { root: pending_root, .. } if pending_root == root
+        )
     }
 
-    fn commit_catalog_pending<Io>(&mut self, core: &mut OperatorSession<Io>) -> ReloadOutcome {
+
+    fn commit_catalog_pending<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        diff: script::CatalogDiff,
+    ) -> ReloadOutcome {
         let Some(mut pending) = self.reload.pending.take() else {
             return ReloadOutcome::Failed("no pending catalog refresh".into());
         };
-        let PendingReloadKind::Catalog { root, .. } = pending.kind.clone() else {
+        if !matches!(&pending.kind, PendingReloadKind::Catalog { .. }) {
             self.reload.pending = Some(pending);
             return ReloadOutcome::Failed("pending reload is not catalog".into());
-        };
+        }
         if pending.warning.epoch != self.reload.generation {
             self.reload.clear_pending();
             return ReloadOutcome::Failed("reload cancelled".into());
@@ -788,15 +1110,18 @@ impl Scripts {
             self.reload.install(pending);
             return ReloadOutcome::NeedsConfirm;
         }
-        let diff = match self.js.diff_catalog(&root) {
-            Ok(d) => d,
-            Err(e) => return ReloadOutcome::Failed(e),
-        };
         let failed = match pending.kind {
             PendingReloadKind::Catalog { failed, .. } => failed,
-            PendingReloadKind::Manual => Vec::new(),
+            PendingReloadKind::Manual => unreachable!(),
         };
-        self.apply_catalog_prepared(core, diff, pending.prepared, failed, pending.warning)
+        self.apply_catalog_prepared(
+            core,
+            diff,
+            pending.prepared,
+            pending.warmed,
+            failed,
+            pending.warning,
+        )
     }
 
     fn apply_catalog_prepared<Io>(
@@ -804,6 +1129,7 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         mut diff: script::CatalogDiff,
         prepared: Vec<script::PreparedCard>,
+        warmed: Vec<script::PreparedCard>,
         prepare_failed: Vec<script::LoadFailure>,
         warning: ReloadWarning,
     ) -> ReloadOutcome {
@@ -818,6 +1144,11 @@ impl Scripts {
         }
         diff.changed.clear();
         let mut report = self.js.apply_catalog_diff(diff);
+        for item in &warmed {
+            if let Err(error) = self.js.commit_prepared(item.clone()) {
+                self.show(format!("catalog {}: {error}", item.card.name));
+            }
+        }
         report.changed = changed_ok;
         report.failed.extend(prepare_failed);
         for name in &removed {
@@ -933,17 +1264,17 @@ fn lookups_match(source: script::ScriptSource, a: &str, b: &str) -> bool {
         && (script::paths_match(a, Path::new(b)) || script::paths_match(b, Path::new(a)))
 }
 
-fn catalog_set_fingerprint(
-    added: &[String],
-    changed: &[String],
-    removed: &[String],
-    prepared: &[script::PreparedCard],
-) -> String {
-    let fps: Vec<(String, String)> = prepared
+fn catalog_set_fingerprint(diff: &script::CatalogDiff) -> String {
+    let fps: Vec<(String, String)> = diff
+        .added
         .iter()
-        .map(|p| (p.card.name.clone(), p.fingerprint.clone()))
+        .chain(&diff.changed)
+        .filter_map(|name| {
+            diff.current_fingerprint(name)
+                .map(|fingerprint| (name.clone(), fingerprint.to_string()))
+        })
         .collect();
-    catalog_set_fingerprint_from_diff(added, changed, removed, &fps)
+    catalog_set_fingerprint_from_diff(&diff.added, &diff.changed, &diff.removed, &fps)
 }
 
 fn catalog_set_fingerprint_from_diff(
