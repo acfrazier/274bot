@@ -215,49 +215,50 @@ pub fn pack_full<R: BankRow>(inv: &[R], inv_size: i32) -> bool {
 }
 
 /// Label chars as the deleted host `norm_action` folded them: the full
-/// Unicode lowercase of `value` (the same mapping `str::to_lowercase`
-/// applies, final sigma included), with every Unicode whitespace char
-/// (VT and NBSP included), `-` and `_` gone. Lazy and allocation-free.
+/// Unicode lowercase of `value` (exactly `str::to_lowercase`), with every
+/// Unicode whitespace char (VT and NBSP included), `-` and `_` gone.
+///
+/// Lazy and allocation-free for every label without a capital sigma: the
+/// standard lowercase mapping is per-char except for `Σ`, whose final-sigma
+/// rule depends on the Unicode `Cased`/`Case_Ignorable` tables that `char`
+/// does not expose. A label containing `Σ` is folded once through
+/// `str::to_lowercase` itself (one allocation), so it matches exactly.
 pub fn normalized_action_chars(value: &str) -> impl Iterator<Item = char> + '_ {
-    NormalizedActionChars {
-        src: value,
-        chars: value.char_indices(),
-        pending: None,
-    }
+    let chars = if value.contains('\u{3a3}') {
+        FoldSource::Lowered(value.to_lowercase().chars().collect::<Vec<_>>().into_iter())
+    } else {
+        FoldSource::PerChar {
+            chars: value.chars(),
+            pending: None,
+        }
+    };
+    chars.filter(|&c| kept(c))
 }
 
-struct NormalizedActionChars<'a> {
-    src: &'a str,
-    chars: std::str::CharIndices<'a>,
-    /// The lowercase expansion of the current source char (full Unicode
-    /// lowercase can expand one char into several, e.g. `İ` → `i̇`).
-    pending: Option<std::char::ToLowercase>,
+enum FoldSource<'a> {
+    /// Context-free path: each source char's own lowercase expansion
+    /// (full Unicode lowercase can expand one char into several, e.g.
+    /// `İ` → `i̇`).
+    PerChar {
+        chars: std::str::Chars<'a>,
+        pending: Option<std::char::ToLowercase>,
+    },
+    /// A label with a capital sigma, lowered by `str::to_lowercase`.
+    Lowered(std::vec::IntoIter<char>),
 }
 
-impl Iterator for NormalizedActionChars<'_> {
+impl Iterator for FoldSource<'_> {
     type Item = char;
 
     fn next(&mut self) -> Option<char> {
-        loop {
-            if let Some(pending) = &mut self.pending {
-                match pending.next() {
-                    Some(c) if kept(c) => return Some(c),
-                    Some(_) => continue,
-                    None => self.pending = None,
+        match self {
+            Self::Lowered(chars) => chars.next(),
+            Self::PerChar { chars, pending } => loop {
+                if let Some(c) = pending.as_mut().and_then(Iterator::next) {
+                    return Some(c);
                 }
-            }
-            let (at, c) = self.chars.next()?;
-            // `str::to_lowercase`'s one context rule: a capital sigma in
-            // final position (preceded by a cased char, not followed by
-            // one, skipping case-ignorable chars) lowers to `ς`, not `σ`.
-            if c == '\u{3a3}' {
-                return Some(if final_sigma(self.src, at) {
-                    '\u{3c2}'
-                } else {
-                    '\u{3c3}'
-                });
-            }
-            self.pending = Some(c.to_lowercase());
+                *pending = Some(chars.next()?.to_lowercase());
+            },
         }
     }
 }
@@ -266,48 +267,6 @@ impl Iterator for NormalizedActionChars<'_> {
 /// `char::is_whitespace`, so VT counts), `-` or `_`.
 fn kept(c: char) -> bool {
     !c.is_whitespace() && c != '-' && c != '_'
-}
-
-fn final_sigma(src: &str, at: usize) -> bool {
-    let preceded = src[..at]
-        .chars()
-        .rev()
-        .find(|&c| !is_case_ignorable(c))
-        .is_some_and(is_cased);
-    let followed = src[at + '\u{3a3}'.len_utf8()..]
-        .chars()
-        .find(|&c| !is_case_ignorable(c))
-        .is_some_and(is_cased);
-    preceded && !followed
-}
-
-/// Unicode `Cased`: the Lowercase/Uppercase properties, plus titlecase
-/// letters, whose lowercase mapping differs from themselves while they
-/// carry neither property (e.g. `ǅ`).
-fn is_cased(c: char) -> bool {
-    c.is_lowercase() || c.is_uppercase() || c.to_lowercase().next() != Some(c)
-}
-
-/// Unicode `Case_Ignorable`, as far as `char`'s property surface exposes
-/// it: the Word_Break mid-letter punctuation, the modifier-letter blocks,
-/// the format chars, and the combining marks — the non-alphanumeric,
-/// non-whitespace chars outside the punctuation/symbol blocks.
-fn is_case_ignorable(c: char) -> bool {
-    matches!(c,
-        '.' | ':' | '\'' | '`' | '^' | '\u{ad}' | '\u{b7}' | '\u{387}' | '\u{61c}'
-        | '\u{180e}' | '\u{1fbf}' | '\u{1ffe}' | '\u{2018}' | '\u{2019}'
-        | '\u{2024}' | '\u{2027}' | '\u{2d7}' | '\u{fe52}' | '\u{feff}'
-        | '\u{ff07}' | '\u{ff0e}'
-        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
-        | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
-        | '\u{20d0}'..='\u{20f0}' | '\u{fff9}'..='\u{fffb}'
-        | '\u{2b0}'..='\u{2ff}' | '\u{a700}'..='\u{a71f}')
-        || (!c.is_ascii()
-            && !c.is_alphanumeric()
-            && !c.is_whitespace()
-            && !c.is_control()
-            && !matches!(c, '\u{2000}'..='\u{2fff}' | '\u{3000}'..='\u{30ff}'
-                | '\u{ff01}'..='\u{ff5e}'))
 }
 
 /// `Withdraw-1`, `withdraw 1` and `Withdraw_1` are one label.

@@ -1132,6 +1132,17 @@ fn normalized_fold_matches_the_deleted_host_fold() {
         ("ΑΣ Α", "αςα"),
         ("ΑΣ'Α", "ασ'α"),
         ("Withdraw ΣΣ", "withdraw σς"),
+        // Sigma beside symbols, unassigned/private-use chars and the
+        // modifier/combining classes `char` cannot classify (T2.2 r2 review).
+        ("Α©Σ", "ασ"),
+        ("Α©Σ", "ας"),
+        ("ΑΣ©Α", "ασ©α"),
+        ("Α\u{e000}Σ", "α\u{e000}σ"),
+        ("Α\u{345}Σ", "α\u{3b9}ς"),
+        ("Α\u{1d2c}Σ", "α\u{1d2c}ς"),
+        ("ΑΣ\u{37a}", "ας\u{37a}"),
+        ("Α\u{64e}Σ", "α\u{64e}ς"),
+        ("Α«Σ", "α«σ"),
         // Multi-char lowercase expansions and titlecase letters.
         ("Withdraw İ", "withdraw i\u{307}"),
         ("Withdraw ẞ", "withdraw ß"),
@@ -1168,6 +1179,39 @@ fn normalized_fold_matches_the_deleted_host_fold() {
             old_norm_action(b),
             "fold of {b:?}"
         );
+    }
+}
+
+/// The fold equals the deleted host fold for every Unicode scalar value on
+/// its own, and for a stride-sampled sweep of the final-sigma templates the
+/// T2.2 r2 review used (`Α c Σ`, `ΑΣ c Α`, `ΑΣ c`, `c Σ`): the per-char path
+/// must hold for all chars, and a label with `Σ` must take the exact path.
+#[test]
+fn normalized_fold_matches_the_deleted_host_fold_across_unicode() {
+    let mut text = String::new();
+    let check = |text: &str| {
+        assert_eq!(
+            normalized_action_chars(text).collect::<String>(),
+            old_norm_action(text),
+            "fold of {text:?}"
+        );
+    };
+    for (index, c) in (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .enumerate()
+    {
+        text.clear();
+        text.push(c);
+        check(&text);
+        if index % 97 == 0 {
+            for template in [["Α", "Σ"], ["ΑΣ", "Α"], ["ΑΣ", ""], ["", "Σ"]] {
+                text.clear();
+                text.push_str(template[0]);
+                text.push(c);
+                text.push_str(template[1]);
+                check(&text);
+            }
+        }
     }
 }
 
