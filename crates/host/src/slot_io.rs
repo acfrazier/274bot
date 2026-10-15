@@ -1236,6 +1236,104 @@ mod tests {
         assert!(buf.take_journal_proof().is_none());
     }
 
+    /// Release micro-bench of the work T4.2 adds around a CPU head's paint
+    /// (not a gate): the head dispatch inside the raster timer, the
+    /// identity-checked publish against the pre-T4.2 unchecked store, and
+    /// one render-pump call with 16 attached CPU heads (the M3 consumer
+    /// pumps every 16 ms; a CPU head never touches the service per paint).
+    #[test]
+    #[ignore = "bench: cargo test -p host --release --lib cpu_head_paint_path_added_work -- --ignored --nocapture"]
+    fn cpu_head_paint_path_added_work() {
+        use client::render::backend::BackendKind;
+        use std::hint::black_box;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Mutex;
+
+        const ROUNDS: usize = 5;
+        const ITERS: u32 = 2_000_000;
+        fn per_iter(mut body: impl FnMut()) -> f64 {
+            let mut best = f64::MAX;
+            for _ in 0..ROUNDS {
+                let start = Instant::now();
+                for _ in 0..ITERS {
+                    body();
+                }
+                best = best.min(start.elapsed().as_nanos() as f64 / f64::from(ITERS));
+            }
+            best
+        }
+
+        // Inside the raster timer: `slot.head` is checked and `Head::paint`
+        // asks the backend kind before the unchanged `mainredraw`.
+        let renderer = client::render::Renderer::new_prefer(true, false);
+        let head_slot = Some(&renderer);
+        let dispatch = per_iter(|| {
+            let head = black_box(head_slot);
+            black_box(head.is_none());
+            black_box(head.is_some_and(|renderer| renderer.backend_kind() != BackendKind::Gpu));
+        });
+
+        // Publication of one full-applet CPU frame and the consumer's take,
+        // reusing the frame so no allocation is timed: T4.2 `publish`
+        // against the pre-T4.2 `store` shape (lock, store, unlock, bump).
+        struct Unchecked {
+            frame: Mutex<Option<FrameOutput>>,
+            gen: AtomicU64,
+        }
+        let old = Unchecked {
+            frame: Mutex::new(None),
+            gen: AtomicU64::new(0),
+        };
+        let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
+        let unchecked = per_iter(|| {
+            *old.frame.lock().unwrap() = spare.take();
+            old.gen.fetch_add(1, Ordering::Relaxed);
+            spare = black_box(old.frame.lock().unwrap().take());
+        });
+        let buf = FrameBuf::new();
+        let head = head_identity(12);
+        buf.attach_head(head);
+        let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
+        let checked = per_iter(|| {
+            black_box(buf.publish(head, spare.take().unwrap()));
+            spare = black_box(buf.take());
+        });
+
+        // One pump call with 16 attached CPU heads and no reservations.
+        let service = RenderService::new(Duration::from_millis(100)).unwrap();
+        let pump = service.register_pump().unwrap();
+        let heads: Vec<_> = (0..16)
+            .map(|slot| {
+                service
+                    .attach(
+                        &pump,
+                        SlotKey::from_incarnation(100 + slot).unwrap(),
+                        Arc::new(Silent),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let pumped = per_iter(|| {
+            black_box(service.pump(&pump, Instant::now()).unwrap());
+        });
+        drop(heads);
+
+        // M3 cpu-n16-full: 16 heads at about 50 paints/s, one pump per 16 ms.
+        let pump_per_paint = pumped * (1000.0 / 16.0) / (16.0 * 50.0);
+        let added = dispatch + (checked - unchecked) + pump_per_paint;
+        println!("cpu head paint path, best of {ROUNDS} x {ITERS} iterations, ns:");
+        println!("  head dispatch (is_none + backend_kind)       {dispatch:8.2}");
+        println!("  publish+take, pre-T4.2 unchecked store shape {unchecked:8.2}");
+        println!("  publish+take, T4.2 identity-checked          {checked:8.2}");
+        println!(
+            "  identity check (difference)                  {:8.2}",
+            checked - unchecked
+        );
+        println!("  render pump call, 16 CPU heads               {pumped:8.2}");
+        println!("  pump share per paint at cpu-n16-full rates   {pump_per_paint:8.2}");
+        println!("  added per paint, total                       {added:8.2}");
+    }
+
     #[cfg(feature = "journal-paint-proof")]
     #[test]
     fn journal_proof_retains_every_generation_with_its_own_pixels_and_stamp() {
