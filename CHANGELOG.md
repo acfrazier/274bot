@@ -3,6 +3,13 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
+- Load-script validation now waits for bounded admission without failing
+  merely because multiple refreshes submit together. If the independent JS
+  deadline service refuses a running execution, its tick error identifies
+  the service condition instead of calling the execution runaway.
+
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
 ### Profiles

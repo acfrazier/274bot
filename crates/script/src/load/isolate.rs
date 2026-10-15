@@ -4,6 +4,7 @@ mod supervisor;
 mod teardown;
 mod thread;
 mod validation;
+pub use supervisor::{capacity_status as isolate_capacity_status, IsolateCapacityStatus};
 pub use validation::{ValidationBatch, ValidationError};
 
 pub use teardown::TeardownProof;
@@ -40,10 +41,18 @@ pub enum LoadIsolateError {
     Supervisor(String),
     #[error("JS deadline supervisor is at capacity")]
     SupervisorCapacity,
-    #[error("JS quarantine is full; wait for a retiring isolate to join")]
-    QuarantineFull,
-    #[error("JS isolate admission is at the process cap")]
-    IsolateCapacity,
+    #[error("JS quarantine full (A={quarantined}, retiring J={retiring_gameplay}, retiring V={retiring_validation}); wait for actual isolate join")]
+    QuarantineFull {
+        quarantined: usize,
+        retiring_gameplay: usize,
+        retiring_validation: usize,
+    },
+    #[error("JS isolate admission at process cap (active={active}, retiring J={retiring_gameplay}, retiring V={retiring_validation})")]
+    IsolateCapacity {
+        active: usize,
+        retiring_gameplay: usize,
+        retiring_validation: usize,
+    },
     /// The operating system refused to create the isolate thread.
     #[error("isolate thread: {0}")]
     ThreadSpawn(#[source] std::io::Error),
@@ -455,8 +464,8 @@ impl LoadIsolate {
         Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
-    /// Validate through the process ValidationSeat; candidate isolates have
-    /// no gameplay authority and remain serialized until physical join.
+    /// Synchronous compatibility helper; remove with remaining test callers.
+    /// Product refreshes use [`Self::validate_prepared_batch`] instead.
     pub fn validate_source(
         js: &str,
         shape: LoadShape,
@@ -834,11 +843,31 @@ impl LoadIsolate {
             )
         };
         let (id, at, handle) = deadline;
-        if let Err(error) = supervisor::get()
-            .and_then(|service| service.arm_execution(self.teardown.clone(), handle, id, owner, at))
-        {
-            // No deadline owner: interrupt this exact execution immediately.
-            self.fire_execution_interrupt(id, owner);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let injected = self.teardown.lock().unwrap().fail_execution_registration;
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let injected: Option<teardown::DeadlineRefusal> = None;
+        let registration = if let Some(reason) = injected {
+            Err(match reason {
+                teardown::DeadlineRefusal::Capacity => LoadIsolateError::SupervisorCapacity,
+                teardown::DeadlineRefusal::Stopped => {
+                    LoadIsolateError::Supervisor("supervisor worker stopped".into())
+                }
+            })
+        } else {
+            supervisor::get().and_then(|service| {
+                service.arm_execution(self.teardown.clone(), handle, id, owner, at)
+            })
+        };
+        if let Err(error) = registration {
+            // No independent owner: interrupt this exact execution immediately.
+            // Pause still allows healthy work when registration succeeds; without
+            // an independent bound, it cannot promise an unbounded completion.
+            let reason = match error {
+                LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
+                _ => teardown::DeadlineRefusal::Stopped,
+            };
+            self.fire_execution_interrupt(id, teardown::ExecutionInterrupt::NoDeadline(reason));
             self.logs.lock().unwrap().push(error.to_string());
         }
     }
@@ -864,8 +893,8 @@ impl LoadIsolate {
 
     /// Park future tick dispatch. Pause intent shares the execution lock with
     /// entry, so a queued tick cannot enter after this call. Healthy work that
-    /// already owns execution is allowed to finish; a one-shot bound tied to
-    /// that exact execution terminates it only if it exceeds the tick budget.
+    /// already owns execution is allowed to finish when its independent deadline
+    /// is registered; otherwise it is cut immediately rather than run unbounded.
     pub fn pause(&self) {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
@@ -1055,6 +1084,17 @@ impl LoadIsolate {
     #[doc(hidden)]
     pub fn fail_onstop_deadline_registration(&self) {
         self.teardown.lock().unwrap().fail_hook_registration = true;
+    }
+
+    /// Isolate-scoped deadline refusal seam for capacity/stopped diagnostics.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fail_execution_deadline_registration(&self, stopped: bool) {
+        self.teardown.lock().unwrap().fail_execution_registration = Some(if stopped {
+            teardown::DeadlineRefusal::Stopped
+        } else {
+            teardown::DeadlineRefusal::Capacity
+        });
     }
 
     /// Give a success-path unit test enough scheduling headroom while
@@ -1371,7 +1411,10 @@ impl LoadIsolate {
         }
         st.execution_interrupt = Some(teardown::InterruptedExecution {
             owner,
-            consumed: false,
+            // Refused supervision is a terminal cut even if the V8-entry
+            // fence has not consumed the terminate request yet. Otherwise a
+            // Pause before entry could suppress both the cut and its cause.
+            consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
         });
         self.fire_terminate();
         true
