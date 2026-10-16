@@ -1,0 +1,7 @@
+# Windows nightly host only: ConPTY for tui-play cells. Installed into the
+# nightly venv (C:\274bot-nightly\venv) with
+#   python -m pip install --require-hashes --only-binary :all: --no-deps -r requirements.txt
+# pywinpty has no Python dependencies. The hash is the cp314 win_amd64 wheel
+# (the host runs CPython 3.14); bump version and hash together.
+pywinpty==3.1.0 \
+    --hash=sha256:d01178e9391366bc3325b4c49068cfce95d10d416f6ade62140b274741bc11e0

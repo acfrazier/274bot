@@ -108,7 +108,16 @@ struct FlagSidecar {
 enum FlagsSlot {
     Unloaded,
     Missing,
-    Refused(#[allow(dead_code)] &'static str),
+    Refused(
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "payload read only by cfg(test) flags_sidecar_state; constructed in both"
+            )
+        )]
+        &'static str,
+    ),
     Loaded(FlagSidecar),
 }
 
@@ -167,7 +176,10 @@ pub(crate) fn holds_nav_locks() -> bool {
 /// The guard field is only held so Drop releases the mutex; it is never read.
 pub(crate) struct NavStaticsGuard(
     #[cfg(test)]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "guard held only so Drop releases the mutex; never read"
+    )]
     parking_lot::ReentrantMutexGuard<'static, ()>,
 );
 
@@ -261,19 +273,6 @@ pub(crate) fn navflags_path() -> PathBuf {
         Ok(p) => PathBuf::from(p),
         Err(_) => host_play::default_pack_path().with_extension("navflags"),
     }
-}
-
-/// Decode sidecar bytes into a [`FlagSidecar`]; `None` when decode fails.
-#[cfg(test)]
-#[allow(dead_code)] // kept for in-memory fixtures alongside decode_sidecar_file
-fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
-    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar_arc(bytes).ok()?;
-    Some(FlagSidecar {
-        origin,
-        width,
-        height,
-        flags,
-    })
 }
 
 /// Decode the sidecar file at `path` into a [`FlagSidecar`]; `None` when

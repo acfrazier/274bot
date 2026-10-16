@@ -18,7 +18,9 @@ use nav::world::NavWorld;
 use crate::evidence::Evidence;
 use crate::proof::Proof;
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
-use crate::{Scenario, StepKind, SustainWhen, Wait};
+#[cfg(test)]
+use crate::Wait;
+use crate::{Scenario, StepKind, SustainWhen};
 
 /// The runner's pollable status (the UI and the headless test read it).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2048,7 +2050,7 @@ fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
 
 /// A `Wait` helper so tests can build steps without importing the field
 /// order.
-#[allow(dead_code)]
+#[cfg(test)]
 fn wait(arm: Proof, budget_ticks: u32) -> Wait {
     Wait { arm, budget_ticks }
 }

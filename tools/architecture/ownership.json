@@ -863,6 +863,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/gather_held_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/gather_return_live.rs",
       "owner": "T1"
     },
@@ -5500,6 +5504,30 @@
     },
     {
       "path": "tools/harness/write_player_fixture.ts",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/test_lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull-windows.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/run_nightly.py",
       "owner": "T1"
     },
     {

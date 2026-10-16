@@ -1,0 +1,13 @@
+# Archive host (Proxmox): pull finished Windows nightly runs into the ZFS dataset.
+# Install: /etc/systemd/system/274bot-nightly-pull-windows.service, script at
+# /usr/local/sbin/274bot-nightly-pull-windows (tools/nightly/cellar-pull-windows.sh).
+[Unit]
+Description=Pull finished 274bot Windows nightly runs from the Windows host into ZFS
+Wants=network-online.target
+After=network-online.target zfs-mount.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/274bot-nightly-pull-windows
+Nice=10
+IOSchedulingClass=idle

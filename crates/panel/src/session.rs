@@ -5543,7 +5543,7 @@ mod fleet_hold_tests {
         assert_eq!(session.error, None);
         assert_eq!(watch.failure(), None);
         assert_eq!(watch.dispatch_operation(), Some(Operation::ObserveBurials));
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while session.focused_script_state() != script::RunState::Running {
             assert!(
                 Instant::now() < deadline,

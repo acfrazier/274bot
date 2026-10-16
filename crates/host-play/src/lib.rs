@@ -138,9 +138,9 @@ pub use play_bootstrap::{
 };
 #[cfg(test)]
 use play_login::{
-    apply_queue_wait, configure_slot_world, drop_queue_place, enqueue_queue_place,
-    granted_permit_may_start_login, granted_permit_world_is_current, login_retry_wait,
-    on_login_success, permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
+    apply_queue_wait, capture_login_authorization, configure_slot_world, drop_queue_place,
+    enqueue_queue_place, granted_permit_world_is_current, login_retry_wait, on_login_success,
+    permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
     refresh_slot_world_preference, server_hold, should_handshake, tick_flags, wait_for_permit,
     wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
     UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
@@ -519,14 +519,19 @@ impl Play {
         let Some(arm) = self.arms.get(name) else {
             return;
         };
-        let mut q = self.queue.lock();
-        q.prefer_owner(arm.queue_owner);
-        publish_queue_place(
-            &q,
-            &mut lock_statuses(&self.statuses),
-            name,
-            arm.queue_owner,
-        );
+        let event = {
+            let mut q = self.queue.lock();
+            q.prefer_owner(arm.queue_owner);
+            publish_queue_place(
+                &q,
+                &mut lock_statuses(&self.statuses),
+                name,
+                arm.queue_owner,
+            )
+        };
+        if let Some(event) = event {
+            arm.publish_queued(event);
+        }
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).
@@ -596,6 +601,8 @@ mod bank_memory_live;
 mod bank_npc_live;
 #[cfg(test)]
 mod gather_bait_live;
+#[cfg(test)]
+mod gather_held_live;
 #[cfg(test)]
 mod gather_return_live;
 #[cfg(test)]
