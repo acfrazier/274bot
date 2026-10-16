@@ -24,9 +24,10 @@ tests, and the graph-creating policy live only in [`acfrazier/274bot-arch`](http
 `main`, as decided in ADR 0010. See the
 [checker README](https://github.com/acfrazier/274bot-arch/blob/main/README.md)
 for its runtime pins and rule-change process. This repo holds the
-runner `tools/architecture/run.sh`, which fetches `274bot-arch` `main` into
-a local cache and runs it against a tree. The fine data the checker reads —
-exactly `tools/architecture/ownership.json`,
+local-convenience-only runner `tools/architecture/run.sh`, which fetches
+`274bot-arch` `main` into a local cache and runs it against a tree. CI
+does not use the runner and never executes a candidate-tree script. The
+fine data the checker reads — exactly `tools/architecture/ownership.json`,
 `tools/architecture/inventories.json`, and
 `tools/architecture/foreign_types.json` — stays in this repo beside the
 runner and is reviewed like code. Everything that creates or activates the
@@ -41,10 +42,11 @@ tools/architecture/run.sh --root /path/to/tree
 ```
 
 With no `--root`, the runner checks the product root it lives in.
-`ARCH_REPO` overrides where the rules come from: a URL (the default remote
-is always `main`) or a local clone, whose selected local `HEAD` is used as
-pre-push proof of an unpushed rule change. `ARCH_CACHE_DIR` overrides the
-fetch cache, a bare Git cache defaulting to
+`ARCH_REPO` is a local-only override of where the rules come from: a URL
+(the default remote is always `main`) or a local clone, whose selected
+local `HEAD` is used as pre-push proof of an unpushed rule change. CI has
+no `ARCH_REPO` override. `ARCH_CACHE_DIR` overrides the local fetch cache,
+a bare Git cache defaulting to
 `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`.
 
 The runner checks the rust-analyzer executable on `PATH`: SHA-256
@@ -61,11 +63,21 @@ and other unsupported workspace shapes fail closed. A path dependency on a
 crate that is not a listed member still appears in the scan and must be a
 policy member or external.
 
-GitHub Actions pins Python **3.14.8** and runs the same check on pushes and
-pull requests in one `architecture` job. It also installs the pinned
-`flatc` and diffs `crates/script/schema/generated` against a fresh
-`flatc --rust` of `crates/script/schema/isolate.fbs`. That job
-does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
+GitHub Actions pins Python **3.14.8** and runs the operator-owned check
+inline in one `architecture` job on pushes and pull requests: it keeps the
+pinned rust-analyzer and `flatc` installation steps, then the check step
+itself runs `git clone --depth 1 --branch main
+https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
+verifies the rust-analyzer binary (SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`), then runs `python3 -B
+"$checker_root/check.py" --self-test` and `python3 -B
+"$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. CI never executes a
+candidate-tree script (including `tools/architecture/run.sh`) and has no
+`ARCH_REPO` override. It also installs the pinned `flatc` and diffs
+`crates/script/schema/generated` against a fresh `flatc --rust` of
+`crates/script/schema/isolate.fbs`. That job does **not** replace `fmt`,
+`clippy`, or `test`. Those gates stay as they are.
 
 The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
 workspace members, edges with their kinds and migrations, and the
@@ -148,12 +160,12 @@ claim that `e2e` owns those crates' production behavior.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 
-If a future change needs a new edge, kind, migration, or configuration
-activation, propose the `274bot-arch` policy edit (a patch or branch bundle
-for the operator to review and push — agents cannot push that repo), update
-this page, and get review. Ownership, inventory, and foreign-type rows
-change as ordinary product diffs beside the runner. Do not add
-a second hidden graph.
+For a new edge, kind, migration, optional-dependency activation, vendored path
+package, or checker change, follow [Changing a boundary](#changing-a-boundary).
+Include the regenerated baseline in the same arch commit as the protected
+rule change. Purely local features without optional or cross-crate activation
+need no operator commit. Ownership, inventory, and foreign-type rows remain
+ordinary product diffs. Do not add a second hidden graph.
 
 ## Cargo features
 
@@ -773,16 +785,27 @@ nav, rendering, or the isolate.
 
 ## Changing a boundary
 
-1. If the change needs a new graph allowance (a crate edge or kind, a
-   migration, a configuration activation), prepare the `274bot-arch`
-   policy edit as a patch or branch bundle. Only the operator can push
-   `274bot-arch`; agents cannot. The operator pushes that policy change
-   before the product change lands. Fine-data changes (ownership rows,
-   inventory rows, foreign-type rows) are ordinary product diffs in
-   `tools/architecture/`, reviewed like code: the checker loads them from
-   the checked tree, refuses malformed or stale data, and cannot widen the
-   protected edge policy.
-2. Update the tables on this page so the public description matches.
-3. Run the local command above (point `ARCH_REPO` at a local `274bot-arch`
-   clone to prove an unpushed policy change before review).
-4. Get review. Do not land a graph change as a drive-by import.
+An operator commit in protected `274bot-arch` is required for a new crate
+edge (including a new target cfg or cross-crate feature request), an edge kind,
+a migration, an optional-dependency activation, a vendored path package, or a checker change. The operator edits
+`policy.toml` where the rule change needs it and regenerates the graph
+provenance baseline in the same arch commit:
+
+```bash
+python3 -B check.py --emit-provenance-baseline /path/to/candidate > graph-provenance.json
+```
+
+The operator publishes first; the product change lands after. Only the
+operator can push `274bot-arch`; agents cannot. Propose the policy edit as
+a patch or branch bundle for the operator to review and push.
+Purely local features with no optional dependency or cross-crate edge, and
+fine ownership/seam/inventory data, need no operator commit: fine-data
+changes (ownership rows, inventory rows, foreign-type rows) are ordinary
+product diffs in `tools/architecture/`, reviewed like code — the checker
+loads them from the checked tree, refuses malformed or stale data, and
+cannot widen the protected edge policy.
+
+1. Update the tables on this page so the public description matches.
+2. Run the local command above (point local-only `ARCH_REPO` at a local
+   `274bot-arch` clone to prove an unpushed policy change before review).
+3. Get review. Do not land a graph change as a drive-by import.

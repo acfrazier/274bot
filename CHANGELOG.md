@@ -133,11 +133,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - The architecture checker, its tests, and the crate-edge policy now live
   in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
-  `tools/architecture/run.sh` runner, and CI runs the same check on pushes
-  and PRs. The fine data (`ownership.json`, `inventories.json`,
-  `foreign_types.json`) stays beside the runner and is reviewed like code.
-  Propose edge-policy changes (crate edges, kinds, migrations, configuration
-  activation) as a patch or branch bundle for the operator to push.
+  local-convenience-only `tools/architecture/run.sh` runner, and CI runs
+  the check inline on pushes and PRs — cloning `274bot-arch` `main`,
+  verifying the pinned rust-analyzer binary, then running `check.py
+  --self-test` and `check.py --root` with no candidate-tree script
+  execution and no `ARCH_REPO` override. The fine data (`ownership.json`,
+  `inventories.json`, `foreign_types.json`) stays beside the runner and is
+  reviewed like code. A new crate edge, edge kind, migration,
+  optional-dependency activation, vendored path package, or checker change
+  needs an operator commit in `274bot-arch` (`policy.toml` plus a
+  regenerated `graph-provenance.json`, operator publishes first); propose
+  it as a patch or branch bundle for the operator to push.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
