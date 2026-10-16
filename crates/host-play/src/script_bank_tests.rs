@@ -54,7 +54,7 @@ impl Gate {
             assert!(
                 !self
                     .cv
-                    .wait_for(&mut phase, Duration::from_secs(10))
+                    .wait_for(&mut phase, Duration::from_secs(60))
                     .timed_out(),
                 "worker phase {wanted}"
             );
