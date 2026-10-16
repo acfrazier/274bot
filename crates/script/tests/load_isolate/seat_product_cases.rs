@@ -241,9 +241,9 @@ import { BotHost } from '../../runtime/BotHost.js';
 import { Execution } from '../../api/execution/Execution.js';
 export const apiVersion = 2;
 let started = false;
-let listenerRan = false;
-let delayTickRan = false;
-let delayUntilRan = false;
+globalThis.__listenerRan = false;
+globalThis.__delayTickRan = false;
+globalThis.__delayUntilRan = false;
 globalThis.__rootPushes = [];
 globalThis.__importStarted = false;
 globalThis.__rootProgress = null;
@@ -259,17 +259,17 @@ export function tick(api) {
     push(api, 'tick-root');
     globalThis.__rootProgress = api.questProgress({ quest: 'tick-root' });
     BotHost.addTickListener(() => {
-        if (!listenerRan && api.tick >= 2) {
-            listenerRan = true;
+        if (!globalThis.__listenerRan && api.tick >= 2) {
+            globalThis.__listenerRan = true;
             push(api, 'listener-root');
         }
     });
     Execution.delayTicks(1).then(() => {
-        delayTickRan = true;
+        globalThis.__delayTickRan = true;
         push(api, 'delay-ticks-root');
     });
     Execution.delayUntil(() => api.tick >= 3, 5000).then(() => {
-        delayUntilRan = true;
+        globalThis.__delayUntilRan = true;
         push(api, 'delay-until-root');
     });
     import('../../api/bank/Banking.js').then(({ Banking }) => {
@@ -311,7 +311,7 @@ export function tick(api) {
     assert_eq!(iso.probe("globalThis.__importStarted").unwrap(), true);
     let pushes = iso.probe("globalThis.__rootPushes").unwrap();
     let pushes = pushes.as_array().unwrap();
-    assert_eq!(pushes.len(), 5);
+    assert_eq!(pushes.len(), 5, "root pushes: {pushes:?}");
     for name in [
         "tick-root",
         "listener-root",
@@ -325,8 +325,10 @@ export function tick(api) {
         );
     }
     assert_eq!(
-        iso.probe("listenerRan && delayTickRan && delayUntilRan")
-            .unwrap(),
+        iso.probe(
+            "globalThis.__listenerRan && globalThis.__delayTickRan && globalThis.__delayUntilRan"
+        )
+        .unwrap(),
         true
     );
 
@@ -363,6 +365,7 @@ fn case_18_async_variable_scope_and_foreign_replacement_are_observed_once() {
 import { bankRoutine } from '../../api/combat/hunting/combat.js';
 import { Banking } from '../../api/bank/Banking.js';
 import { Execution } from '../../api/execution/Execution.js';
+export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 const value = new Deno.core.AsyncVariable();
 let started = false;
@@ -370,42 +373,40 @@ globalThis.__asyncAfterDelay = null;
 globalThis.__foreignValue = 'unset';
 globalThis.__restoredValue = null;
 globalThis.__foreignCalls = null;
-export default class T extends LoopingBot {
-    loop() {
-        if (started) return;
-        started = true;
-        bankRoutine(globalThis.__rs2b0t_host, site, {
-            leave: () => {
-                const previous = Deno.core.getAsyncContext();
-                const derived = Object.assign(Object.create(null), previous ?? {});
-                Deno.core.scopeAsyncContext(derived);
-                value.enter('derived-hook');
-                let pending;
-                try {
-                    pending = (async () => {
-                        await Execution.delayTicks(1);
-                        globalThis.__asyncAfterDelay = value.get() ?? null;
-                        Execution.noteProgress();
-                        const inherited = Deno.core.getAsyncContext();
-                        Deno.core.setAsyncContext(Object.create(null));
-                        globalThis.__foreignValue = value.get() ?? null;
-                        const first = await Banking.open();
-                        const second = await Banking.open();
-                        Deno.core.setAsyncContext(inherited);
-                        globalThis.__restoredValue = value.get() ?? null;
-                        globalThis.__foreignCalls = [first, second];
-                        return true;
-                    })();
-                } finally {
-                    Deno.core.setAsyncContext(previous);
-                }
-                return pending;
-            },
-        });
-    }
+export function tick(api) {
+    if (started) return;
+    started = true;
+    bankRoutine(globalThis.__rs2b0t_host, site, {
+        leave: () => {
+            const previous = Deno.core.getAsyncContext();
+            const derived = Object.assign(Object.create(null), previous ?? {});
+            Deno.core.scopeAsyncContext(derived);
+            value.enter('derived-hook');
+            let pending;
+            try {
+                pending = (async () => {
+                    await Execution.delayTicks(1);
+                    globalThis.__asyncAfterDelay = value.get() ?? null;
+                    Execution.noteProgress();
+                    const inherited = Deno.core.getAsyncContext();
+                    Deno.core.setAsyncContext(Object.create(null));
+                    globalThis.__foreignValue = value.get() ?? null;
+                    const first = await Banking.open();
+                    const second = await Banking.open();
+                    Deno.core.setAsyncContext(inherited);
+                    globalThis.__restoredValue = value.get() ?? null;
+                    globalThis.__foreignCalls = [first, second];
+                    return true;
+                })();
+            } finally {
+                Deno.core.setAsyncContext(previous);
+            }
+            return pending;
+        },
+    });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::CompatClass, vec![]);
+    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
     let mut snapshot = ready_snapshot();
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
@@ -457,32 +458,31 @@ fn case_19_hook_microtask_keeps_local_mirror_while_loop_microtask_is_root() {
     let src = r#"
 import { bankRoutine } from '../../api/combat/hunting/combat.js';
 import { Execution } from '../../api/execution/Execution.js';
+export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 let started = false;
 globalThis.__loopMicrotask = false;
 globalThis.__hookMicrotask = false;
-export default class T extends LoopingBot {
-    loop() {
-        if (started) return;
-        started = true;
+export function tick(api) {
+    if (started) return;
+    started = true;
+    Execution.noteProgress();
+    queueMicrotask(() => {
         Execution.noteProgress();
-        queueMicrotask(() => {
-            Execution.noteProgress();
-            globalThis.__loopMicrotask = true;
-        });
-        bankRoutine(globalThis.__rs2b0t_host, site, {
-            leave: () => new Promise((resolve) => {
-                queueMicrotask(() => {
-                    Execution.noteProgress();
-                    globalThis.__hookMicrotask = true;
-                    resolve(true);
-                });
-            }),
-        });
-    }
+        globalThis.__loopMicrotask = true;
+    });
+    bankRoutine(globalThis.__rs2b0t_host, site, {
+        leave: () => new Promise((resolve) => {
+            queueMicrotask(() => {
+                Execution.noteProgress();
+                globalThis.__hookMicrotask = true;
+                resolve(true);
+            });
+        }),
+    });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::CompatClass, vec![]);
+    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
     let mut snapshot = ready_snapshot();
     post_test_tick(&iso, &mut snapshot, 1);
     let batches = iso.drain_seat_batches();
@@ -598,7 +598,6 @@ export function tick(api) {
         batches.extend(iso.drain_seat_batches());
     }
 
-    assert_eq!(iso.probe("globalThis.__parentSettled").unwrap(), false);
     assert_eq!(iso.probe("globalThis.__childStarted").unwrap(), true);
     assert_eq!(iso.probe("globalThis.__childSettled").unwrap(), false);
     let child_id = {

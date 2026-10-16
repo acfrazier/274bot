@@ -547,10 +547,24 @@ impl SlotScript {
                 run.rekey_session(session.epoch());
             }
         }
-        if let Some(seat) = &mut self.seat {
-            if seat.run().session != session.epoch() {
+        let rekeyed = self.seat.as_mut().and_then(|seat| {
+            (seat.run().session != session.epoch()).then(|| {
                 seat.reconnect(session.epoch());
-                self.discard_seat_gameplay_delivery();
+                seat.run()
+            })
+        });
+        if let Some(run) = rekeyed {
+            self.discard_seat_gameplay_delivery();
+            #[cfg(not(feature = "load"))]
+            let _ = run;
+            #[cfg(feature = "load")]
+            self.align_api_session(run.session);
+            #[cfg(feature = "load")]
+            if let Some(isolate) = &self.load {
+                // The local work epoch can have advanced on transient down
+                // observations before F0 mints this session. The carrier's
+                // pending Starts must use the owner's actual execution key.
+                isolate.align_execution(ExecutionId::first(run));
             }
         }
         if self.seat_compiled_owner.is_none() {
@@ -604,6 +618,12 @@ impl SlotScript {
             reserved_releases: seat.reserved_releases(),
             mirror_revokes_consumed: seat.mirror_revokes_consumed(),
         })
+    }
+    /// The host test rig derives its independent session gate from the same
+    /// incarnation bound by `script_slot_or_insert`, not from a seat result.
+    #[cfg(feature = "test-hooks")]
+    pub fn slot_key_for_test(&self) -> Option<api::identity::SlotKey> {
+        api::identity::SlotKey::from_incarnation(self.incarnation)
     }
 
     /// A non-guardian held tick discards one-shot script effects. Guardian
@@ -1333,7 +1353,7 @@ impl SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
-        if let Some(seat) = &mut self.seat {
+        if let Some(mut seat) = self.seat.take() {
             seat.stop();
         }
         self.seat_fence.revoke();
@@ -2823,7 +2843,7 @@ impl SlotScript {
             .load
             .as_ref()
             .map_or_else(Vec::new, LoadIsolate::drain_lifecycle);
-        facts.extend(self.seat_lifecycle.drain(..));
+        facts.append(&mut self.seat_lifecycle);
         facts
     }
 
@@ -3284,10 +3304,13 @@ impl SlotScript {
                     &mut self.native_runtime,
                     self.quest_pairs.as_deref(),
                     self.local_state.as_deref(),
-                    service_authority,
-                    self.seat
-                        .as_mut()
-                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                    compiled::SeatTickPorts {
+                        authority: service_authority,
+                        prompt: self
+                            .seat
+                            .as_mut()
+                            .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                    },
                 );
                 #[cfg(feature = "load")]
                 {

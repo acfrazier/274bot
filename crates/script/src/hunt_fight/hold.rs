@@ -14,6 +14,7 @@ enum HoldMode {
 pub(super) struct HoldRuntime {
     pub(super) clock: InstantTaskClock,
     token: u64,
+    scene_epoch: u64,
     mode: HoldMode,
     dest: Option<Tile>,
     walk_token: Option<u64>,
@@ -30,6 +31,7 @@ impl HoldRuntime {
         Self {
             clock: InstantTaskClock::new(),
             token,
+            scene_epoch: observed::with(Scene::epoch),
             mode: HoldMode::Idle,
             dest: None,
             walk_token: None,
@@ -208,6 +210,19 @@ fn hold_emit_walk(rt: &mut HoldRuntime, proj: &Projection) -> Value {
 fn hold_next_effect(rt: &mut HoldRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
     if rt.clock.frozen() {
         return rt.emit(json!({ "kind": "wait" }));
+    }
+    let epoch = observed::with(Scene::epoch);
+    if rt.scene_epoch != epoch {
+        rt.scene_epoch = epoch;
+        if matches!(rt.mode, HoldMode::NeedAck | HoldMode::Waiting) {
+            // The old session's Walk is gameplay, not a reconnect-carried
+            // release. Its host route is discarded under the Session seat;
+            // mint a new walk wait and emit a fresh, seat-admitted Walk.
+            rt.mode = HoldMode::NeedWalk;
+            rt.walk_token = None;
+            rt.after_sustain = false;
+            rt.deferred_effect = None;
+        }
     }
     // Resume the deferred mode effect on the protect's ack. In particular,
     // Waiting never sees queued, and NeedAck keeps its own walkToken reply.
@@ -467,6 +482,50 @@ mod tests {
             hold_next_effect(&mut runtime, &projection, None)["kind"],
             "delay-ticks"
         );
+    }
+
+    #[test]
+    fn hold_kept_reconnect_reissues_a_fresh_walk_after_old_session_gameplay_is_dropped() {
+        let projection = parse_projection(&json!({}));
+        for mode in [HoldMode::NeedAck, HoldMode::Waiting] {
+            let mut runtime = HoldRuntime::new(23);
+            runtime.mode = mode;
+            runtime.dest = Some(Tile {
+                x: 14,
+                z: 17,
+                level: 0,
+            });
+            runtime.walk_token = Some(991);
+            runtime.deferred_effect = Some(json!({ "kind": "sustain" }));
+            runtime.clock.arm(RETURN_MS);
+            observed::on_reset();
+
+            runtime.apply_freeze(false, true);
+            assert_eq!(
+                hold_next_effect(&mut runtime, &projection, None)["kind"],
+                "wait"
+            );
+            assert_eq!(runtime.walk_token, Some(991));
+
+            runtime.apply_freeze(false, false);
+            let walk = hold_next_effect(
+                &mut runtime,
+                &projection,
+                Some(&json!({ "walkToken": 991 })),
+            );
+            assert_eq!(walk["kind"], "walk", "mode={mode:?}");
+            assert_eq!(
+                (walk["x"].as_i64(), walk["z"].as_i64()),
+                (Some(14), Some(17))
+            );
+            assert_eq!(runtime.mode, HoldMode::NeedAck);
+            assert_eq!(runtime.walk_token, None);
+            assert!(runtime.deferred_effect.is_none());
+            assert!(
+                runtime.clock.deadline.is_some(),
+                "reconnect keeps the original wait budget"
+            );
+        }
     }
 
     #[test]

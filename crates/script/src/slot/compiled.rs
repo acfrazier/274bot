@@ -409,6 +409,12 @@ pub(super) fn frame_context<'a>(
     }
 }
 
+/// Borrowed, owner-controlled seat capabilities passed to one compiled tick.
+pub(super) struct SeatTickPorts<'a> {
+    pub authority: Option<crate::native::ServiceAuthority<'a>>,
+    pub prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
+}
+
 impl CompiledRun {
     fn latest_config(&self) -> &PreparedConfig {
         self.pending
@@ -446,8 +452,7 @@ impl CompiledRun {
         runtime: &'tick mut crate::native::ledger::Runtime,
         pairs: Option<&'tick dyn crate::quester::pair::QuestPairPort>,
         state: Option<&'tick crate::local_state::SlotState>,
-        service_authority: Option<crate::native::ServiceAuthority<'tick>>,
-        prompt_port: Option<&'tick mut dyn crate::native::SeatPromptPort>,
+        seat_ports: SeatTickPorts<'tick>,
     ) -> (
         Result<ScriptFlow, ScriptFailure>,
         Option<Vec<crate::shim::InteractReq>>,
@@ -492,8 +497,8 @@ impl CompiledRun {
                 output: &mut self.output,
                 pairs,
                 state,
-                service_authority,
-                prompt_port,
+                service_authority: seat_ports.authority,
+                prompt_port: seat_ports.prompt,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,

@@ -204,9 +204,21 @@ fn js_queue_len(scope: &mut v8::HandleScope) -> usize {
     let Some(interact_key) = v8::String::new(scope, "interact") else {
         return 0;
     };
-    host.get(scope, interact_key.into())
-        .and_then(|rows| v8::Local::<v8::Array>::try_from(rows).ok())
-        .map_or(0, |rows| rows.length() as usize)
+    let Some(rows) = host
+        .get(scope, interact_key.into())
+        .and_then(|rows| v8::Local::<v8::Object>::try_from(rows).ok())
+    else {
+        return 0;
+    };
+    let Some(length_key) = v8::String::new(scope, "length") else {
+        return 0;
+    };
+    // The guarded append-only queue is a Proxy, not a V8 Array handle.
+    rows.get(scope, length_key.into())
+        .filter(|length| length.is_number())
+        .and_then(|length| length.number_value(scope))
+        .filter(|length| (0.0..=u32::MAX as f64).contains(length) && length.fract() == 0.0)
+        .map_or(0, |length| length as usize)
 }
 
 /// Drive a just-started row from the start callback's own scope.

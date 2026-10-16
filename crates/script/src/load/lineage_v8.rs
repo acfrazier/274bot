@@ -242,7 +242,7 @@ fn capture_interact_lineage<'s>(
                 "interact lineage collides with mirror owner",
             ));
         }
-        captured.extend(std::iter::repeat(lineage).take(count));
+        captured.extend(std::iter::repeat_n(lineage, count));
     }
     drop(captured);
     state.interact_overflow_dropped.set(
@@ -439,7 +439,7 @@ fn copy_context<'s>(
 ) -> Option<v8::Local<'s, v8::Value>> {
     let mapping = v8::Object::new(scope);
     let null = v8::null(scope);
-    if mapping.set_prototype(scope, null.into())? == false {
+    if !mapping.set_prototype(scope, null.into())? {
         return None;
     }
     if let Ok(previous) = v8::Local::<v8::Object>::try_from(previous) {
@@ -455,13 +455,13 @@ fn copy_context<'s>(
         for index in 0..names.length() {
             let name = names.get_index(scope, index)?;
             let value = previous.get(scope, name)?;
-            if mapping.set(scope, name, value)? == false {
+            if !mapping.set(scope, name, value)? {
                 return None;
             }
         }
     }
     let token = v8::BigInt::new_from_u64(scope, handle);
-    if mapping.set(scope, key.into(), token.into())? == false {
+    if !mapping.set(scope, key.into(), token.into())? {
         return None;
     }
     Some(mapping.into())

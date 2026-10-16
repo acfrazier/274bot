@@ -1028,10 +1028,9 @@ export function tick(api) {
             crate::shim::InteractReq::Held { name, action, .. }
                 if name == "Bones" && action == "Bury"
         )),
-        "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; outcomes={:?}; queue={:?}",
+        "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; lifecycle={:?}",
         iso.drain_logs(),
-        iso.drain_tick_outcomes(),
-        iso.probe("globalThis.__rs2b0t_host?.interact?.length")
+        iso.drain_lifecycle()
     );
     iso.join();
 }
@@ -1884,6 +1883,34 @@ fn post_execution_seat_page<'a>(
     machine_tick(isolate, tick);
 }
 
+fn post_execution_gather_page<'a>(
+    isolate: &LoadIsolate,
+    buffer: &mut crate::isolate_fb::IsolateBuf,
+    tick: u64,
+    live: &'a [crate::native::seat::SeatEntry],
+    results: &'a [crate::native::seat::SeatResult],
+    details: &'a [crate::isolate_fb::SeatLiveDetails<'a>],
+    (gather, terminal): (
+        Option<&'a crate::api_gather::GatherPage>,
+        Option<&'a crate::api_gather::GatherEnd>,
+    ),
+) {
+    let page =
+        crate::isolate_fb::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let snapshot = crate::isolate_fb::tests::empty_input(tick);
+    let bytes = buffer.encode_snapshot_with_native(
+        &snapshot,
+        crate::isolate_fb::NativeFactsInput {
+            api_gather: gather,
+            api_gather_outcome: terminal,
+            seat_page: Some(page),
+            ..Default::default()
+        },
+    );
+    isolate.post_snapshot(bytes);
+    machine_tick(isolate, tick);
+}
+
 #[test]
 fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
     use crate::api_progress::ProgressPage;
@@ -1962,19 +1989,25 @@ export function tick(api) {
     ));
     assert_eq!((start.run, start.session), (28, 0));
     assert_eq!(pending[0].batch.consumed_terminal_seq, 0);
-    assert_eq!(
-        pending[0].batch.reqs.len(),
-        1,
-        "the pending Promise parks exactly one watchdog wait"
+    assert!(
+        matches!(
+            pending[0].batch.reqs.as_slice(),
+            [
+                SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::LoopSettled,
+                },
+                SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::WaitEnqueued,
+                }
+            ]
+        ),
+        "the synchronous tick settles its loop and parks exactly one watchdog wait: {:?}",
+        pending[0].batch.reqs
     );
-    assert!(matches!(
-        &pending[0].batch.reqs[0],
-        crate::isolate_fb::SeatInteractDecoded {
-            lineage: None,
-            mirror_owner: None,
-            request: crate::shim::InteractReq::WaitEnqueued,
-        }
-    ));
     assert!(pending[0].machine_events.is_empty());
     assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
 
@@ -2119,12 +2152,153 @@ export function tick(api) {
         "the synchronous tick still reports its root loop settlement"
     );
     assert_eq!(
-        after_retirement[0].batch.consumed_terminal_seq,
-        1,
+        after_retirement[0].batch.consumed_terminal_seq, 1,
         "the highest consumed sequence remains monotonic on later lifecycle rows"
     );
     assert!(after_retirement[0].batch.starts.is_empty());
     assert_root_loop_settled(&after_retirement[0].batch.reqs);
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_gather_promise_waits_for_typed_terminal_after_seat_done() {
+    use crate::api_gather::{GatherCounts, GatherEnd, GatherPage, GatherPhase};
+    use crate::isolate_fb::SeatLiveDetails;
+    use crate::native::request::NativeKind;
+    use crate::native::{seat::SeatTerminal, NativePhase};
+    use api::identity::{ExecutionId, RequestId};
+    use api::script_contract::ChildOrigin;
+    use api::selected::RunKey;
+
+    let source = r#"
+export const apiVersion = 2;
+let started = false;
+globalThis.__gatherSettles = 0;
+globalThis.__gatherResult = null;
+export function tick(api) {
+  if (started) return;
+  started = true;
+  api.gather.run({
+    skill: 'Woodcutting', woodcuttingResources: ['normal'],
+    location: 'Custom', customTile: { x: 3190, z: 3245, level: 0 },
+    disposition: 'Power', radius: 12
+  }).then(result => {
+    globalThis.__gatherResult = result;
+    globalThis.__gatherSettles += 1;
+  });
+}
+"#;
+    let execution = ExecutionId::first(RunKey {
+        slot: 14,
+        run: 29,
+        session: 0,
+    });
+    let isolate =
+        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
+            .unwrap();
+    wait_ready(&isolate);
+    let mut buffer = crate::isolate_fb::IsolateBuf::new();
+    let empty: [crate::native::seat::SeatEntry; 0] = [];
+    let no_results: [crate::native::seat::SeatResult; 0] = [];
+    let no_details: [SeatLiveDetails<'_>; 0] = [];
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        1,
+        &empty,
+        &no_results,
+        &no_details,
+        (None, None),
+    );
+    let starts = isolate.drain_seat_batches();
+    let id: RequestId = starts[0].batch.starts[0].id;
+    assert_eq!(starts[0].batch.starts[0].kind, NativeKind::Gather);
+    assert_eq!(isolate.probe("globalThis.__gatherSettles").unwrap(), 0);
+
+    let live = [crate::native::seat::SeatEntry {
+        id,
+        parent: None,
+        kind: NativeKind::Gather,
+        origin: ChildOrigin::Started,
+        depth: 0,
+        decisions_consumed: 0,
+        prompt: None,
+    }];
+    let details = [SeatLiveDetails {
+        id,
+        phase: NativePhase::Working,
+        prompt: None,
+    }];
+    let gather = GatherPage {
+        token: id.get(),
+        phase: GatherPhase::Running,
+        status: None,
+    };
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        2,
+        &live,
+        &no_results,
+        &details,
+        (Some(&gather), None),
+    );
+    let _ = isolate.drain_seat_batches();
+    let result = [crate::native::seat::SeatResult {
+        id,
+        seq: 1,
+        outcome: SeatTerminal::Done,
+        prior_parent: None,
+        session: None,
+        authority_revoked: false,
+    }];
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        3,
+        &empty,
+        &result,
+        &no_details,
+        (None, None),
+    );
+    let receipt = isolate.drain_seat_batches();
+    assert!(receipt
+        .iter()
+        .any(|batch| batch.batch.consumed_terminal_seq == 1));
+    assert_eq!(
+        isolate.probe("globalThis.__gatherSettles").unwrap(),
+        0,
+        "a bare seat Done cannot invent the family's GatherEnd"
+    );
+
+    let terminal = GatherEnd::Stopped {
+        token: id.get(),
+        counts: GatherCounts {
+            yielded: 1,
+            dropped: 1,
+            ..GatherCounts::default()
+        },
+    };
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        4,
+        &empty,
+        &result,
+        &no_details,
+        (None, Some(&terminal)),
+    );
+    assert_eq!(isolate.probe("globalThis.__gatherSettles").unwrap(), 1);
+    assert_eq!(
+        isolate.probe("globalThis.__gatherResult").unwrap(),
+        serde_json::json!({
+            "kind": "done",
+            "value": {
+                "end": "stopped", "token": id.get(),
+                "counts": {"yielded": 1, "dropped": 1, "deposited": 0, "trips": 0, "xp": 0}
+            }
+        })
+    );
     isolate.join();
 }
 
@@ -2208,7 +2382,7 @@ export function tick() {
     let logs = isolate.drain_logs();
     assert!(
         logs.iter()
-            .any(|line| line.contains("dropped 159 over-cap seat interact rows")),
+            .any(|line| line.contains("dropped 160 over-cap seat interact rows")),
         "{logs:?}"
     );
     isolate.join();
@@ -2290,7 +2464,7 @@ export function tick() {
 }
 
 #[test]
-fn execution_owned_recovery_anchor_uses_the_seat_lane() {
+fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
     use crate::shim::InteractReq;
     use api::identity::ExecutionId;
     use api::selected::RunKey;
@@ -2317,17 +2491,20 @@ fn execution_owned_recovery_anchor_uses_the_seat_lane() {
     isolate.request_recovery_anchor();
     assert_eq!(isolate.probe("true").unwrap(), serde_json::json!(true));
     assert!(isolate.drain_interacts_stamped().is_empty());
-    let batches = isolate.drain_seat_batches();
-    assert_eq!(batches.len(), 1);
-    assert_eq!(batches[0].batch.reqs.len(), 1);
+    let rows = isolate.drain_lifecycle();
+    assert_eq!(rows.len(), 1);
     assert!(matches!(
-        &batches[0].batch.reqs[0].request,
+        &rows[0],
         InteractReq::RecoveryAnchor {
             x: 10,
             z: 20,
             level: 1
         }
     ));
+    assert!(
+        isolate.drain_seat_batches().is_empty(),
+        "the host-owned watchdog reply must bypass the gameplay seat"
+    );
     isolate.join();
 }
 

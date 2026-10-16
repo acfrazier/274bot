@@ -2078,10 +2078,7 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        assert!(
-            (0..=8192).contains(&exclusive),
-            "exclusive API seat exceeds 8KiB"
-        );
+        assert!(exclusive <= 8192, "exclusive API seat exceeds 8KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());

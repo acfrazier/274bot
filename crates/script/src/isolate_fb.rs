@@ -4521,16 +4521,15 @@ fn seat_result_off<'b>(
     Ok(table.finish())
 }
 
+type SeatLiveVector<'b> =
+    WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatLive<'b>>>>;
+type SeatResultVector<'b> =
+    WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatResult<'b>>>>;
+
 fn seat_page_vectors_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     page: SeatPageInput<'_>,
-) -> Result<
-    (
-        WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatLive<'b>>>>,
-        WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatResult<'b>>>>,
-    ),
-    String,
-> {
+) -> Result<(SeatLiveVector<'b>, SeatResultVector<'b>), String> {
     validate_seat_page(&page)?;
     let mut live_offsets = [WIPOffset::new(0); MAX_SEAT_LIVE];
     for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
@@ -9946,40 +9945,35 @@ pub(crate) mod tests {
             SeatRefusal::None,
             SeatAbortReason::None,
         ))
-        .err()
-        .expect("None outcome")
+        .expect_err("None outcome")
         .contains("no outcome kind"));
         assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
             SeatOutcomeKind(255),
             SeatRefusal::None,
             SeatAbortReason::None,
         ))
-        .err()
-        .expect("unknown outcome kind")
+        .expect_err("unknown outcome kind")
         .contains("inconsistent outcome fields"));
         assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
             SeatOutcomeKind::Refused,
             SeatRefusal::ArgsTooLarge,
             SeatAbortReason::None,
         ))
-        .err()
-        .expect("local refusal")
+        .expect_err("local refusal")
         .contains("ArgsTooLarge"));
         assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
             SeatOutcomeKind::Refused,
             SeatRefusal(255),
             SeatAbortReason::None,
         ))
-        .err()
-        .expect("unknown refusal")
+        .expect_err("unknown refusal")
         .contains("unknown refusal enum"));
         assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
             SeatOutcomeKind::Aborted,
             SeatRefusal::None,
             SeatAbortReason(255),
         ))
-        .err()
-        .expect("unknown abort reason")
+        .expect_err("unknown abort reason")
         .contains("unknown abort enum"));
     }
 
@@ -9988,17 +9982,14 @@ pub(crate) mod tests {
         let size = MAX_SEAT_BINARY_BYTES + 1;
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_decision_answer_size(size))
-                .err()
-                .expect("decoded answer cap")
+                .expect_err("decoded answer cap")
                 .contains("answer length")
         );
         assert!(decode_snapshot(&raw_snapshot_with_prompt_args_size(size))
-            .err()
-            .expect("decoded prompt-args cap")
+            .expect_err("decoded prompt-args cap")
             .contains("prompt args exceed cap"));
         assert!(decode_snapshot(&raw_snapshot_with_outcome_value_size(size))
-            .err()
-            .expect("decoded terminal value cap")
+            .expect_err("decoded terminal value cap")
             .contains("outcome value exceeds cap"));
 
         let id = RequestId::from_raw(1).expect("live id");
@@ -10031,14 +10022,12 @@ pub(crate) mod tests {
     fn seat_snapshot_decoder_enforces_live_and_result_vector_caps() {
         assert!(
             decode_snapshot(&raw_snapshot_with_seat_counts(MAX_SEAT_LIVE + 1, 0))
-                .err()
-                .expect("decoded live cap")
+                .expect_err("decoded live cap")
                 .contains("live vector length")
         );
         assert!(
             decode_snapshot(&raw_snapshot_with_seat_counts(0, MAX_SEAT_RESULTS + 1))
-                .err()
-                .expect("decoded result cap")
+                .expect_err("decoded result cap")
                 .contains("result vector length")
         );
     }
@@ -10081,13 +10070,11 @@ pub(crate) mod tests {
             reqs: &empty_reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("start cap")
+            .expect_err("start cap")
             .contains("starts vector length"));
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_start_count(MAX_SEAT_STARTS + 1))
-                .err()
-                .expect("decoded start cap")
+                .expect_err("decoded start cap")
                 .contains("starts vector length")
         );
 
@@ -10109,8 +10096,7 @@ pub(crate) mod tests {
             reqs: &empty_reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("decision cap")
+            .expect_err("decision cap")
             .contains("decisions vector length"));
 
         let too_many_cancels = vec![
@@ -10129,8 +10115,7 @@ pub(crate) mod tests {
             reqs: &empty_reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("cancel cap")
+            .expect_err("cancel cap")
             .contains("cancels vector length"));
         let too_many_mirror_revokes = (0..=MAX_SEAT_MIRROR_REVOKES)
             .map(|index| SeatMirrorRevoke {
@@ -10147,8 +10132,7 @@ pub(crate) mod tests {
             reqs: &empty_reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("mirror revoke encoder cap")
+            .expect_err("mirror revoke encoder cap")
             .contains("mirror revoke vector length"));
         let raw_revokes = too_many_mirror_revokes
             .iter()
@@ -10156,8 +10140,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_mirror_revokes(&raw_revokes))
-                .err()
-                .expect("mirror revoke decoder cap")
+                .expect_err("mirror revoke decoder cap")
                 .contains("mirror revoke vector length")
         );
 
@@ -10179,8 +10162,7 @@ pub(crate) mod tests {
             reqs: &gameplay,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("gameplay cap")
+            .expect_err("gameplay cap")
             .contains("gameplay row count"));
 
         let large_answer = vec![0; MAX_SEAT_BINARY_BYTES + 1];
@@ -10198,8 +10180,7 @@ pub(crate) mod tests {
             reqs: &empty_reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("answer byte cap")
+            .expect_err("answer byte cap")
             .contains("answer length"));
     }
     #[test]
@@ -10215,8 +10196,7 @@ pub(crate) mod tests {
         ] {
             assert!(
                 decode_seat_interact_batch(&raw_seat_batch_with_mirror_revokes(rows))
-                    .err()
-                    .expect("invalid mirror revokes")
+                    .expect_err("invalid mirror revokes")
                     .contains(expected)
             );
         }
@@ -10244,8 +10224,7 @@ pub(crate) mod tests {
             reqs: &reqs,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("noncontiguous producer sequence")
+            .expect_err("noncontiguous producer sequence")
             .contains("not contiguous"));
     }
     #[test]
@@ -10271,13 +10250,11 @@ pub(crate) mod tests {
             reqs: &row,
         };
         assert!(encode_seat_interact_batch(&input)
-            .err()
-            .expect("encoder rejects colliding IDs")
+            .expect_err("encoder rejects colliding IDs")
             .contains("collides with captured seat lineage"));
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_mirror_owner(41, 41))
-                .err()
-                .expect("decoder rejects colliding IDs")
+                .expect_err("decoder rejects colliding IDs")
                 .contains("collides with captured seat lineage")
         );
     }

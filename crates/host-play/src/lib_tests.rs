@@ -11583,7 +11583,11 @@ export default class T extends LoopingBot {
         .unwrap()
         .lock()
         .unwrap()
-        .drain_interacts();
+        .drain_host_interacts()
+        .1
+        .into_iter()
+        .map(|queued| queued.req)
+        .collect::<Vec<_>>();
     let bytes = script::isolate_fb::encode_interact_batch(&reqs);
     let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
@@ -21523,18 +21527,18 @@ export default class T extends LoopingBot {{
 
 /// Pause with the rig's script walk armed, Resume, and the same walk goes
 /// out once more; nothing else is walked.
-fn pause_resume_resends(rig: &mut ReconnectRig) {
-    rig.frames(1);
+fn pause_resume_resends(rig: &mut ReconnectRig, first_tick: u64) {
+    rig.frames(first_tick);
     let walks = rig.walks();
     let armed = rig.armed();
     assert_eq!(walks.len(), 1, "one walk before the Pause: {walks:?}");
     rig.operator_pause();
     assert_eq!(rig.armed(), (0, None), "Pause ends the follow");
-    rig.frames(2);
+    rig.frames(first_tick + 1);
     assert_eq!(rig.walks(), walks, "paused: nothing goes out");
     rig.resume();
-    rig.frames(3);
-    rig.frames(4);
+    rig.frames(first_tick + 2);
+    rig.frames(first_tick + 3);
     assert_eq!(rig.armed(), armed, "Resume re-arms the same walk");
     assert_eq!(
         rig.walks(),
@@ -21546,7 +21550,7 @@ fn pause_resume_resends(rig: &mut ReconnectRig) {
 #[test]
 fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     let mut rig = ReconnectRig::new(40, 40);
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22071,7 +22075,7 @@ fn a_paused_bank_access_booth_walk_resumes() {
     rig.snap = GameSnapshot::new();
     rig.snap.rebuild(&rig.client);
     assert_eq!(rig.snap.bank_component_id(), -1, "the bank is closed");
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     assert_eq!(rig.walks()[0].0, 0, "an id-0 walk");
     rig.slot().lock().unwrap().stop();
 }
@@ -22103,7 +22107,10 @@ fn a_paused_hunt_walk_resumes() {
         open_world_at(2880, 9780, 64, 64),
         (2914, 9809, 0),
     );
-    pause_resume_resends(&mut rig);
+    // The typed Hunt root is admitted on the first tick. Its walk is emitted
+    // after the seat page reaches the isolate on the next tick.
+    rig.frames(1);
+    pause_resume_resends(&mut rig, 2);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22118,7 +22125,7 @@ fn a_paused_reach_walk_resumes() {
         open_world(64, 64),
         (3, 3, 0),
     );
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 

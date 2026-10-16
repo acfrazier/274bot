@@ -581,7 +581,7 @@ fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
     );
     assert!(matches!(
         slot.seat_interact_delivery.as_slice(),
-        [queued] if &queued.req == &stop
+        [queued] if queued.req == stop
     ));
     assert!(slot.seat.as_ref().unwrap().dropped() >= 1);
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);

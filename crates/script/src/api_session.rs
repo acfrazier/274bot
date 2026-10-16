@@ -28,6 +28,31 @@ thread_local! {
 pub(crate) fn combat_live() -> bool {
     COMBAT.with(|state| state.borrow().is_some())
 }
+/// Seat release custody is level-triggered until the matching product
+/// terminal drops its session row. A lost batch can contain a pending Start
+/// and Stop together; the row's normal step does not run before admission.
+pub(crate) fn pending_stop_intents() -> [Option<InteractReq>; 2] {
+    [
+        GATHER.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .filter(|record| record.stop_requested)
+                .map(|record| InteractReq::GatherStop {
+                    request_id: record.token.get(),
+                })
+        }),
+        COMBAT.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .filter(|record| record.stop_requested)
+                .map(|record| InteractReq::CombatStop {
+                    request_id: record.token.get(),
+                })
+        }),
+    ]
+}
 
 /// Whether any Hunt run row is live; a combat start is `busy` while one is.
 fn hunt_live() -> bool {

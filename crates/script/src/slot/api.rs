@@ -186,6 +186,12 @@ impl ApiSeat {
 }
 
 impl SlotScript {
+    fn api_session_epoch(&self) -> u64 {
+        self.seat
+            .as_ref()
+            .map_or(self.work_epoch, |seat| seat.run().session)
+    }
+
     pub fn api_owns_foreground(&self) -> bool {
         self.api.as_ref().is_some_and(|seat| seat.busy())
     }
@@ -486,7 +492,10 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
         match compiled::prepare_run(
             &crate::gatherer::CARD,
@@ -622,7 +631,7 @@ impl SlotScript {
             };
             match job.join() {
                 Ok(mut run) => {
-                    run.rekey_session(self.work_epoch);
+                    run.rekey_session(self.api_session_epoch());
                     seat.page = Some(Arc::new(GatherPage {
                         token,
                         phase: GatherPhase::Running,
@@ -664,10 +673,13 @@ impl SlotScript {
                     &mut self.native_runtime,
                     None,
                     self.local_state.as_deref(),
-                    None,
-                    self.seat
-                        .as_mut()
-                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                    compiled::SeatTickPorts {
+                        authority: None,
+                        prompt: self
+                            .seat
+                            .as_mut()
+                            .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                    },
                 );
                 #[cfg(feature = "load")]
                 {
@@ -799,6 +811,31 @@ impl SlotScript {
             seat.page = None;
             seat.terminal = None;
         }
+    }
+
+    /// A transient down observation may advance the local work epoch before
+    /// F0 mints the replacement session. Align retained family run stamps
+    /// without repeating their reconnect cancellation or preparation.
+    pub(super) fn align_api_session(&mut self, session: u64) {
+        let Some(seat) = self.api.as_mut() else {
+            return;
+        };
+        match &mut seat.gather {
+            GatherSeat::AwaitingAdmission { run, .. } => run.session = session,
+            GatherSeat::Running { run, .. } => {
+                run.rekey_session(session);
+                if let Some(page) = seat.page.as_mut() {
+                    Arc::make_mut(page).status = run.output.status.clone();
+                }
+            }
+            GatherSeat::Idle | GatherSeat::Preparing { .. } => {}
+        }
+        match &mut seat.combat {
+            CombatSeat::AwaitingAdmission { run, .. } => run.session = session,
+            CombatSeat::Running { run, .. } => run.rekey_session(session),
+            CombatSeat::Idle | CombatSeat::Preparing { .. } => {}
+        }
+        seat.progress.rekey(session);
     }
 
     pub(super) fn teardown_api(&mut self, reason: StopReason) {

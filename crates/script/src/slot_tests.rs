@@ -13,6 +13,23 @@ impl Script for Noop {
     }
 }
 
+#[test]
+fn non_kept_stop_releases_the_seat_before_idle_and_rearms_on_next_start() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(39);
+    slot.start_test_script(Box::new(Noop), None).unwrap();
+    assert!(slot.seat.is_some(), "compiled card owns a native seat");
+
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(slot.seat.is_none(), "Stop drops the old seat owner");
+
+    slot.start_test_script(Box::new(Noop), None).unwrap();
+    assert!(slot.seat.is_some(), "a new run arms a new seat");
+    slot.stop_removed();
+    assert!(slot.seat.is_none(), "removal is also a non-kept boundary");
+}
+
 #[cfg(feature = "load")]
 fn wait_state(slot: &mut SlotScript, want: RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
