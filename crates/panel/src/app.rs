@@ -1,8 +1,10 @@
 //! Panel shell: docking enabled, multi-viewport disabled, amber chrome,
 //! running on the panel-owned window loop in `crate::window`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
@@ -6529,10 +6531,12 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             exit_after_work_shutdown(1);
         }
     }
+    let running = Rc::new(RefCell::new(running));
     let mut presented = false;
 
     let mut cfg = runner_config();
     let mut window_title = running
+        .borrow()
         .as_ref()
         .map(|(state, _)| state.session.app_title())
         .unwrap_or_else(|| "274bot".into());
@@ -6541,12 +6545,19 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let os_window_init = Arc::clone(&os_window);
     let live_failure = Arc::new(Mutex::new(None));
     let live_failure_frame = Arc::clone(&live_failure);
+    let frame_running = Rc::clone(&running);
+    let shutdown_running = Rc::clone(&running);
     let result = window::run(
         cfg,
         amber_style,
         move |window, device, queue, _| {
             client::render::backend::inject_device(device.clone(), queue.clone());
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
+        },
+        move |gpu| {
+            if let Some((state, _)) = shutdown_running.borrow_mut().as_mut() {
+                state.walk_map.release(Some(gpu));
+            }
         },
         Arc::clone(&shot_state),
         move |ui, gpu| {
@@ -6562,7 +6573,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                             Arc::clone(&shot_state),
                             host_play::InstancePermit::skip(),
                         ) {
-                            Ok(ready) => running = Some(ready),
+                            Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                             Err(e) => {
                                 eprintln!("panel: {e}");
                                 exit_after_work_shutdown(1);
@@ -6571,6 +6582,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                     }
                 }
             }
+            let mut running = frame_running.borrow_mut();
             let Some((state, startup)) = running.as_mut() else {
                 return false;
             };

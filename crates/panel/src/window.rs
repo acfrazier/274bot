@@ -939,6 +939,11 @@ impl AppWindow {
         })
     }
 
+    fn release_gpu_resources(&mut self, release: &mut dyn FnMut(&mut Gpu)) {
+        let mut gpu = Gpu::new(&self.device, &self.queue, &mut self.imgui.renderer);
+        release(&mut gpu);
+    }
+
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.surface_desc.width = new_size.width;
@@ -1525,6 +1530,7 @@ where
     pending: Option<PendingGpu>,
     lifecycle: Lifecycle,
     ui_frame: F,
+    on_gpu_shutdown: Box<dyn FnMut(&mut Gpu)>,
     /// Whole-window shot coordination shared with the UI body (the
     /// scenario sink's requests) and the render readback.
     shots: Arc<Mutex<ShotState>>,
@@ -1544,6 +1550,7 @@ where
         on_gpu_init: impl FnMut(&Arc<Window>, &wgpu::Device, &wgpu::Queue, &wgpu::SurfaceConfiguration)
             + 'static,
         shots: Arc<Mutex<ShotState>>,
+        on_gpu_shutdown: impl FnMut(&mut Gpu) + 'static,
         ui_frame: F,
     ) -> Self {
         Self {
@@ -1555,10 +1562,23 @@ where
                 on_gpu_init: Some(Box::new(on_gpu_init)),
             },
             ui_frame,
+            on_gpu_shutdown: Box::new(on_gpu_shutdown),
             shots,
             last_wake: Instant::now(),
             failure: None,
         }
+    }
+
+    fn drop_window(&mut self) {
+        if let Some(mut window) = self.window.take() {
+            window.release_gpu_resources(&mut self.on_gpu_shutdown);
+        }
+    }
+
+    fn close_window(&mut self, event_loop: &ActiveEventLoop) {
+        self.drop_window();
+        self.pending = None;
+        event_loop.exit();
     }
 
     /// Create the window and start its GPU bring-up; the loop keeps pumping
@@ -1614,16 +1634,6 @@ fn current_os_window_id(
         .or_else(|| pending.as_ref().map(|p| p.window.id()))
 }
 
-fn close_for_destroyed_window(
-    window: &mut Option<AppWindow>,
-    pending: &mut Option<PendingGpu>,
-    event_loop: &ActiveEventLoop,
-) {
-    *window = None;
-    *pending = None;
-    event_loop.exit();
-}
-
 impl<F> ApplicationHandler for App<F>
 where
     F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
@@ -1656,10 +1666,10 @@ where
                 if current_os_window_id(&self.window, &self.pending) != Some(window_id) {
                     return;
                 }
-                close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+                self.close_window(event_loop);
             }
             WindowEvent::CloseRequested => {
-                close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+                self.close_window(event_loop);
             }
             WindowEvent::RedrawRequested => {
                 // Render and, on fatal errors, attempt a full GPU/window rebuild.
@@ -1692,9 +1702,9 @@ where
                 }
 
                 if need_recreate && !event_loop.exiting() {
-                    // Drop the existing window and rebuild the whole stack
-                    // the same way startup builds it.
-                    self.window = None;
+                    // Release owner textures while the old renderer is live,
+                    // then rebuild the same GPU/window stack as startup.
+                    self.drop_window();
                     self.start_gpu(event_loop);
                 }
             }
@@ -1786,14 +1796,15 @@ where
 
 /// Run the panel window loop. `ui_frame` is called every frame with the Ui
 /// and `Gpu` handle, and returns `true` to end the loop after that frame.
-/// `on_gpu_init` fires once the device/queue/surface exist (the loop owns the
-/// window now). `shots` coordinates whole-window captures between the UI body
-/// (requests) and the render pass (readback).
+/// `on_gpu_init` fires once the device/queue/surface exist. `on_gpu_shutdown`
+/// runs before the renderer is dropped or rebuilt, while its GPU handle is
+/// still live. `shots` coordinates whole-window captures.
 pub fn run<F>(
     cfg: PanelConfig,
     on_style: impl FnMut(&mut imgui::Context) + 'static,
     on_gpu_init: impl FnMut(&Arc<Window>, &wgpu::Device, &wgpu::Queue, &wgpu::SurfaceConfiguration)
         + 'static,
+    on_gpu_shutdown: impl FnMut(&mut Gpu) + 'static,
     shots: Arc<Mutex<ShotState>>,
     ui_frame: F,
 ) -> Result<(), PanelError>
@@ -1810,8 +1821,11 @@ where
         }
     }
 
-    let mut app = App::new(cfg, on_style, on_gpu_init, shots, ui_frame);
-    event_loop.run_app(&mut app)?;
+    let mut app = App::new(cfg, on_style, on_gpu_init, shots, on_gpu_shutdown, ui_frame);
+    let run_result = event_loop.run_app(&mut app);
+    app.drop_window();
+    app.pending = None;
+    run_result?;
     // A window that could not be created (or rebuilt after a GPU error)
     // ends the loop; report it so the process exits non-zero.
     match app.failure.take() {
