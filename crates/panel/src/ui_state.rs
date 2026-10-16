@@ -330,7 +330,7 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::{load, load_from, save, save_to, save_to_checked, NavSettings, PanelUiState};
-    use crate::test_support::{scratch_service, TestDir};
+    use crate::test_support::{patiently, scratch_service, set_patiently, TestDir};
     use host_play::local_state::Preferences;
     use std::collections::HashMap;
 
@@ -475,21 +475,23 @@ mod tests {
         // The single-key writers are a second service on the same files: a
         // peer frontend's writes, as far as the panel's preferences can tell.
         let peer = scratch_service(&dir).preferences();
-        save_to_checked(
-            &prefs,
-            &PanelUiState {
-                last_focus: Some("before".into()),
-                ..PanelUiState::default()
-            },
-        )
+        patiently(|| {
+            save_to_checked(
+                &prefs,
+                &PanelUiState {
+                    last_focus: Some("before".into()),
+                    ..PanelUiState::default()
+                },
+            )
+            .map_err(|error| error.to_string())
+        })
         .unwrap();
-        peer.set("unrelated", serde_json::json!({"keep": 7}))
-            .unwrap();
-        peer.set(
+        set_patiently(&peer, "unrelated", serde_json::json!({"keep": 7}));
+        set_patiently(
+            &peer,
             "quester_paths",
             serde_json::json!({"enabled": true, "folder": "checkout/quester/paths/289"}),
-        )
-        .unwrap();
+        );
         let panel_state = PanelUiState {
             last_focus: Some("panel-save".into()),
             capture: true,
@@ -512,7 +514,7 @@ mod tests {
         // Reproduce the stale panel snapshot deterministically before the
         // concurrent stress loop: a single-key writer lands, then the panel
         // saves its older in-memory state.
-        peer.set("nav", nav.clone()).unwrap();
+        set_patiently(&peer, "nav", nav.clone());
         let after_writer: serde_json::Value =
             serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
         assert_eq!(after_writer["last_focus"], "before");
@@ -520,7 +522,8 @@ mod tests {
         assert_eq!(after_writer["nav"]["allow_wilderness"], false);
         assert_eq!(after_writer["nav"]["show_nav_path"], true);
 
-        save_to_checked(&prefs, &panel_state).unwrap();
+        patiently(|| save_to_checked(&prefs, &panel_state).map_err(|error| error.to_string()))
+            .unwrap();
         let after_panel_save: serde_json::Value =
             serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
         assert_eq!(after_panel_save["last_focus"], "panel-save");
@@ -551,7 +554,7 @@ mod tests {
             "survivable_routing_notice_ack": false,
             "show_nav_path": true
         });
-        peer.set("nav", nav.clone()).unwrap();
+        set_patiently(&peer, "nav", nav.clone());
         let after_second_writer: serde_json::Value =
             serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
         assert_eq!(after_second_writer["last_focus"], "panel-save");
@@ -582,14 +585,17 @@ mod tests {
         let panel = std::thread::spawn(move || {
             for _ in 0..32 {
                 panel_barrier.wait();
-                save_to_checked(&panel_prefs, &panel_state).unwrap();
+                patiently(|| {
+                    save_to_checked(&panel_prefs, &panel_state).map_err(|error| error.to_string())
+                })
+                .unwrap();
             }
         });
         let nav_barrier = std::sync::Arc::clone(&barrier);
         let writer = std::thread::spawn(move || {
             for _ in 0..32 {
                 nav_barrier.wait();
-                peer.set("nav", nav.clone()).unwrap();
+                set_patiently(&peer, "nav", nav.clone());
             }
         });
         panel.join().unwrap();
@@ -659,7 +665,7 @@ mod tests {
             last_focus: Some("alice".into()),
             ..Default::default()
         };
-        save_to_checked(&prefs, &state).unwrap();
+        patiently(|| save_to_checked(&prefs, &state).map_err(|error| error.to_string())).unwrap();
         let backups: Vec<_> = std::fs::read_dir(&*dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())

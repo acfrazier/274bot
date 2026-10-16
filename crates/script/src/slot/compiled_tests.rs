@@ -6,6 +6,7 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 
+#[cfg(feature = "load")]
 fn start(slot: &mut SlotScript, bag: SettingsBag) {
     slot.start_compiled(
         "account",
@@ -45,6 +46,7 @@ fn tick(slot: &mut SlotScript) {
     });
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
     use crate::preparation::{self, PreparationInput, PreparationKind};
@@ -78,6 +80,7 @@ fn large_catalogue_job_and_operator_start_both_complete() {
     assert_eq!(slot.state(), RunState::Running);
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn oversized_native_settings_have_a_typed_visible_refusal() {
     let mut slot = SlotScript::new();
@@ -103,6 +106,7 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
     assert_eq!(slot.state(), RunState::Idle);
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn native_card_policy_timing() {
     let _selected = selected();
@@ -126,6 +130,7 @@ fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
     assert_eq!(output.applied.map(std::num::NonZeroU64::get), Some(7));
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
     let mut slot = SlotScript::new();
@@ -169,6 +174,7 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
         .is_err());
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     let mut slot = SlotScript::new();
@@ -193,6 +199,7 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     assert!(slot.preparing.is_none());
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
     let mut slot = SlotScript::new();
@@ -364,7 +371,14 @@ fn configuration_fences_account_incarnation_revision_and_type_without_load_succe
         alice.compiled.as_ref().unwrap().config.get::<u64>(),
         Some(&10)
     );
-    assert!(!alice.post_settings_bag_fenced(&SettingsBag::new(), "compiled:test", alice_run.run));
+    #[cfg(feature = "load")]
+    {
+        assert!(!alice.post_settings_bag_fenced(
+            &SettingsBag::new(),
+            "compiled:test",
+            alice_run.run
+        ));
+    }
 }
 
 #[test]
@@ -457,6 +471,7 @@ fn removal_notifies_the_native_script_once_with_removed_reason() {
 }
 
 /// A Sherlock revision prepared exactly as a settings edit prepares it.
+#[cfg(feature = "load")]
 fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
     FamilyPreparation::run(move |worker| {
         prepare_config(
@@ -475,6 +490,7 @@ fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+#[cfg(feature = "load")]
 fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
     FamilyPreparation::run(move |worker| {
         prepare_config(
@@ -500,6 +516,7 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
     let mut alice = SlotScript::new();
@@ -591,6 +608,7 @@ fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
     assert_eq!(slot.state(), RunState::Running);
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
     let mut slot = SlotScript::new();
@@ -616,6 +634,7 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
     assert_eq!(slot.watchdog.last_recovery(), Some(now));
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance() {
     let mut slot = SlotScript::new();

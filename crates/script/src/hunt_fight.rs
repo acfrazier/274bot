@@ -740,14 +740,6 @@ fn engage_range_for(style: Style) -> i32 {
     }
 }
 
-fn attack_range_for(style: Style) -> i32 {
-    match style {
-        Style::Melee => 1,
-        Style::Range => 7,
-        Style::Mage => 10,
-    }
-}
-
 fn hunt_names(site: &Site) -> Vec<String> {
     let mut names = Vec::with_capacity(1 + site.also_hunt.len());
     names.push(site.target.clone());
@@ -1470,11 +1462,6 @@ impl FightRuntime {
             return self.yield_now();
         }
         match self.ladder(proj, &obs) {
-            Ladder::Stuck => return self.yield_now(),
-            Ladder::Moved => {
-                self.mode = Mode::Pass;
-                return self.pass_from_head(proj);
-            }
             Ladder::Held => {}
             Ladder::Walk => return self.begin_walk(proj),
         }
@@ -1800,11 +1787,8 @@ impl FightRuntime {
     }
 }
 
-#[allow(dead_code)]
 enum Ladder {
     Held,
-    Moved,
-    Stuck,
     Walk,
 }
 
@@ -2211,11 +2195,6 @@ pub fn loot_target(token: u64) -> Option<i32> {
 
 pub fn token_alive(token: u64) -> bool {
     RUNTIMES.with(|m| m.borrow().contains_key(&token))
-}
-
-#[allow(dead_code)]
-fn _attack_range_used_in_taverley() -> i32 {
-    attack_range_for(Style::Range)
 }
 
 fn unknown_token() -> Value {

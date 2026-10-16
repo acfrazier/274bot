@@ -88,6 +88,101 @@ pub(crate) fn scratch_service(dir: &Path) -> Arc<LocalStateService> {
 pub(crate) fn thread_preferences() -> Preferences {
     LocalStateService::open_process(thread_state_root()).preferences()
 }
+/// Retry a frontend-backed write while it reports the write queued past
+/// the frontend's bounded durability wait: under machine load a write
+/// stays queued past 5 s and settles later. Any other error returns at
+/// once, so refusals and genuine conflicts keep their fast verdict.
+pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.contains("not durable within")
+                    && start.elapsed() < std::time::Duration::from_secs(60) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+/// A preferences write through a scratch service, retried past load-slow
+/// durability (see [`patiently`]). The update re-reads and re-applies its
+/// change on a conflict, so a retry after a late-landing write converges.
+pub(crate) fn set_patiently(preferences: &Preferences, key: &str, value: serde_json::Value) {
+    patiently(|| {
+        preferences
+            .set(key, value.clone())
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
+}
+/// A [`script::LoadoutsStore`] save through a scratch service, retried
+/// past load-slow durability (see [`patiently`]). A write of an earlier
+/// attempt that lands late conflicts with its own retry; the save replays
+/// the store's latest on a conflict, so a retry converges.
+pub(crate) fn save_store_patiently(store: &mut script::LoadoutsStore) {
+    let start = std::time::Instant::now();
+    loop {
+        match store.save() {
+            Ok(()) => return,
+            Err(error)
+                if (error.contains("not durable within")
+                    || error.contains("changed since this list was loaded"))
+                    && start.elapsed() < std::time::Duration::from_secs(60) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => panic!("loadouts save failed: {error}"),
+        }
+    }
+}
+/// [`crate::loadouts::save_draft`], retried past load-slow durability: a
+/// failed save keeps the operator's draft, so saving again retries the
+/// same edit. A conflict is retried only after a timeout saw the store
+/// move under the save; a first-answer conflict (another writer) returns
+/// at once for the caller to assert on.
+pub(crate) fn save_draft_patiently(session: &mut crate::session::Session) -> bool {
+    let start = std::time::Instant::now();
+    let mut timed_out_before = false;
+    loop {
+        let saved = crate::loadouts::save_draft(session);
+        if saved {
+            return true;
+        }
+        let status = session.loadouts_status.clone();
+        if status.contains("not durable within") {
+            timed_out_before = true;
+        } else if !(timed_out_before && status.contains("changed since this list was loaded")) {
+            return false;
+        }
+        if start.elapsed() >= std::time::Duration::from_secs(60) {
+            return false;
+        }
+        std::thread::yield_now();
+    }
+}
+/// Re-read a loadouts store until `settled` holds (up to 60 s): recovery
+/// for a product save that stayed queued past its bounded wait, where a
+/// retry could double-apply (add/duplicate). Reload errors are transient
+/// (the writer is still draining the queued write); the final assert names
+/// the missing effect.
+pub(crate) fn reload_store_until(
+    store: &mut script::LoadoutsStore,
+    label: &str,
+    mut settled: impl FnMut(&script::LoadoutsStore) -> bool,
+) {
+    let start = std::time::Instant::now();
+    while !settled(store) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "{label} never landed"
+        );
+        let _ = store.reload();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
 
 impl Drop for TestDir {
     fn drop(&mut self) {

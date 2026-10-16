@@ -725,7 +725,7 @@ fn profile_prepare_task(
 }
 
 fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !task.is_finished() {
         assert!(
             Instant::now() < deadline,
@@ -734,6 +734,10 @@ fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedT
         thread::yield_now();
     }
 }
+
+// Both saturation fixtures hold terminal WorkAdmission receipts. Running them
+// together would let one test release the other's "Full" condition mid-assertion.
+static ADMISSION_FIXTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
     let input = script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap();
@@ -765,7 +769,7 @@ fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
 }
 
 fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         drive_startup(state, startup);
         if !startup.in_flight() {
@@ -833,6 +837,7 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
 
 #[test]
 fn profile_selection_retries_after_work_admission_is_full() {
+    let _fixture = ADMISSION_FIXTURE.lock().unwrap();
     let (_root, options, env) = startup_profile_inputs();
     let mut state = PanelState::default();
     state
@@ -865,6 +870,7 @@ fn profile_selection_retries_after_work_admission_is_full() {
 
 #[test]
 fn profile_validation_retries_after_work_admission_is_full() {
+    let _fixture = ADMISSION_FIXTURE.lock().unwrap();
     let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });

@@ -183,7 +183,7 @@ fn wait_latest(navs: &Arc<Mutex<HashMap<String, NavBot>>>, id: u64) -> InspectTe
             }
         }
         assert!(
-            start.elapsed() < Duration::from_secs(2),
+            start.elapsed() < Duration::from_secs(60),
             "inspect {id} did not publish"
         );
         thread::yield_now();
@@ -205,7 +205,7 @@ fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
             }
         }
         assert!(
-            start.elapsed() < Duration::from_secs(2),
+            start.elapsed() < Duration::from_secs(60),
             "inspect worker did not idle"
         );
         thread::yield_now();

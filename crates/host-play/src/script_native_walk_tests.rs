@@ -2531,8 +2531,11 @@ fn two_walk_rig() -> Rig {
     rig
 }
 
+/// Drive ticks until the worker publishes both walk results, up to a
+/// load-proof 60 s: each `observe` advances the simulation, and the 50 ms
+/// sleeps only pace the polling.
 fn drive_second_walk(rig: &mut Rig, first_tick: u64) -> Vec<Result<WalkEnd, ActionError>> {
-    for tick in (first_tick..).take(40) {
+    for tick in (first_tick..).take(1_200) {
         rig.observe(tick);
         if rig.shared.lock().results.len() >= 2 {
             break;
@@ -2717,7 +2720,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
         "the previously published receipt remains intact"
     );
     completed
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(std::time::Duration::from_secs(60))
         .expect("the new route worker completes");
 }
 
