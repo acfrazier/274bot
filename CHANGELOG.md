@@ -131,6 +131,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Release engineering
 
+- The architecture check now refuses candidate Cargo configuration files,
+  including files in vendored trees. It checks default-feature and optional
+  activation for every protected package, even packages outside named configurations.
+  Baseline updates use the branch after it merges current `dev`.
+  Operators review removed records to retain permissions that other branches still need.
 - The architecture checker, its tests, and the crate-edge policy now live
   in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
   local-convenience-only `tools/architecture/run.sh` runner, and CI runs

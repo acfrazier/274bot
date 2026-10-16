@@ -164,11 +164,14 @@ repo (workspace members, edges/kinds/migrations, configuration
 feature/activation — see [docs/architecture.md](docs/architecture.md)).
 An operator commit in protected `274bot-arch` is required for a new crate
 edge (including a new target cfg or cross-crate feature request), an edge kind,
-a migration, an optional-dependency activation, a vendored path package, or a checker change: the operator edits `policy.toml`
-where needed and regenerates `graph-provenance.json` in the same arch commit
-(`python3 -B check.py --emit-provenance-baseline /path/to/candidate >
-graph-provenance.json`), then publishes first. Propose the edit as a patch
-or branch bundle for the operator to push; agents cannot push that repo.
+a migration, an optional-dependency activation, a vendored path package, or a checker change.
+The operator edits `policy.toml` where needed.
+First merge current `dev` into the branch being merged.
+In the same arch commit, regenerate `graph-provenance.json` from that merged branch tree:
+`python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json`.
+Review removed records. Retain records that other active branches still need.
+The operator publishes first. Propose the edit as a patch or branch bundle.
+Agents cannot push that repo.
 Purely local features with no optional dependency or cross-crate edge, and
 ownership/inventory/foreign-type rows, need no operator commit. These fine-data
 rows are ordinary product diffs, reviewed like code. New reverse
