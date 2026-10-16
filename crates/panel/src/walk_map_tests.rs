@@ -1331,6 +1331,44 @@ fn running_visible_decode_does_not_read_its_png_again() {
 }
 
 #[test]
+fn pending_visible_decode_does_not_read_its_png_again() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let visible = lod0(0, 0);
+    let far = lod0(60, 60);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([visible]).expect("fixtures"));
+    map.note_open();
+    let identity = map.identity();
+    let generation = map.generation();
+    // An accepted decode outside the view stays active (cancelled, with no
+    // poll), so the visible request must wait as the pending demand.
+    let far_png = Arc::<[u8]>::from(encode_tile(far).expect("far PNG"));
+    map.decode
+        .request(generation, identity, far, far_png)
+        .expect("submit the far decode");
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    request_async_view(&mut map, view);
+
+    assert_eq!(
+        map.decode.pending_request(),
+        Some((generation, identity, visible)),
+        "the visible PNG decode must be pending"
+    );
+    assert_eq!(map.tile_read_count, 1);
+    for _ in 0..32 {
+        request_async_view(&mut map, view);
+    }
+    assert_eq!(
+        map.tile_read_count, 1,
+        "a pending visible decode must prevent repeat PNG reads"
+    );
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
 fn unreadable_visible_tile_is_recorded_and_status_settles() {
     let _work_service_guard = decode_service_test_lock();
     wait_for_decode_service_capacity_zero();
