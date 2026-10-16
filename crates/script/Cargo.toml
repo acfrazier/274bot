@@ -305,7 +305,6 @@ name = "line_of_sight"
 required-features = ["load"]
 [[test]]
 name = "load_picker"
-required-features = ["load"]
 [[test]]
 name = "load_shape"
 required-features = ["load"]
