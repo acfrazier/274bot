@@ -2233,6 +2233,9 @@ fn tick_loop(
                     });
                 }
             }
+            IsolateCmd::RearmDiscardedWalk(token) => {
+                crate::walk_wait::rearm_discarded(token);
+            }
             IsolateCmd::AlignExecution(owner_execution) => {
                 execution = Some(owner_execution);
                 crate::machine::set_execution(execution);
@@ -2241,6 +2244,7 @@ fn tick_loop(
                 keep_work,
                 generation: reset_generation,
                 execution: new_execution,
+                undelivered_walks,
             } => {
                 execution = new_execution;
                 if let Some(lease) = compat_journal.as_ref() {
@@ -2293,6 +2297,9 @@ fn tick_loop(
                     session_held = true;
                     crate::machine::on_session_hold(true);
                     sync_work_freeze(&mut work_frozen, true);
+                    for token in undelivered_walks {
+                        crate::walk_wait::rearm_discarded(token);
+                    }
                 } else if v2_native {
                     let _ = super::super::lineage_v8::eval::<()>(
                         &mut runtime,

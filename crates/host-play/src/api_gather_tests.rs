@@ -1473,6 +1473,26 @@ fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
 }
 
 #[test]
+fn paused_only_guardian_frames_keep_seat_backlog_bounded() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    let mut max_pending = 0;
+    for _ in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        rig.slot().lock().unwrap().retain_held_seat_batches();
+        max_pending = max_pending.max(rig.slot().lock().unwrap().seat_batch_backlog());
+    }
+    assert!(
+        max_pending <= 2,
+        "paused-only guardian frames must retain bounded batches: {max_pending}"
+    );
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+}
+
+#[test]
 fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
     let mut rig = GatherReconnectRig::new();
     let _ = rig.probe("globalThis.__pair = true");

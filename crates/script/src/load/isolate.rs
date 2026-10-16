@@ -159,7 +159,13 @@ enum IsolateCmd {
         generation: u64,
         /// The slot-owned RunKey for the new connection/session.
         execution: Option<api::identity::ExecutionId>,
+        /// Walk rows discarded before host delivery. Their live waits must
+        /// request the route again through the new session's seat.
+        undelivered_walks: Vec<u64>,
     },
+    /// An old-generation tick finished after the reset had already drained
+    /// the host queue. Re-arm its discarded wait on the isolate thread.
+    RearmDiscardedWalk(u64),
     /// The F0 owner is ready after a kept boundary: re-stamp pending starts
     /// with its session without resetting the isolate's retained work.
     AlignExecution(api::identity::ExecutionId),
@@ -1259,6 +1265,13 @@ impl LoadIsolate {
         self.reset_session(true, execution)
     }
 
+    /// A host slot discarded a walk after it left the isolate but before
+    /// dispatch. The kept script's owning wait must request it in the new
+    /// session; the old host-side row must not be replayed.
+    pub(crate) fn rearm_host_discarded_walk(&self, token: u64) {
+        self.send(IsolateCmd::RearmDiscardedWalk(token));
+    }
+
     pub(crate) fn compat_journal_paint_hidden(&self, now: Instant) -> bool {
         let Some(lease) = self.compat_journal.as_ref() else {
             return false;
@@ -1293,9 +1306,24 @@ impl LoadIsolate {
         // retains AbortWalk releases only; gameplay rows are discarded.
         self.pump_logs();
         let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
-        let generation = {
+        let (generation, undelivered_walks) = {
             let mut interacts = self.interacts.lock().unwrap();
             let mut seat_batches = self.seat_batches.lock().unwrap();
+            let undelivered_walks: Vec<_> = if keep_work {
+                interacts
+                    .iter()
+                    .map(|row| &row.req)
+                    .chain(
+                        seat_batches
+                            .iter()
+                            .flat_map(|batch| batch.batch.reqs.iter().map(|row| &row.request)),
+                    )
+                    .filter_map(discarded_walk_id)
+                    .take(HELD_RELEASES)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let generation = self
                 .work_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
@@ -1328,7 +1356,7 @@ impl LoadIsolate {
             *self.held_fence.lock().unwrap() = keep_work.then_some(generation);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
-            generation
+            (generation, undelivered_walks)
         };
         if let Some(lease) = &self.compat_journal {
             lease.set_host_generation(generation);
@@ -1357,6 +1385,7 @@ impl LoadIsolate {
             keep_work,
             generation,
             execution,
+            undelivered_walks,
         });
         generation
     }
@@ -1610,6 +1639,9 @@ impl LoadIsolate {
                             .load(std::sync::atomic::Ordering::Acquire)
                         {
                             if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
+                                for token in reqs.iter().filter_map(discarded_walk_id) {
+                                    self.send(IsolateCmd::RearmDiscardedWalk(token));
+                                }
                                 hold_walk_releases(
                                     &mut lock_after_isolate_failure(&self.held_releases),
                                     reqs.into_iter().map(|req| QueuedInteract {
@@ -1657,6 +1689,13 @@ impl LoadIsolate {
                         {
                             if let Ok(batch) = crate::isolate_fb::decode_seat_interact_batch(&bytes)
                             {
+                                for token in batch
+                                    .reqs
+                                    .iter()
+                                    .filter_map(|row| discarded_walk_id(&row.request))
+                                {
+                                    self.send(IsolateCmd::RearmDiscardedWalk(token));
+                                }
                                 hold_walk_releases(
                                     &mut lock_after_isolate_failure(&self.held_releases),
                                     batch.reqs.into_iter().map(|row| QueuedInteract {
@@ -1799,6 +1838,18 @@ impl Drop for LoadIsolate {
                     .retain_uncredited(handle);
             }
         }
+    }
+}
+
+fn discarded_walk_id(req: &crate::shim::InteractReq) -> Option<u64> {
+    match req {
+        crate::shim::InteractReq::Walk { request_id, .. }
+        | crate::shim::InteractReq::WalkNear { request_id, .. }
+            if *request_id != 0 =>
+        {
+            Some(*request_id)
+        }
+        _ => None,
     }
 }
 

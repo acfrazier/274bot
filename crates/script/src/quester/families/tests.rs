@@ -7631,6 +7631,29 @@ fn arrive_slot_walk(
     );
 }
 
+/// The native receipt can arrive before the next owner tick retires inactive
+/// routes. It must free the armed release slot immediately.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn native_walk_receipt_frees_its_seat_release_before_next_tick() {
+    let mut slot = mill_descent_slot();
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    slot_tick(&mut slot, &mill_frame(ladder, 1781), 10);
+    let walk = take_slot_walk(&mut slot);
+    assert_eq!(slot.seat_probe().unwrap().reserved_releases, 1);
+    arrive_slot_walk(&mut slot, &walk, 11);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        0,
+        "native receipt frees the seat slot without another owner tick"
+    );
+    slot.stop();
+}
+
 /// The loc ids of every loc op the slot queued this tick.
 fn slot_loc_ops(slot: &mut crate::slot::SlotScript) -> Vec<Option<i32>> {
     std::iter::from_fn(|| slot.take_native_action())

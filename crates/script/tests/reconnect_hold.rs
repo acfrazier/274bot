@@ -403,8 +403,8 @@ export default class T extends LoopingBot {
 }
 "#;
 
-/// The tick emits a walk and the connection drops before the host drains it.
-/// The prior-session gameplay request is discarded on the relog.
+/// A queued walk is discarded at a kept reconnect. The resumed wait makes
+/// a fresh seat request, then settles on actual arrival.
 #[test]
 fn an_undrained_walk_is_discarded_on_kept_reconnect() {
     let iso = LoadIsolate::spawn(HELD_WALK.into(), LoadShape::CompatClass, vec![]).unwrap();
@@ -412,12 +412,28 @@ fn an_undrained_walk_is_discarded_on_kept_reconnect() {
     snap.here = Some(tile(3222, 3222));
     tick(&iso, &snap);
     iso.reconnect_session_work(None);
-    let _next = relog(&iso, &mut snap, 2, tile(3240, 3240));
+    assert!(
+        walks(&iso.drain_interacts()).is_empty(),
+        "the old-session walk is discarded before the new tick"
+    );
+    let next = relog(&iso, &mut snap, 2, tile(3240, 3240));
     let after_relog = iso.drain_interacts();
     assert!(
-        walks(&after_relog).is_empty(),
-        "the undrained old-session walk is discarded: {after_relog:?}"
+        matches!(
+            walks(&after_relog).as_slice(),
+            [InteractReq::WalkNear {
+                x: 3300,
+                z: 3300,
+                ..
+            }]
+        ),
+        "the wait requests a fresh walk through the new seat: {after_relog:?}"
     );
+    assert_eq!(value(&iso, "globalThis.__ok"), serde_json::Value::Null);
+    snap.tick = next;
+    snap.here = Some(tile(3300, 3301));
+    tick(&iso, &snap);
+    assert_eq!(value(&iso, "globalThis.__ok"), true, "the wait settles");
     iso.join();
 }
 
@@ -536,8 +552,8 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-/// A tick that emits a walk after the reset has advanced the work generation
-/// is stale too: its walk is discarded rather than replayed on the new session.
+/// A late old-generation tick is discarded. Its still-live walk wait issues
+/// a new seat request rather than replaying the stale batch.
 #[test]
 fn a_walk_emitted_late_by_a_tick_crossing_the_drop_is_discarded() {
     let src = r#"
@@ -573,11 +589,30 @@ export default class T extends LoopingBot {
         "the release fence does not expose old gameplay: {before_tick_finishes:?}"
     );
 
-    let _next = relog(&iso, &mut snap, 3, tile(3240, 3240));
-    let after_relog = iso.drain_interacts();
+    let next = relog(&iso, &mut snap, 3, tile(3240, 3240));
+    let mut after_relog = iso.drain_interacts();
+    for offset in 0..4 {
+        if !walks(&after_relog).is_empty() {
+            break;
+        }
+        snap.tick = next + offset;
+        tick(&iso, &snap);
+        after_relog.extend(iso.drain_interacts());
+    }
     assert!(
-        walks(&after_relog).is_empty(),
-        "the late old-generation walk is discarded: {after_relog:?}"
+        matches!(
+            walks(&after_relog).as_slice(),
+            [InteractReq::WalkNear {
+                x: 3300,
+                z: 3300,
+                ..
+            }]
+        ),
+        "only the fresh new-session walk enters the seat: {after_relog:?}"
     );
+    snap.tick = next + 4;
+    snap.here = Some(tile(3300, 3301));
+    tick(&iso, &snap);
+    assert_eq!(value(&iso, "globalThis.__ok"), true);
     iso.join();
 }

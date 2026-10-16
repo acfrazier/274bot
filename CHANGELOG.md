@@ -27,11 +27,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   in the new session instead of replaying the old click.
 - Walks that arrive normally free their seat release slot, so repeated walks
   do not block later actions. A kept reconnect discards old gameplay walks.
-  During a guardian hold, the pending seat batch stays bounded while releases
-  and controls remain queued.
+  A wait whose walk was not delivered requests a fresh walk through the new
+  session's seat and still settles on arrival. During a guardian hold, all
+  walk terminals free their slots after resume. Pending batches stay bounded;
+  releases, controls and lifecycle facts remain queued.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.
+  The guarded append copies nested row values, refuses accessors and Proxies
+  without calling them, and counts refused rows. Repeated aborts for one walk
+  coalesce; a seventeenth distinct walk release is still refused.
 - Compat cards and native V2 scripts now capture the first and subsequent
   JavaScript interactions in one guarded queue. Machine actions keep their
   order relative to queued script actions. The seat still bounds each tick.
