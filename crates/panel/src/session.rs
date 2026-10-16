@@ -2553,7 +2553,9 @@ impl Session {
             .catalog_root()?
             .ok_or_else(|| "$RS2B0T catalog root unavailable".to_string())?;
         let path_file = self.rs2b0t_path_file();
-        self.scripts.fill_catalog_blocking(&root, &path_file)
+        self.scripts
+            .fill_catalog_blocking(&root, &path_file)
+            .map_err(|error| error.to_string())
     }
 
     /// Live `script_<name>` setup: temp vault with the scenario's seed

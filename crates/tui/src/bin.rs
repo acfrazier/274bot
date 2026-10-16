@@ -1775,6 +1775,7 @@ impl TuiSession {
         };
         self.scripts
             .fill_catalog_blocking(&root, &script::default_rs2b0t_path_file())
+            .map_err(|error| error.to_string())
     }
 
     /// Fill the JS library's cards from the `$RS2B0T` registry once when
@@ -1919,6 +1920,7 @@ impl TuiSession {
         }
         self.scripts
             .request_catalog_import(root, &script::default_rs2b0t_path_file())
+            .map_err(|error| error.to_string())
     }
 
     /// Show the script coordinator's latest notice on the strip.
@@ -1974,7 +1976,7 @@ impl TuiSession {
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
                 }
-                Err(error) => app.error = Some(error),
+                Err(error) => app.error = Some(error.to_string()),
             }
         }
         if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {

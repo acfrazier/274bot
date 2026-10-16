@@ -455,6 +455,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/marked.rs",
       "owner": "T3"
     },
@@ -1317,6 +1321,10 @@
     {
       "path": "crates/host-play/tests/m3_render_contention.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/host-play/tests/map_decode_alloc.rs",
+      "owner": "T5"
     },
     {
       "path": "crates/host-play/tests/nav_fares_live.rs",

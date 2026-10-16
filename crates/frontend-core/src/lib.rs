@@ -24,6 +24,7 @@ pub mod group_walk;
 pub mod log;
 pub mod log_file;
 pub mod map_bake;
+pub mod map_decode;
 pub mod marked;
 pub mod nav_prefs;
 pub mod operations;
@@ -54,6 +55,7 @@ pub use map_bake::{
     load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
+pub use map_decode::{WalkMapDecodeController, WalkMapDecodeError, WalkMapDecodeResult};
 pub use marked::{
     assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope, login_marked,
     logout_marked, marked_availability, prepare_apply_settings_marked, restart_scope,
