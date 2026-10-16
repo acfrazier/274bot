@@ -99,7 +99,7 @@ if (-not (Get-LocalUser -Name $User -ErrorAction SilentlyContinue)) {
     $password = ConvertTo-SecureString ([Convert]::ToBase64String($bytes) + 'aA1!') -AsPlainText -Force
     [Array]::Clear($bytes, 0, $bytes.Length)
     New-LocalUser -Name $User -Password $password -PasswordNeverExpires -UserMayNotChangePassword `
-        -AccountNeverExpires -Description '274bot nightly: read-only SFTP pull of C:\274bot-nightly\runs' | Out-Null
+        -AccountNeverExpires -Description '274bot nightly: read-only SFTP pull of runs' | Out-Null
 }
 foreach ($group in Get-LocalGroup) {
     if (Get-LocalGroupMember -Group $group -Member $User -ErrorAction SilentlyContinue) {
