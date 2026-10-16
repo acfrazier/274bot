@@ -2087,6 +2087,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/app_teardown_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/app_tests.rs",
       "owner": "T3"
     },

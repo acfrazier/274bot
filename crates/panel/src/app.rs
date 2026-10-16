@@ -1,8 +1,10 @@
 //! Panel shell: docking enabled, multi-viewport disabled, amber chrome,
 //! running on the panel-owned window loop in `crate::window`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
@@ -6529,10 +6531,12 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             exit_after_work_shutdown(1);
         }
     }
+    let running = Rc::new(RefCell::new(running));
     let mut presented = false;
 
     let mut cfg = runner_config();
     let mut window_title = running
+        .borrow()
         .as_ref()
         .map(|(state, _)| state.session.app_title())
         .unwrap_or_else(|| "274bot".into());
@@ -6541,6 +6545,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let os_window_init = Arc::clone(&os_window);
     let live_failure = Arc::new(Mutex::new(None));
     let live_failure_frame = Arc::clone(&live_failure);
+    let frame_running = Rc::clone(&running);
     let result = window::run(
         cfg,
         amber_style,
@@ -6548,6 +6553,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             client::render::backend::inject_device(device.clone(), queue.clone());
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
+        panel_gpu_shutdown(Rc::clone(&running)),
         Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
@@ -6562,7 +6568,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                             Arc::clone(&shot_state),
                             host_play::InstancePermit::skip(),
                         ) {
-                            Ok(ready) => running = Some(ready),
+                            Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                             Err(e) => {
                                 eprintln!("panel: {e}");
                                 exit_after_work_shutdown(1);
@@ -6571,6 +6577,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                     }
                 }
             }
+            let mut running = frame_running.borrow_mut();
             let Some((state, startup)) = running.as_mut() else {
                 return false;
             };
@@ -6602,6 +6609,18 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     );
     let failure = live_failure.lock().unwrap().take();
     finish_panel_run(result, failure)
+}
+
+/// The window's GPU shutdown hook: release the walk map's textures while
+/// the renderer that registered them is still live.
+fn panel_gpu_shutdown(
+    running: Rc<RefCell<Option<(PanelState, StartupPreparation)>>>,
+) -> impl FnMut(&mut Gpu) + 'static {
+    move |gpu| {
+        if let Some((state, _)) = running.borrow_mut().as_mut() {
+            state.walk_map.release(Some(gpu));
+        }
+    }
 }
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
@@ -7131,3 +7150,7 @@ mod tests;
 #[cfg(test)]
 #[path = "app_window_tests.rs"]
 mod window_tests;
+
+#[cfg(test)]
+#[path = "app_teardown_tests.rs"]
+mod teardown_tests;
