@@ -7,10 +7,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
-- Disabling random-event handling no longer leaves Gatherer or other scripts
-  waiting forever on a detected event, such as a held Strange box. Events
-  remain visible, but do not pause scripts while handling is disabled.
-
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
@@ -43,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Random-event guardian
+
+- Disabling random-event handling no longer leaves Gatherer or other scripts
+  waiting forever on a detected event, such as a held Strange box. Events
+  remain visible, but do not pause scripts while handling is disabled.
+
 ### Gatherer and banking
 
 - A Gatherer that stalls on its return from the bank now replans once from
@@ -51,8 +53,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Gatherer and Quester banking now check the current inventory and retry once
   after a refused or ineffective deposit. Items already deposited are not
   counted twice, and protected items remain protected. Gatherer keeps unbankable
-  items and continues gathering when the deposit frees enough space. Both scripts
+  items and continues gathering whenever the pack still has space after depositing,
+  including tool-fetch and supply-only trips that deposit nothing. A pack filled
+  by supply withdrawals reports that no gathering space remains. Both scripts
   report a full bank or full item stack. Quester still refuses unbankable deposits.
+  Real Strange boxes keep replicating into freed slots through their content
+  timers (`content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`).
+  With event handling disabled, unsolved boxes eventually fill the pack and
+  Gatherer stops with the unbankable-item reason.
 
 ### Saved state
 

@@ -23945,6 +23945,15 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
 
 #[test]
 fn disabled_box_guardian_keeps_native_eligibility_available() {
+    assert_box_guardian_native_eligibility(false);
+}
+
+#[test]
+fn enabled_box_guardian_pauses_native_eligibility_for_an_owned_event() {
+    assert_box_guardian_native_eligibility(true);
+}
+
+fn assert_box_guardian_native_eligibility(random_events: bool) {
     struct EligibilityProbe(Arc<Mutex<Vec<bool>>>);
     impl script::native::Script for EligibilityProbe {
         fn tick(
@@ -23967,10 +23976,13 @@ fn disabled_box_guardian_keeps_native_eligibility_available() {
     let (navs, world) = empty_nav();
     let mut client = guardian_client();
     plant_inv_item(&mut client, 3062);
+    let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+    item.name = "Strange box".into();
+    item.iop = [Some("Open".into()), None, None, None, None];
     let mut guardian = Guardian::new();
     let mut driver = GuardRec::default();
     let settings = ProfileSettings {
-        random_events: false,
+        random_events,
         ..ProfileSettings::default()
     };
     let mut snapshot = GameSnapshot::new();
@@ -23978,6 +23990,8 @@ fn disabled_box_guardian_keeps_native_eligibility_available() {
         tick_at(&mut client, &mut snapshot);
         let status = guardian.tick(&mut driver, &snapshot, &settings, tick * 600, None);
         assert_eq!(status.kind, Some(api::random::RandomKind::Box));
+        assert_eq!(status.hold, random_events);
+        assert_eq!(status.ours, random_events);
         script_observe(
             &mut client,
             "alice",
@@ -23999,10 +24013,40 @@ fn disabled_box_guardian_keeps_native_eligibility_available() {
     }
     assert_eq!(
         *observed.lock().unwrap(),
-        vec![true; 3],
-        "detect-only boxes must not freeze native scripts through the ours operand"
+        if random_events {
+            Vec::new()
+        } else {
+            vec![true; 3]
+        },
+        "only enabled handling may freeze native scripts for an owned box"
     );
-    assert!(driver.menus.is_empty() && driver.actions.is_empty());
+    assert_eq!(
+        driver.menus.is_empty() && driver.actions.is_empty(),
+        !random_events
+    );
+    if random_events {
+        // The host skips native ticks under hold. Isolate the owned-event
+        // operand too: it must forbid transitions even without that shortcut.
+        script_observe(
+            &mut client,
+            "alice",
+            true,
+            true,
+            4,
+            snapshot.tile(),
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            true,
+        );
+        assert_eq!(*observed.lock().unwrap(), vec![false]);
+    }
 }
 
 /// Queues a walk through the same legacy adapter as Sherlock; the host still

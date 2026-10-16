@@ -30,7 +30,6 @@ use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
 use nav::contract::ArrivalKind;
-use std::num::NonZeroI32;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -251,9 +250,8 @@ struct GatherScratch {
     /// do not consume this bound.
     return_recovery_actions: u8,
     return_recovery_pending: bool,
-    /// Occupied slots before depositing around a kept item: necessarily nonzero.
-    /// A hold can restart the action without discarding this trip's baseline.
-    unbankable_occupied_before: Option<NonZeroI32>,
+    /// Retained across action restarts until the next trip begins.
+    kept_unbankable: bool,
 }
 
 pub struct Gatherer {
@@ -403,7 +401,7 @@ impl Gatherer {
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
-        self.scratch.unbankable_occupied_before = None;
+        self.scratch.kept_unbankable = false;
         self.scratch.return_recovery_actions = 0;
         self.scratch.return_recovery_pending = false;
         self.supply_missing = None;
@@ -643,15 +641,12 @@ impl Gatherer {
                 let Some(inventory) = snapshot.inventory() else {
                     return;
                 };
-                let occupied_before = snapshot.stock().occupied().and_then(NonZeroI32::new);
                 for item in inventory.value.iter().filter(|item| item.count > 0) {
                     let Some(index) = supply::unbankable_index(&self.prepared.selected, item)
                     else {
                         continue;
                     };
-                    if self.scratch.unbankable_occupied_before.is_none() {
-                        self.scratch.unbankable_occupied_before = occupied_before;
-                    }
+                    self.scratch.kept_unbankable = true;
                     let mask = 1_u8 << index;
                     if self.unbankable_logged & mask == 0 {
                         self.unbankable_logged |= mask;
@@ -732,12 +727,13 @@ impl Gatherer {
                 // V-resume derives the observed tool and, if possible, waits
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
-                    if self.scratch.unbankable_occupied_before.is_some()
+                    if self.scratch.kept_unbankable
                         && tick.cx.snapshot().stock().pack_full() == Some(true)
                     {
-                        self.deposit_failure(ActionError::BankDeposit(
-                            crate::bank::ops::DepositFailure::Unbankable,
-                        ));
+                        self.fail(
+                            "inventory-blocked",
+                            "supply withdrawals filled the inventory; no space remains for gathering",
+                        );
                         return;
                     }
                     self.advance_trip(TripStep::Return);
@@ -1727,16 +1723,8 @@ impl Gatherer {
                         self.retained.haul_since_death = true;
                     }
                     self.sync_retained(tick);
-                    if self
-                        .scratch
-                        .unbankable_occupied_before
-                        .is_some_and(|before| {
-                            let stock = tick.cx.snapshot().stock();
-                            stock
-                                .occupied()
-                                .is_none_or(|occupied| occupied >= before.get())
-                                || stock.pack_full() != Some(false)
-                        })
+                    if self.scratch.kept_unbankable
+                        && tick.cx.snapshot().stock().pack_full() != Some(false)
                     {
                         self.deposit_failure(ActionError::BankDeposit(
                             crate::bank::ops::DepositFailure::Unbankable,

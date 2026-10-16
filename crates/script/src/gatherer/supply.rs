@@ -40,6 +40,7 @@ const UNBANKABLE_ALIASES: &[&str] = &[
     "macro_genilamp",
     "bloated_toad",
 ];
+const _: () = assert!(UNBANKABLE_ALIASES.len() <= u8::BITS as usize);
 
 pub(super) fn unbankable_index(selected: &SelectedGameData, item: &ItemView) -> Option<usize> {
     let alias = selected.item_by_id(item.def.id)?.alias.as_deref()?;
@@ -1474,8 +1475,13 @@ mod tests {
             .split_once("[label,")
             .expect("end of bank_check_allowed")
             .0;
-        for clause in allowed.split("$obj = ").skip(1) {
+        let mut content_items = Vec::new();
+        for clause in allowed.split("$obj").skip(1) {
+            let Some(clause) = clause.trim_start().strip_prefix('=') else {
+                continue;
+            };
             let alias = clause
+                .trim_start()
                 .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
                 .next()
                 .unwrap();
@@ -1483,7 +1489,12 @@ mod tests {
                 UNBANKABLE_ALIASES.contains(&alias),
                 "bank_check_allowed refuses {alias}; update the Gatherer kept set"
             );
+            content_items.push(alias.to_owned());
         }
+        assert!(
+            !content_items.is_empty(),
+            "the content scan must parse bank_check_allowed item clauses; update the parser if their syntax changed"
+        );
         let mut directories = vec![scripts];
         let mut parameter_items = Vec::new();
         while let Some(directory) = directories.pop() {
@@ -1530,6 +1541,7 @@ mod tests {
                         "{} marks {alias} unbankable; update the Gatherer kept set",
                         path.display()
                     );
+                    content_items.push(alias.to_owned());
                     parameter_items.push(alias.to_owned());
                 }
             }
@@ -1538,6 +1550,12 @@ mod tests {
             !parameter_items.is_empty(),
             "the content scan must find parameters"
         );
+        for alias in UNBANKABLE_ALIASES {
+            assert!(
+                content_items.iter().any(|item| item == alias),
+                "{alias} is no longer refused by bank content; remove the stale Gatherer kept alias"
+            );
+        }
     }
 
     #[test]
