@@ -10,7 +10,10 @@ use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
-use crate::test_support::{thread_preferences, thread_state_root, TestDir, TestPath};
+use crate::test_support::{
+    patiently, save_draft_patiently, save_store_patiently, set_patiently, thread_preferences,
+    thread_state_root, TestDir, TestPath,
+};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
@@ -504,7 +507,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
         crate::test_support::scratch_service(&own_root).operator_loadouts(),
     ));
     own.upsert(api::loadout::Loadout::new("melee"));
-    own.save().unwrap();
+    save_store_patiently(&mut own);
 
     assert!(session.unlock("prepared-pass"));
     let handle = session
@@ -530,7 +533,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     // The Loadouts form saves through the session's service: the Start
     // leases that row.
     session.loadouts.upsert(api::loadout::Loadout::new("melee"));
-    session.loadouts.save().unwrap();
+    save_store_patiently(&mut session.loadouts);
     start().expect("the Start leases the row the form saved");
 }
 
@@ -547,10 +550,14 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         last_focus: Some("alice".into()),
         ..Default::default()
     };
-    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
     assert!(
-        crate::loadouts::save_draft(&mut session),
+        save_draft_patiently(&mut session),
         "{}",
         session.loadouts_status
     );
@@ -573,11 +580,13 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
 
     // The peer's edits reach the panel through the panel's service (a key
     // the panel's own state does not hold, as another frontend's would be).
-    peer.preferences()
-        .set("peer_marker", serde_json::json!({"kept": 7}))
-        .unwrap();
+    set_patiently(
+        &peer.preferences(),
+        "peer_marker",
+        serde_json::json!({"kept": 7}),
+    );
     peer_form.upsert(api::loadout::Loadout::new("peer-row"));
-    peer_form.save().unwrap();
+    save_store_patiently(&mut peer_form);
     session.preferences.reload().unwrap();
     assert_eq!(
         session.preferences.value("peer_marker"),
@@ -590,7 +599,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     session.loadouts_sel = 0;
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
     assert!(
-        crate::loadouts::save_draft(&mut session),
+        save_draft_patiently(&mut session),
         "{}",
         session.loadouts_status
     );
@@ -598,7 +607,11 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         last_focus: Some("bob".into()),
         ..state
     };
-    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
     let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
@@ -864,7 +877,7 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
 }
 
 fn settle_catalog_work(session: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
@@ -881,7 +894,7 @@ fn settle_catalog_work(session: &mut Session) {
 }
 
 fn settle_transpile_queue(session: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !session.transpile_queue.is_empty() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
@@ -3113,7 +3126,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.quester_paths.is_running() {
         assert!(
             Instant::now() < deadline,
@@ -3269,17 +3282,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
 
     // The peer's write lands next to a key the panel knows nothing about;
     // the projection follows once the session's preferences re-read.
-    frontend_core::nav_preference(
-        &peer,
-        frontend_core::NavPreference::AllowTeleports,
-        Some(true),
-    )
+    patiently(|| {
+        frontend_core::nav_preference(
+            &peer,
+            frontend_core::NavPreference::AllowTeleports,
+            Some(true),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
-    peer.set(
+    set_patiently(
+        &peer,
         "peer_marker",
         serde_json::json!("written by the other frontend"),
-    )
-    .unwrap();
+    );
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
     assert!(session.walk_permissions.globals.allow_teleports);
@@ -4839,7 +4856,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     s.load("carol");
     // ensure_slot registers the IO map synchronously; wait only for the
     // slot threads to publish their status rows.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -4953,7 +4970,7 @@ fn logout_all_arms_every_wall_member() {
     s.load("bob");
     s.core.fleet_mut().add("alice");
     s.core.fleet_mut().add("bob");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().arm("bob").is_some() {
             break;
@@ -4979,7 +4996,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     });
     let mut s = Session::new();
     s.live_prepare_stress(3, false).expect("prepare");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;

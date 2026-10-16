@@ -261,7 +261,13 @@ pub(crate) fn discard_unconsumed_native_capture() {
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
 /// maps DOM `KeyboardEvent.key` (`:` is 58, `~` is 126).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "test-only key mapping helper; exercised by input_capture_tests"
+    )
+)]
 pub(crate) fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
     for &(k, ch) in CAPTURE_NAMED {
         if k == key {

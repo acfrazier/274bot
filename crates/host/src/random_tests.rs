@@ -864,10 +864,63 @@ fn toggle_off_detects_but_never_sends() {
     assert!(drv.actions.is_empty());
     assert_eq!(status.kind, Some(RandomKind::Dialog), "detect still fills");
     assert_eq!(status.name.as_deref(), Some("genie"));
-    assert!(status.ours);
+    assert!(!status.ours, "detect-only must not latch script pending");
     assert!(!status.toggle);
     assert!(!status.handling);
     assert!(!status.hold);
+}
+
+#[test]
+fn disabled_strange_boxes_remain_detected_without_latching_script_pending() {
+    for boxes in [1, 28] {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, boxes);
+        let mut guardian = Guardian::new();
+        let mut driver = FakeDriver::default();
+        let disabled = ProfileSettings {
+            random_events: false,
+            ..ProfileSettings::default()
+        };
+        let mut snapshot = GameSnapshot::new();
+
+        for now in [0, 600, 300_000] {
+            tick_at(&mut c, &mut snapshot);
+            let status = guardian.tick(&mut driver, &snapshot, &disabled, now, None);
+            assert_eq!(status.kind, Some(RandomKind::Box));
+            assert_eq!(status.name.as_deref(), Some("strange box"));
+            assert!(!status.toggle);
+            assert!(!status.hold);
+            assert!(
+                !status.ours,
+                "disabled handling must not latch native hold or EventSignal.pending"
+            );
+            assert!(driver.menus.is_empty());
+            assert!(driver.actions.is_empty());
+        }
+
+        // Enabling handling makes this same inventory actionable again.
+        tick_at(&mut c, &mut snapshot);
+        let status = guardian.tick(
+            &mut driver,
+            &snapshot,
+            &ProfileSettings::default(),
+            300_600,
+            None,
+        );
+        assert!(status.hold && status.ours);
+        assert_eq!(driver.actions, vec![0], "the enabled solver opens the box");
+
+        // Turning it off also releases an already-started solver immediately.
+        driver.menus.clear();
+        driver.actions.clear();
+        tick_at(&mut c, &mut snapshot);
+        let status = guardian.tick(&mut driver, &snapshot, &disabled, 301_200, None);
+        assert!(!status.hold && !status.ours);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        assert!(driver.menus.is_empty() && driver.actions.is_empty());
+    }
 }
 
 #[test]

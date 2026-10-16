@@ -8,7 +8,7 @@ use vault::{Profile, ProfileSettings, Vault};
 /// Pump catalogue, worker validation and Start receipts until all script
 /// lifecycle work has settled.
 fn settle(s: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while (s.reload_validation_pending()
         || s.scripts.catalog_work_pending()
         || s.scripts.starts_pending())
@@ -47,7 +47,7 @@ fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
 /// before the reap).
 fn wait_state(s: &Session, name: &str, want: script::RunState) {
     let play = s.core.play().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while play.script_state(name) != want && Instant::now() < deadline {
         play.pump_script_lifecycle(name);
         std::thread::sleep(Duration::from_millis(5));

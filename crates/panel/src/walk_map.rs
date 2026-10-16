@@ -85,9 +85,11 @@ pub struct LiveCounters {
 }
 
 struct GpuTex {
-    #[allow(dead_code)]
     texture: wgpu::Texture,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "kept alive for GPU lifetime; view handle never read"
+    )]
     view: wgpu::TextureView,
     tex_id: TextureId,
 }
@@ -99,7 +101,10 @@ struct TerrainSlot {
 
 struct OverlayGpu {
     texture: wgpu::Texture,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "kept alive for GPU lifetime; view handle never read"
+    )]
     view: wgpu::TextureView,
     tex_id: TextureId,
     w: u32,
