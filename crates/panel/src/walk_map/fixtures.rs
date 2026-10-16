@@ -13,8 +13,6 @@ use nav::map::MapError;
 #[cfg(test)]
 use nav::map::formats::TileReceipt;
 #[cfg(test)]
-use nav::map::identity::CatalogueIdentity;
-#[cfg(test)]
 use nav::map::poi::{
     CapabilityEvidence, DisplayAnchor, EntityKind, Footprint, PoiKey, PoiKind, SourceSpace,
 };
@@ -37,16 +35,6 @@ pub fn image_identity() -> ImageIdentity {
         revision: 289,
         content: Digest([0xf1; 32]),
         policy: Digest([0xf2; 32]),
-    }
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn catalogue_identity() -> CatalogueIdentity {
-    CatalogueIdentity {
-        revision: 289,
-        content: Digest([0xf1; 32]),
-        policy: Digest([0xf3; 32]),
     }
 }
 

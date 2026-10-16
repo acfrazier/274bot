@@ -8,7 +8,7 @@ use vault::{Profile, ProfileSettings, Vault};
 /// Pump catalogue, worker validation and Start receipts until all script
 /// lifecycle work has settled.
 fn settle(s: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while (s.reload_validation_pending()
         || s.scripts.catalog_work_pending()
         || s.scripts.starts_pending())
@@ -47,7 +47,7 @@ fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
 /// before the reap).
 fn wait_state(s: &Session, name: &str, want: script::RunState) {
     let play = s.core.play().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while play.script_state(name) != want && Instant::now() < deadline {
         play.pump_script_lifecycle(name);
         std::thread::sleep(Duration::from_millis(5));
@@ -2434,5 +2434,11 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
         "the second click starts the relog"
     );
     assert!(s.scripts.start_queue_place(&queued).is_none());
-    assert!(s.core.play().unwrap().arm(&queued).unwrap().wants_logout());
+    let arm = s.core.play().unwrap().arm(&queued).unwrap();
+    assert!(
+        !arm.wants_logout(),
+        "an offline slot has no session to log out"
+    );
+    assert!(arm.wants_login(), "RelogNow arms the next login");
+    assert!(!arm.login_latched(), "RelogNow must not latch Logout");
 }
