@@ -1120,6 +1120,14 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/reload.rs|CatalogError",
+      "path": "crates/frontend-core/src/scripts/reload.rs",
+      "symbol": "CatalogError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Opaque catalog fill/import failure kind; Display preserves prior String wording and details stay private behind the newtype like ImportError."
     }
   ],
   "violations": [],

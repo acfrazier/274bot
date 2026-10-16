@@ -27,7 +27,12 @@
 
 #![cfg_attr(
     not(any(unix, windows)),
-    allow(dead_code, unused_imports, unused_variables)
+    allow(
+        dead_code,
+        unused_imports,
+        unused_variables,
+        reason = "shared wait/terminate/drain body is dead on unknown platforms, which fail closed in run"
+    )
 )]
 
 use std::collections::BTreeMap;

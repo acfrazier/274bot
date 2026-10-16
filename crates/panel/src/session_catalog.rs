@@ -102,6 +102,7 @@ impl Session {
         }
         self.scripts
             .request_catalog_import(root, &self.rs2b0t_path_file())
+            .map_err(|error| error.to_string())
     }
 
     /// The card currently at the front of the warmup queue, if any.
@@ -162,7 +163,7 @@ impl Session {
                 self.rs2b0t_catalog_open = false;
                 self.error = None;
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.error = Some(error.to_string()),
         }
     }
 

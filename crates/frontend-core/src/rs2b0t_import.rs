@@ -343,7 +343,8 @@ fn wipe(value: &mut Value) {
 }
 
 /// Open `path` for reading without waiting: a FIFO with no writer would
-/// otherwise block the caller's frame in `open`.
+/// otherwise block the caller's frame in `open`. A directory opens too, so
+/// the check on the handle refuses it as not a file on every platform.
 fn open_for_reading(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -351,6 +352,14 @@ fn open_for_reading(path: &Path) -> std::io::Result<std::fs::File> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NONBLOCK);
+    }
+    // Without `FILE_FLAG_BACKUP_SEMANTICS` Windows refuses to open a
+    // directory at all (access denied).
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
     }
     options.open(path)
 }

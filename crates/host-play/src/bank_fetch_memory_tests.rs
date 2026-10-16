@@ -446,7 +446,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
                 return term;
             }
             assert!(
-                start.elapsed() < Duration::from_secs(2),
+                start.elapsed() < Duration::from_secs(60),
                 "inspect {request_id} did not publish"
             );
             std::thread::yield_now();

@@ -111,7 +111,7 @@ pub use library::{
 #[cfg(feature = "load")]
 pub use library::{
     CardPreparationOutcome, CardPreparationSnapshot, CatalogPreparationResult,
-    CatalogPreparationSnapshot,
+    CatalogPreparationSnapshot, CatalogSnapshotError, CatalogWorkerError,
 };
 
 #[cfg(feature = "load")]

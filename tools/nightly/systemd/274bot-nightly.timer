@@ -1,0 +1,12 @@
+# Nightly VM: start the nightly run at 02:00 operator-local time.
+# Install: /etc/systemd/system/274bot-nightly.timer
+[Unit]
+Description=274bot nightly live-cell run at 02:00 America/New_York
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 America/New_York
+Persistent=false
+Unit=274bot-nightly.service
+
+[Install]
+WantedBy=timers.target

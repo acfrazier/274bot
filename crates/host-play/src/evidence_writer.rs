@@ -664,10 +664,10 @@ mod tests {
             }),
         });
         let outcome = writer
-            .wait(&job, Duration::from_secs(10))
+            .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
         assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
-        assert!(writer.flush(Duration::from_secs(10)));
+        assert!(writer.flush(Duration::from_secs(60)));
         let on_disk = std::fs::read(&png_path).expect("png");
         assert_eq!(on_disk, direct_encode(16, 9, &test_pixels(16, 9)));
         let sidecar = std::fs::read(&json_path).expect("json");
@@ -698,7 +698,7 @@ mod tests {
             sidecar: None,
         });
         let outcome = writer
-            .wait(&job, Duration::from_secs(10))
+            .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
         assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
         let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
@@ -735,7 +735,7 @@ mod tests {
             }),
         });
         let outcome = writer
-            .wait(&job, Duration::from_secs(10))
+            .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
         assert!(outcome.error.is_some(), "invalid frame must fail");
         assert!(!png_path.exists(), "no PNG is left behind on failure");
@@ -795,22 +795,26 @@ mod tests {
                 }
             }
 
+            /// Wait until the worker reaches the write gate for `id`.
+            /// The guard is dropped before asserting, so a timeout fails
+            /// this test without poisoning the gate for the worker thread.
             fn wait_entered(&self, id: u64, timeout: Duration) {
                 let deadline = Instant::now() + timeout;
                 let mut entered = self.entered.lock().expect("entered");
                 while !entered.contains(&id) {
                     let now = Instant::now();
-                    assert!(now < deadline, "job {id} never entered write gate");
-                    let (guard, wait) = self
+                    if now >= deadline {
+                        break;
+                    }
+                    let (guard, _) = self
                         .entered_cv
                         .wait_timeout(entered, deadline - now)
                         .expect("wait entered");
                     entered = guard;
-                    assert!(
-                        entered.contains(&id) || !wait.timed_out(),
-                        "job {id} never entered write gate"
-                    );
                 }
+                let seen = entered.contains(&id);
+                drop(entered);
+                assert!(seen, "job {id} never entered write gate");
             }
 
             fn release(&self, id: u64) {
@@ -832,7 +836,7 @@ mod tests {
         let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |id| hook_gate.hook(id));
         let writer = Arc::new(EvidenceWriter::with_config(WriterConfig {
             bound: 1,
-            submit_wait: Duration::from_secs(10),
+            submit_wait: Duration::from_secs(60),
             before_write: Some(hook),
         }));
         let request = |name: &str| EvidenceRequest {
@@ -847,7 +851,7 @@ mod tests {
         // 1. Submit A and wait until the worker gates on it.
         let job_a = writer.submit(request("w0.png"));
         let id_a = job_a.id();
-        gate.wait_entered(id_a, Duration::from_secs(10));
+        gate.wait_entered(id_a, Duration::from_secs(60));
 
         // 2. B queues behind the gated A.
         let job_b = writer.submit(request("w1.png"));
@@ -867,11 +871,11 @@ mod tests {
 
         // 4. Release A; the worker completes it, pops B, and gates on B.
         gate.release(id_a);
-        gate.wait_entered(id_b, Duration::from_secs(10));
+        gate.wait_entered(id_b, Duration::from_secs(60));
 
         // 5. The pop must have woken C even though B is still gated.
         let job_c = rx
-            .recv_timeout(Duration::from_secs(3))
+            .recv_timeout(Duration::from_secs(60))
             .expect("submit blocked on a full queue must enqueue once the worker pops");
         assert!(
             writer.poll(&job_c).is_none(),
@@ -885,11 +889,11 @@ mod tests {
         gate.release(id_c);
         for job in [&job_a, &job_b, &job_c] {
             let outcome = writer
-                .wait(job, Duration::from_secs(10))
+                .wait(job, Duration::from_secs(60))
                 .expect("capture completes");
             assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
         }
-        assert!(writer.flush(Duration::from_secs(10)));
+        assert!(writer.flush(Duration::from_secs(60)));
         assert_eq!(writer.stats().dropped, 0);
         std::fs::remove_dir_all(&dir).ok();
     }

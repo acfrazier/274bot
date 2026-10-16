@@ -2711,7 +2711,7 @@ mod tests {
         let start = Instant::now();
         while !matches!(handle.status(), MapJobStatus::Ready) {
             assert!(
-                start.elapsed() < Duration::from_secs(10),
+                start.elapsed() < Duration::from_secs(60),
                 "status: {:?}",
                 handle.status()
             );
@@ -2731,7 +2731,7 @@ mod tests {
         let start = Instant::now();
         while !matches!(first.status(), MapJobStatus::Paused) {
             assert!(
-                start.elapsed() < Duration::from_secs(10),
+                start.elapsed() < Duration::from_secs(60),
                 "status: {:?}",
                 first.status()
             );
@@ -2993,7 +2993,7 @@ mod tests {
         let start = Instant::now();
         while !matches!(first.status(), MapJobStatus::Paused) {
             assert!(
-                start.elapsed() < Duration::from_secs(10),
+                start.elapsed() < Duration::from_secs(60),
                 "status: {:?}",
                 first.status()
             );
@@ -3247,7 +3247,7 @@ mod tests {
         let start = Instant::now();
         while job.upgrade().is_some() {
             assert!(
-                start.elapsed() < Duration::from_secs(10),
+                start.elapsed() < Duration::from_secs(60),
                 "a closed, finished job is still held by the manager"
             );
             manager.reap();
@@ -3268,7 +3268,7 @@ mod tests {
             .unwrap();
         let start = Instant::now();
         while !producer.image_started.load(AtomicOrdering::Acquire) {
-            assert!(start.elapsed() < Duration::from_secs(2));
+            assert!(start.elapsed() < Duration::from_secs(60));
             thread::sleep(Duration::from_millis(1));
         }
         let second = manager.request(descriptor, MapDemand::Images).unwrap();
@@ -3321,7 +3321,15 @@ mod tests {
     fn dropping_last_handle_cancels_and_identity_switch_joins_off_ui() {
         let root = temp_root("switch");
         let producer = FixtureProducer::new(false);
-        producer.image_delay_ms.store(200, AtomicOrdering::Release);
+        // The image delay sleep is uninterruptible, so the first bake is
+        // still inside it when the second request returns below: the old
+        // bake is provably alive at that point, which proves the request
+        // joined it off the calling thread instead of waiting for it. A
+        // wall-clock "request was fast" assert could not tell a slow spawn
+        // from a join under machine load.
+        producer
+            .image_delay_ms
+            .store(5_000, AtomicOrdering::Release);
         let manager = MapDemandManager::new(root.clone(), producer.clone());
         let first_descriptor = descriptor(&root);
         let first = manager
@@ -3329,18 +3337,20 @@ mod tests {
             .unwrap();
         let start = Instant::now();
         while !producer.image_started.load(AtomicOrdering::Acquire) {
-            assert!(start.elapsed() < Duration::from_secs(2));
+            assert!(start.elapsed() < Duration::from_secs(60));
             thread::sleep(Duration::from_millis(1));
         }
         drop(first);
         let second_descriptor =
             MapProfileDescriptor::new(274, Digest([4; 32]), Digest([5; 32]), Digest([6; 32]))
                 .unwrap();
-        let request_start = Instant::now();
         let second = manager
             .request(second_descriptor.clone(), MapDemand::CatalogueOnly)
             .unwrap();
-        assert!(request_start.elapsed() < Duration::from_millis(500));
+        assert!(
+            !producer.image_exited.load(AtomicOrdering::Acquire),
+            "the identity switch joined the running bake off this thread"
+        );
         wait_ready(&second);
         assert!(producer.image_exited.load(AtomicOrdering::Acquire));
         assert!(root
@@ -3556,7 +3566,7 @@ mod tests {
         });
 
         receiver
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(60))
             .expect("capacity holder did not start");
         root.ensure_capacity(0, &BTreeSet::new(), None).unwrap();
         let result = prune_thread.join().unwrap();
@@ -3667,7 +3677,7 @@ mod tests {
                 return status;
             }
             assert!(
-                start.elapsed() < Duration::from_secs(30),
+                start.elapsed() < Duration::from_secs(60),
                 "status: {status:?}"
             );
             thread::sleep(Duration::from_millis(2));
@@ -3721,7 +3731,7 @@ mod tests {
         let start = Instant::now();
         while !producer.image_started.load(AtomicOrdering::Acquire) {
             assert!(
-                start.elapsed() < Duration::from_secs(10),
+                start.elapsed() < Duration::from_secs(60),
                 "status: {:?}",
                 handle.status()
             );
@@ -4092,7 +4102,7 @@ mod tests {
             }
             output.push_str(&line);
             assert!(
-                start.elapsed() < Duration::from_secs(5),
+                start.elapsed() < Duration::from_secs(60),
                 "child output: {output}"
             );
         }

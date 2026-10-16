@@ -274,7 +274,7 @@ pub(super) const CATHERBY_BANK: WorldTile = WorldTile {
     z: 3441,
     level: 0,
 };
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) const DRAYNOR_BANK: WorldTile = WorldTile {
     x: 3093,
     z: 3243,

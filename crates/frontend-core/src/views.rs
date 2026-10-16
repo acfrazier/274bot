@@ -135,6 +135,7 @@ impl QueuePlace {
         };
         let _ = match blocker {
             AdmitBlocker::Handshake => write!(out, "another bot is logging in"),
+            AdmitBlocker::Retiring => write!(out, "previous login is finishing"),
             AdmitBlocker::Spacing { .. } => write!(out, "pacing logins"),
             AdmitBlocker::AddressBudget {
                 attempts,

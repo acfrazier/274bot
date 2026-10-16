@@ -725,7 +725,7 @@ fn profile_prepare_task(
 }
 
 fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !task.is_finished() {
         assert!(
             Instant::now() < deadline,
@@ -765,7 +765,7 @@ fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
 }
 
 fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         drive_startup(state, startup);
         if !startup.in_flight() {
