@@ -5503,6 +5503,14 @@
       "owner": "T1"
     },
     {
+      "path": "tools/lint-ratchet/lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/test_lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/release/package.py",
       "owner": "T1"
     },
