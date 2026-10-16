@@ -451,17 +451,6 @@ fn targeting(mut row: Value, slot: i32) -> Value {
     row
 }
 
-/// One fight call's pages: the posted npc page, the posted local-player
-/// slot, the Protect from Magic overlay the gate reads, and the posted
-/// effective hitpoints. The overlay is up and the player is healthy unless
-/// a test says otherwise, so each test names only the gate it is about.
-#[allow(dead_code)]
-fn wizard_npc(index: i32, distance: i32, health: i32, max_health: i32) -> Value {
-    let mut row = npc(index, WIZARD, distance, health, max_health);
-    row["id"] = json!(1007);
-    row
-}
-
 fn combat_report_page(id: u32, end: &str) -> Value {
     json!({
         "combat": {

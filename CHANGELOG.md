@@ -39,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Random-event guardian
+
+- Disabling random-event handling no longer leaves Gatherer or other scripts
+  waiting forever on a detected event, such as a held Strange box. Events
+  remain visible, but do not pause scripts while handling is disabled.
+
 ### Gatherer and banking
 
 - A Gatherer that stalls on its return from the bank now replans once from
@@ -46,8 +52,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   gathering site and reports routes that remain blocked.
 - Gatherer and Quester banking now check the current inventory and retry once
   after a refused or ineffective deposit. Items already deposited are not
-  counted twice, and protected items remain protected. Both scripts report a
-  full bank, full item stack or unbankable item instead of a generic timeout.
+  counted twice, and protected items remain protected. Gatherer keeps unbankable
+  items and continues gathering whenever the pack still has space after depositing,
+  including tool-fetch and supply-only trips that deposit nothing. A pack filled
+  by actual supply withdrawals reports that no gathering space remains. Both
+  scripts report a full bank or full item stack. Quester still refuses
+  unbankable deposits.
+  Unsolved Strange boxes multiply over time and their stacks spread into freed
+  inventory slots. With event handling disabled, if no supply withdrawals fill
+  the pack first, Gatherer stops with the unbankable-item reason once the boxes
+  fill it.
 
 ### Saved state
 

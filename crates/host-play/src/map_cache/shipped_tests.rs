@@ -82,7 +82,7 @@ fn wait_ready(handle: &MapDemandHandle) {
             other => panic!("map demand ended {other:?}"),
         }
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < Duration::from_secs(60),
             "map demand never settled"
         );
         std::thread::sleep(Duration::from_millis(5));

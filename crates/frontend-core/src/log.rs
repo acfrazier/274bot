@@ -859,7 +859,13 @@ fn local_now() -> LocalTime {
 }
 
 /// UTC fallback when the local conversion is unavailable.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg_attr(
+    windows,
+    expect(
+        dead_code,
+        reason = "UTC fallback unused on Windows; unix failure path and unknown platforms use it"
+    )
+)]
 fn utc_from(since_epoch: std::time::Duration) -> LocalTime {
     let secs = since_epoch.as_secs();
     let days = secs / 86_400;
