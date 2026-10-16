@@ -1485,10 +1485,11 @@ mod tests {
         );
         assert!(memory <= 96, "BankMemory is {memory} bytes");
         // SlotBankMemory is one shared header (the Arc) plus the slot's
-        // single reserved table (its hint). A Windows PathBuf stores the
-        // parsed prefix beside the bytes, 8 wider than the Unix one, so
-        // the cap prices that platform word in: 152 + 8 header on Unix,
-        // 160 + 8 header on Windows. Growth beyond either fails here.
+        // single reserved table (its hint). A Windows PathBuf is a
+        // `Wtf8Buf`: its byte `Vec` plus an `is_known_utf8` flag, which
+        // padding makes 8 bytes wider than the Unix `Vec<u8>`. So the cap
+        // prices that platform word in: 152 + 8 header on Unix, 160 + 8
+        // header on Windows. Growth beyond either fails here.
         #[cfg(windows)]
         const SLOT_CAP: usize = 168;
         #[cfg(not(windows))]
