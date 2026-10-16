@@ -194,6 +194,14 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeController",
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "symbol": "WalkMapDecodeController",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.W(walk-map-decode) owns the active WorkTicket and pending PNG demand; all controller fields are private."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeError",
       "path": "crates/frontend-core/src/map_decode.rs",
       "symbol": "WalkMapDecodeError",

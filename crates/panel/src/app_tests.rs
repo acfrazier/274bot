@@ -802,6 +802,7 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
 
 #[test]
 fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
@@ -818,6 +819,7 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
 
 #[test]
 fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
@@ -833,6 +835,7 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
 
 #[test]
 fn profile_selection_retries_after_work_admission_is_full() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (_root, options, env) = startup_profile_inputs();
     let mut state = PanelState::default();
     state
@@ -865,6 +868,7 @@ fn profile_selection_retries_after_work_admission_is_full() {
 
 #[test]
 fn profile_validation_retries_after_work_admission_is_full() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
@@ -943,6 +947,7 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
 #[test]
 fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
+    let _work_service_guard = crate::work_service_test_lock();
 
     let (root, cache, manifest) = checked_fixture(274);
     let mut state = PanelState::default();

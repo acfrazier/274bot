@@ -241,8 +241,6 @@ pub enum WalkMapDecodeFailure {
     PngFrame,
     #[error("invalid map png frame size")]
     PngFrameSize,
-    #[error("invalid map PNG trailing chunks")]
-    PngTrailing,
     #[error("walk map decode job was already run")]
     AlreadyRun,
 }
@@ -377,9 +375,6 @@ fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
     {
         return Err(WalkMapDecodeFailure::PngFrameSize);
     }
-    reader
-        .finish()
-        .map_err(|_| WalkMapDecodeFailure::PngTrailing)?;
     Ok(rgba)
 }
 

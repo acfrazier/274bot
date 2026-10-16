@@ -27,6 +27,32 @@ use crate::game_view::FrameGpu;
 use crate::test_support::headless_gpu;
 use nav::map::poi::PoiKind;
 
+fn decode_service_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    crate::work_service_test_lock()
+}
+
+fn decode_service_capacity() -> api::work::WorkCapacity {
+    script::work_admission::WorkService::shared()
+        .expect("shared work service")
+        .lock()
+        .capacity()
+}
+
+fn wait_for_decode_service_capacity_zero() {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let capacity = decode_service_capacity();
+        if capacity == api::work::WorkCapacity::EMPTY {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "shared decode capacity did not return to zero: {capacity:?}"
+        );
+        std::thread::yield_now();
+    }
+}
+
 fn open_world(w: usize, h: usize) -> NavWorld {
     NavWorld::from_parts(
         WorldCollision {
@@ -476,6 +502,7 @@ fn serialize_decode_outcome(
 
 #[test]
 fn walk_map_decode_supersedes_old_generation_identity_and_key() {
+    let _work_service_guard = decode_service_test_lock();
     let old_key = lod0(50, 50);
     let new_key = lod0(51, 50);
     let old_identity = super::fixtures::image_identity();
@@ -1091,19 +1118,56 @@ fn terrain_slots_cap_under_panning() {
             "panning must keep at most {TEXTURE_CAP} slots, got {}",
             map.slot_keys().len()
         );
-        // Real byte count is asserted in decode_staging_bytes_is_unclamped_sum.
     }
 }
 
 #[test]
 fn decode_staging_bytes_is_unclamped_sum() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+
+    let active_key = lod0(60, 60);
+    let pending_key = lod0(61, 60);
+    let upload_key = lod0(62, 60);
+    let identity = super::fixtures::image_identity();
+    let active_png = Arc::<[u8]>::from(encode_tile(active_key).expect("active PNG"));
+    let pending_png = Arc::<[u8]>::from(encode_tile(pending_key).expect("pending PNG"));
+    let upload_png = encode_tile(upload_key).expect("upload PNG");
+    let upload_rgba = decode_tile(&upload_png).expect("decode upload PNG");
+
     let mut map = WalkMapRenderer::new();
-    map.force_staging_bytes(600_000, 600_000, 600_000);
+    map.note_open();
+    map.decode
+        .request(
+            map.generation,
+            identity,
+            active_key,
+            Arc::clone(&active_png),
+        )
+        .expect("submit active decode");
+    map.decode
+        .request(
+            map.generation,
+            identity,
+            pending_key,
+            Arc::clone(&pending_png),
+        )
+        .expect("retain pending decode");
+    assert!(map.decode.has_active());
     assert_eq!(
-        map.counters().decode_staging_bytes,
-        1_800_000,
-        "decode_staging_bytes must not clamp to DECODE_STAGING_CAP"
+        map.decode.pending_request(),
+        Some((map.generation, identity, pending_key))
     );
+    map.pending_upload = Some((map.generation, identity, upload_key, upload_rgba.clone()));
+
+    let expected = active_png.len() + TILE_RGBA_BYTES + pending_png.len() + upload_rgba.len();
+    let counters = map.counters();
+    assert_eq!(counters.in_flight, 1);
+    assert_eq!(counters.pending_upload, 1);
+    assert_eq!(counters.decode_staging_bytes, expected);
+
+    drop(map);
+    wait_for_decode_service_capacity_zero();
 }
 
 #[test]
@@ -1409,6 +1473,7 @@ fn slash_label_collect_reuses_name_buffer_after_warmup() {
 #[test]
 #[ignore = "requires BOT_WALK_MAP_DECODE_CORPUS to point at a published real image artifact"]
 fn real_walk_map_decode_matches_legacy_outcome_bytes() {
+    let _work_service_guard = decode_service_test_lock();
     #[derive(serde::Deserialize)]
     struct DeclaredIdentity {
         identity: ImageIdentity,
@@ -1540,6 +1605,7 @@ fn find_png_chunk_payload<'a>(png: &'a [u8], wanted: &[u8; 4]) -> &'a [u8] {
 
 #[test]
 fn ancillary_text_and_icc_preserve_legacy_pixels() {
+    let _work_service_guard = decode_service_test_lock();
     let identity = super::fixtures::image_identity();
     let mut controller = WalkMapDecodeController::new();
     let large_text = String::from("x").repeat(400 * 1024);
@@ -1594,5 +1660,191 @@ fn ancillary_text_and_icc_preserve_legacy_pixels() {
         serialize_decode_outcome(1, identity, key, &legacy_rgba),
         "Exif decode differs from the legacy pixels"
     );
+    assert!(!controller.is_busy());
+}
+
+#[test]
+fn decode_staging_cap_is_the_computed_real_bound() {
+    assert_eq!(super::DECODE_STAGING_CAP, 1_839_120);
+}
+
+fn async_test_turn(map: &mut WalkMapRenderer, world: &NavWorld, view: View) {
+    map.test_sync(
+        None,
+        view,
+        world,
+        layers_none(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+}
+
+fn request_async_view(map: &mut WalkMapRenderer, view: View) {
+    let mut gpu: Option<&mut dyn FrameGpu> = None;
+    map.sync_terrain(view, &mut gpu);
+}
+
+fn settle_renderer(map: &mut WalkMapRenderer, world: &NavWorld, view: View) -> Vec<TileKey> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut quiet = 0;
+    let mut previous = Vec::new();
+    while quiet < 16 {
+        async_test_turn(map, world, view);
+        let mut keys = map.slot_keys();
+        keys.sort();
+        if !map.decode.is_busy() && map.pending_upload.is_none() && keys == previous {
+            quiet += 1;
+        } else {
+            quiet = 0;
+        }
+        previous = keys;
+        assert!(
+            Instant::now() < deadline,
+            "async renderer did not settle; slots: {previous:?}"
+        );
+        std::thread::yield_now();
+    }
+    previous
+}
+
+fn async_renderer_keys() -> Vec<TileKey> {
+    let mut keys: Vec<_> = (0..8)
+        .flat_map(|x| (0..8).map(move |z| lod0(x, z)))
+        .collect();
+    keys.extend((20..28).flat_map(|x| (20..28).map(move |z| lod0(x, z))));
+    keys
+}
+
+#[test]
+fn renderer_background_decode_pans_refills_and_releases_every_owner() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let world = open_world(3, 3);
+    let near = tile_view(3, 3, 4.0, 640.0, 0);
+    let far = tile_view(23, 23, 4.0, 640.0, 0);
+    let fixtures = FixtureStore::with_keys(async_renderer_keys()).expect("fixtures");
+
+    let mut oracle = WalkMapRenderer::new();
+    oracle.bind_fixtures(fixtures.clone());
+    oracle.note_open();
+    let near_expected = settle_renderer(&mut oracle, &world, near);
+    let far_expected = settle_renderer(&mut oracle, &world, far);
+    assert!(!near_expected.is_empty() && !far_expected.is_empty());
+    wait_for_decode_service_capacity_zero();
+    let mut close_map = WalkMapRenderer::new();
+    close_map.test_sync_decode = false;
+    close_map.bind_fixtures(fixtures.clone());
+    close_map.note_open();
+    request_async_view(&mut close_map, far);
+    assert!(
+        close_map.decode.has_active(),
+        "close setup has an active decode"
+    );
+    close_map.release(None);
+    assert_eq!(close_map.counters().in_flight, 0);
+    assert_eq!(close_map.counters().decode_staging_bytes, 0);
+    wait_for_decode_service_capacity_zero();
+
+    let mut dropped = WalkMapRenderer::new();
+    dropped.test_sync_decode = false;
+    dropped.bind_fixtures(fixtures.clone());
+    dropped.note_open();
+    request_async_view(&mut dropped, near);
+    assert!(
+        dropped.decode.has_active(),
+        "drop setup has an active decode"
+    );
+    drop(dropped);
+    wait_for_decode_service_capacity_zero();
+
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(fixtures.clone());
+    map.note_open();
+    request_async_view(&mut map, near);
+    assert!(
+        map.decode.has_active(),
+        "renderer turns must submit through the real background controller"
+    );
+    assert_eq!(settle_renderer(&mut map, &world, near), near_expected);
+    wait_for_decode_service_capacity_zero();
+
+    let mut max_jobs = 0;
+    for turn in 0..400 {
+        async_test_turn(&mut map, &world, if turn % 2 == 0 { near } else { far });
+        let jobs = decode_service_capacity().jobs();
+        max_jobs = max_jobs.max(jobs);
+        assert!(map.counters().decode_staging_bytes <= super::DECODE_STAGING_CAP);
+    }
+    assert!(
+        max_jobs <= 1,
+        "one renderer retains at most one accepted job"
+    );
+    assert_eq!(settle_renderer(&mut map, &world, far), far_expected);
+    assert!(
+        map.slot_keys().iter().all(|key| key.x >= 20 && key.z >= 20),
+        "rapid panning must settle to the far visible set"
+    );
+    wait_for_decode_service_capacity_zero();
+
+    map.release(None);
+    map.bind_fixtures(fixtures.clone());
+    map.note_open();
+    request_async_view(&mut map, near);
+    assert!(
+        map.decode.has_active(),
+        "pack-change setup has an active decode"
+    );
+    let old_generation = map.generation();
+    map.sync_identity(Digest([0x5a; 32]), Some((0, 0, 3, 3)), None);
+    assert_ne!(map.generation(), old_generation);
+    assert!(map.pending_upload.is_none());
+    assert!(!map.decode.is_busy());
+    assert_eq!(settle_renderer(&mut map, &world, near), near_expected);
+    wait_for_decode_service_capacity_zero();
+
+    for cycle in 0..200 {
+        let mut churn = WalkMapRenderer::new();
+        churn.test_sync_decode = false;
+        churn.bind_fixtures(fixtures.clone());
+        churn.note_open();
+        request_async_view(&mut churn, if cycle % 2 == 0 { near } else { far });
+        if cycle % 3 == 0 {
+            request_async_view(&mut churn, if cycle % 2 == 0 { far } else { near });
+        }
+        drop(churn);
+    }
+    wait_for_decode_service_capacity_zero();
+}
+
+fn insert_damaged_text_chunk_before_iend(png: &mut Vec<u8>) {
+    assert!(png.len() >= 12, "PNG has a terminal IEND chunk");
+    let iend = png.len() - 12;
+    assert_eq!(&png[iend + 4..iend + 8], b"IEND");
+    let damaged_chunk = [
+        0, 0, 0, 1, // one payload byte
+        b't', b'E', b'X', b't', b'x', 0, 0, 0, 0, // intentionally invalid CRC
+    ];
+    png.splice(iend..iend, damaged_chunk);
+}
+
+#[test]
+fn trailing_damaged_chunk_keeps_legacy_decoder_acceptance() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let key = lod0(63, 60);
+    let identity = super::fixtures::image_identity();
+    let mut png = encode_tile(key).expect("valid producer tile");
+    insert_damaged_text_chunk_before_iend(&mut png);
+    let expected = decode_tile(&png).expect("legacy decoder ignores later damaged chunk");
+
+    let mut controller = WalkMapDecodeController::new();
+    controller
+        .request(12, identity, key, Arc::from(png))
+        .expect("submit damaged-trailing tile");
+    let result = wait_for_decode(&mut controller);
+    assert_eq!(result.into_rgba(), expected);
     assert!(!controller.is_busy());
 }

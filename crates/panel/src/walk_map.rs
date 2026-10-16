@@ -57,7 +57,9 @@ pub const MAX_SYMBOLS: usize = 256;
 pub const MAX_LABELS: usize = 32;
 #[cfg(test)]
 const DECODE_LIMIT_BYTES: usize = 512 * 1024;
-const DECODE_STAGING_CAP: usize = 2 * 1024 * 1024;
+// Worst case: active (512 KiB PNG + 266,256-byte RGBA = 790,544), pending
+// (524,288 bytes), and newly offered PNG (524,288 bytes): 1,839,120 bytes.
+const DECODE_STAGING_CAP: usize = (512 * 1024 + TILE_RGBA_BYTES) + 2 * 512 * 1024;
 const MAX_ROUTE_SEGMENTS: usize = 512;
 pub const CACHE_UNBOUND: &str = "map imagery unavailable — cache not bound";
 pub const REACH_UNAVAILABLE: &str = "reach unavailable";
@@ -126,8 +128,6 @@ pub struct WalkMapRenderer {
     tex_pool: Vec<GpuTex>,
     #[cfg(test)]
     test_sync_decode: bool,
-    #[cfg(test)]
-    test_staging_bytes: usize,
     pub show_basemap: bool,
     pub show_grid: bool,
     pub show_reach: bool,
@@ -198,8 +198,6 @@ impl WalkMapRenderer {
             tex_pool: Vec::new(),
             #[cfg(test)]
             test_sync_decode: true,
-            #[cfg(test)]
-            test_staging_bytes: 0,
             show_basemap: true,
             show_grid: false,
             show_reach: false,
@@ -354,27 +352,12 @@ impl WalkMapRenderer {
             overlay_cpu_bytes: self.overlay_cpu.as_ref().map(Vec::len).unwrap_or(0),
             overlay_gpu_bytes,
             decode_staging_bytes: self.decode.staging_bytes()
-                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0)
-                + {
-                    #[cfg(test)]
-                    {
-                        self.test_staging_bytes
-                    }
-                    #[cfg(not(test))]
-                    {
-                        0
-                    }
-                },
+                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
             in_flight: usize::from(self.decode.has_active()),
             pending_upload: usize::from(self.pending_upload.is_some()),
             vtx: self.last_vtx,
             idx: self.last_idx,
         }
-    }
-
-    #[cfg(test)]
-    pub fn force_staging_bytes(&mut self, compressed: usize, in_flight: usize, pending: usize) {
-        self.test_staging_bytes = compressed.saturating_add(in_flight).saturating_add(pending);
     }
 
     pub fn record_geometry(&mut self, vtx: i32, idx: i32) {
@@ -797,7 +780,7 @@ impl WalkMapRenderer {
         }
         if let Some((gen, image, key)) = self.decode.pending_request() {
             if gen == generation && image == identity && vis_contains(vis, key) {
-                if let Err(error) = self.decode.retry_pending(true) {
+                if let Err(error) = self.decode.retry_pending() {
                     self.phase = MapPhase::Error;
                     self.status = format!("tile decode failed: {error}");
                 }
