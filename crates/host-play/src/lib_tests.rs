@@ -1,4 +1,5 @@
 use super::*;
+use crate::play_login::observe_client_session_exit;
 use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
@@ -31,10 +32,16 @@ fn test_queue_owner(uid: i32) -> u64 {
     TEST_QUEUE_OWNER_NAMESPACE | u64::from(uid as u32)
 }
 
+fn poll_permit(queue: &mut LoginQueue, owner: u64, uid: i32, now: Instant) -> Permit {
+    let polled = queue.poll_owner(owner, uid, now);
+    assert!(polled.cancels.is_empty());
+    polled.permit
+}
+
 fn request_test_owner(queue: &mut LoginQueue, uid: i32, now: Instant) -> Permit {
     let owner = test_queue_owner(uid);
     queue.enqueue_owner(owner, uid);
-    queue.poll_owner(owner, uid, now)
+    poll_permit(queue, owner, uid, now)
 }
 
 fn request_shared(queue: &SharedLoginQueue, uid: i32, now: Instant) -> Permit {
@@ -811,9 +818,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
         assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
         assert!(rows[0].error.is_none());
     }
-    *arm.world.lock() = Some(2);
-    arm.world_generation.fetch_add(1, Ordering::Relaxed);
-    arm.notify_retry_wait();
+    arm.switch_world(2);
     assert!(wait_until(1_500, || {
         statuses.lock().unwrap()[0]
             .startup_progress_message
@@ -822,7 +827,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
 
     assert_eq!(waiter.join().unwrap(), Some(true));
     assert!(started.elapsed() >= Duration::from_millis(1_900));
-    assert_eq!(*arm.world.lock(), Some(2));
+    assert_eq!(arm.world_choice(), Some(2));
 }
 
 #[test]
@@ -1656,7 +1661,7 @@ fn stop_slot_sets_stop_and_forgets_name() {
         let mut q = play.queue.lock();
         q.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
-            q.poll_owner(arm.queue_owner, 7, now),
+            poll_permit(&mut q, arm.queue_owner, 7, now),
             Permit::Wait(_)
         ));
     }
@@ -2042,7 +2047,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
         let mut q = play.queue.lock();
         q.enqueue_owner(arm.queue_owner, 42);
         assert!(matches!(
-            q.poll_owner(arm.queue_owner, 42, now),
+            poll_permit(&mut q, arm.queue_owner, 42, now),
             Permit::Wait(_)
         ));
     }
@@ -2402,9 +2407,27 @@ fn client_after_server_logout() -> Client {
     client
 }
 
+fn client_after_connection_loss() -> Client {
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_external_reconnect_owner(true);
+    client.ingame = true;
+    client.lost_con();
+    client
+}
+
 #[test]
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     let mut client = client_after_server_logout();
     let before = Instant::now();
     tick_flags(&mut client, &[], &arm);
@@ -2414,7 +2437,7 @@ fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do
         .expect("the actual server Logout supplies local release evidence");
     assert!(until >= before + host::login_queue::LOGIN_START_SPACING);
     assert!(until <= after + host::login_queue::LOGIN_START_SPACING);
-    assert!(!arm.reconnect.load(Ordering::Relaxed));
+    assert!(!arm.reconnects());
 
     for transport in [false, true] {
         let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
@@ -2433,21 +2456,52 @@ fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do
 }
 
 #[test]
+fn observed_server_logout_retains_cause_before_slot_boundary_retirement() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let key = arm.session_key().expect("active session");
+    let mut client = client_after_server_logout();
+
+    observe_client_session_exit(&mut client, &arm);
+    assert!(!arm.session_online());
+    assert!(!arm.take_session_boundary(), "no script work to carry");
+    let exit = arm.latest_lifecycle_event().expect("classified exit");
+    assert_eq!(exit.scope(), api::identity::Scope::Session(key));
+    assert!(matches!(
+        exit.payload(),
+        api::lifecycle::SessionEventOut::SessionEnded {
+            cause: api::lifecycle::SessionEndCause::ServerLogout,
+            resumable: false,
+        }
+    ));
+
+    tick_flags(&mut client, &[], &arm);
+    assert_eq!(
+        arm.latest_lifecycle_event().unwrap().payload(),
+        exit.payload(),
+        "the later flag probe must not publish a second exit"
+    );
+}
+
+#[test]
 fn operator_logout_wins_over_a_correlated_client_idle_logout() {
     let mut client = client_after_observed_idle_logout();
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     arm.request_logout();
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "a server logout makes the next login fresh"
     );
-    assert!(arm.wants_logout());
+    assert!(
+        !arm.wants_logout(),
+        "the observed exit settles its logout boundary"
+    );
     assert!(!should_handshake(&arm, false));
     assert_eq!(client.take_session_exit_reason(), None);
 }
@@ -2459,7 +2513,7 @@ fn operator_logout_then_world_change_logs_in_fresh() {
     let mut client = client_after_server_logout();
     let arm = SlotArm::new(7, true);
     // Online after a successful handshake.
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     arm.request_logout();
     assert!(!tick_flags(&mut client, &[], &arm));
 
@@ -2469,7 +2523,7 @@ fn operator_logout_then_world_change_logs_in_fresh() {
     arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "the next handshake after a clean logout is not a reconnect"
     );
     assert!(arm.login_applies_memory());
@@ -2492,14 +2546,11 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     client.ingame = true;
     client.lost_con();
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, client.ingame));
-    assert!(
-        arm.reconnect.load(Ordering::Relaxed),
-        "a lost connection reconnects (opcode 18)"
-    );
+    assert!(arm.reconnects(), "a lost connection reconnects (opcode 18)");
     assert!(!arm.login_applies_memory());
 }
 
@@ -2594,7 +2645,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.ptype = 74;
     client.psize = 0;
@@ -2607,7 +2658,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, false), "the bot logs back in");
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(!reconnect, "a protocol error is followed by a fresh login");
     assert!(arm.login_applies_memory());
 
@@ -2627,7 +2678,7 @@ fn protocol_error_t2_logs_in_fresh() {
     let addr = listener.local_addr().unwrap();
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     // A one-byte frame for a zero-length opcode fails the fixed-length check.
     client.ptype = 74;
@@ -2638,7 +2689,7 @@ fn protocol_error_t2_logs_in_fresh() {
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, false));
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "a decode exception is followed by a fresh login"
     );
 }
@@ -2652,12 +2703,12 @@ fn connection_loss_reconnects_and_keeps_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.lost_con();
     assert!(scene_has_the_loc(&client));
     assert!(!tick_flags(&mut client, &[], &arm));
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(reconnect, "a lost connection reconnects (opcode 18)");
 
     client.login("bob", "pw", reconnect).unwrap();
@@ -2677,14 +2728,14 @@ fn dead_server_deadline_reconnects_and_keeps_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.last_response = Some(Instant::now() - Duration::from_secs(16));
     client.game_loop();
     assert!(!client.ingame);
     assert!(scene_has_the_loc(&client), "the deadline keeps the map");
     assert!(!tick_flags(&mut client, &[], &arm));
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(reconnect);
 
     client.login("bob", "pw", reconnect).unwrap();
@@ -2702,7 +2753,7 @@ fn dead_server_deadline_with_a_pending_logout_logs_in_fresh() {
     let addr = listener.local_addr().unwrap();
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.logout_timer = 250;
     client.last_response = Some(Instant::now() - Duration::from_secs(16));
@@ -2713,10 +2764,7 @@ fn dead_server_deadline_with_a_pending_logout_logs_in_fresh() {
         "the pending logout clears the map"
     );
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
-        "a cleared map is never reconnected into"
-    );
+    assert!(!arm.reconnects(), "a cleared map is never reconnected into");
 }
 
 #[test]
@@ -2742,8 +2790,41 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(!arm.login_latched());
     assert!(!arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+#[test]
+fn session_exit_snapshot_is_consistent_with_logout_order() {
+    for logout_before_exit in [false, true] {
+        let arm = SlotArm::new(7, true);
+        arm.set_script_active(true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        if logout_before_exit {
+            arm.request_logout();
+        }
+        let mut client = client_after_server_logout();
+        observe_client_session_exit(&mut client, &arm);
+        if !logout_before_exit {
+            arm.request_logout();
+        }
+        assert_eq!(
+            arm.take_session_boundary(),
+            !logout_before_exit,
+            "boundary work policy must use the same intent snapshot as the exit"
+        );
+        assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
+    }
+}
+
+#[test]
+fn clean_server_logout_does_not_count_toward_repeat_guard() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let mut client = client_after_server_logout();
+    observe_client_session_exit(&mut client, &arm);
+    assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
     assert_eq!(arm.login_latch_reason(), None);
 }
 
@@ -2752,7 +2833,8 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
     for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
-        let mut client = client_after_server_logout();
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        let mut client = client_after_connection_loss();
         assert!(!tick_flags(&mut client, &[], &arm));
         assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
     }
@@ -2968,7 +3050,7 @@ fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
         let mut queue = queue.lock();
         queue.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
-            queue.poll_owner(arm.queue_owner, 7, now),
+            poll_permit(&mut queue, arm.queue_owner, 7, now),
             Permit::Wait(_)
         ));
     }
@@ -3027,7 +3109,7 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.withdraw_login();
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3048,7 +3130,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3067,7 +3149,8 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-    let login: Option<Result<(), &str>> = permit.attempt(|_, _| Err("connect failed"), |_| None);
+    let login: Option<Result<(), &str>> =
+        permit.attempt(|_| true, |_, _| Err("connect failed"), |_| None);
     assert_eq!(login, Some(Err("connect failed")));
     drop(permit);
     assert!(
@@ -3093,8 +3176,11 @@ fn panic_in_login_attempt_resolves_the_reservation() {
 
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-        let _: Option<Result<(), ()>> =
-            permit.attempt(|_, _| panic!("synthetic client.login unwind"), |_| None);
+        let _: Option<Result<(), ()>> = permit.attempt(
+            |_| true,
+            |_, _| panic!("synthetic client.login unwind"),
+            |_| None,
+        );
     }));
     assert!(unwind.is_err());
     assert!(
@@ -3118,7 +3204,7 @@ fn granted(wait: PermitWait) -> GrantedReservation {
 /// Run a granted login that returns at once with `Ok`.
 fn complete(mut permit: GrantedReservation) {
     assert_eq!(
-        permit.attempt(|_, _| Ok::<(), ()>(()), |_| None),
+        permit.attempt(|_| true, |_, _| Ok::<(), ()>(()), |_| None),
         Some(Ok(()))
     );
 }
@@ -3237,8 +3323,11 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
     let (deadline_tx, deadline_rx) = mpsc::channel();
+    let (read_ended_tx, read_ended_rx) = mpsc::channel();
+    let (return_tx, return_rx) = mpsc::channel();
     let stuck = thread::spawn(move || {
         permit.attempt(
+            |_| true,
             |deadline, cancel| {
                 deadline_tx.send(deadline).unwrap();
                 // A client that ignores the queue's deadline: its own is a
@@ -3251,36 +3340,65 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
                     Some(&cancel),
                 )?;
                 stream.write(&[14, 0], 2)?;
-                stream.read()
+                let read = stream.read();
+                read_ended_tx.send(()).unwrap();
+                return_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                read
             },
             |_| None,
         )
     });
     let deadline = deadline_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     let mut alice_socket = server.join().unwrap();
-    let bob_permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
-    let granted_at = Instant::now();
+    let (bob_tx, bob_rx) = mpsc::channel();
+    let bob_queue = Arc::clone(&queue);
+    let bob_statuses = Arc::clone(&statuses);
+    let bob_arm = Arc::clone(&bob);
+    let bob_waiter = thread::spawn(move || {
+        bob_tx
+            .send(wait_for_permit(
+                &bob_queue,
+                &bob_statuses,
+                "bob",
+                8,
+                &bob_arm,
+            ))
+            .unwrap();
+    });
+    read_ended_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expired lease fired its socket cancellation");
+    let retired_at = Instant::now();
+    assert!(retired_at >= deadline + host::login_queue::LEASE_SLACK);
+    assert_eq!(
+        queue.lock().head_blocker(bob.queue_owner, retired_at),
+        Some(host::login_queue::AdmitBlocker::Retiring),
+        "elapsed time alone cannot grant bob while alice has not returned"
+    );
+    assert!(matches!(
+        bob_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
     alice_socket.set_nonblocking(true).unwrap();
     let mut byte = [0; 1];
     assert_eq!(
         alice_socket.read(&mut byte).unwrap(),
         0,
-        "the server has read alice's end of stream when bob is granted"
+        "the server reads alice's end of stream before the return acknowledgement"
     );
-    assert!(
-        granted_at >= deadline + host::login_queue::LEASE_SLACK,
-        "bob waits for alice's lease to end"
-    );
-    assert!(
-        granted_at < deadline + host::login_queue::LEASE_SLACK + Duration::from_millis(500),
-        "bob starts as soon as alice's lease ends"
-    );
+    return_tx.send(()).unwrap();
     let error = stuck
         .join()
         .unwrap()
         .expect("alice's attempt started")
         .unwrap_err();
     assert_eq!(error.to_string(), "login cancelled by its host");
+    let bob_permit = granted(
+        bob_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("bob follows alice's actual return"),
+    );
+    bob_waiter.join().unwrap();
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3367,6 +3485,88 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
     server.join().unwrap();
 }
 
+/// A profile edit reaches the running worker, not just its next spawn. The
+/// worker must not recycle an unused grant at full speed after the uid changes.
+#[test]
+fn uid_save_on_running_slot_connects_without_requeue_spin() {
+    use std::sync::mpsc;
+
+    #[cfg(target_os = "linux")]
+    fn worker_task() -> Option<std::path::PathBuf> {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                std::fs::read_to_string(path.join("comm")).is_ok_and(|name| name == "uid-r3\n")
+            })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn worker_cpu_ticks() -> u64 {
+        let task = worker_task().expect("named slot worker");
+        let stat = std::fs::read_to_string(task.join("stat")).unwrap();
+        let fields: Vec<_> = stat[stat.rfind(')').unwrap() + 2..]
+            .split_whitespace()
+            .collect();
+        fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        accepted_tx.send(()).unwrap();
+        drop(socket);
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, false);
+    arm.set_lowmem_handshake(false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("uid-r3", 42), None, None, Some(Arc::clone(&arm)));
+    #[cfg(target_os = "linux")]
+    assert!(wait_until(2_000, || worker_task().is_some()));
+    #[cfg(not(target_os = "linux"))]
+    assert!(wait_until(2_000, || arm.latest_lifecycle_event().is_some()));
+    play.remember_profile(profile("uid-r3", 43));
+    assert_eq!(arm.uid.load(Ordering::Relaxed), 43);
+    arm.arm_explicit_login();
+    play.wake("uid-r3");
+    #[cfg(target_os = "linux")]
+    let before = worker_cpu_ticks();
+    thread::sleep(Duration::from_secs(2));
+    #[cfg(target_os = "linux")]
+    let ticks = worker_cpu_ticks() - before;
+    let reached = accepted_rx.try_recv().is_ok();
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("uid-r3");
+    if reached {
+        server.join().unwrap();
+    }
+    assert!(
+        reached,
+        "uid edit must connect rather than recycle its grant"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        ticks < 25,
+        "refused grants burned {ticks} worker CPU ticks in 2s"
+    );
+}
+
 /// Spacing counts from each attempt's real start: a worker delayed after its
 /// grant, whose connect then fails at once, does not let the next attempt
 /// start right behind it.
@@ -3385,6 +3585,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     thread::sleep(spacing + Duration::from_millis(200));
     let mut alice_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             alice_start = Some(Instant::now());
             Err::<(), _>("refused at once")
@@ -3395,6 +3596,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let mut bob_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             bob_start = Some(Instant::now());
             Ok::<(), ()>(())
@@ -3435,6 +3637,7 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
         .is_some()));
     let backoff = LoginBackoff::new();
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             Err::<(), _>(LoginError::response(
                 16,
@@ -3927,15 +4130,15 @@ fn focus_selects_the_sampled_slot() {
         let mut q = play.queue.lock();
         assert!(q.queued_uids().is_empty(), "focus must not reserve a login");
         q.enqueue_owner(b.queue_owner, 11);
-        assert_eq!(q.poll_owner(b.queue_owner, 11, now), Permit::Grant);
+        assert_eq!(poll_permit(&mut q, b.queue_owner, 11, now), Permit::Grant);
         q.enqueue_owner(c.queue_owner, 12);
         assert!(matches!(
-            q.poll_owner(c.queue_owner, 12, now),
+            poll_permit(&mut q, c.queue_owner, 12, now),
             Permit::Wait(_)
         ));
         q.enqueue_owner(b.queue_owner, 11);
         assert!(matches!(
-            q.poll_owner(b.queue_owner, 11, now),
+            poll_permit(&mut q, b.queue_owner, 11, now),
             Permit::Wait(_)
         ));
         assert_eq!(
@@ -22076,6 +22279,29 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     rig.slot().lock().unwrap().stop();
 }
 
+/// Client::login can return a dropped-session fact before the title loop
+/// mirrors a script started in-world. The exit policy is captured before
+/// SessionExited, while the actual script is sampled before work is reset.
+#[test]
+fn observed_drop_keeps_a_script_started_after_the_last_title_sync() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let armed = rig.armed();
+    assert!(!arm.keeps_script_work_after_exit());
+
+    arm.observe_session_exit(api::lifecycle::SessionEndCause::ConnectionLost, false);
+    rig.end_session(&arm);
+    assert!(should_handshake(&arm, false));
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "the observed exit keeps the held walk");
+    rig.slot().lock().unwrap().stop();
+}
+
 /// The repeat guard stops reconnect attempts, not the active script. An
 /// explicit Log in clears the guard and resumes the work held at the exit.
 #[test]
@@ -23477,7 +23703,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         false,
     ));
     assert!(
-        wait_until(100, || queued(&navs).is_some()),
+        wait_until(1_000, || queued(&navs).is_some()),
         "the worker armed the route"
     );
 

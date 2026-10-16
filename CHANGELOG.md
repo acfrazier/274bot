@@ -118,6 +118,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   cancelled in the log, one line per save, instead of being dropped
   silently.
 
+### Login
+
+- A login that finishes after its lease deadline, Logout, or world switch
+  cannot become an active session. An expired handshake keeps its place until
+  it actually returns, so another bot cannot overlap it. The queue cancels
+  its socket and then admits the next bot in normal order.
+- A login refused before it starts no longer uses the next bot's login
+  spacing or device/address allowance. Refused and cancelled sockets close
+  before the next queued login is admitted.
+- Relog now keeps the login request after logging out and clears its pending
+  notice when the replacement session starts. Queue cards distinguish a
+  server-imposed login hold from spacing and label a retiring handshake
+  **previous login is finishing**.
+- Editing a running bot's uid applies to its next login without repeatedly
+  cycling the login queue. Saving a new password does not count as a clean
+  logout: clean-logout release pacing remains in effect. A bot already waiting
+  in the login queue refuses its old login and rejoins at the back.
+- Unread session-end boundaries are delivered in order up to a bound of 32;
+  the consuming lifecycle read reports how many older boundaries were missed
+  if the bound fills.
+
 ### Panel
 
 - The Fleet window's filter matches several words and world numbers, the
