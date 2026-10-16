@@ -1413,20 +1413,63 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
     );
     rig.reconnect();
     assert_eq!(rig.native_run().session, before.session.wrapping_add(1));
-    let (rows, owned) = rig.drain_host();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (rows, owned) = rig.drain_host();
+        assert!(rows.is_empty(), "the typed Stop has no ordinary host row");
+        if !owned {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the carried Stop did not release the original Gatherer seat"
+        );
+        rig.isolate_tick_without_host_drain();
+        let _ = rig.probe("true");
+        std::thread::yield_now();
+    }
     assert!(
-        rows.is_empty(),
-        "reconnect discarded the old typed Stop batch"
+        rig.slot().lock().unwrap().native_status().is_none(),
+        "Stop removes the original Gatherer without admitting a replacement"
     );
-    assert!(owned, "the running Gatherer seat survives the lost Stop");
-
-    rig.isolate_tick_without_host_drain();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
-    assert!(!owned, "the re-emitted typed Stop tears down the seat");
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     rig.isolate_tick_without_host_drain();
     rig.settled_result(token);
+}
+
+#[test]
+fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    for tick in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        if tick % 2 == 0 {
+            let _ = rig.drain_host();
+        } else {
+            // Paused guardian frames do not drain host interactions.
+            rig.slot().lock().unwrap().retain_held_seat_batches();
+        }
+        let pending = rig.slot().lock().unwrap().seat_batch_backlog();
+        assert!(
+            pending <= 2,
+            "guardian hold must not retain one seat batch per tick: tick={tick}, pending={pending}"
+        );
+    }
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while rig.slot().lock().unwrap().api_owns_foreground() {
+        let _ = rig.drain_host();
+        if !rig.slot().lock().unwrap().api_owns_foreground() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "held Stop did not dispatch");
+        rig.isolate_tick_without_host_drain();
+        let _ = rig.probe("true");
+    }
+    assert_eq!(rig.slot().lock().unwrap().seat_batch_backlog(), 0);
 }
 
 #[test]

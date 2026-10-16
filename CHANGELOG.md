@@ -25,6 +25,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   A Gatherer or combat Stop also survives a lost Start batch during a kept
   reconnect; an interrupted Hunt safespot walk asks the seat for a fresh walk
   in the new session instead of replaying the old click.
+- Walks that arrive normally free their seat release slot, so repeated walks
+  do not block later actions. A kept reconnect discards old gameplay walks.
+  During a guardian hold, the pending seat batch stays bounded while releases
+  and controls remain queued.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.

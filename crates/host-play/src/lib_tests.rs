@@ -22239,11 +22239,10 @@ fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
     rig.slot().lock().unwrap().stop();
 }
 
-/// The script emits its walk and the connection drops before host-play
-/// drains it: the request never reached the old session, so the relogged
-/// session dispatches it, once, under its own request id.
+/// A walk row queued before a kept reconnect is stale gameplay. It cannot
+/// leave the new session through the host without fresh seat admission.
 #[test]
-fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
+fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
     let mut rig = ReconnectRig::new(40, 40);
     // The posting frame only: the tick queues the walk, nothing drains it.
     rig.frame(1, true);
@@ -22251,13 +22250,12 @@ fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
 
     rig.boundary(true);
     rig.frames(2);
-    let (request_id, requested) = rig.armed();
-    assert_ne!(
-        request_id, 0,
-        "the undispatched walk goes out after the relog"
+    rig.frames(3);
+    assert_eq!(rig.armed(), (0, None), "the stale walk cannot re-arm");
+    assert!(
+        rig.walks().is_empty(),
+        "the stale row never reaches the host"
     );
-    assert_eq!(requested, walk_dest(40, 40));
-    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
     rig.slot().lock().unwrap().stop();
 }
 

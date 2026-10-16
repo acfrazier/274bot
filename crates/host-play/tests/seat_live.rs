@@ -684,9 +684,6 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
                             "seat": seat_json(probe),
                         });
                         if inside_maze && probe.held {
-                            // A real hold can begin after the prior gameplay
-                            // row was dispatched. The native fixture proves
-                            // drop accounting with a deliberately pending row.
                             held_seat = Some(probe);
                         }
                     }
@@ -701,6 +698,22 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
         );
         assert!(held_seat.expect("observed held seat").held);
         assert_eq!(maze_status["inside_maze"], true);
+        live.play
+            .script_api_live_queue_held_gameplay(&live.account)
+            .expect("queue one real isolate gameplay row during guardian hold");
+        wait_until(
+            &live,
+            "held gameplay drop",
+            Duration::from_secs(60),
+            |live| {
+                let probe = seat_probe(live);
+                probe.held && probe.dropped > initial_seat.dropped
+            },
+        );
+        let dropped_seat = seat_probe(&live);
+        assert!(dropped_seat.held && dropped_seat.dropped > initial_seat.dropped);
+        maze_status["seat"] = seat_json(dropped_seat);
+        held_seat = Some(dropped_seat);
     }
 
     if reconnect {
@@ -827,6 +840,10 @@ fn run_native_cell() {
     assert!(
         seat.live > 0 || seat.results > 0,
         "compiled action must be visible in the seat"
+    );
+    assert!(
+        seat.reserved_releases <= 1,
+        "the first completed native walk must free its seat release slot before the return walk"
     );
     let before_stop = seat_json(seat);
     live.play.script_stop(&live.account);

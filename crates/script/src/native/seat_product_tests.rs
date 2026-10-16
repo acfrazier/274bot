@@ -438,6 +438,13 @@ fn fixture_10_guardian_hold_freezes_requests_and_keeps_releases() {
     assert_eq!(seat.prompt(fixture_id(1)).unwrap(), Some(1));
     fixture_push_owner(&mut seat, 10, 1);
     seat.take();
+    seat.push(
+        12,
+        EmissionClass::Release,
+        EmissionSource::Owner(fixture_id(1)),
+        Some(Release::GatherStop),
+    )
+    .unwrap();
     seat.hold(true);
     fixture_push_owner(&mut seat, 11, 1);
     seat.complete(fixture_id(1), false).unwrap();
@@ -468,7 +475,7 @@ fn fixture_10_guardian_hold_freezes_requests_and_keeps_releases() {
     seat.hold(false);
     seat.take();
     seat.dispatch_into(&mut output);
-    assert_eq!(output, [12]);
+    assert_eq!(output, [12], "the release queued before hold survives once");
     assert_eq!(seat.live().len(), 1);
     assert_eq!(seat.live()[0].prompt, Some(1));
     assert_eq!(seat.live()[0].decisions_consumed, 0);
@@ -1637,4 +1644,143 @@ fn guardian_session_capture_handoff_covers_all_family_pairs() {
             assert_eq!(seat.foreground(), expected_foreground);
         }
     }
+}
+
+/// A root row pushed under Gather is checked against foreground only when dispatched.
+#[test]
+fn root_gameplay_row_uses_foreground_at_dispatch_time() {
+    let mut seat = GameplaySeat::<u32>::new(fixture_run());
+    fixture_start(&mut seat, 1, None, NativeKind::Gather);
+    seat.push(30, EmissionClass::Gameplay, EmissionSource::Root, None)
+        .unwrap();
+    seat.complete(fixture_id(1), false).unwrap();
+
+    seat.take();
+    let mut output = Vec::new();
+    seat.dispatch_into(&mut output);
+
+    assert_eq!(output, [30]);
+    assert_eq!(seat.dropped(), 0);
+}
+
+#[test]
+fn normal_walk_terminals_free_slots_before_later_gameplay_dispatch() {
+    let mut seat = GameplaySeat::<u32>::new(fixture_run());
+    let mut walks = Vec::new();
+    for raw in 1..=(MAX_WALK_RELEASES as u64 + 1) {
+        fixture_start(&mut seat, raw, None, NativeKind::Walk);
+        seat.push_walk(
+            raw as u32,
+            EmissionSource::Owner(fixture_id(raw)),
+            fixture_id(raw),
+        )
+        .unwrap();
+        seat.take();
+        seat.dispatch_into(&mut walks);
+        assert_eq!(
+            seat.reserved_releases(),
+            1,
+            "walk {raw} keeps its reservation until terminal"
+        );
+
+        seat.complete(fixture_id(raw), false).unwrap();
+        assert_eq!(
+            seat.reserved_releases(),
+            0,
+            "normal terminal frees walk {raw}'s reservation"
+        );
+    }
+    assert_eq!(walks.len(), MAX_WALK_RELEASES + 1);
+
+    seat.push(200, EmissionClass::Gameplay, EmissionSource::Root, None)
+        .unwrap();
+    seat.take();
+    let mut gameplay = Vec::new();
+    seat.dispatch_into(&mut gameplay);
+    assert_eq!(gameplay, [200]);
+}
+
+#[test]
+fn walk_release_retirement_is_terminal_scoped_and_queue_safe() {
+    let mut unrelated = GameplaySeat::<u32>::new(fixture_run());
+    fixture_start(&mut unrelated, 1, None, NativeKind::BankNearest);
+    unrelated
+        .push(
+            40,
+            EmissionClass::Release,
+            EmissionSource::Root,
+            Some(Release::AbortWalk(fixture_id(1))),
+        )
+        .unwrap();
+    unrelated.complete(fixture_id(1), false).unwrap();
+    assert_eq!(unrelated.reserved_releases(), 1);
+
+    unrelated.take();
+    let mut output = Vec::new();
+    unrelated.dispatch_into(&mut output);
+    assert_eq!(output, [40]);
+    assert_eq!(unrelated.reserved_releases(), 0);
+
+    let mut walk = GameplaySeat::<u32>::new(fixture_run());
+    fixture_start(&mut walk, 1, None, NativeKind::Walk);
+    walk.push(
+        41,
+        EmissionClass::Release,
+        EmissionSource::Root,
+        Some(Release::AbortWalk(fixture_id(1))),
+    )
+    .unwrap();
+    walk.complete(fixture_id(1), false).unwrap();
+    assert_eq!(
+        walk.reserved_releases(),
+        1,
+        "a queued AbortWalk remains reserved through the walk terminal"
+    );
+
+    walk.take();
+    let mut output = Vec::new();
+    walk.dispatch_into(&mut output);
+    assert_eq!(output, [41]);
+    assert_eq!(walk.reserved_releases(), 0);
+}
+
+#[test]
+fn physical_walk_terminal_retires_only_armed_unqueued_slot() {
+    let mut seat = GameplaySeat::<u32>::new(fixture_run());
+    assert!(seat.reserve_walk(fixture_id(50)));
+    seat.push_walk(50, EmissionSource::Root, fixture_id(50))
+        .unwrap();
+    seat.take();
+    let mut output = Vec::new();
+    seat.dispatch_into(&mut output);
+    assert_eq!(seat.reserved_releases(), 1);
+
+    seat.walk_terminal(fixture_id(50));
+    assert_eq!(seat.reserved_releases(), 0);
+
+    assert!(seat.reserve_walk(fixture_id(51)));
+    seat.walk_terminal(fixture_id(51));
+    assert_eq!(
+        seat.reserved_releases(),
+        1,
+        "a terminal cannot free a reservation that was never armed"
+    );
+    seat.push(
+        51,
+        EmissionClass::Release,
+        EmissionSource::Root,
+        Some(Release::AbortWalk(fixture_id(51))),
+    )
+    .unwrap();
+    seat.walk_terminal(fixture_id(51));
+    assert_eq!(
+        seat.reserved_releases(),
+        1,
+        "a queued AbortWalk remains reserved"
+    );
+
+    seat.take();
+    seat.dispatch_into(&mut output);
+    assert_eq!(output, [50, 51]);
+    assert_eq!(seat.reserved_releases(), 0);
 }
