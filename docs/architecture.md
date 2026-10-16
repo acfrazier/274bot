@@ -812,7 +812,7 @@ nav, rendering, or the isolate.
 
 An operator commit in protected `274bot-arch` is required for a new crate
 edge (including a new target cfg or cross-crate feature request), an edge kind,
-a migration, an optional-dependency activation, a vendored path package, or a checker change.
+a migration, an optional-dependency activation, a vendored path package, a client manifest change, or a checker change.
 The operator edits `policy.toml` where the rule change needs it.
 First merge current `dev` into the branch being merged.
 Regenerate the baseline from that merged branch tree in the same arch commit:
@@ -826,8 +826,8 @@ Review removed records. Retain records that other active branches still need.
 The operator publishes first; the product change lands after. Only the
 operator can push `274bot-arch`; agents cannot. Propose the policy edit as
 a patch or branch bundle for the operator to review and push.
-Purely local features with no optional dependency or cross-crate edge, and
-fine ownership/seam/inventory data, need no operator commit: fine-data
+Outside the pinned client manifests, purely local features with no optional dependency or cross-crate edge need no operator commit.
+Fine ownership/seam/inventory data also needs no operator commit. Fine-data
 changes (ownership rows, inventory rows, foreign-type rows) are ordinary
 product diffs in `tools/architecture/`, reviewed like code — the checker
 loads them from the checked tree, refuses malformed or stale data, and

@@ -50,7 +50,7 @@ Reward hacking is handled where it has been caught in practice:
    - a clean run of the checker from `274bot-arch` `main`;
    - Main pushes.
 
-   A new seam type or ownership row is part of the change's own diff. Only a new crate edge, or a checker change, goes to the operator as a `274bot-arch` commit first.
+   A new seam type or ownership row is part of the change's own diff. New crate edges, client manifest changes, and checker changes need an operator commit in `274bot-arch` first.
 5. **Client gitlink moves are ordinary reviewed diffs when every vendored `Cargo.toml` remains byte-identical.** Manifest changes also need an operator commit to the protected pin. Fork review enforces Java conformance, not the gate.
 
 ## Retired
