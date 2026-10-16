@@ -3429,6 +3429,230 @@ fn catalog_request_refusals_name_their_failure_kind() {
 }
 
 #[test]
+fn catalog_typed_failures_keep_their_byte_identical_display() {
+    use script::load::{CatalogSnapshotError, CatalogWorkerError};
+
+    let snapshots = [
+        (
+            CatalogSnapshotError::SnapshotTooLarge,
+            "catalog snapshot is too large",
+        ),
+        (
+            CatalogSnapshotError::RegistryIndexSizeOverflow,
+            "catalog registry index size overflow",
+        ),
+        (
+            CatalogSnapshotError::SourceEstimateTooLarge,
+            "catalog source estimate is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataTooLarge,
+            "catalog card metadata is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataExceedsSnapshotBound,
+            "catalog card metadata exceeds the 8 MiB snapshot bound",
+        ),
+        (
+            CatalogSnapshotError::SourceChargeOverflow,
+            "catalog source charge overflow",
+        ),
+        (
+            CatalogSnapshotError::SnapshotExceedsInputBound,
+            "catalog snapshot exceeds the input charge bound",
+        ),
+        (
+            CatalogSnapshotError::InputChargeOverflow,
+            "catalog input charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ScratchChargeOverflow,
+            "catalog scratch charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ResultChargeOverflow,
+            "catalog result charge overflow",
+        ),
+    ];
+    assert_eq!(snapshots.len(), 10, "every snapshot variant is covered");
+    for (error, expected) in snapshots {
+        let wrapped = CatalogError::from(error);
+        assert!(
+            matches!(wrapped, CatalogError::Snapshot(_)),
+            "snapshot failures wrap without parsing their text"
+        );
+        assert_eq!(wrapped.to_string(), expected);
+    }
+
+    let workers = [
+        (
+            CatalogWorkerError::Registry {
+                path: "/root/index.ts".into(),
+                reason: "missing /root/index.ts: gone".into(),
+            },
+            "$RS2B0T registry /root/index.ts: missing /root/index.ts: gone",
+        ),
+        (
+            CatalogWorkerError::TooManyRegistrations,
+            "catalog has more than 4096 registrations",
+        ),
+        (
+            CatalogWorkerError::RegistrySizeOverflow,
+            "catalog registry size overflow",
+        ),
+        (
+            CatalogWorkerError::RegistryMetadataExceedsInputBound,
+            "catalog registry metadata exceeds its charged input bound",
+        ),
+        (
+            CatalogWorkerError::InputsExceedInputBound,
+            "catalog inputs exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::TooManySourceFiles,
+            "catalog source graph exceeds 8192 files",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedInputBound,
+            "catalog sources exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedBoundedInputLimit,
+            "catalog sources exceed the bounded input limit",
+        ),
+        (
+            CatalogWorkerError::SourceFile {
+                reason: "not a regular file".into(),
+            },
+            "not a regular file",
+        ),
+        (
+            CatalogWorkerError::TooManySiblings {
+                relative: "./src/bot/scripts/Big/Big.ts".into(),
+            },
+            "catalog source ./src/bot/scripts/Big/Big.ts has more than 128 sibling modules",
+        ),
+        (
+            CatalogWorkerError::SiblingIndexSizeOverflow,
+            "catalog sibling index size overflow",
+        ),
+        (
+            CatalogWorkerError::ScratchExceedsBound,
+            "catalog preparation scratch exceeds its charged scratch bound",
+        ),
+        (
+            CatalogWorkerError::TooManySiblingModules,
+            "catalog source graph exceeds 8192 sibling modules",
+        ),
+        (
+            CatalogWorkerError::ParsedRegistrationMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: parsed registration is missing",
+        ),
+        (
+            CatalogWorkerError::ExistingSnapshotMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: existing card snapshot is missing",
+        ),
+        (
+            CatalogWorkerError::CardBounded {
+                name: "GoneBot".into(),
+                reason: "registry entry no longer resolves".into(),
+            },
+            "catalog GoneBot: registry entry no longer resolves",
+        ),
+        (
+            CatalogWorkerError::FailureIndexSizeOverflow,
+            "catalog failure index size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffCompletedMoreThanOnce,
+            "catalog diff work completed more than once",
+        ),
+        (
+            CatalogWorkerError::PreparationCompletedMoreThanOnce,
+            "catalog preparation work completed more than once",
+        ),
+        (
+            CatalogWorkerError::CandidateCountOverflow,
+            "catalog candidate count overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeOverflow,
+            "catalog result size overflow",
+        ),
+        (
+            CatalogWorkerError::PreparedResultExceedsBound,
+            "prepared catalog result exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::PreparedCardSizeOverflow,
+            "prepared catalog card size overflow",
+        ),
+        (
+            CatalogWorkerError::FailureSizeOverflow,
+            "catalog failure size overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeUnderflow,
+            "catalog result size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::UnchangedCandidateIndexInvalid,
+            "catalog unchanged candidate index is invalid",
+        ),
+        (
+            CatalogWorkerError::ScratchSizeOverflow,
+            "catalog scratch size overflow",
+        ),
+        (
+            CatalogWorkerError::CardTaskAlreadyComplete,
+            "card preparation task is already complete",
+        ),
+        (
+            CatalogWorkerError::DiffSizeOverflow,
+            "catalog diff size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffSizeUnderflow,
+            "catalog diff size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::DiffExceedsResultBound,
+            "catalog diff exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::FingerprintInsertionDisappeared,
+            "catalog fingerprint insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::IncomingInsertionDisappeared,
+            "catalog incoming insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::DiffStateUnavailable,
+            "catalog diff state is unavailable",
+        ),
+    ];
+    assert_eq!(workers.len(), 34, "every worker variant is covered");
+    for (error, expected) in workers {
+        let wrapped = CatalogError::from(error);
+        assert!(
+            matches!(wrapped, CatalogError::Worker(_)),
+            "worker failures wrap without parsing their text"
+        );
+        assert_eq!(wrapped.to_string(), expected);
+    }
+
+    assert_eq!(
+        CatalogError::UnexpectedCatalogCommit("js-scripts.json: gone".into()).to_string(),
+        "catalog commit invariant violated for a catalog card: js-scripts.json: gone"
+    );
+}
+
+#[test]
 fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work() {
     const LIMIT: usize = 64;
     let mut f = fixture("loaded-start-bound", &["alice"]);
