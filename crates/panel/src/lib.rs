@@ -51,3 +51,11 @@ mod manual_click_live_tests;
 /// active at a time (`Context::create` panics on `ContextAlreadyActive`),
 /// so parallel tests that each create one race.
 pub(crate) static IMGUI_CTX_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+/// Serializes tests that share the process-wide WorkService ledger.
+pub(crate) fn work_service_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GUARD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
