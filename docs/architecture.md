@@ -68,6 +68,17 @@ package must have a canonical manifest binding in protected
 `policy.toml` `[workspace.path_packages]`. Unlisted path packages and symlink
 substitutions are refused. Every listed manifest is scanned, even when unused.
 Edges from listed packages need ordinary protected allowances.
+The checker refuses a `git` key in any dependency table, target table,
+`[workspace.dependencies]`, `[patch.*]`, or `[replace]` entry.
+The refusal names the manifest file and the entry.
+The checker never reads a git crate's manifest.
+A git crate could carry a crate edge or a feature request into a local package.
+Only root `[patch.*]` and `[replace]` entries listed by name and path in
+protected `policy.toml` `[root_patches]` may appear in the product root.
+The list now holds only `dear-imgui-wgpu` at `vendor/dear-imgui-wgpu-0.15.1`.
+A root patch makes a local package reachable from every external crate.
+Any other root patch or replacement needs an operator commit that adds it.
+Registry dependencies stay allowed. A crates.io crate cannot name a local path package without a root patch, and the root patch list covers that route.
 
 Every `Cargo.toml` below `vendor/fr-client-rust/` is pinned in protected
 `274bot-arch/vendor-manifests.json`. One digest covers the sorted path and exact-byte pairs.
@@ -84,6 +95,10 @@ The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
 candidate tree, including vendored trees and symlinks. Directory and file names
 are matched without ASCII case distinctions. These files can override the graph.
 Unicode look-alike names are outside this refusal because Cargo on Linux does not read them.
+One limit stays with review. A product build script can rewrite a vendored
+manifest on disk during a CI job, between steps.
+The checker reads committed manifests only. It does not run build scripts.
+A new `build.rs` needs an ownership row, so a reviewer sees it.
 Dependency aliases are tracked by package name, not by alias or version.
 Default-feature and dev-dependency activation is checked for every protected
 member and listed path package, even when no named configuration reaches it.
@@ -812,7 +827,7 @@ nav, rendering, or the isolate.
 
 An operator commit in protected `274bot-arch` is required for a new crate
 edge (including a new target cfg or cross-crate feature request), an edge kind,
-a migration, an optional-dependency activation, a vendored path package, a client manifest change, or a checker change.
+a migration, an optional-dependency activation, a vendored path package, a client manifest change, a root patch or replacement entry, or a checker change.
 The operator edits `policy.toml` where the rule change needs it.
 First merge current `dev` into the branch being merged.
 Regenerate the baseline from that merged branch tree in the same arch commit:
